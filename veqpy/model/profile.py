@@ -18,18 +18,10 @@ from veqpy.model.serial import Serial
 class ProfileRuntimeView:
     """Stage-A 热路径使用的已绑定 profile 运行时视图."""
 
-    u: np.ndarray
-    u_r: np.ndarray
-    u_rr: np.ndarray
-    T: np.ndarray
-    T_r: np.ndarray
-    T_rr: np.ndarray
-    rp: np.ndarray
-    rp_r: np.ndarray
-    rp_rr: np.ndarray
-    env: np.ndarray
-    env_r: np.ndarray
-    env_rr: np.ndarray
+    u_fields: np.ndarray
+    T_fields: np.ndarray
+    rp_fields: np.ndarray
+    env_fields: np.ndarray
     coeff: np.ndarray | None
     offset: float
     scale: float
@@ -49,27 +41,14 @@ class Profile(Serial):
     envelope_power: int = 1
     offset: float = 0.0
     coeff: np.ndarray | None = None
-    u: np.ndarray | None = field(init=False, default=None)
-    u_r: np.ndarray | None = field(init=False, default=None)
-    u_rr: np.ndarray | None = field(init=False, default=None)
-    _coeff_topology: tuple[bool, int] | None = field(init=False, default=None, repr=False)
-    _T: np.ndarray | None = field(init=False, default=None, repr=False)
-    _T_r: np.ndarray | None = field(init=False, default=None, repr=False)
-    _T_rr: np.ndarray | None = field(init=False, default=None, repr=False)
-    _rp: np.ndarray | None = field(init=False, default=None, repr=False)
-    _rp_r: np.ndarray | None = field(init=False, default=None, repr=False)
-    _rp_rr: np.ndarray | None = field(init=False, default=None, repr=False)
-    _env: np.ndarray | None = field(init=False, default=None, repr=False)
-    _env_r: np.ndarray | None = field(init=False, default=None, repr=False)
-    _env_rr: np.ndarray | None = field(init=False, default=None, repr=False)
+    u_fields: np.ndarray | None = field(init=False, default=None, repr=False)
+    T_fields: np.ndarray | None = field(init=False, default=None, repr=False)
+    rp_fields: np.ndarray | None = field(init=False, default=None, repr=False)
+    env_fields: np.ndarray | None = field(init=False, default=None, repr=False)
 
     @classmethod
     def serial_attributes(cls) -> dict[str, type]:
-        """声明可序列化的根属性.
-
-        Returns:
-            可用于重建 Profile 根参数的字段类型映射.
-        """
+        """声明可序列化的根属性."""
         return {
             "scale": float,
             "power": int,
@@ -84,19 +63,29 @@ class Profile(Serial):
         self.envelope_power = int(self.envelope_power)
         self.offset = 0.0 if self.offset is None else float(self.offset)
         self.coeff = _coerce_optional_array(self.coeff, copy=False, name="coeff")
-        if self.coeff is not None:
-            self._coeff_topology = _coeff_topology(self.coeff)
 
         if grid is not None:
             self._prepare_runtime_cache(grid)
 
+    @property
+    def u(self) -> np.ndarray | None:
+        return _field_slice(self.u_fields, 0)
+
+    @property
+    def u_r(self) -> np.ndarray | None:
+        return _field_slice(self.u_fields, 1)
+
+    @property
+    def u_rr(self) -> np.ndarray | None:
+        return _field_slice(self.u_fields, 2)
+
     def __iter__(self):
         """返回当前已经物化的 u, u_r, u_rr 三元组."""
-        if self.u is None or self.u_r is None or self.u_rr is None:
+        if self.u_fields is None:
             raise RuntimeError("Profile is not materialized; call update(..., grid=...) first")
-        yield self.u
-        yield self.u_r
-        yield self.u_rr
+        yield self.u_fields[0]
+        yield self.u_fields[1]
+        yield self.u_fields[2]
 
     def check(self) -> None:
         """校验根参数与可序列化字段的基本类型约束."""
@@ -118,49 +107,25 @@ class Profile(Serial):
             offset=self.offset,
             coeff=_copy_optional_array(self.coeff),
         )
-        out.u = _copy_optional_array(self.u)
-        out.u_r = _copy_optional_array(self.u_r)
-        out.u_rr = _copy_optional_array(self.u_rr)
-        out._coeff_topology = self._coeff_topology
-        out._T = self._T
-        out._T_r = self._T_r
-        out._T_rr = self._T_rr
-        out._rp = self._rp
-        out._rp_r = self._rp_r
-        out._rp_rr = self._rp_rr
-        out._env = self._env
-        out._env_r = self._env_r
-        out._env_rr = self._env_rr
+        out.u_fields = _copy_optional_array(self.u_fields)
+        out.T_fields = self.T_fields
+        out.rp_fields = self.rp_fields
+        out.env_fields = self.env_fields
         return out
 
     def update(self, grid: Grid | None = None) -> None:
-        """刷新当前 grid 上的 profile 值和导数.
-
-        Args:
-            grid: 可选的新 Grid. 首次调用时必须提供, 以建立 runtime cache.
-
-        Returns:
-            无返回值. 当前对象的 u, u_r, u_rr 会被原地更新.
-        """
+        """刷新当前 grid 上的 profile 值和导数."""
         if grid is not None:
             self._prepare_runtime_cache(grid)
-        if self._T is None:
+        if self.T_fields is None:
             raise RuntimeError("Profile runtime cache is not initialized; pass grid on first update().")
-        if self.u is None or self.u_r is None or self.u_rr is None:
+        if self.u_fields is None:
             raise RuntimeError("Profile output buffers are not initialized; pass grid on first update().")
         _fill_profile_outputs(
-            self.u,
-            self.u_r,
-            self.u_rr,
-            self._T,
-            self._T_r,
-            self._T_rr,
-            self._rp,
-            self._rp_r,
-            self._rp_rr,
-            self._env,
-            self._env_r,
-            self._env_rr,
+            self.u_fields,
+            self.T_fields,
+            self.rp_fields,
+            self.env_fields,
             self.offset,
             self.coeff,
             self.scale,
@@ -168,74 +133,34 @@ class Profile(Serial):
 
     def _runtime_view(self) -> ProfileRuntimeView:
         """导出 Stage-A 热路径所需的已绑定运行时视图."""
-        if self.u is None or self.u_r is None or self.u_rr is None:
+        if self.u_fields is None:
             raise RuntimeError("Profile output buffers are not initialized")
-        if self._T is None or self._T_r is None or self._T_rr is None:
+        if self.T_fields is None:
             raise RuntimeError("Profile runtime cache is not initialized")
-        if self._rp is None or self._rp_r is None or self._rp_rr is None:
+        if self.rp_fields is None:
             raise RuntimeError("Profile power cache is not initialized")
-        if self._env is None or self._env_r is None or self._env_rr is None:
+        if self.env_fields is None:
             raise RuntimeError("Profile envelope cache is not initialized")
         return ProfileRuntimeView(
-            u=self.u,
-            u_r=self.u_r,
-            u_rr=self.u_rr,
-            T=self._T,
-            T_r=self._T_r,
-            T_rr=self._T_rr,
-            rp=self._rp,
-            rp_r=self._rp_r,
-            rp_rr=self._rp_rr,
-            env=self._env,
-            env_r=self._env_r,
-            env_rr=self._env_rr,
+            u_fields=self.u_fields,
+            T_fields=self.T_fields,
+            rp_fields=self.rp_fields,
+            env_fields=self.env_fields,
             coeff=self.coeff,
             offset=self.offset,
             scale=self.scale,
         )
 
-    def _bind_coeff(self, coeff: np.ndarray | None) -> None:
-        """绑定并锁定 coeff 拓扑.
-
-        第一次绑定决定该 Profile 的 coeff 是否为 None 以及长度.
-        之后只允许重绑到相同拓扑的数组视图.
-        """
-        coeff_arr = _coerce_optional_array(coeff, copy=False, name="coeff")
-        topology = _coeff_topology(coeff_arr)
-        if self._coeff_topology is None:
-            self.coeff = coeff_arr
-            self._coeff_topology = topology
-            return
-        if topology != self._coeff_topology:
-            expected = _format_coeff_topology(self._coeff_topology)
-            got = _format_coeff_topology(topology)
-            raise ValueError(f"Profile coeff topology is immutable; expected {expected}, got {got}")
-        self.coeff = coeff_arr
-
     def _prepare_runtime_cache(self, grid: Grid) -> None:
         """绑定 Grid 并准备 profile 计算所需的只读缓存."""
-        rows = grid.L_max + 1
-        T_fields = grid.T_fields
-        self._T = T_fields[:rows]
-        self._T_r = T_fields[rows : 2 * rows]
-        self._T_rr = T_fields[2 * rows : 3 * rows]
+        self.T_fields = grid.T_fields
+        self.rp_fields = _power_terms(grid.rho, self.power)
+        self.env_fields = _envelope_terms(grid.rho, grid.rho2, grid.y, self.envelope_power)
+        self.rp_fields.flags.writeable = False
+        self.env_fields.flags.writeable = False
 
-        rp, rp_r, rp_rr = _power_terms(grid.rho, self.power)
-        env, env_r, env_rr = _envelope_terms(grid.rho, grid.rho2, grid.y, self.envelope_power)
-        for arr in (rp, rp_r, rp_rr, env, env_r, env_rr):
-            arr.flags.writeable = False
-
-        self._rp = rp
-        self._rp_r = rp_r
-        self._rp_rr = rp_rr
-        self._env = env
-        self._env_r = env_r
-        self._env_rr = env_rr
-
-        if self.u is None or self.u.shape != (grid.Nr,):
-            self.u = np.empty(grid.Nr, dtype=np.float64)
-            self.u_r = np.empty(grid.Nr, dtype=np.float64)
-            self.u_rr = np.empty(grid.Nr, dtype=np.float64)
+        if self.u_fields is None or self.u_fields.shape != (3, grid.Nr):
+            self.u_fields = np.empty((3, grid.Nr), dtype=np.float64)
 
 
 def _coerce_optional_array(value, *, copy: bool, name: str = "array") -> np.ndarray | None:
@@ -258,18 +183,10 @@ def _copy_optional_array(value: np.ndarray | None) -> np.ndarray | None:
 def fill_profile_runtime_view(view: ProfileRuntimeView) -> None:
     """用已绑定运行时视图刷新单个 profile."""
     _fill_profile_outputs(
-        view.u,
-        view.u_r,
-        view.u_rr,
-        view.T,
-        view.T_r,
-        view.T_rr,
-        view.rp,
-        view.rp_r,
-        view.rp_rr,
-        view.env,
-        view.env_r,
-        view.env_rr,
+        view.u_fields,
+        view.T_fields,
+        view.rp_fields,
+        view.env_fields,
         view.offset,
         view.coeff,
         view.scale,
@@ -277,62 +194,31 @@ def fill_profile_runtime_view(view: ProfileRuntimeView) -> None:
 
 
 def _fill_profile_outputs(
-    u: np.ndarray,
-    u_r: np.ndarray,
-    u_rr: np.ndarray,
-    T: np.ndarray,
-    T_r: np.ndarray,
-    T_rr: np.ndarray,
-    rp: np.ndarray,
-    rp_r: np.ndarray,
-    rp_rr: np.ndarray,
-    env: np.ndarray,
-    env_r: np.ndarray,
-    env_rr: np.ndarray,
+    u_fields: np.ndarray,
+    T_fields: np.ndarray,
+    rp_fields: np.ndarray,
+    env_fields: np.ndarray,
     offset: float,
     coeff: np.ndarray | None,
     scale: float,
 ) -> None:
     update_profile(
-        u,
-        u_r,
-        u_rr,
-        T,
-        T_r,
-        T_rr,
-        rp,
-        rp_r,
-        rp_rr,
-        env,
-        env_r,
-        env_rr,
+        u_fields,
+        T_fields,
+        rp_fields,
+        env_fields,
         offset,
         coeff,
     )
     if scale != 1.0:
-        np.multiply(u, scale, out=u)
-        np.multiply(u_r, scale, out=u_r)
-        np.multiply(u_rr, scale, out=u_rr)
+        np.multiply(u_fields, scale, out=u_fields)
 
 
-def _coeff_topology(value: np.ndarray | None) -> tuple[bool, int]:
-    if value is None:
-        return True, -1
-    return False, int(value.shape[0])
-
-
-def _format_coeff_topology(topology: tuple[bool, int]) -> str:
-    is_none, length = topology
-    if is_none:
-        return "coeff=None"
-    return f"coeff length {length}"
-
-
-def _power_terms(rho: np.ndarray, a: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _power_terms(rho: np.ndarray, a: int) -> np.ndarray:
     if a == 0:
         ones = np.ones_like(rho)
         zeros = np.zeros_like(rho)
-        return ones, zeros, zeros
+        return _stack_fields(ones, zeros, zeros)
 
     rp = rho**a
     rp_r = a * rho ** (a - 1)
@@ -340,7 +226,7 @@ def _power_terms(rho: np.ndarray, a: int) -> tuple[np.ndarray, np.ndarray, np.nd
         rp_rr = np.zeros_like(rho)
     else:
         rp_rr = a * (a - 1) * rho ** (a - 2)
-    return rp, rp_r, rp_rr
+    return _stack_fields(rp, rp_r, rp_rr)
 
 
 def _envelope_terms(
@@ -348,15 +234,29 @@ def _envelope_terms(
     rho2: np.ndarray,
     y: np.ndarray,
     c: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> np.ndarray:
     if c == 0:
         ones = np.ones_like(rho)
         zeros = np.zeros_like(rho)
-        return ones, zeros, zeros
+        return _stack_fields(ones, zeros, zeros)
     if c == 1:
-        return y, -2.0 * rho, np.full_like(rho, -2.0)
+        return _stack_fields(y, -2.0 * rho, np.full_like(rho, -2.0))
 
     env = y**c
     env_r = -2.0 * c * rho * y ** (c - 1)
     env_rr = -2.0 * c * y ** (c - 1) + 4.0 * c * (c - 1) * rho2 * y ** (c - 2)
-    return env, env_r, env_rr
+    return _stack_fields(env, env_r, env_rr)
+
+
+def _field_slice(fields: np.ndarray | None, index: int) -> np.ndarray | None:
+    if fields is None:
+        return None
+    return fields[index]
+
+
+def _stack_fields(a0: np.ndarray, a1: np.ndarray, a2: np.ndarray) -> np.ndarray:
+    out = np.empty((3, a0.shape[0]), dtype=np.float64)
+    out[0] = a0
+    out[1] = a1
+    out[2] = a2
+    return out

@@ -89,8 +89,8 @@ class Grid(Serial):
             raise ValueError("Nr must be at least 4 for stable spectral methods")
         if self.Nt < 1:
             raise ValueError("Nt must be positive")
-        if self.L_max < 1:
-            raise ValueError("L_max must be at least 1")
+        if self.L_max < 0:
+            raise ValueError("L_max must be non-negative")
 
         rho, weights = _build_rho_and_weights(self.Nr, scheme)
         theta = np.linspace(0.0, 2.0 * np.pi, self.Nt, endpoint=False)
@@ -127,18 +127,15 @@ class Grid(Serial):
 
     @property
     def T(self) -> np.ndarray:
-        rows = self.L_max + 1
-        return self.T_fields[:rows]
+        return self.T_fields[0]
 
     @property
     def T_r(self) -> np.ndarray:
-        rows = self.L_max + 1
-        return self.T_fields[rows : 2 * rows]
+        return self.T_fields[1]
 
     @property
     def T_rr(self) -> np.ndarray:
-        rows = self.L_max + 1
-        return self.T_fields[2 * rows : 3 * rows]
+        return self.T_fields[2]
 
     def __rich__(self):
         tree = Tree("[bold blue]Grid[/]")
@@ -409,9 +406,8 @@ def _build_chebyshev_tables(
     d2x_dr2 = 4.0
     T_r = Tx * dx_dr[None, :]
     T_rr = Txx * (dx_dr[None, :] ** 2) + Tx * d2x_dr2
-    rows = L_max + 1
-    out = np.empty((3 * rows, Nr), dtype=np.float64)
-    out[:rows] = T
-    out[rows : 2 * rows] = T_r
-    out[2 * rows : 3 * rows] = T_rr
+    out = np.empty((3, L_max + 1, Nr), dtype=np.float64)
+    out[0] = T
+    out[1] = T_r
+    out[2] = T_rr
     return out

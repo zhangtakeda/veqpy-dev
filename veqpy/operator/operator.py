@@ -499,15 +499,33 @@ class Operator:
         nt = self.grid.Nt
 
         self.coeff_matrix = np.zeros_like(self.coeff_index, dtype=np.float64)
-        self.h_profile = Profile(offset=0.0)
-        self.v_profile = Profile(offset=0.0)
-        self.k_profile = Profile(offset=float(self.case.ka))
-        self.c0_profile = Profile(offset=float(self.case.c0a))
-        self.c1_profile = Profile(power=1, offset=float(self.case.c1a))
-        self.s1_profile = Profile(power=1, offset=float(self.case.s1a))
-        self.s2_profile = Profile(power=2, offset=float(self.case.s2a))
-        self.psin_profile = Profile(power=2, offset=1.0)
-        self.F_profile = Profile(scale=self.case.R0 * self.case.B0, envelope_power=2, offset=1.0)
+        self._load_case_coeff_matrix()
+        self.h_profile = Profile(offset=0.0, coeff=self._profile_coeff_row(PROFILE_INDEX["h"]))
+        self.v_profile = Profile(offset=0.0, coeff=self._profile_coeff_row(PROFILE_INDEX["v"]))
+        self.k_profile = Profile(offset=float(self.case.ka), coeff=self._profile_coeff_row(PROFILE_INDEX["k"]))
+        self.c0_profile = Profile(offset=float(self.case.c0a), coeff=self._profile_coeff_row(PROFILE_INDEX["c0"]))
+        self.c1_profile = Profile(
+            power=1,
+            offset=float(self.case.c1a),
+            coeff=self._profile_coeff_row(PROFILE_INDEX["c1"]),
+        )
+        self.s1_profile = Profile(
+            power=1,
+            offset=float(self.case.s1a),
+            coeff=self._profile_coeff_row(PROFILE_INDEX["s1"]),
+        )
+        self.s2_profile = Profile(
+            power=2,
+            offset=float(self.case.s2a),
+            coeff=self._profile_coeff_row(PROFILE_INDEX["s2"]),
+        )
+        self.psin_profile = Profile(power=2, offset=1.0, coeff=self._profile_coeff_row(PROFILE_INDEX["psin"]))
+        self.F_profile = Profile(
+            scale=self.case.R0 * self.case.B0,
+            envelope_power=2,
+            offset=1.0,
+            coeff=self._profile_coeff_row(PROFILE_INDEX["F"]),
+        )
 
         self.psin_R = np.zeros((nr, nt), dtype=np.float64)
         self.psin_Z = np.zeros((nr, nt), dtype=np.float64)
@@ -520,8 +538,8 @@ class Operator:
         self.alpha2 = 0.0
 
     def _refresh_case_runtime(self) -> None:
-        self._sync_profile_specs()
         self._load_case_coeff_matrix()
+        self._sync_profile_specs()
         self.profile_runtime_views = self._build_profile_runtime_views()
         self._rebind_runtime()
 
@@ -562,6 +580,12 @@ class Operator:
                 continue
             self.coeff_matrix[p, : L + 1] = np.asarray(coeff, dtype=np.float64)
 
+    def _profile_coeff_row(self, p: int) -> np.ndarray | None:
+        L = int(self.profile_L[p])
+        if L < 0:
+            return None
+        return self.coeff_matrix[p, : L + 1]
+
     def _validate_case_compatibility(self, case: OperatorCase) -> None:
         profile_L, coeff_index, order_offsets = build_profile_layout(case.coeffs_by_name)
         if not np.array_equal(profile_L, self.profile_L):
@@ -587,10 +611,7 @@ class Operator:
         return tuple(views)
 
     def _build_profile_runtime_view(self, p: int, profile_name: str) -> ProfileRuntimeView:
-        L = int(self.profile_L[p])
-        coeff_row = None if L < 0 else self.coeff_matrix[p, : L + 1]
         profile = getattr(self, f"{profile_name}_profile")
-        profile._bind_coeff(coeff_row)
         return profile._runtime_view()
 
     def _build_residual_slots(self) -> tuple[ResidualAssembleSlot, ...]:
