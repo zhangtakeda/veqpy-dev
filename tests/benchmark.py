@@ -10,7 +10,7 @@ import numpy as np
 
 PLOT = False
 SHOW_PROGRESS = True
-WARMSTART = False
+WARMSTART = True
 ASSERT_EXPECTATIONS = False
 BACKEND = os.environ.get("VEQPY_BACKEND", "numba")
 os.environ["VEQPY_BACKEND"] = BACKEND
@@ -38,7 +38,6 @@ try:
         CASE_1 as PF_REFERENCE_CASE,
         CONFIG as PF_REFERENCE_SOLVER_CONFIG,
         COEFFS as PF_REFERENCE_COEFFS,
-        GRID as PF_REFERENCE_GRID,
         pf_reference_profiles,
     )
 except ImportError:
@@ -46,7 +45,6 @@ except ImportError:
         CASE_1 as PF_REFERENCE_CASE,
         CONFIG as PF_REFERENCE_SOLVER_CONFIG,
         COEFFS as PF_REFERENCE_COEFFS,
-        GRID as PF_REFERENCE_GRID,
         pf_reference_profiles,
     )
 
@@ -54,6 +52,11 @@ from veqpy.model import Equilibrium, Grid, resample_equilibrium
 from veqpy.operator import PROFILE_INDEX, Operator, OperatorCase, build_profile_layout
 from veqpy.solver import Solver, SolverConfig
 
+PF_REFERENCE_GRID = Grid(
+    Nr=32,
+    Nt=32,
+    scheme="legendre",
+)
 
 GRID = Grid(Nr=12, Nt=12, scheme="legendre", L_max=PF_REFERENCE_GRID.L_max)
 CONFIG = SolverConfig(method=PF_REFERENCE_SOLVER_CONFIG.method)

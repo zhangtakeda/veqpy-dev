@@ -1,5 +1,13 @@
+"""model 层的 Grid 定义.
+
+属于 model 层.
+负责持有单个网格配置及其派生的节点, 权重, 积分矩阵, 微分矩阵和基函数表.
+不负责 source route, residual 组装, 或 solver runtime 状态.
+"""
+
 from dataclasses import dataclass, field
 from typing import Literal
+import warnings
 
 import numpy as np
 from rich.console import Console
@@ -22,7 +30,9 @@ from veqpy.model.serial import Serial
 class Grid(Serial):
     """径向-极角离散化的网格配置.
 
-    只需指定 Nr / Nt / scheme, 即可自动生成节点、权重、谱矩阵与 Chebyshev 表.
+    Grid 是不可变的网格配置对象.
+    只需指定 Nr, Nt, scheme 和 L_max, 即可自动生成节点, 权重, 谱矩阵与 Chebyshev 表.
+    它属于 model 层的数据对象, 不是可回写的 runtime buffer.
     """
 
     Nr: int
@@ -35,6 +45,7 @@ class Grid(Serial):
     theta: np.ndarray = field(init=False)
     cos_theta: np.ndarray = field(init=False)
     sin_theta: np.ndarray = field(init=False)
+    cos_2theta: np.ndarray = field(init=False)
     sin_2theta: np.ndarray = field(init=False)
 
     weights: np.ndarray = field(init=False)
@@ -43,13 +54,15 @@ class Grid(Serial):
 
     x: np.ndarray = field(init=False)
     y: np.ndarray = field(init=False)
-    T: np.ndarray = field(init=False)
-    T_r: np.ndarray = field(init=False)
-    T_rr: np.ndarray = field(init=False)
+    T_fields: np.ndarray = field(init=False)
 
     @classmethod
     def serial_attributes(cls) -> dict[str, type]:
-        """Serialize only the root grid parameters; derived arrays are rebuilt on load."""
+        """声明可序列化的根属性.
+
+        Returns:
+            仅包含可重建 Grid 的根参数. 派生数组在反序列化后重新计算.
+        """
 
         return {
             "Nr": int,
@@ -65,6 +78,13 @@ class Grid(Serial):
             raise ValueError(f"Unknown grid scheme: {scheme}")
         object.__setattr__(self, "scheme", scheme)
 
+        if scheme == "lobatto":
+            warnings.warn(
+                "Grid scheme 'lobatto' is deprecated and is not benchmark-stable in the current implementation.",
+                FutureWarning,
+                stacklevel=2,
+            )
+
         if self.Nr < 4:
             raise ValueError("Nr must be at least 4 for stable spectral methods")
         if self.Nt < 1:
@@ -76,6 +96,7 @@ class Grid(Serial):
         theta = np.linspace(0.0, 2.0 * np.pi, self.Nt, endpoint=False)
         cos_theta = np.cos(theta)
         sin_theta = np.sin(theta)
+        cos_2theta = cos_theta * cos_theta - sin_theta * sin_theta
         sin_2theta = 2.0 * sin_theta * cos_theta
         rho2 = rho * rho
         x = 2.0 * rho2 - 1.0
@@ -88,22 +109,33 @@ class Grid(Serial):
             integration_matrix = _build_integration_matrix(rho)
             differentiation_matrix = _build_differentiation_matrix(rho)
 
-        T, T_r, T_rr = _build_chebyshev_tables(rho, x, self.L_max)
+        T_fields = _build_chebyshev_tables(rho, x, self.L_max)
 
         object.__setattr__(self, "rho", np.asarray(rho, dtype=np.float64))
         object.__setattr__(self, "rho2", np.asarray(rho2, dtype=np.float64))
         object.__setattr__(self, "theta", np.asarray(theta, dtype=np.float64))
         object.__setattr__(self, "cos_theta", np.asarray(cos_theta, dtype=np.float64))
         object.__setattr__(self, "sin_theta", np.asarray(sin_theta, dtype=np.float64))
+        object.__setattr__(self, "cos_2theta", np.asarray(cos_2theta, dtype=np.float64))
         object.__setattr__(self, "sin_2theta", np.asarray(sin_2theta, dtype=np.float64))
         object.__setattr__(self, "weights", np.asarray(weights, dtype=np.float64))
         object.__setattr__(self, "integration_matrix", np.asarray(integration_matrix, dtype=np.float64))
         object.__setattr__(self, "differentiation_matrix", np.asarray(differentiation_matrix, dtype=np.float64))
         object.__setattr__(self, "x", np.asarray(x, dtype=np.float64))
         object.__setattr__(self, "y", np.asarray(y, dtype=np.float64))
-        object.__setattr__(self, "T", np.asarray(T, dtype=np.float64))
-        object.__setattr__(self, "T_r", np.asarray(T_r, dtype=np.float64))
-        object.__setattr__(self, "T_rr", np.asarray(T_rr, dtype=np.float64))
+        object.__setattr__(self, "T_fields", np.asarray(T_fields, dtype=np.float64))
+
+    @property
+    def T(self) -> np.ndarray:
+        return self.T_fields[0]
+
+    @property
+    def T_r(self) -> np.ndarray:
+        return self.T_fields[1]
+
+    @property
+    def T_rr(self) -> np.ndarray:
+        return self.T_fields[2]
 
     def __rich__(self):
         tree = Tree("[bold blue]Grid[/]")
@@ -122,11 +154,30 @@ class Grid(Serial):
         return str(self)
 
     def differentiate(self, f_1D: np.ndarray, *, out: np.ndarray | None = None) -> np.ndarray:
+        """在当前径向网格上对 1D 场做谱微分.
+
+        Args:
+            f_1D: 当前 grid 上的 1D 场, shape=(Nr,).
+            out: 可选输出缓冲区, shape=(Nr,).
+
+        Returns:
+            当前 grid 上的径向导数, shape=(Nr,).
+        """
         if out is None:
             out = np.empty_like(f_1D)
         return full_differentiation(out, f_1D, self.differentiation_matrix)
 
     def integrate(self, f_1D: np.ndarray, *, p: int | None = None, out: np.ndarray | None = None) -> np.ndarray:
+        """在当前径向网格上对 1D 场做积分.
+
+        Args:
+            f_1D: 当前 grid 上的 1D 被积函数, shape=(Nr,).
+            p: 可选的轴正则阶数. 为 None 时使用全积分矩阵.
+            out: 可选输出缓冲区, shape=(Nr,).
+
+        Returns:
+            当前 grid 上的积分结果, shape=(Nr,).
+        """
         if out is None:
             out = np.empty_like(f_1D)
         if p is None:
@@ -148,6 +199,16 @@ class Grid(Serial):
         axis: int | None = None,
         out: np.ndarray | None = None,
     ) -> float | np.ndarray:
+        """在当前网格上执行求积.
+
+        Args:
+            f: 当前 grid 上的 1D 或 2D 数组.
+            axis: 对 2D 数组做径向或极向压缩时指定轴.
+            out: 可选输出缓冲区.
+
+        Returns:
+            1D 输入时返回标量求积值. 2D 输入时返回沿指定轴压缩后的 1D 数组.
+        """
         if out is None:
             if axis is None:
                 return quadrature(f, self.weights)
@@ -326,7 +387,7 @@ def _build_chebyshev_tables(
     rho: np.ndarray,
     x: np.ndarray,
     L_max: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> np.ndarray:
     Nr = len(rho)
     T = np.zeros((L_max + 1, Nr), dtype=np.float64)
     Tx = np.zeros((L_max + 1, Nr), dtype=np.float64)
@@ -335,6 +396,7 @@ def _build_chebyshev_tables(
     if L_max >= 1:
         T[1, :] = x
         Tx[1, :] = 1.0
+
     for k in range(1, L_max):
         T[k + 1, :] = 2.0 * x * T[k, :] - T[k - 1, :]
         Tx[k + 1, :] = 2.0 * T[k, :] + 2.0 * x * Tx[k, :] - Tx[k - 1, :]
@@ -344,4 +406,8 @@ def _build_chebyshev_tables(
     d2x_dr2 = 4.0
     T_r = Tx * dx_dr[None, :]
     T_rr = Txx * (dx_dr[None, :] ** 2) + Tx * d2x_dr2
-    return T, T_r, T_rr
+    out = np.empty((3, L_max + 1, Nr), dtype=np.float64)
+    out[0] = T
+    out[1] = T_r
+    out[2] = T_rr
+    return out

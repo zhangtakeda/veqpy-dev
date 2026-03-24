@@ -8,48 +8,16 @@ import numpy as np
 
 
 def update_geometry(
-    # 输出缓冲区
-    tb: np.ndarray,
-    cos_tb: np.ndarray,
-    sin_tb: np.ndarray,
-    tb_r: np.ndarray,
-    tb_t: np.ndarray,
-    tb_rr: np.ndarray,
-    tb_rt: np.ndarray,
-    tb_tt: np.ndarray,
-    R: np.ndarray,
-    R_r: np.ndarray,
-    R_t: np.ndarray,
-    R_rr: np.ndarray,
-    R_rt: np.ndarray,
-    R_tt: np.ndarray,
-    Z: np.ndarray,
-    Z_r: np.ndarray,
-    Z_t: np.ndarray,
-    Z_rr: np.ndarray,
-    Z_rt: np.ndarray,
-    Z_tt: np.ndarray,
-    J: np.ndarray,
-    J_r: np.ndarray,
-    J_t: np.ndarray,
-    JR: np.ndarray,
-    JR_r: np.ndarray,
-    JR_t: np.ndarray,
-    JdivR: np.ndarray,
-    JdivR_r: np.ndarray,
-    grt: np.ndarray,
-    grt_t: np.ndarray,
-    gtt: np.ndarray,
-    gtt_r: np.ndarray,
-    gttdivJR: np.ndarray,
-    gttdivJR_r: np.ndarray,
-    grtdivJR_t: np.ndarray,
+    tb_fields: np.ndarray,
+    R_fields: np.ndarray,
+    Z_fields: np.ndarray,
+    J_fields: np.ndarray,
+    g_fields: np.ndarray,
     S_r: np.ndarray,
     V_r: np.ndarray,
     Kn: np.ndarray,
     Kn_r: np.ndarray,
     Ln_r: np.ndarray,
-    # 输入 profile 与网格
     a: float,
     R0: float,
     Z0: float,
@@ -57,45 +25,85 @@ def update_geometry(
     theta: np.ndarray,
     cos_theta: np.ndarray,
     sin_theta: np.ndarray,
+    cos_2theta: np.ndarray,
+    sin_2theta: np.ndarray,
     weights: np.ndarray,
-    h: np.ndarray,
-    h_r: np.ndarray,
-    h_rr: np.ndarray,
-    v: np.ndarray,
-    v_r: np.ndarray,
-    v_rr: np.ndarray,
-    k: np.ndarray,
-    k_r: np.ndarray,
-    k_rr: np.ndarray,
-    c0: np.ndarray,
-    c0_r: np.ndarray,
-    c0_rr: np.ndarray,
-    c1: np.ndarray,
-    c1_r: np.ndarray,
-    c1_rr: np.ndarray,
-    s1: np.ndarray,
-    s1_r: np.ndarray,
-    s1_rr: np.ndarray,
-    s2: np.ndarray,
-    s2_r: np.ndarray,
-    s2_rr: np.ndarray,
+    h_fields: np.ndarray,
+    v_fields: np.ndarray,
+    k_fields: np.ndarray,
+    c0_fields: np.ndarray,
+    c1_fields: np.ndarray,
+    s1_fields: np.ndarray,
+    s2_fields: np.ndarray,
 ):
-    """
-    原地更新几何场及其径向积分量.
+    """原地更新几何场及其径向积分量."""
+    tb = tb_fields[0]
+    tb_r = tb_fields[1]
+    tb_t = tb_fields[2]
+    tb_rr = tb_fields[3]
+    tb_rt = tb_fields[4]
+    tb_tt = tb_fields[5]
+    cos_tb = tb_fields[6]
+    sin_tb = tb_fields[7]
 
-    Args:
-        tb, cos_tb, sin_tb, tb_r, tb_t, ..., gttdivJR_r, grtdivJR_t: 调用方持有的二维输出缓冲区, shape=(nr, nt).
-        S_r, V_r, Kn, Kn_r, Ln_r: 调用方持有的一维输出缓冲区, shape=(nr,).
-        a, R0, Z0: 几何尺度与平移参数, 单位与 R, Z 保持一致.
-        rho, theta, cos_theta, sin_theta, weights: 径向和极向网格及求积权重, shape=(nr,) 或 (nt,).
-        h, h_r, h_rr, v, v_r, v_rr, ...: 当前 grid 上的几何参数化 profile 及其一阶, 二阶导数, shape=(nr,).
-    """
+    R = R_fields[0]
+    R_r = R_fields[1]
+    R_t = R_fields[2]
+    R_rr = R_fields[3]
+    R_rt = R_fields[4]
+    R_tt = R_fields[5]
+
+    Z = Z_fields[0]
+    Z_r = Z_fields[1]
+    Z_t = Z_fields[2]
+    Z_rr = Z_fields[3]
+    Z_rt = Z_fields[4]
+    Z_tt = Z_fields[5]
+
+    J = J_fields[0]
+    J_r = J_fields[1]
+    J_t = J_fields[2]
+    JR = J_fields[3]
+    JR_r = J_fields[4]
+    JR_t = J_fields[5]
+    JdivR = J_fields[6]
+    JdivR_r = J_fields[7]
+    grt = g_fields[0]
+    grt_t = g_fields[1]
+    grtdivJR_t = g_fields[2]
+    gtt = g_fields[3]
+    gtt_r = g_fields[4]
+    gttdivJR = g_fields[5]
+    gttdivJR_r = g_fields[6]
+
     rho_2d = rho[:, None]
     theta_2d = theta[None, :]
     cos_t = cos_theta[None, :]
     sin_t = sin_theta[None, :]
-    cos_2t = cos_t * cos_t - sin_t * sin_t
-    sin_2t = 2.0 * sin_t * cos_t
+    cos_2t = cos_2theta[None, :]
+    sin_2t = sin_2theta[None, :]
+
+    h = h_fields[0]
+    h_r = h_fields[1]
+    h_rr = h_fields[2]
+    v = v_fields[0]
+    v_r = v_fields[1]
+    v_rr = v_fields[2]
+    k = k_fields[0]
+    k_r = k_fields[1]
+    k_rr = k_fields[2]
+    c0 = c0_fields[0]
+    c0_r = c0_fields[1]
+    c0_rr = c0_fields[2]
+    c1 = c1_fields[0]
+    c1_r = c1_fields[1]
+    c1_rr = c1_fields[2]
+    s1 = s1_fields[0]
+    s1_r = s1_fields[1]
+    s1_rr = s1_fields[2]
+    s2 = s2_fields[0]
+    s2_r = s2_fields[1]
+    s2_rr = s2_fields[2]
 
     tb[:] = theta_2d + c0[:, None]
     tb_r[:] = c0_r[:, None]
@@ -178,7 +186,6 @@ def _theta_integral(
     weights: np.ndarray,
 ) -> np.ndarray:
     """按 theta 方向做全角积分并写回调用方缓冲区."""
-
     np.sum(arr, axis=1, out=out)
     out *= 2.0 * np.pi / arr.shape[1]
     return out

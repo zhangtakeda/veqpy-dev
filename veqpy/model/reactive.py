@@ -1,6 +1,6 @@
 """响应式缓存框架 (Reactive Caching Framework).
 
-提供 Reactive 基类, 支持自动依赖图构建、懒惰缓存 (lazy caching) 和
+提供 Reactive 基类, 支持自动依赖图构建, 懒惰缓存 (lazy caching) 和
 级联失效 (cascading invalidation).
 
 子类只需:
@@ -11,10 +11,6 @@
 若存在无法静态分析的依赖, 可使用 @depends_on 装饰器进行显式声明.
 
 当根属性发生修改时, 所有受影响的下游缓存会自动失效并重新计算.
-
-项目: veqpy - VEQ (Veloce EQquilibrium code) 项目的 Python 接口组件
-作者: rhzhang (DUT.Phys)
-日期: 2026-02-24
 """
 
 import ast

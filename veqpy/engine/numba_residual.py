@@ -4,39 +4,83 @@ engine 层 Numba residual 核.
 不负责算子路由, packed layout/codec, solver 收敛控制.
 """
 
+from dataclasses import dataclass
+from typing import Callable
+
 import numpy as np
 from numba import njit
 
 
+@dataclass(frozen=True, slots=True)
+class _ResidualBlockSpec:
+    name: str
+    implementation: Callable
+
+
+RESIDUAL_BLOCK_REGISTRY: dict[str, _ResidualBlockSpec] = {}
+
+
+def register_residual_block(name: str) -> Callable:
+    def decorator(func: Callable) -> Callable:
+        existing = RESIDUAL_BLOCK_REGISTRY.get(name)
+        if existing is not None:
+            raise ValueError(f"Residual block {name!r} is already registered")
+        RESIDUAL_BLOCK_REGISTRY[name] = _ResidualBlockSpec(name=name, implementation=func)
+        return func
+
+    return decorator
+
+
+def bind_residual_block(name: str) -> Callable:
+    try:
+        spec = RESIDUAL_BLOCK_REGISTRY[name]
+    except KeyError as exc:
+        supported = ", ".join(RESIDUAL_BLOCK_REGISTRY)
+        raise KeyError(f"Unknown residual block {name!r}. Supported blocks: {supported}") from exc
+    return spec.implementation
+
+
 @njit(cache=True, fastmath=True, nogil=True)
 def update_residual(
-    out_psin_R: np.ndarray,
-    out_psin_Z: np.ndarray,
-    out_G: np.ndarray,
+    out_fields: np.ndarray,
     alpha1: float,
     alpha2: float,
-    psin_r: np.ndarray,
-    psin_rr: np.ndarray,
-    FFn_r: np.ndarray,
-    Pn_r: np.ndarray,
-    R: np.ndarray,
-    R_t: np.ndarray,
-    Z_t: np.ndarray,
-    J: np.ndarray,
-    JdivR: np.ndarray,
-    gttdivJR: np.ndarray,
-    grtdivJR_t: np.ndarray,
-    gttdivJR_r: np.ndarray,
+    root_fields: np.ndarray,
+    R_fields: np.ndarray,
+    Z_fields: np.ndarray,
+    J_fields: np.ndarray,
+    g_fields: np.ndarray,
 ) -> None:
     """
     原地更新 residual 相关二维场.
 
     Args:
-        out_psin_R, out_psin_Z, out_G: 调用方持有的二维输出缓冲区, shape=(nr, nt).
+        out_fields: 调用方持有的二维输出 fields, shape=(3, nr, nt).
         alpha1, alpha2: source 与几何项的归一化系数.
-        psin_r, psin_rr, FFn_r, Pn_r: 当前 grid 上的一维 root fields, shape=(nr,).
-        R, R_t, Z_t, J, JdivR, gttdivJR, grtdivJR_t, gttdivJR_r: 当前几何场及其组合量, shape=(nr, nt).
+        root_fields: 当前 grid 上的一维 root fields, shape=(4, nr).
+        R_fields, Z_fields, J_fields, g_fields: 当前几何 packed fields.
+
+    Returns:
+        返回 None. 所有 residual 相关二维场都会原地写入 out_fields.
     """
+    out_psin_R = out_fields[0]
+    out_psin_Z = out_fields[1]
+    out_G = out_fields[2]
+
+    psin_r = root_fields[0]
+    psin_rr = root_fields[1]
+    FFn_r = root_fields[2]
+    Pn_r = root_fields[3]
+
+    R = R_fields[0]
+    R_t = R_fields[2]
+    Z_t = Z_fields[2]
+    J = J_fields[0]
+    JdivR = J_fields[6]
+    grtdivJR_t = g_fields[2]
+    gttdivJR = g_fields[5]
+    gttdivJR_r = g_fields[6]
+
     nr, nt = out_G.shape
     for i in range(nr):
         psin_r_safe = psin_r[i]
@@ -54,15 +98,26 @@ def update_residual(
             out_G[i, j] = alpha1 * G1n + alpha2 * G2n
 
 
+@register_residual_block("h")
 @njit(cache=True, fastmath=True, nogil=True)
 def assemble_h_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
     psin_R: np.ndarray,
+    psin_Z: np.ndarray,
+    sin_tb: np.ndarray,
+    sin_theta: np.ndarray,
+    cos_theta: np.ndarray,
+    sin_2theta: np.ndarray,
+    rho: np.ndarray,
+    rho2: np.ndarray,
     y: np.ndarray,
     T: np.ndarray,
     weights: np.ndarray,
     a: float,
+    R0: float,
+    B0: float,
 ) -> None:
     """
     组装 h 通道的一维 residual 投影块.
@@ -73,19 +128,33 @@ def assemble_h_residual_block(
         y, weights: 径向权重项, shape=(nr,).
         T: 基函数矩阵, shape=(n_basis, nr).
         a: 小半径尺度, 与几何单位一致.
+
+    Returns:
+        返回 None. 组装后的 h 通道投影会原地写入 out.
     """
-    _assemble_weighted_projection(out, G, psin_R, y, T, weights, (2.0 * np.pi / G.shape[1]) * a)
+    _assemble_weighted_projection(out_packed, coeff_indices, G, psin_R, y, T, weights, (2.0 * np.pi / G.shape[1]) * a)
 
 
+@register_residual_block("v")
 @njit(cache=True, fastmath=True, nogil=True)
 def assemble_v_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
+    psin_R: np.ndarray,
     psin_Z: np.ndarray,
+    sin_tb: np.ndarray,
+    sin_theta: np.ndarray,
+    cos_theta: np.ndarray,
+    sin_2theta: np.ndarray,
+    rho: np.ndarray,
+    rho2: np.ndarray,
     y: np.ndarray,
     T: np.ndarray,
     weights: np.ndarray,
     a: float,
+    R0: float,
+    B0: float,
 ) -> None:
     """
     组装 v 通道的一维 residual 投影块.
@@ -96,21 +165,33 @@ def assemble_v_residual_block(
         y, weights: 径向权重项, shape=(nr,).
         T: 基函数矩阵, shape=(n_basis, nr).
         a: 小半径尺度, 与几何单位一致.
+
+    Returns:
+        返回 None. 组装后的 v 通道投影会原地写入 out.
     """
-    _assemble_weighted_projection(out, G, psin_Z, y, T, weights, (2.0 * np.pi / G.shape[1]) * a)
+    _assemble_weighted_projection(out_packed, coeff_indices, G, psin_Z, y, T, weights, (2.0 * np.pi / G.shape[1]) * a)
 
 
+@register_residual_block("k")
 @njit(cache=True, fastmath=True, nogil=True)
 def assemble_k_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
+    psin_R: np.ndarray,
     psin_Z: np.ndarray,
+    sin_tb: np.ndarray,
     sin_theta: np.ndarray,
+    cos_theta: np.ndarray,
+    sin_2theta: np.ndarray,
     rho: np.ndarray,
+    rho2: np.ndarray,
     y: np.ndarray,
     T: np.ndarray,
     weights: np.ndarray,
     a: float,
+    R0: float,
+    B0: float,
 ) -> None:
     """
     组装 k 通道的一维 residual 投影块.
@@ -122,6 +203,9 @@ def assemble_k_residual_block(
         rho, y, weights: 径向权重项, shape=(nr,).
         T: 基函数矩阵, shape=(n_basis, nr).
         a: 小半径尺度, 与几何单位一致.
+
+    Returns:
+        返回 None. 组装后的 k 通道投影会原地写入 out.
     """
     nr, nt = G.shape
     weighted_rho = np.empty(nr, dtype=G.dtype)
@@ -131,20 +215,29 @@ def assemble_k_residual_block(
         for j in range(nt):
             collapsed += G[i, j] * psin_Z[i, j] * sin_theta[j]
         weighted_rho[i] = collapsed * rho[i] * y[i] * weights[i] * scale
-    _project_rows(out, T, weighted_rho)
+    _project_rows_to_packed(out_packed, coeff_indices, T, weighted_rho)
 
 
+@register_residual_block("c0")
 @njit(cache=True, fastmath=True, nogil=True)
 def assemble_c0_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
     psin_R: np.ndarray,
+    psin_Z: np.ndarray,
     sin_tb: np.ndarray,
+    sin_theta: np.ndarray,
+    cos_theta: np.ndarray,
+    sin_2theta: np.ndarray,
     rho: np.ndarray,
+    rho2: np.ndarray,
     y: np.ndarray,
     T: np.ndarray,
     weights: np.ndarray,
     a: float,
+    R0: float,
+    B0: float,
 ) -> None:
     """
     组装 c0 通道的一维 residual 投影块.
@@ -155,6 +248,9 @@ def assemble_c0_residual_block(
         rho, y, weights: 径向权重项, shape=(nr,).
         T: 基函数矩阵, shape=(n_basis, nr).
         a: 小半径尺度, 与几何单位一致.
+
+    Returns:
+        返回 None. 组装后的 c0 通道投影会原地写入 out.
     """
     nr, nt = G.shape
     weighted_rho = np.empty(nr, dtype=G.dtype)
@@ -164,21 +260,29 @@ def assemble_c0_residual_block(
         for j in range(nt):
             collapsed += G[i, j] * psin_R[i, j] * sin_tb[i, j]
         weighted_rho[i] = collapsed * rho[i] * y[i] * weights[i] * scale
-    _project_rows(out, T, weighted_rho)
+    _project_rows_to_packed(out_packed, coeff_indices, T, weighted_rho)
 
 
+@register_residual_block("c1")
 @njit(cache=True, fastmath=True, nogil=True)
 def assemble_c1_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
     psin_R: np.ndarray,
+    psin_Z: np.ndarray,
     sin_tb: np.ndarray,
+    sin_theta: np.ndarray,
     cos_theta: np.ndarray,
+    sin_2theta: np.ndarray,
+    rho: np.ndarray,
     rho2: np.ndarray,
     y: np.ndarray,
     T: np.ndarray,
     weights: np.ndarray,
     a: float,
+    R0: float,
+    B0: float,
 ) -> None:
     """
     组装 c1 通道的一维 residual 投影块.
@@ -190,6 +294,9 @@ def assemble_c1_residual_block(
         rho2, y, weights: 径向权重项, shape=(nr,).
         T: 基函数矩阵, shape=(n_basis, nr).
         a: 小半径尺度, 与几何单位一致.
+
+    Returns:
+        返回 None. 组装后的 c1 通道投影会原地写入 out.
     """
     nr, nt = G.shape
     weighted_rho = np.empty(nr, dtype=G.dtype)
@@ -199,21 +306,29 @@ def assemble_c1_residual_block(
         for j in range(nt):
             collapsed += G[i, j] * psin_R[i, j] * sin_tb[i, j] * cos_theta[j]
         weighted_rho[i] = collapsed * rho2[i] * y[i] * weights[i] * scale
-    _project_rows(out, T, weighted_rho)
+    _project_rows_to_packed(out_packed, coeff_indices, T, weighted_rho)
 
 
+@register_residual_block("s1")
 @njit(cache=True, fastmath=True, nogil=True)
 def assemble_s1_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
     psin_R: np.ndarray,
+    psin_Z: np.ndarray,
     sin_tb: np.ndarray,
     sin_theta: np.ndarray,
+    cos_theta: np.ndarray,
+    sin_2theta: np.ndarray,
+    rho: np.ndarray,
     rho2: np.ndarray,
     y: np.ndarray,
     T: np.ndarray,
     weights: np.ndarray,
     a: float,
+    R0: float,
+    B0: float,
 ) -> None:
     """
     组装 s1 通道的一维 residual 投影块.
@@ -225,6 +340,9 @@ def assemble_s1_residual_block(
         rho2, y, weights: 径向权重项, shape=(nr,).
         T: 基函数矩阵, shape=(n_basis, nr).
         a: 小半径尺度, 与几何单位一致.
+
+    Returns:
+        返回 None. 组装后的 s1 通道投影会原地写入 out.
     """
     nr, nt = G.shape
     weighted_rho = np.empty(nr, dtype=G.dtype)
@@ -234,15 +352,20 @@ def assemble_s1_residual_block(
         for j in range(nt):
             collapsed += G[i, j] * psin_R[i, j] * sin_tb[i, j] * sin_theta[j]
         weighted_rho[i] = collapsed * rho2[i] * y[i] * weights[i] * scale
-    _project_rows(out, T, weighted_rho)
+    _project_rows_to_packed(out_packed, coeff_indices, T, weighted_rho)
 
 
+@register_residual_block("s2")
 @njit(cache=True, fastmath=True, nogil=True)
 def assemble_s2_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
     psin_R: np.ndarray,
+    psin_Z: np.ndarray,
     sin_tb: np.ndarray,
+    sin_theta: np.ndarray,
+    cos_theta: np.ndarray,
     sin_2theta: np.ndarray,
     rho: np.ndarray,
     rho2: np.ndarray,
@@ -250,6 +373,8 @@ def assemble_s2_residual_block(
     T: np.ndarray,
     weights: np.ndarray,
     a: float,
+    R0: float,
+    B0: float,
 ) -> None:
     """
     组装 s2 通道的一维 residual 投影块.
@@ -261,6 +386,9 @@ def assemble_s2_residual_block(
         rho, rho2, y, weights: 径向权重项, shape=(nr,).
         T: 基函数矩阵, shape=(n_basis, nr).
         a: 小半径尺度, 与几何单位一致.
+
+    Returns:
+        返回 None. 组装后的 s2 通道投影会原地写入 out.
     """
     nr, nt = G.shape
     weighted_rho = np.empty(nr, dtype=G.dtype)
@@ -270,17 +398,29 @@ def assemble_s2_residual_block(
         for j in range(nt):
             collapsed += G[i, j] * psin_R[i, j] * sin_tb[i, j] * sin_2theta[j]
         weighted_rho[i] = collapsed * rho[i] * rho2[i] * y[i] * weights[i] * scale
-    _project_rows(out, T, weighted_rho)
+    _project_rows_to_packed(out_packed, coeff_indices, T, weighted_rho)
 
 
+@register_residual_block("psin")
 @njit(cache=True, fastmath=True, nogil=True)
 def assemble_psin_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
+    psin_R: np.ndarray,
+    psin_Z: np.ndarray,
+    sin_tb: np.ndarray,
+    sin_theta: np.ndarray,
+    cos_theta: np.ndarray,
+    sin_2theta: np.ndarray,
+    rho: np.ndarray,
     rho2: np.ndarray,
     y: np.ndarray,
     T: np.ndarray,
     weights: np.ndarray,
+    a: float,
+    R0: float,
+    B0: float,
 ) -> None:
     """
     组装 psin 通道的一维 residual 投影块.
@@ -290,6 +430,9 @@ def assemble_psin_residual_block(
         G: 二维 residual 场, shape=(nr, nt).
         rho2, y, weights: 径向权重项, shape=(nr,).
         T: 基函数矩阵, shape=(n_basis, nr).
+
+    Returns:
+        返回 None. 组装后的 psin 通道投影会原地写入 out.
     """
     nr, nt = G.shape
     weighted_rho = np.empty(nr, dtype=G.dtype)
@@ -299,16 +442,27 @@ def assemble_psin_residual_block(
         for j in range(nt):
             collapsed += G[i, j]
         weighted_rho[i] = collapsed * rho2[i] * y[i] * weights[i] * scale
-    _project_rows(out, T, weighted_rho)
+    _project_rows_to_packed(out_packed, coeff_indices, T, weighted_rho)
 
 
+@register_residual_block("F")
 @njit(cache=True, fastmath=True, nogil=True)
 def assemble_F_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
+    psin_R: np.ndarray,
+    psin_Z: np.ndarray,
+    sin_tb: np.ndarray,
+    sin_theta: np.ndarray,
+    cos_theta: np.ndarray,
+    sin_2theta: np.ndarray,
+    rho: np.ndarray,
+    rho2: np.ndarray,
     y: np.ndarray,
     T: np.ndarray,
     weights: np.ndarray,
+    a: float,
     R0: float,
     B0: float,
 ) -> None:
@@ -321,6 +475,9 @@ def assemble_F_residual_block(
         y, weights: 径向权重项, shape=(nr,).
         T: 基函数矩阵, shape=(n_basis, nr).
         R0, B0: 参考磁轴半径与磁场强度, 用于 F 通道归一化.
+
+    Returns:
+        返回 None. 组装后的 F 通道投影会原地写入 out.
     """
     nr, nt = G.shape
     weighted_rho = np.empty(nr, dtype=G.dtype)
@@ -330,12 +487,13 @@ def assemble_F_residual_block(
         for j in range(nt):
             collapsed += G[i, j]
         weighted_rho[i] = collapsed * y[i] * y[i] * weights[i] * scale
-    _project_rows(out, T, weighted_rho)
+    _project_rows_to_packed(out_packed, coeff_indices, T, weighted_rho)
 
 
 @njit(cache=True, fastmath=True, nogil=True)
 def _assemble_weighted_projection(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
     field: np.ndarray,
     y: np.ndarray,
@@ -350,15 +508,20 @@ def _assemble_weighted_projection(
         for j in range(nt):
             collapsed += G[i, j] * field[i, j]
         weighted_rho[i] = collapsed * y[i] * weights[i] * scale
-    _project_rows(out, T, weighted_rho)
+    _project_rows_to_packed(out_packed, coeff_indices, T, weighted_rho)
 
 
 @njit(cache=True, fastmath=True, nogil=True)
-def _project_rows(out: np.ndarray, T: np.ndarray, weighted_rho: np.ndarray) -> None:
-    rows = out.shape[0]
+def _project_rows_to_packed(
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
+    T: np.ndarray,
+    weighted_rho: np.ndarray,
+) -> None:
+    rows = coeff_indices.shape[0]
     cols = weighted_rho.shape[0]
     for i in range(rows):
         total = 0.0
         for j in range(cols):
             total += T[i, j] * weighted_rho[j]
-        out[i] = total
+        out_packed[coeff_indices[i]] = total

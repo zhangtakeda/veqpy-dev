@@ -25,19 +25,6 @@ from typing import Iterable
 DEFAULT_EXTENSIONS = {
     ".py",
     ".pyi",
-    ".js",
-    ".ts",
-    ".jsx",
-    ".tsx",
-    ".java",
-    ".c",
-    ".h",
-    ".cpp",
-    ".hpp",
-    ".cc",
-    ".hh",
-    ".rs",
-    ".go",
     ".sh",
     ".bash",
     ".zsh",
@@ -50,11 +37,18 @@ DEFAULT_EXTENSIONS = {
 }
 
 DEFAULT_DIRS = {
-    "veqpy",
-    "veqlib",
-    "tests",
-    "doc",
     "docs",
+    "scripts",
+    "tests",
+    "veqpy",
+}
+
+DEFAULT_TOP_LEVEL_FILES = {
+    ".gitignore",
+    "LICENSE",
+    "README.md",
+    "TODO.md",
+    "pyproject.toml",
 }
 
 
@@ -83,6 +77,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def iter_target_files(root: Path, target_dirs: set[str], extensions: set[str]) -> Iterable[Path]:
+    for path in sorted(root.iterdir()):
+        if not path.is_file():
+            continue
+        if path.name in DEFAULT_TOP_LEVEL_FILES or path.suffix.lower() in extensions:
+            yield path
+
     for dir_name in sorted(target_dirs):
         target_dir = root / dir_name
         if not target_dir.exists() or not target_dir.is_dir():

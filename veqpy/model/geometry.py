@@ -1,4 +1,11 @@
-from dataclasses import InitVar, dataclass, field, fields
+"""model 层的 Geometry 定义.
+
+属于 model 层.
+负责持有单个 Grid 上物化后的几何 runtime buffer, 以及由 profile 派生的一维几何积分量.
+不负责 packed state ownership, source route, residual 组装, 或 solver policy.
+"""
+
+from dataclasses import InitVar, dataclass, field
 
 import numpy as np
 
@@ -6,90 +13,10 @@ from veqpy.engine import update_geometry
 from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile
 
-
-def bufferclass(cls):
-    annotations = dict(getattr(cls, "__annotations__", {}))
-    cls.__annotations__ = {"grid": InitVar[Grid], **annotations}
-
-    def _buffer_field_names():
-        return tuple(f.name for f in fields(cls) if not f.init)
-
-    def __post_init__(self, grid: Grid):
-        shape = (grid.Nr, grid.Nt)
-        for name in _buffer_field_names():
-            object.__setattr__(self, name, np.empty(shape, dtype=np.float64))
-
-    def __iter__(self):
-        for name in _buffer_field_names():
-            yield getattr(self, name)
-
-    cls.__post_init__ = __post_init__
-    cls.__iter__ = __iter__
-    return cls
-
-
-@dataclass(frozen=True, slots=True)
-@bufferclass
-class _TbFields:
-    tb: np.ndarray = field(init=False)
-    cos_tb: np.ndarray = field(init=False)
-    sin_tb: np.ndarray = field(init=False)
-    tb_r: np.ndarray = field(init=False)
-    tb_t: np.ndarray = field(init=False)
-    tb_rr: np.ndarray = field(init=False)
-    tb_rt: np.ndarray = field(init=False)
-    tb_tt: np.ndarray = field(init=False)
-
-
-@dataclass(frozen=True, slots=True)
-@bufferclass
-class _RFields:
-    R: np.ndarray = field(init=False)
-    R_r: np.ndarray = field(init=False)
-    R_t: np.ndarray = field(init=False)
-    R_rr: np.ndarray = field(init=False)
-    R_rt: np.ndarray = field(init=False)
-    R_tt: np.ndarray = field(init=False)
-
-
-@dataclass(frozen=True, slots=True)
-@bufferclass
-class _ZFields:
-    Z: np.ndarray = field(init=False)
-    Z_r: np.ndarray = field(init=False)
-    Z_t: np.ndarray = field(init=False)
-    Z_rr: np.ndarray = field(init=False)
-    Z_rt: np.ndarray = field(init=False)
-    Z_tt: np.ndarray = field(init=False)
-
-
-@dataclass(frozen=True, slots=True)
-@bufferclass
-class _JFields:
-    J: np.ndarray = field(init=False)
-    J_r: np.ndarray = field(init=False)
-    J_t: np.ndarray = field(init=False)
-    JR: np.ndarray = field(init=False)
-    JR_r: np.ndarray = field(init=False)
-    JR_t: np.ndarray = field(init=False)
-    JdivR: np.ndarray = field(init=False)
-    JdivR_r: np.ndarray = field(init=False)
-
-
-@dataclass(frozen=True, slots=True)
-@bufferclass
-class _MFields:
-    grt: np.ndarray = field(init=False)
-    grt_t: np.ndarray = field(init=False)
-    gtt: np.ndarray = field(init=False)
-    gtt_r: np.ndarray = field(init=False)
-    gttdivJR: np.ndarray = field(init=False)
-    gttdivJR_r: np.ndarray = field(init=False)
-    grtdivJR_t: np.ndarray = field(init=False)
-
-
 @dataclass(frozen=True, slots=True)
 class Geometry:
+    """单个 grid 上的几何 runtime 容器."""
+
     grid: InitVar[Grid]
 
     S_r: np.ndarray = field(init=False)
@@ -98,24 +25,26 @@ class Geometry:
     Kn_r: np.ndarray = field(init=False)
     Ln_r: np.ndarray = field(init=False)
 
-    _tb_fields: _TbFields = field(init=False)
-    _R_fields: _RFields = field(init=False)
-    _Z_fields: _ZFields = field(init=False)
-    _J_fields: _JFields = field(init=False)
-    _M_fields: _MFields = field(init=False)
+    tb_fields: np.ndarray = field(init=False, repr=False)
+    R_fields: np.ndarray = field(init=False, repr=False)
+    Z_fields: np.ndarray = field(init=False, repr=False)
+    J_fields: np.ndarray = field(init=False, repr=False)
+    g_fields: np.ndarray = field(init=False, repr=False)
 
     def __post_init__(self, grid: Grid):
-        object.__setattr__(self, "S_r", np.empty((grid.Nr,), dtype=np.float64))
-        object.__setattr__(self, "V_r", np.empty((grid.Nr,), dtype=np.float64))
-        object.__setattr__(self, "Kn", np.empty((grid.Nr,), dtype=np.float64))
-        object.__setattr__(self, "Kn_r", np.empty((grid.Nr,), dtype=np.float64))
-        object.__setattr__(self, "Ln_r", np.empty((grid.Nr,), dtype=np.float64))
-
-        object.__setattr__(self, "_tb_fields", _TbFields(grid=grid))
-        object.__setattr__(self, "_R_fields", _RFields(grid=grid))
-        object.__setattr__(self, "_Z_fields", _ZFields(grid=grid))
-        object.__setattr__(self, "_J_fields", _JFields(grid=grid))
-        object.__setattr__(self, "_M_fields", _MFields(grid=grid))
+        nr = grid.Nr
+        nt = grid.Nt
+        shape = (nr, nt)
+        object.__setattr__(self, "S_r", np.empty(nr, dtype=np.float64))
+        object.__setattr__(self, "V_r", np.empty(nr, dtype=np.float64))
+        object.__setattr__(self, "Kn", np.empty(nr, dtype=np.float64))
+        object.__setattr__(self, "Kn_r", np.empty(nr, dtype=np.float64))
+        object.__setattr__(self, "Ln_r", np.empty(nr, dtype=np.float64))
+        object.__setattr__(self, "tb_fields", np.empty((8, *shape), dtype=np.float64))
+        object.__setattr__(self, "R_fields", np.empty((6, *shape), dtype=np.float64))
+        object.__setattr__(self, "Z_fields", np.empty((6, *shape), dtype=np.float64))
+        object.__setattr__(self, "J_fields", np.empty((8, *shape), dtype=np.float64))
+        object.__setattr__(self, "g_fields", np.empty((7, *shape), dtype=np.float64))
 
     def update(
         self,
@@ -131,19 +60,18 @@ class Geometry:
         s1_profile: Profile,
         s2_profile: Profile,
     ):
-        if self.R.shape != (grid.Nr, grid.Nt):
-            raise ValueError(f"Expected geometry shape {(self.R.shape[0], self.R.shape[1])}, got {(grid.Nr, grid.Nt)}")
-
-        rho, theta = grid.rho, grid.theta
-        cos_theta, sin_theta = grid.cos_theta, grid.sin_theta
-        weights = grid.weights
+        """用当前 Grid 和 profile 值刷新几何场."""
+        if self.R_fields.shape[1:] != (grid.Nr, grid.Nt):
+            raise ValueError(
+                f"Expected geometry shape {(self.R_fields.shape[1], self.R_fields.shape[2])}, got {(grid.Nr, grid.Nt)}"
+            )
 
         update_geometry(
-            *self._tb_fields,
-            *self._R_fields,
-            *self._Z_fields,
-            *self._J_fields,
-            *self._M_fields,
+            self.tb_fields,
+            self.R_fields,
+            self.Z_fields,
+            self.J_fields,
+            self.g_fields,
             self.S_r,
             self.V_r,
             self.Kn,
@@ -152,156 +80,158 @@ class Geometry:
             float(a),
             float(R0),
             float(Z0),
-            rho,
-            theta,
-            cos_theta,
-            sin_theta,
-            weights,
-            *h_profile,
-            *v_profile,
-            *k_profile,
-            *c0_profile,
-            *c1_profile,
-            *s1_profile,
-            *s2_profile,
+            grid.rho,
+            grid.theta,
+            grid.cos_theta,
+            grid.sin_theta,
+            grid.cos_2theta,
+            grid.sin_2theta,
+            grid.weights,
+            h_profile.u_fields,
+            v_profile.u_fields,
+            k_profile.u_fields,
+            c0_profile.u_fields,
+            c1_profile.u_fields,
+            s1_profile.u_fields,
+            s2_profile.u_fields,
         )
 
     @property
     def tb(self) -> np.ndarray:
-        return self._tb_fields.tb
-
-    @property
-    def cos_tb(self) -> np.ndarray:
-        return self._tb_fields.cos_tb
-
-    @property
-    def sin_tb(self) -> np.ndarray:
-        return self._tb_fields.sin_tb
+        return self.tb_fields[0]
 
     @property
     def tb_r(self) -> np.ndarray:
-        return self._tb_fields.tb_r
+        return self.tb_fields[1]
 
     @property
     def tb_t(self) -> np.ndarray:
-        return self._tb_fields.tb_t
+        return self.tb_fields[2]
 
     @property
     def tb_rr(self) -> np.ndarray:
-        return self._tb_fields.tb_rr
+        return self.tb_fields[3]
 
     @property
     def tb_rt(self) -> np.ndarray:
-        return self._tb_fields.tb_rt
+        return self.tb_fields[4]
 
     @property
     def tb_tt(self) -> np.ndarray:
-        return self._tb_fields.tb_tt
+        return self.tb_fields[5]
+
+    @property
+    def cos_tb(self) -> np.ndarray:
+        return self.tb_fields[6]
+
+    @property
+    def sin_tb(self) -> np.ndarray:
+        return self.tb_fields[7]
 
     @property
     def R(self) -> np.ndarray:
-        return self._R_fields.R
+        return self.R_fields[0]
 
     @property
     def R_r(self) -> np.ndarray:
-        return self._R_fields.R_r
+        return self.R_fields[1]
 
     @property
     def R_t(self) -> np.ndarray:
-        return self._R_fields.R_t
+        return self.R_fields[2]
 
     @property
     def R_rr(self) -> np.ndarray:
-        return self._R_fields.R_rr
+        return self.R_fields[3]
 
     @property
     def R_rt(self) -> np.ndarray:
-        return self._R_fields.R_rt
+        return self.R_fields[4]
 
     @property
     def R_tt(self) -> np.ndarray:
-        return self._R_fields.R_tt
+        return self.R_fields[5]
 
     @property
     def Z(self) -> np.ndarray:
-        return self._Z_fields.Z
+        return self.Z_fields[0]
 
     @property
     def Z_r(self) -> np.ndarray:
-        return self._Z_fields.Z_r
+        return self.Z_fields[1]
 
     @property
     def Z_t(self) -> np.ndarray:
-        return self._Z_fields.Z_t
+        return self.Z_fields[2]
 
     @property
     def Z_rr(self) -> np.ndarray:
-        return self._Z_fields.Z_rr
+        return self.Z_fields[3]
 
     @property
     def Z_rt(self) -> np.ndarray:
-        return self._Z_fields.Z_rt
+        return self.Z_fields[4]
 
     @property
     def Z_tt(self) -> np.ndarray:
-        return self._Z_fields.Z_tt
+        return self.Z_fields[5]
 
     @property
     def J(self) -> np.ndarray:
-        return self._J_fields.J
+        return self.J_fields[0]
 
     @property
     def J_r(self) -> np.ndarray:
-        return self._J_fields.J_r
+        return self.J_fields[1]
 
     @property
     def J_t(self) -> np.ndarray:
-        return self._J_fields.J_t
+        return self.J_fields[2]
 
     @property
     def JR(self) -> np.ndarray:
-        return self._J_fields.JR
+        return self.J_fields[3]
 
     @property
     def JR_r(self) -> np.ndarray:
-        return self._J_fields.JR_r
+        return self.J_fields[4]
 
     @property
     def JR_t(self) -> np.ndarray:
-        return self._J_fields.JR_t
+        return self.J_fields[5]
 
     @property
     def JdivR(self) -> np.ndarray:
-        return self._J_fields.JdivR
+        return self.J_fields[6]
 
     @property
     def JdivR_r(self) -> np.ndarray:
-        return self._J_fields.JdivR_r
+        return self.J_fields[7]
 
     @property
     def grt(self) -> np.ndarray:
-        return self._M_fields.grt
+        return self.g_fields[0]
 
     @property
     def grt_t(self) -> np.ndarray:
-        return self._M_fields.grt_t
+        return self.g_fields[1]
 
     @property
     def gtt(self) -> np.ndarray:
-        return self._M_fields.gtt
+        return self.g_fields[3]
 
     @property
     def gtt_r(self) -> np.ndarray:
-        return self._M_fields.gtt_r
+        return self.g_fields[4]
 
     @property
     def gttdivJR(self) -> np.ndarray:
-        return self._M_fields.gttdivJR
+        return self.g_fields[5]
 
     @property
     def gttdivJR_r(self) -> np.ndarray:
-        return self._M_fields.gttdivJR_r
+        return self.g_fields[6]
 
     @property
     def grtdivJR_t(self) -> np.ndarray:
-        return self._M_fields.grtdivJR_t
+        return self.g_fields[2]

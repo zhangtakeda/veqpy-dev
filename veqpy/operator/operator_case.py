@@ -1,3 +1,9 @@
+"""
+operator 层 case 容器.
+负责把算例输入规范化为稳定的只含标量, 一维数组和 Python 列表的配置对象, 供 Operator 复用.
+不负责 layout 构造, residual 计算, solver 策略管理.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -10,6 +16,17 @@ from rich.tree import Tree
 
 @dataclass(slots=True)
 class OperatorCase:
+    """
+    描述一次 operator 求值所需的静态 case 输入.
+
+    Args:
+        coeffs_by_name: profile 名到系数列表的映射. None 表示 profile 不激活.
+        a, R0, Z0, B0: 基本几何尺度与参考磁场参数.
+        heat_input, current_input: 定义在 grid.rho 上的一维输入 profile.
+        ka, c0a, c1a, s1a, s2a: shape profile 的常数偏移项.
+        Ip, beta: 可选约束量. None 会在运行时归一化为 NaN 表示未指定.
+    """
+
     coeffs_by_name: dict[str, list[float] | None]
     a: float
     R0: float
@@ -26,6 +43,7 @@ class OperatorCase:
     beta: float | None = None
 
     def __post_init__(self) -> None:
+        """在构造后把各字段规整为稳定运行时表示."""
         for name in _CASE_FIELD_NAMES:
             object.__setattr__(self, name, _normalize_case_value(name, getattr(self, name)))
 
@@ -35,6 +53,12 @@ class OperatorCase:
         object.__setattr__(self, name, value)
 
     def copy(self) -> OperatorCase:
+        """
+        创建一个与当前 case 独立的副本.
+
+        Returns:
+            返回新的 OperatorCase. 其中数组和系数列表都会复制, 便于后续安全修改.
+        """
         return OperatorCase(
             coeffs_by_name=_copy_coeffs(self.coeffs_by_name),
             a=self.a,

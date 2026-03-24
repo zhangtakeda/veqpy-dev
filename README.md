@@ -1,8 +1,7 @@
 # veqpy
 
-veqpy is a Python package for tokamak magnetohydrodynamic equilibrium calculations in the VEQ project.
-
-VEQ stands for Veloce/Variational EQuilibrium, a high-performance Python wrapper for plasma equilibrium simulations in magnetic confinement devices.
+`veqpy` is a Python package for VEQ (Veloce/Variational Equilibrium),
+a high-performance Python wrapper for plasma equilibrium simulations in magnetic confinement fusion (MCF) devices.
 
 - Author: `rhzhang`
 - Updated: `2026-03-24`
@@ -199,18 +198,17 @@ If `WARMSTART` in `tests/benchmark.py` is switched to `True`, the artifact root 
 - `Grid` is immutable.
 - `Equilibrium` is a single-grid snapshot, not a solver-side mutable state object.
 - `Equilibrium.resample(...)` is snapshot interpolation, not strict parametric reconstruction.
-- If you change the packed layout, packed codec, operator contract, solver control flow, or engine exports, update `doc/` as well.
+- If you change the packed layout, packed codec, operator contract, solver control flow, or engine exports, update `docs/` as well.
 
 ## Related Documentation
 
-- [`doc/overview.md`](doc/overview.md)
-- [`doc/conventions.md`](doc/conventions.md)
-- [`doc/guardrails.md`](doc/guardrails.md)
-- [`doc/veqpy_operators.md`](doc/veqpy_operators.md)
-- [`doc/veqpy_equilibrium.md`](doc/veqpy_equilibrium.md)
+- [`docs/overview.md`](docs/overview.md)
+- [`docs/conventions.md`](docs/conventions.md)
+- [`docs/guardrails.md`](docs/guardrails.md)
+- [`docs/veqpy_operators.md`](docs/veqpy_operators.md)
+- [`docs/veqpy_equilibrium.md`](docs/veqpy_equilibrium.md)
 
 ## Reference
 
 [1] Huasheng Xie and Yueyan Li, "What Is the Minimum Number of Parameters Required to Represent Solutions of the Grad-Shafranov Equation?," arXiv:2601.02942, 2026. [https://arxiv.org/abs/2601.02942](https://arxiv.org/abs/2601.02942)
-
 [2] Xingyu Li, Huasheng Xie, Lai Wei, and Zhengxiong Wang, "Investigation of Toroidal Rotation Effects on Spherical Torus Equilibria using the Fast Spectral Solver VEQ-R," arXiv:2602.11422, 2026. [https://arxiv.org/abs/2602.11422](https://arxiv.org/abs/2602.11422)
