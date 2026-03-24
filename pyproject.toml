@@ -1,0 +1,53 @@
+[build-system]
+requires = [
+    "setuptools>=69",
+    "wheel",
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "veqpy"
+dynamic = ["version"]
+description = "veqpy — Veloce EQuilbrium code"
+readme = "README.md"
+license = {text = "Apache License 2.0"}
+authors = [
+    {name = "rhzhang", email = "rhzhang@mail.dlut.edu.cn"},
+]
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=1.24",
+    "orjson>=3.9",
+    "matplotlib>=3.7",
+    "scipy>=1.17.1",
+    "numba>=0.64.0",
+    "rich>=13",
+]
+
+[project.optional-dependencies]
+nevergrad = ["nevergrad>=1.0"]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.4",
+]
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+include = ["veqpy*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "veqpy.__version__"}
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["I001"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"
