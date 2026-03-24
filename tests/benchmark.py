@@ -10,7 +10,7 @@ import numpy as np
 
 PLOT = False
 SHOW_PROGRESS = True
-WARMSTART = False
+WARMSTART = True
 ASSERT_EXPECTATIONS = False
 BACKEND = os.environ.get("VEQPY_BACKEND", "numba")
 os.environ["VEQPY_BACKEND"] = BACKEND

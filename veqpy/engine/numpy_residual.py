@@ -40,36 +40,45 @@ def bind_residual_block(name: str) -> Callable:
 
 
 def update_residual(
-    out_psin_R: np.ndarray,
-    out_psin_Z: np.ndarray,
-    out_G: np.ndarray,
+    out_fields: np.ndarray,
     alpha1: float,
     alpha2: float,
-    psin_r: np.ndarray,
-    psin_rr: np.ndarray,
-    FFn_r: np.ndarray,
-    Pn_r: np.ndarray,
-    R: np.ndarray,
-    R_t: np.ndarray,
-    Z_t: np.ndarray,
-    J: np.ndarray,
-    JdivR: np.ndarray,
-    gttdivJR: np.ndarray,
-    grtdivJR_t: np.ndarray,
-    gttdivJR_r: np.ndarray,
+    root_fields: np.ndarray,
+    R_fields: np.ndarray,
+    Z_fields: np.ndarray,
+    J_fields: np.ndarray,
+    g_fields: np.ndarray,
 ) -> None:
     """
     原地更新 residual 相关二维场.
 
     Args:
-        out_psin_R, out_psin_Z, out_G: 调用方持有的二维输出缓冲区, shape=(nr, nt).
+        out_fields: 调用方持有的二维输出 fields, shape=(3, nr, nt).
         alpha1, alpha2: source 与几何项的归一化系数.
-        psin_r, psin_rr, FFn_r, Pn_r: 当前 grid 上的一维 root fields, shape=(nr,).
-        R, R_t, Z_t, J, JdivR, gttdivJR, grtdivJR_t, gttdivJR_r: 当前几何场及其组合量, shape=(nr, nt).
+        root_fields: 当前 grid 上的一维 root fields, shape=(4, nr).
+        R_fields, Z_fields, J_fields, g_fields: 当前几何 packed fields.
 
     Returns:
-        返回 None. 所有 residual 相关二维场都会原地写入 out_psin_R, out_psin_Z, out_G.
+        返回 None. 所有 residual 相关二维场都会原地写入 out_fields.
     """
+    out_psin_R = out_fields[0]
+    out_psin_Z = out_fields[1]
+    out_G = out_fields[2]
+
+    psin_r = root_fields[0]
+    psin_rr = root_fields[1]
+    FFn_r = root_fields[2]
+    Pn_r = root_fields[3]
+
+    R = R_fields[0]
+    R_t = R_fields[2]
+    Z_t = Z_fields[2]
+    J = J_fields[0]
+    JdivR = J_fields[6]
+    grtdivJR_t = g_fields[2]
+    gttdivJR = g_fields[5]
+    gttdivJR_r = g_fields[6]
+
     np.divide(Z_t, J, out=out_psin_R)
     out_psin_R *= -1.0
     out_psin_R *= psin_r[:, None]
@@ -87,7 +96,8 @@ def update_residual(
 
 @register_residual_block("h")
 def assemble_h_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
@@ -122,12 +132,13 @@ def assemble_h_residual_block(
     weighted_rho = collapsed_rho * y
     weighted_rho *= weights
     weighted_rho *= (2.0 * np.pi / G.shape[1]) * a
-    out[:] = T[: out.shape[0]] @ weighted_rho
+    out_packed[coeff_indices] = T[: coeff_indices.shape[0]] @ weighted_rho
 
 
 @register_residual_block("v")
 def assemble_v_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
@@ -162,12 +173,13 @@ def assemble_v_residual_block(
     weighted_rho = collapsed_rho * y
     weighted_rho *= weights
     weighted_rho *= (2.0 * np.pi / G.shape[1]) * a
-    out[:] = T[: out.shape[0]] @ weighted_rho
+    out_packed[coeff_indices] = T[: coeff_indices.shape[0]] @ weighted_rho
 
 
 @register_residual_block("k")
 def assemble_k_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
@@ -203,12 +215,13 @@ def assemble_k_residual_block(
     weighted_rho = collapsed_rho * rho * y
     weighted_rho *= weights
     weighted_rho *= (2.0 * np.pi / G.shape[1]) * (-a)
-    out[:] = T[: out.shape[0]] @ weighted_rho
+    out_packed[coeff_indices] = T[: coeff_indices.shape[0]] @ weighted_rho
 
 
 @register_residual_block("c0")
 def assemble_c0_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
@@ -243,12 +256,13 @@ def assemble_c0_residual_block(
     weighted_rho = collapsed_rho * rho * y
     weighted_rho *= weights
     weighted_rho *= (2.0 * np.pi / G.shape[1]) * (-a)
-    out[:] = T[: out.shape[0]] @ weighted_rho
+    out_packed[coeff_indices] = T[: coeff_indices.shape[0]] @ weighted_rho
 
 
 @register_residual_block("c1")
 def assemble_c1_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
@@ -284,12 +298,13 @@ def assemble_c1_residual_block(
     weighted_rho = collapsed_rho * rho2 * y
     weighted_rho *= weights
     weighted_rho *= (2.0 * np.pi / G.shape[1]) * (-a)
-    out[:] = T[: out.shape[0]] @ weighted_rho
+    out_packed[coeff_indices] = T[: coeff_indices.shape[0]] @ weighted_rho
 
 
 @register_residual_block("s1")
 def assemble_s1_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
@@ -325,12 +340,13 @@ def assemble_s1_residual_block(
     weighted_rho = collapsed_rho * rho2 * y
     weighted_rho *= weights
     weighted_rho *= (2.0 * np.pi / G.shape[1]) * (-a)
-    out[:] = T[: out.shape[0]] @ weighted_rho
+    out_packed[coeff_indices] = T[: coeff_indices.shape[0]] @ weighted_rho
 
 
 @register_residual_block("s2")
 def assemble_s2_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
@@ -366,12 +382,13 @@ def assemble_s2_residual_block(
     weighted_rho = collapsed_rho * rho * rho2 * y
     weighted_rho *= weights
     weighted_rho *= (2.0 * np.pi / G.shape[1]) * (-a)
-    out[:] = T[: out.shape[0]] @ weighted_rho
+    out_packed[coeff_indices] = T[: coeff_indices.shape[0]] @ weighted_rho
 
 
 @register_residual_block("psin")
 def assemble_psin_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
@@ -405,12 +422,13 @@ def assemble_psin_residual_block(
     weighted_rho = collapsed_rho * rho2 * y
     weighted_rho *= weights
     weighted_rho *= 2.0 * np.pi / G.shape[1]
-    out[:] = T[: out.shape[0]] @ weighted_rho
+    out_packed[coeff_indices] = T[: coeff_indices.shape[0]] @ weighted_rho
 
 
 @register_residual_block("F")
 def assemble_F_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
@@ -445,4 +463,4 @@ def assemble_F_residual_block(
     weighted_rho = collapsed_rho * y * y
     weighted_rho *= weights
     weighted_rho *= (2.0 * np.pi / G.shape[1]) * (R0 * B0)
-    out[:] = T[: out.shape[0]] @ weighted_rho
+    out_packed[coeff_indices] = T[: coeff_indices.shape[0]] @ weighted_rho

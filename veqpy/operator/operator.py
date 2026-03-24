@@ -18,11 +18,13 @@ from veqpy.engine import (
     validate_operator,
 )
 from veqpy.model import Equilibrium, Geometry, Grid, Profile
-from veqpy.model.profile import ProfileRuntimeView, fill_profile_runtime_view
+from veqpy.model.profile import (
+    ProfileRuntimeView,
+    fill_profile_runtime_view,
+    fill_profile_runtime_view_from_packed,
+)
 from veqpy.operator.codec import (
-    decode_packed_state_active_trusted,
     decode_packed_blocks,
-    decode_packed_state_inplace,
     encode_packed_residual,
     encode_packed_state,
 )
@@ -41,7 +43,6 @@ from veqpy.operator.operator_case import OperatorCase
 class ResidualAssembleSlot:
     """描述一个 active profile 对应的 residual 写回槽位."""
 
-    coeff_row: np.ndarray
     coeff_indices: np.ndarray
     kernel: Callable
 
@@ -73,7 +74,6 @@ class Operator:
     case: OperatorCase = field(repr=False)
     geometry: Geometry = field(init=False)
 
-    coeff_matrix: np.ndarray = field(init=False)
     h_profile: Profile = field(init=False)
     v_profile: Profile = field(init=False)
     k_profile: Profile = field(init=False)
@@ -91,6 +91,8 @@ class Operator:
     psin_rr: np.ndarray = field(init=False)
     FFn_r: np.ndarray = field(init=False)
     Pn_r: np.ndarray = field(init=False)
+    residual_fields: np.ndarray = field(init=False, repr=False)
+    root_fields: np.ndarray = field(init=False, repr=False)
     alpha1: float = field(init=False)
     alpha2: float = field(init=False)
 
@@ -329,7 +331,7 @@ class Operator:
         self.stage_a_profile(x_eval)
         self.stage_b_geometry()
         self.stage_c_source()
-        return self._build_equilibrium_from_runtime()
+        return self._build_equilibrium_from_runtime(x_eval)
 
     def stage_a_profile(self, x: np.ndarray) -> None:
         """
@@ -339,16 +341,9 @@ class Operator:
             x: 一维 packed 状态向量.
 
         Returns:
-            返回 None. 结果会原地写入 coeff_matrix 与各 profile 缓冲区.
+        返回 None. 结果会原地写入各 profile 缓冲区.
         """
-        decode_packed_state_active_trusted(
-            x,
-            self.active_profile_ids,
-            self.profile_L,
-            self.coeff_index,
-            self.coeff_matrix,
-        )
-        self._fill_profile_views(self.active_profile_runtime_views)
+        self._fill_profile_views_from_packed(x, self.active_profile_runtime_views)
 
     def stage_b_geometry(self) -> None:
         """
@@ -490,47 +485,46 @@ class Operator:
         nr = self.grid.Nr
         nt = self.grid.Nt
 
-        self.coeff_matrix = np.zeros_like(self.coeff_index, dtype=np.float64)
-        self._load_case_coeff_matrix()
-        self.h_profile = Profile(offset=0.0, coeff=self._profile_coeff_row(PROFILE_INDEX["h"]))
-        self.v_profile = Profile(offset=0.0, coeff=self._profile_coeff_row(PROFILE_INDEX["v"]))
-        self.k_profile = Profile(offset=float(self.case.ka), coeff=self._profile_coeff_row(PROFILE_INDEX["k"]))
-        self.c0_profile = Profile(offset=float(self.case.c0a), coeff=self._profile_coeff_row(PROFILE_INDEX["c0"]))
+        self.h_profile = Profile(offset=0.0, coeff=self._profile_coeff_from_case(PROFILE_INDEX["h"]))
+        self.v_profile = Profile(offset=0.0, coeff=self._profile_coeff_from_case(PROFILE_INDEX["v"]))
+        self.k_profile = Profile(offset=float(self.case.ka), coeff=self._profile_coeff_from_case(PROFILE_INDEX["k"]))
+        self.c0_profile = Profile(offset=float(self.case.c0a), coeff=self._profile_coeff_from_case(PROFILE_INDEX["c0"]))
         self.c1_profile = Profile(
             power=1,
             offset=float(self.case.c1a),
-            coeff=self._profile_coeff_row(PROFILE_INDEX["c1"]),
+            coeff=self._profile_coeff_from_case(PROFILE_INDEX["c1"]),
         )
         self.s1_profile = Profile(
             power=1,
             offset=float(self.case.s1a),
-            coeff=self._profile_coeff_row(PROFILE_INDEX["s1"]),
+            coeff=self._profile_coeff_from_case(PROFILE_INDEX["s1"]),
         )
         self.s2_profile = Profile(
             power=2,
             offset=float(self.case.s2a),
-            coeff=self._profile_coeff_row(PROFILE_INDEX["s2"]),
+            coeff=self._profile_coeff_from_case(PROFILE_INDEX["s2"]),
         )
-        self.psin_profile = Profile(power=2, offset=1.0, coeff=self._profile_coeff_row(PROFILE_INDEX["psin"]))
+        self.psin_profile = Profile(power=2, offset=1.0, coeff=self._profile_coeff_from_case(PROFILE_INDEX["psin"]))
         self.F_profile = Profile(
             scale=self.case.R0 * self.case.B0,
             envelope_power=2,
             offset=1.0,
-            coeff=self._profile_coeff_row(PROFILE_INDEX["F"]),
+            coeff=self._profile_coeff_from_case(PROFILE_INDEX["F"]),
         )
 
-        self.psin_R = np.zeros((nr, nt), dtype=np.float64)
-        self.psin_Z = np.zeros((nr, nt), dtype=np.float64)
-        self.G = np.zeros((nr, nt), dtype=np.float64)
-        self.psin_r = np.empty(nr, dtype=np.float64)
-        self.psin_rr = np.empty(nr, dtype=np.float64)
-        self.FFn_r = np.empty(nr, dtype=np.float64)
-        self.Pn_r = np.empty(nr, dtype=np.float64)
+        self.residual_fields = np.zeros((3, nr, nt), dtype=np.float64)
+        self.psin_R = self.residual_fields[0]
+        self.psin_Z = self.residual_fields[1]
+        self.G = self.residual_fields[2]
+        self.root_fields = np.empty((4, nr), dtype=np.float64)
+        self.psin_r = self.root_fields[0]
+        self.psin_rr = self.root_fields[1]
+        self.FFn_r = self.root_fields[2]
+        self.Pn_r = self.root_fields[3]
         self.alpha1 = 0.0
         self.alpha2 = 0.0
 
     def _refresh_case_runtime(self) -> None:
-        self._load_case_coeff_matrix()
         self._sync_profile_specs()
         self.profile_runtime_views = self._build_profile_runtime_views()
         self._rebind_runtime()
@@ -546,6 +540,15 @@ class Operator:
         self.psin_profile.offset = 1.0
         self.F_profile.offset = 1.0
         self.F_profile.scale = self.case.R0 * self.case.B0
+        self.h_profile.coeff = self._profile_coeff_from_case(PROFILE_INDEX["h"])
+        self.v_profile.coeff = self._profile_coeff_from_case(PROFILE_INDEX["v"])
+        self.k_profile.coeff = self._profile_coeff_from_case(PROFILE_INDEX["k"])
+        self.c0_profile.coeff = self._profile_coeff_from_case(PROFILE_INDEX["c0"])
+        self.c1_profile.coeff = self._profile_coeff_from_case(PROFILE_INDEX["c1"])
+        self.s1_profile.coeff = self._profile_coeff_from_case(PROFILE_INDEX["s1"])
+        self.s2_profile.coeff = self._profile_coeff_from_case(PROFILE_INDEX["s2"])
+        self.psin_profile.coeff = self._profile_coeff_from_case(PROFILE_INDEX["psin"])
+        self.F_profile.coeff = self._profile_coeff_from_case(PROFILE_INDEX["F"])
 
         for profile in (
             self.h_profile,
@@ -560,23 +563,15 @@ class Operator:
         ):
             profile._prepare_runtime_cache(self.grid)
 
-    def _load_case_coeff_matrix(self) -> None:
-        self.coeff_matrix.fill(0.0)
-        coeff_dict = self.case.coeffs_by_name
-        for p, name in enumerate(PROFILE_NAMES):
-            L = int(self.profile_L[p])
-            if L < 0:
-                continue
-            coeff = coeff_dict.get(name)
-            if coeff is None:
-                continue
-            self.coeff_matrix[p, : L + 1] = np.asarray(coeff, dtype=np.float64)
-
-    def _profile_coeff_row(self, p: int) -> np.ndarray | None:
+    def _profile_coeff_from_case(self, p: int) -> np.ndarray | None:
         L = int(self.profile_L[p])
         if L < 0:
             return None
-        return self.coeff_matrix[p, : L + 1]
+        coeff = self.case.coeffs_by_name.get(PROFILE_NAMES[p])
+        if coeff is None:
+            return None
+        arr = np.asarray(coeff, dtype=np.float64)
+        return arr[: L + 1].copy()
 
     def _validate_case_compatibility(self, case: OperatorCase) -> None:
         profile_L, coeff_index, order_offsets = build_profile_layout(case.coeffs_by_name)
@@ -604,7 +599,11 @@ class Operator:
 
     def _build_profile_runtime_view(self, p: int, profile_name: str) -> ProfileRuntimeView:
         profile = getattr(self, f"{profile_name}_profile")
-        return profile._runtime_view()
+        L = int(self.profile_L[p])
+        coeff_indices = (
+            np.empty(0, dtype=np.int64) if L < 0 else self.coeff_index[p, : L + 1]
+        )
+        return profile._runtime_view(coeff_indices=coeff_indices)
 
     def _build_residual_slots(self) -> tuple[ResidualAssembleSlot, ...]:
         slots: list[ResidualAssembleSlot] = []
@@ -615,7 +614,6 @@ class Operator:
     def _build_residual_slot(self, p: int) -> ResidualAssembleSlot:
         L = int(self.profile_L[p])
         profile_name = PROFILE_NAMES[p]
-        coeff_row = self.coeff_matrix[p, : L + 1]
         coeff_indices = self.coeff_index[p, : L + 1]
         try:
             kernel = bind_residual_block(profile_name)
@@ -623,7 +621,6 @@ class Operator:
             raise ValueError(f"Unsupported active profile {profile_name!r}") from exc
 
         return ResidualAssembleSlot(
-            coeff_row=coeff_row,
             coeff_indices=coeff_indices,
             kernel=kernel,
         )
@@ -635,25 +632,20 @@ class Operator:
         for view in views:
             fill_profile_runtime_view(view)
 
+    def _fill_profile_views_from_packed(self, x: np.ndarray, views: tuple[ProfileRuntimeView, ...]) -> None:
+        for view in views:
+            fill_profile_runtime_view_from_packed(view, x)
+
     def _build_G_inplace(self) -> None:
         update_residual(
-            self.psin_R,
-            self.psin_Z,
-            self.G,
+            self.residual_fields,
             self.alpha1,
             self.alpha2,
-            self.psin_r,
-            self.psin_rr,
-            self.FFn_r,
-            self.Pn_r,
-            self.geometry.R,
-            self.geometry.R_t,
-            self.geometry.Z_t,
-            self.geometry.J,
-            self.geometry.JdivR,
-            self.geometry.gttdivJR,
-            self.geometry.grtdivJR_t,
-            self.geometry.gttdivJR_r,
+            self.root_fields,
+            self.geometry.R_fields,
+            self.geometry.Z_fields,
+            self.geometry.J_fields,
+            self.geometry.g_fields,
         )
 
     def _assemble_residual(self) -> np.ndarray:
@@ -677,7 +669,9 @@ class Operator:
             float(self.case.B0),
         )
 
-    def _build_equilibrium_from_runtime(self) -> Equilibrium:
+    def _build_equilibrium_from_runtime(self, x: np.ndarray) -> Equilibrium:
+        coeff_blocks = decode_packed_blocks(x, self.profile_L, self.coeff_index)
+        snapshot_profiles = self._snapshot_profiles(coeff_blocks)
         case = self.case
         return Equilibrium(
             R0=case.R0,
@@ -686,13 +680,13 @@ class Operator:
             a=case.a,
             grid=self.grid,
             active_profiles=[name for name in SHAPE_PROFILE_NAMES if case.coeffs_by_name[name] is not None],
-            h_profile=self.h_profile.copy(),
-            v_profile=self.v_profile.copy(),
-            k_profile=self.k_profile.copy(),
-            c0_profile=self.c0_profile.copy(),
-            c1_profile=self.c1_profile.copy(),
-            s1_profile=self.s1_profile.copy(),
-            s2_profile=self.s2_profile.copy(),
+            h_profile=snapshot_profiles["h"],
+            v_profile=snapshot_profiles["v"],
+            k_profile=snapshot_profiles["k"],
+            c0_profile=snapshot_profiles["c0"],
+            c1_profile=snapshot_profiles["c1"],
+            s1_profile=snapshot_profiles["s1"],
+            s2_profile=snapshot_profiles["s2"],
             FFn_r=self.FFn_r.copy(),
             Pn_r=self.Pn_r.copy(),
             psin_r=self.psin_r.copy(),
@@ -700,3 +694,12 @@ class Operator:
             alpha1=float(self.alpha1),
             alpha2=float(self.alpha2),
         )
+
+    def _snapshot_profiles(self, coeff_blocks: tuple[np.ndarray | None, ...]) -> dict[str, Profile]:
+        snapshots: dict[str, Profile] = {}
+        for name in PROFILE_NAMES:
+            profile = getattr(self, f"{name}_profile")
+            copied = profile.copy()
+            copied.coeff = None if coeff_blocks[PROFILE_INDEX[name]] is None else coeff_blocks[PROFILE_INDEX[name]].copy()
+            snapshots[name] = copied
+        return snapshots

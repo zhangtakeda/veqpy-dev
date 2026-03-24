@@ -42,36 +42,45 @@ def bind_residual_block(name: str) -> Callable:
 
 @njit(cache=True, fastmath=True, nogil=True)
 def update_residual(
-    out_psin_R: np.ndarray,
-    out_psin_Z: np.ndarray,
-    out_G: np.ndarray,
+    out_fields: np.ndarray,
     alpha1: float,
     alpha2: float,
-    psin_r: np.ndarray,
-    psin_rr: np.ndarray,
-    FFn_r: np.ndarray,
-    Pn_r: np.ndarray,
-    R: np.ndarray,
-    R_t: np.ndarray,
-    Z_t: np.ndarray,
-    J: np.ndarray,
-    JdivR: np.ndarray,
-    gttdivJR: np.ndarray,
-    grtdivJR_t: np.ndarray,
-    gttdivJR_r: np.ndarray,
+    root_fields: np.ndarray,
+    R_fields: np.ndarray,
+    Z_fields: np.ndarray,
+    J_fields: np.ndarray,
+    g_fields: np.ndarray,
 ) -> None:
     """
     原地更新 residual 相关二维场.
 
     Args:
-        out_psin_R, out_psin_Z, out_G: 调用方持有的二维输出缓冲区, shape=(nr, nt).
+        out_fields: 调用方持有的二维输出 fields, shape=(3, nr, nt).
         alpha1, alpha2: source 与几何项的归一化系数.
-        psin_r, psin_rr, FFn_r, Pn_r: 当前 grid 上的一维 root fields, shape=(nr,).
-        R, R_t, Z_t, J, JdivR, gttdivJR, grtdivJR_t, gttdivJR_r: 当前几何场及其组合量, shape=(nr, nt).
+        root_fields: 当前 grid 上的一维 root fields, shape=(4, nr).
+        R_fields, Z_fields, J_fields, g_fields: 当前几何 packed fields.
 
     Returns:
-        返回 None. 所有 residual 相关二维场都会原地写入 out_psin_R, out_psin_Z, out_G.
+        返回 None. 所有 residual 相关二维场都会原地写入 out_fields.
     """
+    out_psin_R = out_fields[0]
+    out_psin_Z = out_fields[1]
+    out_G = out_fields[2]
+
+    psin_r = root_fields[0]
+    psin_rr = root_fields[1]
+    FFn_r = root_fields[2]
+    Pn_r = root_fields[3]
+
+    R = R_fields[0]
+    R_t = R_fields[2]
+    Z_t = Z_fields[2]
+    J = J_fields[0]
+    JdivR = J_fields[6]
+    grtdivJR_t = g_fields[2]
+    gttdivJR = g_fields[5]
+    gttdivJR_r = g_fields[6]
+
     nr, nt = out_G.shape
     for i in range(nr):
         psin_r_safe = psin_r[i]
@@ -92,7 +101,8 @@ def update_residual(
 @register_residual_block("h")
 @njit(cache=True, fastmath=True, nogil=True)
 def assemble_h_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
@@ -122,13 +132,14 @@ def assemble_h_residual_block(
     Returns:
         返回 None. 组装后的 h 通道投影会原地写入 out.
     """
-    _assemble_weighted_projection(out, G, psin_R, y, T, weights, (2.0 * np.pi / G.shape[1]) * a)
+    _assemble_weighted_projection(out_packed, coeff_indices, G, psin_R, y, T, weights, (2.0 * np.pi / G.shape[1]) * a)
 
 
 @register_residual_block("v")
 @njit(cache=True, fastmath=True, nogil=True)
 def assemble_v_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
@@ -158,13 +169,14 @@ def assemble_v_residual_block(
     Returns:
         返回 None. 组装后的 v 通道投影会原地写入 out.
     """
-    _assemble_weighted_projection(out, G, psin_Z, y, T, weights, (2.0 * np.pi / G.shape[1]) * a)
+    _assemble_weighted_projection(out_packed, coeff_indices, G, psin_Z, y, T, weights, (2.0 * np.pi / G.shape[1]) * a)
 
 
 @register_residual_block("k")
 @njit(cache=True, fastmath=True, nogil=True)
 def assemble_k_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
@@ -203,13 +215,14 @@ def assemble_k_residual_block(
         for j in range(nt):
             collapsed += G[i, j] * psin_Z[i, j] * sin_theta[j]
         weighted_rho[i] = collapsed * rho[i] * y[i] * weights[i] * scale
-    _project_rows(out, T, weighted_rho)
+    _project_rows_to_packed(out_packed, coeff_indices, T, weighted_rho)
 
 
 @register_residual_block("c0")
 @njit(cache=True, fastmath=True, nogil=True)
 def assemble_c0_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
@@ -247,13 +260,14 @@ def assemble_c0_residual_block(
         for j in range(nt):
             collapsed += G[i, j] * psin_R[i, j] * sin_tb[i, j]
         weighted_rho[i] = collapsed * rho[i] * y[i] * weights[i] * scale
-    _project_rows(out, T, weighted_rho)
+    _project_rows_to_packed(out_packed, coeff_indices, T, weighted_rho)
 
 
 @register_residual_block("c1")
 @njit(cache=True, fastmath=True, nogil=True)
 def assemble_c1_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
@@ -292,13 +306,14 @@ def assemble_c1_residual_block(
         for j in range(nt):
             collapsed += G[i, j] * psin_R[i, j] * sin_tb[i, j] * cos_theta[j]
         weighted_rho[i] = collapsed * rho2[i] * y[i] * weights[i] * scale
-    _project_rows(out, T, weighted_rho)
+    _project_rows_to_packed(out_packed, coeff_indices, T, weighted_rho)
 
 
 @register_residual_block("s1")
 @njit(cache=True, fastmath=True, nogil=True)
 def assemble_s1_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
@@ -337,13 +352,14 @@ def assemble_s1_residual_block(
         for j in range(nt):
             collapsed += G[i, j] * psin_R[i, j] * sin_tb[i, j] * sin_theta[j]
         weighted_rho[i] = collapsed * rho2[i] * y[i] * weights[i] * scale
-    _project_rows(out, T, weighted_rho)
+    _project_rows_to_packed(out_packed, coeff_indices, T, weighted_rho)
 
 
 @register_residual_block("s2")
 @njit(cache=True, fastmath=True, nogil=True)
 def assemble_s2_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
@@ -382,13 +398,14 @@ def assemble_s2_residual_block(
         for j in range(nt):
             collapsed += G[i, j] * psin_R[i, j] * sin_tb[i, j] * sin_2theta[j]
         weighted_rho[i] = collapsed * rho[i] * rho2[i] * y[i] * weights[i] * scale
-    _project_rows(out, T, weighted_rho)
+    _project_rows_to_packed(out_packed, coeff_indices, T, weighted_rho)
 
 
 @register_residual_block("psin")
 @njit(cache=True, fastmath=True, nogil=True)
 def assemble_psin_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
@@ -425,13 +442,14 @@ def assemble_psin_residual_block(
         for j in range(nt):
             collapsed += G[i, j]
         weighted_rho[i] = collapsed * rho2[i] * y[i] * weights[i] * scale
-    _project_rows(out, T, weighted_rho)
+    _project_rows_to_packed(out_packed, coeff_indices, T, weighted_rho)
 
 
 @register_residual_block("F")
 @njit(cache=True, fastmath=True, nogil=True)
 def assemble_F_residual_block(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
@@ -469,12 +487,13 @@ def assemble_F_residual_block(
         for j in range(nt):
             collapsed += G[i, j]
         weighted_rho[i] = collapsed * y[i] * y[i] * weights[i] * scale
-    _project_rows(out, T, weighted_rho)
+    _project_rows_to_packed(out_packed, coeff_indices, T, weighted_rho)
 
 
 @njit(cache=True, fastmath=True, nogil=True)
 def _assemble_weighted_projection(
-    out: np.ndarray,
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
     G: np.ndarray,
     field: np.ndarray,
     y: np.ndarray,
@@ -489,15 +508,20 @@ def _assemble_weighted_projection(
         for j in range(nt):
             collapsed += G[i, j] * field[i, j]
         weighted_rho[i] = collapsed * y[i] * weights[i] * scale
-    _project_rows(out, T, weighted_rho)
+    _project_rows_to_packed(out_packed, coeff_indices, T, weighted_rho)
 
 
 @njit(cache=True, fastmath=True, nogil=True)
-def _project_rows(out: np.ndarray, T: np.ndarray, weighted_rho: np.ndarray) -> None:
-    rows = out.shape[0]
+def _project_rows_to_packed(
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
+    T: np.ndarray,
+    weighted_rho: np.ndarray,
+) -> None:
+    rows = coeff_indices.shape[0]
     cols = weighted_rho.shape[0]
     for i in range(rows):
         total = 0.0
         for j in range(cols):
             total += T[i, j] * weighted_rho[j]
-        out[i] = total
+        out_packed[coeff_indices[i]] = total

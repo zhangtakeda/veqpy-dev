@@ -93,30 +93,30 @@ class ProbeSummary:
             )
 
         stage_a = self.metric("operator.stage_a_profile")
-        decode = self.metric("stage_a.decode_packed_state_active_trusted")
+        packed_fill = self.metric("stage_a.fill_profile_views_from_packed")
         fill_rows = self.metric("stage_a.fill_profile_views")
-        profile_update = self.metric("stage_a.fill_profile_runtime_view")
-        profile_kernel = self.metric("stage_a.engine.update_profile")
+        profile_update = self.metric("stage_a.fill_profile_runtime_view_from_packed")
+        profile_kernel = self.metric("stage_a.engine.update_profile_packed")
         lines.append("stage_a detail:")
         lines.append(
-            f"  decode packed x -> coeff_matrix: {decode / 1000:.3f} ms "
-            f"(calls={self.count('stage_a.decode_packed_state_active_trusted')})"
+            f"  fill views from packed x: {packed_fill / 1000:.3f} ms "
+            f"(calls={self.count('stage_a.fill_profile_views_from_packed')})"
         )
         lines.append(
             f"  fill profile views: {fill_rows / 1000:.3f} ms "
             f"(calls={self.count('stage_a.fill_profile_views')})"
         )
         lines.append(
-            f"  fill_profile_runtime_view total: {profile_update / 1000:.3f} ms "
-            f"(calls={self.count('stage_a.fill_profile_runtime_view')})"
+            f"  fill_profile_runtime_view_from_packed total: {profile_update / 1000:.3f} ms "
+            f"(calls={self.count('stage_a.fill_profile_runtime_view_from_packed')})"
         )
         lines.append(
-            f"  engine.update_profile: {profile_kernel / 1000:.3f} ms "
-            f"(calls={self.count('stage_a.engine.update_profile')})"
+            f"  engine.update_profile_packed: {profile_kernel / 1000:.3f} ms "
+            f"(calls={self.count('stage_a.engine.update_profile_packed')})"
         )
         lines.append(
             f"  stage_a Python/non-kernel remainder: "
-            f"{max(stage_a - decode - profile_kernel, 0.0) / 1000:.3f} ms"
+            f"{max(stage_a - profile_kernel, 0.0) / 1000:.3f} ms"
         )
 
         stage_b = self.metric("operator.stage_b_geometry")
@@ -358,16 +358,6 @@ def install_probe(*, solver: Solver, summary: ProbeSummary):
 
         return factory
 
-    def wrap_decode(original: Callable) -> Callable:
-        def wrapped(*args, **kwargs):
-            started = perf_counter()
-            try:
-                return original(*args, **kwargs)
-            finally:
-                summary.add("stage_a.decode_packed_state_active_trusted", (perf_counter() - started) * 1e6)
-
-        return wrapped
-
     def wrap_fill_views(original: Callable) -> Callable:
         def wrapped(self, *args, **kwargs):
             if self is not target_operator:
@@ -386,19 +376,7 @@ def install_probe(*, solver: Solver, summary: ProbeSummary):
             try:
                 return original(view, *args, **kwargs)
             finally:
-                summary.add("stage_a.fill_profile_runtime_view", (perf_counter() - started) * 1e6)
-
-        return wrapped
-
-    def wrap_profile_update(original: Callable) -> Callable:
-        def wrapped(self, *args, **kwargs):
-            if id(self) not in target_profile_ids:
-                return original(self, *args, **kwargs)
-            started = perf_counter()
-            try:
-                return original(self, *args, **kwargs)
-            finally:
-                summary.add("stage_a.fill_profile_runtime_view", (perf_counter() - started) * 1e6)
+                summary.add("stage_a.fill_profile_runtime_view_from_packed", (perf_counter() - started) * 1e6)
 
         return wrapped
 
@@ -408,7 +386,19 @@ def install_probe(*, solver: Solver, summary: ProbeSummary):
             try:
                 return original(*args, **kwargs)
             finally:
-                summary.add("stage_a.engine.update_profile", (perf_counter() - started) * 1e6)
+                summary.add("stage_a.engine.update_profile_packed", (perf_counter() - started) * 1e6)
+
+        return wrapped
+
+    def wrap_fill_views_from_packed(original: Callable) -> Callable:
+        def wrapped(self, *args, **kwargs):
+            if self is not target_operator:
+                return original(self, *args, **kwargs)
+            started = perf_counter()
+            try:
+                return original(self, *args, **kwargs)
+            finally:
+                summary.add("stage_a.fill_profile_views_from_packed", (perf_counter() - started) * 1e6)
 
         return wrapped
 
@@ -589,38 +579,20 @@ def install_probe(*, solver: Solver, summary: ProbeSummary):
         stack.enter_context(_patch_method(Operator, "stage_b_geometry", wrap_stage("operator.stage_b_geometry")))
         stack.enter_context(_patch_method(Operator, "stage_c_source", wrap_stage("operator.stage_c_source")))
         stack.enter_context(_patch_method(Operator, "stage_d_residual", wrap_stage("operator.stage_d_residual")))
-        decode_trusted = getattr(operator_module, "decode_packed_state_active_trusted", None)
-        decode_safe = getattr(operator_module, "decode_packed_state_inplace", None)
-        if decode_trusted is not None:
-            stack.enter_context(
-                _patch_attr(
-                    operator_module,
-                    "decode_packed_state_active_trusted",
-                    wrap_decode(decode_trusted),
-                )
-            )
-        elif decode_safe is not None:
-            stack.enter_context(
-                _patch_attr(
-                    operator_module,
-                    "decode_packed_state_inplace",
-                    wrap_decode(decode_safe),
-                )
-            )
         fill_method_name = "_fill_profile_views"
         stack.enter_context(_patch_method(Operator, fill_method_name, wrap_fill_views))
-        runtime_fill = getattr(operator_module, "fill_profile_runtime_view", None)
-        if runtime_fill is not None:
-            stack.enter_context(
-                _patch_attr(
-                    operator_module,
-                    "fill_profile_runtime_view",
-                    wrap_runtime_view_fill(runtime_fill),
-                )
+        stack.enter_context(_patch_method(Operator, "_fill_profile_views_from_packed", wrap_fill_views_from_packed))
+        runtime_fill = getattr(operator_module, "fill_profile_runtime_view_from_packed", None)
+        stack.enter_context(
+            _patch_attr(
+                operator_module,
+                "fill_profile_runtime_view_from_packed",
+                wrap_runtime_view_fill(runtime_fill),
             )
-        else:
-            stack.enter_context(_patch_method(profile_module.Profile, "update", wrap_profile_update))
-        stack.enter_context(_patch_attr(profile_module, "update_profile", wrap_profile_kernel(profile_module.update_profile)))
+        )
+        stack.enter_context(
+            _patch_attr(profile_module, "update_profile_packed", wrap_profile_kernel(profile_module.update_profile_packed))
+        )
         stack.enter_context(_patch_method(geometry_module.Geometry, "update", wrap_geometry_update))
         stack.enter_context(_patch_attr(geometry_module, "update_geometry", wrap_geometry_kernel(geometry_module.update_geometry)))
         stack.enter_context(_patch_attr(target_operator, "source_runner", wrap_source_runner(original_source_runner)))
@@ -635,7 +607,6 @@ def install_probe(*, solver: Solver, summary: ProbeSummary):
             profile_name = PROFILE_NAMES[int(p)]
             wrapped_slots.append(
                 operator_module.ResidualAssembleSlot(
-                    coeff_row=slot.coeff_row,
                     coeff_indices=slot.coeff_indices,
                     kernel=wrap_residual_block(f"stage_d.block.{profile_name}")(slot.kernel),
                 )

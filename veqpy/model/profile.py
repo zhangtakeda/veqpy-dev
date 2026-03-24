@@ -9,7 +9,7 @@ from dataclasses import InitVar, dataclass, field
 
 import numpy as np
 
-from veqpy.engine import update_profile
+from veqpy.engine import update_profile, update_profile_packed
 from veqpy.model.grid import Grid
 from veqpy.model.serial import Serial
 
@@ -23,6 +23,7 @@ class ProfileRuntimeView:
     rp_fields: np.ndarray
     env_fields: np.ndarray
     coeff: np.ndarray | None
+    coeff_indices: np.ndarray
     offset: float
     scale: float
 
@@ -131,7 +132,7 @@ class Profile(Serial):
             self.scale,
         )
 
-    def _runtime_view(self) -> ProfileRuntimeView:
+    def _runtime_view(self, coeff_indices: np.ndarray) -> ProfileRuntimeView:
         """导出 Stage-A 热路径所需的已绑定运行时视图."""
         if self.u_fields is None:
             raise RuntimeError("Profile output buffers are not initialized")
@@ -147,6 +148,7 @@ class Profile(Serial):
             rp_fields=self.rp_fields,
             env_fields=self.env_fields,
             coeff=self.coeff,
+            coeff_indices=coeff_indices,
             offset=self.offset,
             scale=self.scale,
         )
@@ -193,6 +195,20 @@ def fill_profile_runtime_view(view: ProfileRuntimeView) -> None:
     )
 
 
+def fill_profile_runtime_view_from_packed(view: ProfileRuntimeView, x: np.ndarray) -> None:
+    """直接从 packed 状态向量读取系数并刷新单个 profile."""
+    _fill_profile_outputs_from_packed(
+        view.u_fields,
+        view.T_fields,
+        view.rp_fields,
+        view.env_fields,
+        view.offset,
+        x,
+        view.coeff_indices,
+        view.scale,
+    )
+
+
 def _fill_profile_outputs(
     u_fields: np.ndarray,
     T_fields: np.ndarray,
@@ -209,6 +225,29 @@ def _fill_profile_outputs(
         env_fields,
         offset,
         coeff,
+    )
+    if scale != 1.0:
+        np.multiply(u_fields, scale, out=u_fields)
+
+
+def _fill_profile_outputs_from_packed(
+    u_fields: np.ndarray,
+    T_fields: np.ndarray,
+    rp_fields: np.ndarray,
+    env_fields: np.ndarray,
+    offset: float,
+    x: np.ndarray,
+    coeff_indices: np.ndarray,
+    scale: float,
+) -> None:
+    update_profile_packed(
+        u_fields,
+        T_fields,
+        rp_fields,
+        env_fields,
+        offset,
+        x,
+        coeff_indices,
     )
     if scale != 1.0:
         np.multiply(u_fields, scale, out=u_fields)

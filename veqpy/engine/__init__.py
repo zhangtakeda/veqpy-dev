@@ -12,7 +12,7 @@ if BACKEND not in ("numpy", "numba"):
 
 if BACKEND == "numpy":
     from veqpy.engine.numpy_geometry import update_geometry
-    from veqpy.engine.numpy_profile import update_profile
+    from veqpy.engine.numpy_profile import update_profile, update_profile_packed
     from veqpy.engine.numpy_residual import (
         update_residual,
         bind_residual_block,
@@ -42,7 +42,7 @@ if BACKEND == "numpy":
     )
 elif BACKEND == "numba":
     from veqpy.engine.numba_geometry import update_geometry
-    from veqpy.engine.numba_profile import update_profile
+    from veqpy.engine.numba_profile import update_profile, update_profile_packed
     from veqpy.engine.numba_residual import (
         update_residual,
         bind_residual_block,
@@ -74,6 +74,7 @@ elif BACKEND == "numba":
 
 __all__ = [
     "update_profile",
+    "update_profile_packed",
     "update_geometry",
     "update_residual",
     "bind_residual_block",
