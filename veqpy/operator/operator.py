@@ -12,15 +12,7 @@ from typing import Callable
 import numpy as np
 
 from veqpy.engine import (
-    assemble_c0_residual_block,
-    assemble_c1_residual_block,
-    assemble_F_residual_block,
-    assemble_h_residual_block,
-    assemble_k_residual_block,
-    assemble_psin_residual_block,
-    assemble_s1_residual_block,
-    assemble_s2_residual_block,
-    assemble_v_residual_block,
+    bind_residual_assembler,
     bind_runner,
     update_residual,
     validate_operator,
@@ -37,6 +29,8 @@ from veqpy.operator.codec import (
 from veqpy.operator.layout import (
     PROFILE_INDEX,
     PROFILE_NAMES,
+    PREFIX_PROFILE_NAMES,
+    SHAPE_PROFILE_NAMES,
     build_active_profile_metadata,
     build_profile_layout,
     packed_size,
@@ -250,7 +244,7 @@ class Operator:
             return ()
 
         prefix_indices: list[int] = []
-        for name in ("F", "psin"):
+        for name in PREFIX_PROFILE_NAMES:
             p = PROFILE_INDEX[name]
             L = int(self.profile_L[p])
             if L < 0:
@@ -260,7 +254,7 @@ class Operator:
                 if idx >= 0:
                     prefix_indices.append(idx)
 
-        shape_profile_ids = [int(PROFILE_INDEX[name]) for name in ("h", "v", "k", "c0", "c1", "s1", "s2")]
+        shape_profile_ids = [int(PROFILE_INDEX[name]) for name in SHAPE_PROFILE_NAMES]
         active_shape_ids = [p for p in shape_profile_ids if int(self.profile_L[p]) >= 0]
         if not active_shape_ids:
             if prefix_indices:
@@ -300,9 +294,7 @@ class Operator:
         Returns:
             返回一维整数数组, 顺序与 PROFILE_NAMES 中的 shape profiles 一致.
         """
-        profile_ids = [
-            int(PROFILE_INDEX[name]) for name in ("h", "v", "k", "c0", "c1", "s1", "s2") if int(self.profile_L[PROFILE_INDEX[name]]) >= 0
-        ]
+        profile_ids = [int(PROFILE_INDEX[name]) for name in SHAPE_PROFILE_NAMES if int(self.profile_L[PROFILE_INDEX[name]]) >= 0]
         return np.asarray(profile_ids, dtype=np.int64)
 
     def build_coeffs(self, x: np.ndarray, *, include_none: bool = True) -> dict[str, list[float] | None]:
@@ -628,131 +620,11 @@ class Operator:
         a = float(self.case.a)
         R0 = float(self.case.R0)
         B0 = float(self.case.B0)
-
-        match profile_name:
-            case "h":
-
-                def assemble() -> None:
-                    assemble_h_residual_block(
-                        coeff_row,
-                        self.G,
-                        self.psin_R,
-                        self.grid.y,
-                        self.grid.T,
-                        self.grid.weights,
-                        a,
-                    )
-            case "v":
-
-                def assemble() -> None:
-                    assemble_v_residual_block(
-                        coeff_row,
-                        self.G,
-                        self.psin_Z,
-                        self.grid.y,
-                        self.grid.T,
-                        self.grid.weights,
-                        a,
-                    )
-            case "k":
-
-                def assemble() -> None:
-                    assemble_k_residual_block(
-                        coeff_row,
-                        self.G,
-                        self.psin_Z,
-                        self.grid.sin_theta,
-                        self.grid.rho,
-                        self.grid.y,
-                        self.grid.T,
-                        self.grid.weights,
-                        a,
-                    )
-            case "c0":
-
-                def assemble() -> None:
-                    assemble_c0_residual_block(
-                        coeff_row,
-                        self.G,
-                        self.psin_R,
-                        self.geometry.sin_tb,
-                        self.grid.rho,
-                        self.grid.y,
-                        self.grid.T,
-                        self.grid.weights,
-                        a,
-                    )
-            case "c1":
-
-                def assemble() -> None:
-                    assemble_c1_residual_block(
-                        coeff_row,
-                        self.G,
-                        self.psin_R,
-                        self.geometry.sin_tb,
-                        self.grid.cos_theta,
-                        self.grid.rho2,
-                        self.grid.y,
-                        self.grid.T,
-                        self.grid.weights,
-                        a,
-                    )
-            case "s1":
-
-                def assemble() -> None:
-                    assemble_s1_residual_block(
-                        coeff_row,
-                        self.G,
-                        self.psin_R,
-                        self.geometry.sin_tb,
-                        self.grid.sin_theta,
-                        self.grid.rho2,
-                        self.grid.y,
-                        self.grid.T,
-                        self.grid.weights,
-                        a,
-                    )
-            case "s2":
-
-                def assemble() -> None:
-                    assemble_s2_residual_block(
-                        coeff_row,
-                        self.G,
-                        self.psin_R,
-                        self.geometry.sin_tb,
-                        self.grid.sin_2theta,
-                        self.grid.rho,
-                        self.grid.rho2,
-                        self.grid.y,
-                        self.grid.T,
-                        self.grid.weights,
-                        a,
-                    )
-            case "psin":
-
-                def assemble() -> None:
-                    assemble_psin_residual_block(
-                        coeff_row,
-                        self.G,
-                        self.grid.rho2,
-                        self.grid.y,
-                        self.grid.T,
-                        self.grid.weights,
-                    )
-            case "F":
-
-                def assemble() -> None:
-                    assemble_F_residual_block(
-                        coeff_row,
-                        self.G,
-                        self.grid.y,
-                        self.grid.T,
-                        self.grid.weights,
-                        R0,
-                        B0,
-                    )
-            case _:
-                raise ValueError(f"Unsupported active profile {profile_name!r}")
+        try:
+            assemble_builder = bind_residual_assembler(profile_name)
+        except KeyError as exc:
+            raise ValueError(f"Unsupported active profile {profile_name!r}") from exc
+        assemble = assemble_builder(self, coeff_row, a, R0, B0)
 
         return ResidualAssembleSlot(
             coeff_row=coeff_row,
@@ -799,9 +671,7 @@ class Operator:
             B0=case.B0,
             a=case.a,
             grid=self.grid,
-            active_profiles=[
-                name for name in ("h", "v", "k", "c0", "c1", "s1", "s2") if case.coeffs_by_name[name] is not None
-            ],
+            active_profiles=[name for name in SHAPE_PROFILE_NAMES if case.coeffs_by_name[name] is not None],
             h_profile=self.h_profile.copy(),
             v_profile=self.v_profile.copy(),
             k_profile=self.k_profile.copy(),

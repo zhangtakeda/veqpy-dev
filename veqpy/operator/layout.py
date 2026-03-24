@@ -6,11 +6,11 @@ operator 层 packed layout helper.
 
 import numpy as np
 
-PROFILE_NAMES = ("h", "v", "k", "c0", "c1", "s1", "s2", "psin", "F")
+PREFIX_PROFILE_NAMES = ("psin", "F")
+SHAPE_PROFILE_NAMES = ("h", "v", "k", "c0", "c1", "s1", "s2")
+PROFILE_NAMES = PREFIX_PROFILE_NAMES + SHAPE_PROFILE_NAMES
 PROFILE_INDEX = {name: i for i, name in enumerate(PROFILE_NAMES)}
 PROFILE_COUNT = len(PROFILE_NAMES)
-PREFIX_PROFILE_NAMES = ("F", "psin")
-SHAPE_PROFILE_NAMES = tuple(name for name in PROFILE_NAMES if name not in PREFIX_PROFILE_NAMES)
 
 
 def build_profile_layout(

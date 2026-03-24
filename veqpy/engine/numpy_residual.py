@@ -4,7 +4,39 @@ engine 层 NumPy residual 核.
 不负责算子路由, packed layout/codec, solver 收敛控制.
 """
 
+from dataclasses import dataclass
+from typing import Callable
+
 import numpy as np
+
+
+@dataclass(frozen=True, slots=True)
+class _ResidualAssemblerSpec:
+    name: str
+    implementation: Callable
+
+
+RESIDUAL_ASSEMBLER_REGISTRY: dict[str, _ResidualAssemblerSpec] = {}
+
+
+def register_residual_assembler(name: str) -> Callable:
+    def decorator(func: Callable) -> Callable:
+        existing = RESIDUAL_ASSEMBLER_REGISTRY.get(name)
+        if existing is not None:
+            raise ValueError(f"Residual assembler {name!r} is already registered")
+        RESIDUAL_ASSEMBLER_REGISTRY[name] = _ResidualAssemblerSpec(name=name, implementation=func)
+        return func
+
+    return decorator
+
+
+def bind_residual_assembler(name: str) -> Callable:
+    try:
+        spec = RESIDUAL_ASSEMBLER_REGISTRY[name]
+    except KeyError as exc:
+        supported = ", ".join(RESIDUAL_ASSEMBLER_REGISTRY)
+        raise KeyError(f"Unknown residual assembler {name!r}. Supported assemblers: {supported}") from exc
+    return spec.implementation
 
 
 def update_residual(
@@ -328,3 +360,147 @@ def assemble_F_residual_block(
     weighted_rho *= weights
     weighted_rho *= (2.0 * np.pi / G.shape[1]) * (R0 * B0)
     out[:] = T[: out.shape[0]] @ weighted_rho
+
+
+@register_residual_assembler("h")
+def _bind_h_residual_assembler(operator, coeff_row: np.ndarray, a: float, R0: float, B0: float) -> Callable[[], None]:
+    del R0, B0
+
+    def assemble() -> None:
+        assemble_h_residual_block(coeff_row, operator.G, operator.psin_R, operator.grid.y, operator.grid.T, operator.grid.weights, a)
+
+    return assemble
+
+
+@register_residual_assembler("v")
+def _bind_v_residual_assembler(operator, coeff_row: np.ndarray, a: float, R0: float, B0: float) -> Callable[[], None]:
+    del R0, B0
+
+    def assemble() -> None:
+        assemble_v_residual_block(coeff_row, operator.G, operator.psin_Z, operator.grid.y, operator.grid.T, operator.grid.weights, a)
+
+    return assemble
+
+
+@register_residual_assembler("k")
+def _bind_k_residual_assembler(operator, coeff_row: np.ndarray, a: float, R0: float, B0: float) -> Callable[[], None]:
+    del R0, B0
+
+    def assemble() -> None:
+        assemble_k_residual_block(
+            coeff_row,
+            operator.G,
+            operator.psin_Z,
+            operator.grid.sin_theta,
+            operator.grid.rho,
+            operator.grid.y,
+            operator.grid.T,
+            operator.grid.weights,
+            a,
+        )
+
+    return assemble
+
+
+@register_residual_assembler("c0")
+def _bind_c0_residual_assembler(operator, coeff_row: np.ndarray, a: float, R0: float, B0: float) -> Callable[[], None]:
+    del R0, B0
+
+    def assemble() -> None:
+        assemble_c0_residual_block(
+            coeff_row,
+            operator.G,
+            operator.psin_R,
+            operator.geometry.sin_tb,
+            operator.grid.rho,
+            operator.grid.y,
+            operator.grid.T,
+            operator.grid.weights,
+            a,
+        )
+
+    return assemble
+
+
+@register_residual_assembler("c1")
+def _bind_c1_residual_assembler(operator, coeff_row: np.ndarray, a: float, R0: float, B0: float) -> Callable[[], None]:
+    del R0, B0
+
+    def assemble() -> None:
+        assemble_c1_residual_block(
+            coeff_row,
+            operator.G,
+            operator.psin_R,
+            operator.geometry.sin_tb,
+            operator.grid.cos_theta,
+            operator.grid.rho2,
+            operator.grid.y,
+            operator.grid.T,
+            operator.grid.weights,
+            a,
+        )
+
+    return assemble
+
+
+@register_residual_assembler("s1")
+def _bind_s1_residual_assembler(operator, coeff_row: np.ndarray, a: float, R0: float, B0: float) -> Callable[[], None]:
+    del R0, B0
+
+    def assemble() -> None:
+        assemble_s1_residual_block(
+            coeff_row,
+            operator.G,
+            operator.psin_R,
+            operator.geometry.sin_tb,
+            operator.grid.sin_theta,
+            operator.grid.rho2,
+            operator.grid.y,
+            operator.grid.T,
+            operator.grid.weights,
+            a,
+        )
+
+    return assemble
+
+
+@register_residual_assembler("s2")
+def _bind_s2_residual_assembler(operator, coeff_row: np.ndarray, a: float, R0: float, B0: float) -> Callable[[], None]:
+    del R0, B0
+
+    def assemble() -> None:
+        assemble_s2_residual_block(
+            coeff_row,
+            operator.G,
+            operator.psin_R,
+            operator.geometry.sin_tb,
+            operator.grid.sin_2theta,
+            operator.grid.rho,
+            operator.grid.rho2,
+            operator.grid.y,
+            operator.grid.T,
+            operator.grid.weights,
+            a,
+        )
+
+    return assemble
+
+
+@register_residual_assembler("psin")
+def _bind_psin_residual_assembler(operator, coeff_row: np.ndarray, a: float, R0: float, B0: float) -> Callable[[], None]:
+    del a, R0, B0
+
+    def assemble() -> None:
+        assemble_psin_residual_block(coeff_row, operator.G, operator.grid.rho2, operator.grid.y, operator.grid.T, operator.grid.weights)
+
+    return assemble
+
+
+@register_residual_assembler("F")
+def _bind_F_residual_assembler(operator, coeff_row: np.ndarray, a: float, R0: float, B0: float) -> Callable[[], None]:
+    del a
+
+    def assemble() -> None:
+        assemble_F_residual_block(coeff_row, operator.G, operator.grid.y, operator.grid.T, operator.grid.weights, R0, B0)
+
+    return assemble
