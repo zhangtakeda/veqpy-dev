@@ -42,7 +42,16 @@ class Solver:
         operator: Operator,
         config: SolverConfig | None = None,
     ) -> None:
-        """绑定一个 Operator 和一份默认求解配置."""
+        """
+        绑定一个 Operator 和一份默认求解配置.
+
+        Args:
+            operator: 提供 residual 求值与 packed layout 语义的 Operator.
+            config: Solver 的默认配置. None 表示使用默认 SolverConfig.
+
+        Returns:
+            返回 None. solver 会据此初始化 x0, result 和 history.
+        """
 
         self.operator = operator
         self.config = SolverConfig() if config is None else config
@@ -52,26 +61,48 @@ class Solver:
         self.x0 = self.operator.encode_initial_state()
 
     def reset(self) -> None:
-        """将 solver-owned x0 原地清零."""
+        """
+        将 solver 持有的 x0 原地清零.
+
+        Returns:
+            返回 None. 只修改当前 x0, 不清空 history 和 result.
+        """
 
         self.x0.fill(0.0)
 
     def clear(self) -> None:
-        """清空 solve history, 不改当前 x0."""
+        """
+        清空 solve history, 不改当前 x0.
+
+        Returns:
+            返回 None. 只影响 history 列表.
+        """
 
         self.history.clear()
 
     def replace_case(self, case: OperatorCase) -> None:
-        """替换兼容工况.
+        """
+        替换兼容工况.
 
-        只允许替换 layout 兼容的 OperatorCase.
-        packed x 语义和 Operator 持有的索引布局不会在这里变化.
+        Args:
+            case: 新的 OperatorCase. 它必须与当前 packed layout 完全兼容.
+
+        Returns:
+            返回 None. packed x 语义和 Operator 持有的索引布局不会在这里变化.
         """
 
         self.operator.replace_case(case)
 
     def replace_config(self, config: SolverConfig) -> None:
-        """替换 solver 的长期默认配置."""
+        """
+        替换 solver 的长期默认配置.
+
+        Args:
+            config: 新的默认 SolverConfig.
+
+        Returns:
+            返回 None. 之后未显式覆盖的 solve 调用都会继承它.
+        """
 
         self.config = config
 
@@ -89,17 +120,18 @@ class Solver:
         enable_verbose: bool | None = None,
         enable_history: bool | None = None,
     ) -> np.ndarray:
-        """执行一次求解并返回收敛后的 packed x.
+        """
+        执行一次求解并返回收敛后的 packed x.
 
-        输入语义:
-        - x0 为本次 solve 的临时初值, shape 必须等于 operator.x_size.
-        - 其余参数只覆盖本次 solve 的配置字段, 不会修改 self.config.
+        Args:
+            x0: 本次 solve 的临时初值. shape 必须等于 operator.x_size.
+            method, rtol, atol, root_maxiter, root_maxfev: 本次求解对默认配置的覆盖项.
+            enable_warmstart, enable_homotopy, enable_verbose, enable_history: 本次求解的布尔开关覆盖项.
 
-        输出语义:
-        - 返回收敛后的 packed x.
-        - self.result 总是更新为本次结果快照.
-        - self.history 是否追加由 enable_history 控制.
-        - self.x0 在 solve 结束后会更新为最终 x.
+        Returns:
+            返回收敛后的 packed x.
+            self.result 总是更新为本次结果快照, self.history 是否追加由 enable_history 控制,
+            self.x0 会在 solve 结束后更新为最终 x.
         """
 
         solve_config = self._resolve_solve_config(
@@ -172,7 +204,15 @@ class Solver:
         *,
         include_none: bool = True,
     ) -> dict[str, list[float] | None]:
-        """从当前 solver-owned `x0` 重建 coeff dict."""
+        """
+        从当前 solver 持有的 x0 重建 profile 系数字典.
+
+        Args:
+            include_none: 是否保留 inactive profile 的 None 条目.
+
+        Returns:
+            返回 profile 名到系数列表的字典表示.
+        """
 
         return self.operator.build_coeffs(self.x0, include_none=include_none)
 
@@ -181,7 +221,15 @@ class Solver:
         *,
         include_none: bool = True,
     ) -> list[dict[str, list[float] | None]]:
-        """从 history 中每个结果快照重建 coeff dict."""
+        """
+        从 history 中每个结果快照重建 profile 系数字典.
+
+        Args:
+            include_none: 是否保留 inactive profile 的 None 条目.
+
+        Returns:
+            返回与 history 等长的系数字典列表.
+        """
 
         history = []
         for record in self.history:
@@ -189,14 +237,22 @@ class Solver:
         return history
 
     def build_equilibrium(self) -> Equilibrium:
-        """从当前 solver-owned x0 物化一个 Equilibrium snapshot."""
+        """
+        从当前 solver 持有的 x0 物化一个 Equilibrium snapshot.
+
+        Returns:
+            返回根据当前 x0, case 和 grid 构造的 Equilibrium 副本.
+        """
 
         return self.operator.build_equilibrium(self.x0)
 
     def build_equilibrium_history(self) -> list[Equilibrium]:
-        """从 history 中每个结果快照物化 Equilibrium.
+        """
+        从 history 中每个结果快照物化 Equilibrium.
 
-        这里会临时切换 case/config/x0, 最后恢复 solver 当前状态.
+        Returns:
+            返回与 history 等长的 Equilibrium 列表.
+            过程中会临时切换 case, config 和 x0, 最后恢复 solver 当前状态.
         """
 
         saved_case = self.operator.case.copy()
@@ -231,7 +287,12 @@ class Solver:
         enable_verbose: bool | None,
         enable_history: bool | None,
     ) -> SolverConfig:
-        """基于 self.config 生成一次 solve 的临时配置快照."""
+        """
+        基于默认配置生成一次 solve 的临时配置快照.
+
+        Returns:
+            返回本次求解实际生效的 SolverConfig.
+        """
 
         overrides: dict[str, object] = {}
         if method is not None:
@@ -262,7 +323,12 @@ class Solver:
         *,
         solve_config: SolverConfig,
     ) -> tuple[np.ndarray, bool, str, int, int, int, float]:
-        """按主方法求解, 必要时回退到 least-squares 的 lm 和 trf."""
+        """
+        按主方法求解, 必要时回退到 least_squares 的 lm 和 trf.
+
+        Returns:
+            返回 SolverResult 所需的七元组, 顺序为 x, success, message, nfev, njev, nit, residual_norm.
+        """
 
         attempts: list[tuple[str, tuple[np.ndarray, bool, str, int, int, int, float] | None, Exception | None]] = []
 
@@ -318,7 +384,12 @@ class Solver:
         *,
         solve_config: SolverConfig,
     ) -> tuple[tuple[np.ndarray, bool, str, int, int, int, float] | None, Exception | None]:
-        """包装一次 solve stage, 让 fallback 能处理数值异常."""
+        """
+        包装一次 solve stage, 让 fallback 流程也能处理数值异常.
+
+        Returns:
+            返回 attempt 结果与异常对象二元组. 若求解抛异常, 会返回失败 attempt 和对应异常.
+        """
 
         try:
             return self._solve_opt_problem(x_guess, solve_config=solve_config), None
@@ -439,16 +510,11 @@ class Solver:
         *,
         solve_config: SolverConfig,
     ) -> tuple[np.ndarray, bool, str, int, int, int, float]:
-        """执行 full solve 或 homotopy solve, 并返回 SolverResult 所需字段.
+        """
+        执行 full solve 或 homotopy solve, 并返回 SolverResult 所需字段.
 
-        返回值依次为:
-        - packed x
-        - success
-        - message
-        - nfev
-        - njev
-        - nit
-        - residual norm
+        Returns:
+            返回七元组, 顺序为 packed x, success, message, nfev, njev, nit, residual norm.
         """
 
         stage_groups = self._build_stage_groups(solve_config=solve_config)
@@ -593,7 +659,12 @@ class Solver:
         *,
         solve_config: SolverConfig,
     ):
-        """在 full packed x 上调用一次 scipy.optimize.root."""
+        """
+        在完整 packed x 上调用一次 scipy.optimize.root.
+
+        Returns:
+            返回 SciPy root 优化结果对象.
+        """
 
         return root(
             self.operator,
@@ -609,7 +680,12 @@ class Solver:
         *,
         solve_config: SolverConfig,
     ):
-        """在 full packed x 上调用一次 scipy.optimize.least_squares."""
+        """
+        在完整 packed x 上调用一次 scipy.optimize.least_squares.
+
+        Returns:
+            返回 SciPy least_squares 优化结果对象.
+        """
 
         return least_squares(
             self.operator,
@@ -624,7 +700,12 @@ class Solver:
         active_len: int,
         solve_config: SolverConfig,
     ):
-        """在 prefix 子问题 x[:active_len] -> residual[:active_len] 上调用 root."""
+        """
+        在 prefix 子问题 x[:active_len] 对 residual[:active_len] 调用 root.
+
+        Returns:
+            返回 SciPy root 优化结果对象.
+        """
 
         active_indices = np.arange(int(active_len), dtype=np.int64)
         return self._run_root_masked(x_stage, active_indices=active_indices, solve_config=solve_config)
@@ -659,7 +740,12 @@ class Solver:
         active_len: int,
         solve_config: SolverConfig,
     ):
-        """在 prefix 子问题上调用 scipy.optimize.least_squares."""
+        """
+        在 prefix 子问题上调用 scipy.optimize.least_squares.
+
+        Returns:
+            返回 SciPy least_squares 优化结果对象.
+        """
 
         active_indices = np.arange(int(active_len), dtype=np.int64)
         return self._run_least_squares_masked(x_stage, active_indices=active_indices, solve_config=solve_config)
@@ -763,10 +849,12 @@ class Solver:
         *,
         solve_config: SolverConfig,
     ) -> list[int]:
-        """生成 homotopy frontier 序列.
+        """
+        生成 homotopy frontier 序列.
 
-        enable_homotopy=False 时只返回 full size.
-        enable_homotopy=True 时, frontiers 由 Operator.homotopy_frontiers() 决定.
+        Returns:
+            返回升序 frontier 列表.
+            enable_homotopy=False 时只返回 full size, 否则 frontiers 由 Operator.homotopy_frontiers() 决定.
         """
 
         x_size = self.operator.x_size

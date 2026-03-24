@@ -1,3 +1,9 @@
+"""
+solver 层结果对象.
+负责持有一次求解的输入初值, 最终状态, 收敛标志和统计量, 并与调用方输入解耦.
+不负责 history 管理, case 替换, equilibrium 重建.
+"""
+
 from dataclasses import dataclass
 
 import numpy as np
@@ -8,6 +14,20 @@ from rich.tree import Tree
 
 @dataclass(frozen=True, slots=True)
 class SolverResult:
+    """
+    描述一次 solve 调用的最终结果快照.
+
+    Args:
+        x0: 本次求解起始的 packed 状态向量.
+        x: 本次求解结束时的 packed 状态向量.
+        success: 求解是否被接受.
+        message: 求解器返回或封装后的结果说明.
+        residual_norm_initial: 初始残差范数.
+        residual_norm_final: 最终残差范数.
+        nfev, njev, nit: 函数评估, Jacobian 评估和迭代次数统计.
+        elapsed: 总耗时, 单位为微秒.
+    """
+
     x0: np.ndarray
     x: np.ndarray
     success: bool
@@ -20,7 +40,12 @@ class SolverResult:
     elapsed: float
 
     def __post_init__(self) -> None:
-        """Detach packed state arrays from caller-owned inputs."""
+        """
+        复制 packed 状态数组, 避免结果对象与调用方共享可变内存.
+
+        Returns:
+            返回 None. x0 和 x 会被规整为独立的一维 float64 数组副本.
+        """
 
         object.__setattr__(self, "x0", _as_1d_array(self.x0, name="x0"))
         object.__setattr__(self, "x", _as_1d_array(self.x, name="x"))
@@ -49,6 +74,16 @@ class SolverResult:
 
 
 def _as_1d_array(value: np.ndarray, *, name: str) -> np.ndarray:
+    """
+    把输入规整为独立的一维 float64 数组副本.
+
+    Args:
+        value: 待规整的数组输入.
+        name: 报错上下文名称.
+
+    Returns:
+        返回一维 float64 数组副本.
+    """
     arr = np.asarray(value, dtype=np.float64)
     if arr.ndim != 1:
         raise ValueError(f"{name} must be 1D, got {arr.shape}")

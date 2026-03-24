@@ -1,3 +1,10 @@
+"""model 层的 Profile 定义.
+
+属于 model 层.
+负责持有单个 profile 的根参数, 以及绑定到某个 Grid 后的 u, u_r, u_rr runtime buffer.
+不负责 packed state ownership, source scaling, 或 solver orchestration.
+"""
+
 from dataclasses import InitVar, dataclass, field
 
 import numpy as np
@@ -7,11 +14,14 @@ from veqpy.model.grid import Grid
 from veqpy.model.serial import Serial
 
 
-_MISSING = object()
-
-
 @dataclass(slots=True)
 class Profile(Serial):
+    """单个一维 profile 的 runtime 容器.
+
+    Profile 持有 scale, power, envelope_power, offset, coeff 等根参数.
+    绑定到某个 Grid 后, 它会物化出 u, u_r, u_rr 三个 1D runtime buffer.
+    """
+
     grid: InitVar[Grid | None] = None
     scale: float = 1.0
     power: int = 0
@@ -21,6 +31,7 @@ class Profile(Serial):
     u: np.ndarray | None = field(init=False, default=None)
     u_r: np.ndarray | None = field(init=False, default=None)
     u_rr: np.ndarray | None = field(init=False, default=None)
+    _coeff_topology: tuple[bool, int] | None = field(init=False, default=None, repr=False)
     _T: np.ndarray | None = field(init=False, default=None, repr=False)
     _T_r: np.ndarray | None = field(init=False, default=None, repr=False)
     _T_rr: np.ndarray | None = field(init=False, default=None, repr=False)
@@ -33,6 +44,11 @@ class Profile(Serial):
 
     @classmethod
     def serial_attributes(cls) -> dict[str, type]:
+        """声明可序列化的根属性.
+
+        Returns:
+            可用于重建 Profile 根参数的字段类型映射.
+        """
         return {
             "scale": float,
             "power": int,
@@ -47,11 +63,14 @@ class Profile(Serial):
         self.envelope_power = int(self.envelope_power)
         self.offset = 0.0 if self.offset is None else float(self.offset)
         self.coeff = _coerce_optional_array(self.coeff, copy=False, name="coeff")
+        if self.coeff is not None:
+            self._coeff_topology = _coeff_topology(self.coeff)
 
         if grid is not None:
             self._prepare_runtime_cache(grid)
 
     def __iter__(self):
+        """返回当前已经物化的 u, u_r, u_rr 三元组."""
         if self.u is None or self.u_r is None or self.u_rr is None:
             raise RuntimeError("Profile is not materialized; call update(..., grid=...) first")
         yield self.u
@@ -59,6 +78,7 @@ class Profile(Serial):
         yield self.u_rr
 
     def check(self) -> None:
+        """校验根参数与可序列化字段的基本类型约束."""
         for key, expected in type(self).serial_attributes().items():
             value = getattr(self, key)
             if value is None:
@@ -69,6 +89,7 @@ class Profile(Serial):
                 raise ValueError(f"Attribute '{key}' must be 1D, got {value.shape}")
 
     def copy(self) -> "Profile":
+        """复制 Profile 根参数与已存在的 runtime buffer."""
         out = Profile(
             scale=self.scale,
             power=self.power,
@@ -79,6 +100,7 @@ class Profile(Serial):
         out.u = _copy_optional_array(self.u)
         out.u_r = _copy_optional_array(self.u_r)
         out.u_rr = _copy_optional_array(self.u_rr)
+        out._coeff_topology = self._coeff_topology
         out._T = self._T
         out._T_r = self._T_r
         out._T_rr = self._T_rr
@@ -90,9 +112,15 @@ class Profile(Serial):
         out._env_rr = self._env_rr
         return out
 
-    def update(self, coeff=_MISSING, grid: Grid | None = None) -> None:
-        if coeff is not _MISSING:
-            self.coeff = _coerce_optional_array(coeff, copy=False, name="coeff")
+    def update(self, grid: Grid | None = None) -> None:
+        """刷新当前 grid 上的 profile 值和导数.
+
+        Args:
+            grid: 可选的新 Grid. 首次调用时必须提供, 以建立 runtime cache.
+
+        Returns:
+            无返回值. 当前对象的 u, u_r, u_rr 会被原地更新.
+        """
         if grid is not None:
             self._prepare_runtime_cache(grid)
         if self._T is None:
@@ -120,7 +148,26 @@ class Profile(Serial):
             np.multiply(self.u_r, self.scale, out=self.u_r)
             np.multiply(self.u_rr, self.scale, out=self.u_rr)
 
+    def _bind_coeff(self, coeff: np.ndarray | None) -> None:
+        """绑定并锁定 coeff 拓扑.
+
+        第一次绑定决定该 Profile 的 coeff 是否为 None 以及长度.
+        之后只允许重绑到相同拓扑的数组视图.
+        """
+        coeff_arr = _coerce_optional_array(coeff, copy=False, name="coeff")
+        topology = _coeff_topology(coeff_arr)
+        if self._coeff_topology is None:
+            self.coeff = coeff_arr
+            self._coeff_topology = topology
+            return
+        if topology != self._coeff_topology:
+            expected = _format_coeff_topology(self._coeff_topology)
+            got = _format_coeff_topology(topology)
+            raise ValueError(f"Profile coeff topology is immutable; expected {expected}, got {got}")
+        self.coeff = coeff_arr
+
     def _prepare_runtime_cache(self, grid: Grid) -> None:
+        """绑定 Grid 并准备 profile 计算所需的只读缓存."""
         self._T = grid.T
         self._T_r = grid.T_r
         self._T_rr = grid.T_rr
@@ -158,6 +205,19 @@ def _coerce_optional_array(value, *, copy: bool, name: str = "array") -> np.ndar
 
 def _copy_optional_array(value: np.ndarray | None) -> np.ndarray | None:
     return None if value is None else value.copy()
+
+
+def _coeff_topology(value: np.ndarray | None) -> tuple[bool, int]:
+    if value is None:
+        return True, -1
+    return False, int(value.shape[0])
+
+
+def _format_coeff_topology(topology: tuple[bool, int]) -> str:
+    is_none, length = topology
+    if is_none:
+        return "coeff=None"
+    return f"coeff length {length}"
 
 
 def _power_terms(rho: np.ndarray, a: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:

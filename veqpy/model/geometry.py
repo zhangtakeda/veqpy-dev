@@ -1,3 +1,10 @@
+"""model 层的 Geometry 定义.
+
+属于 model 层.
+负责持有单个 Grid 上物化后的几何 runtime buffer, 以及由 profile 派生的一维几何积分量.
+不负责 packed state ownership, source route, residual 组装, 或 solver policy.
+"""
+
 from dataclasses import InitVar, dataclass, field, fields
 
 import numpy as np
@@ -90,6 +97,12 @@ class _MFields:
 
 @dataclass(frozen=True, slots=True)
 class Geometry:
+    """单个 grid 上的几何 runtime 容器.
+
+    Geometry 持有已经物化的 2D 几何场和 1D 几何积分量.
+    它依赖 Grid 和各个 Profile 的当前值, 但不持有 profile 根参数的所有权.
+    """
+
     grid: InitVar[Grid]
 
     S_r: np.ndarray = field(init=False)
@@ -105,6 +118,7 @@ class Geometry:
     _M_fields: _MFields = field(init=False)
 
     def __post_init__(self, grid: Grid):
+        """按当前 grid 形状分配 Geometry runtime buffer."""
         object.__setattr__(self, "S_r", np.empty((grid.Nr,), dtype=np.float64))
         object.__setattr__(self, "V_r", np.empty((grid.Nr,), dtype=np.float64))
         object.__setattr__(self, "Kn", np.empty((grid.Nr,), dtype=np.float64))
@@ -131,6 +145,19 @@ class Geometry:
         s1_profile: Profile,
         s2_profile: Profile,
     ):
+        """用当前 Grid 和 profile 值刷新几何场.
+
+        Args:
+            a: 小半径尺度, 单位 m.
+            R0: 几何中心 R 坐标, 单位 m.
+            Z0: 几何中心 Z 坐标, 单位 m.
+            grid: 当前几何所属网格.
+            h_profile, v_profile, k_profile, c0_profile, c1_profile, s1_profile, s2_profile:
+                已经在当前 grid 上物化的 profile runtime 容器.
+
+        Returns:
+            无返回值. 当前对象的二维几何场和一维几何积分量会被原地更新.
+        """
         if self.R.shape != (grid.Nr, grid.Nt):
             raise ValueError(f"Expected geometry shape {(self.R.shape[0], self.R.shape[1])}, got {(grid.Nr, grid.Nt)}")
 

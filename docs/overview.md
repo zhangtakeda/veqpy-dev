@@ -15,7 +15,7 @@
 - Stage A/B/C/D 当前仍由 [`veqpy/operator/operator.py`](../veqpy/operator/operator.py) 组织.
 - packed `layout/codec` 归 `veqpy/operator/`.
 - `Solver` 是 solve facade, 不持有 backend 选择逻辑.
-- `Solver.solve(...)` 只执行求解并返回 packed `x`; `SolverResult` / `Equilibrium` / coeff 重建由 `solver.result`、`solver.build_equilibrium()`、`solver.build_coeffs()` 提供.
+- `Solver.solve(...)` 只执行求解并返回 packed `x`; `SolverResult` / `Equilibrium` / coeff 重建由 `solver.result`, `solver.build_equilibrium()`, `solver.build_coeffs()` 提供.
 - `Solver` 还提供 `build_equilibrium_history()` 和 `build_coeffs_history()` 作为 history 重建入口.
 - `OperatorCase` 当前是可变 runtime case; `SolverRecord` 会复制 case snapshot.
 - `Equilibrium` 是单网格 materialized diagnostic snapshot, 不是 solver-side parametric state.
@@ -73,9 +73,9 @@
 
 # Suggested Checks
 
-- 只改 `README.md` 或 `doc/`:
+- 只改 `README.md` 或 `docs/`:
   - 不强制跑数值脚本.
-  - 至少核对路径、命令、产物目录仍真实存在.
+  - 至少核对路径, 命令, 产物目录仍真实存在.
 - 改任意 `veqpy/*.py` 或 `tests/*.py`:
   - 建议先跑 `py -m compileall veqpy tests`
 - 改 `veqpy/engine/`, `veqpy/model/`, `veqpy/operator/`, `veqpy/solver/`, 包级 `__init__.py`, packed `layout/codec`, `Operator`, `OperatorCase`, `Solver`, `Equilibrium`:
@@ -95,7 +95,7 @@
 - `veqpy/operator/codec.py`
   - packed state 和 packed residual 的边界转码都依赖这里.
 - `veqpy/solver/solver.py`
-  - root / least-squares 路径、fallback、homotopy stage policy 都在这里.
+  - root / least-squares 路径, fallback, homotopy stage policy 都在这里.
 - `veqpy/model/equilibrium.py`
   - snapshot semantics, resample semantics, plotting/comparison 在这里定义.
 - `tests/demo.py`
@@ -117,7 +117,7 @@
 - `veqpy/model/equilibrium.py`
 - `tests/demo.py`
 - `tests/benchmark.py`
-- `doc/conventions.md`
-- `doc/guardrails.md`
-- `doc/veqpy_operators.md`
-- `doc/veqpy_equilibrium.md`
+- `docs/conventions.md`
+- `docs/guardrails.md`
+- `docs/veqpy_operators.md`
+- `docs/veqpy_equilibrium.md`

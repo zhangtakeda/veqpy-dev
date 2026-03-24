@@ -89,6 +89,9 @@ def update_geometry(
         a, R0, Z0: 几何尺度与平移参数, 单位与 R, Z 保持一致.
         rho, theta, cos_theta, sin_theta, weights: 径向和极向网格及求积权重, shape=(nr,) 或 (nt,).
         h, h_r, h_rr, v, v_r, v_rr, ...: 当前 grid 上的几何参数化 profile 及其一阶, 二阶导数, shape=(nr,).
+
+    Returns:
+        返回 None. 所有二维几何场与一维 theta 积分量都会原地写入调用方缓冲区.
     """
     rho_2d = rho[:, None]
     theta_2d = theta[None, :]

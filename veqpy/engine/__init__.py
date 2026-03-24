@@ -1,6 +1,6 @@
 """
 engine 层 backend 导出面.
-负责按 VEQPY_BACKEND 选择数组导向数值核并导出稳定接口.
+负责按 VEQPY_BACKEND 选择数组导向数值核并导出 profile, geometry, residual, source helper 的稳定接口.
 不负责算子定义, packed layout/codec, solver facade.
 """
 

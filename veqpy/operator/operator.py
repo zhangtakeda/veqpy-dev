@@ -1,3 +1,9 @@
+"""
+operator 层主协调器.
+负责把 case, grid, model profile, engine kernels 和 packed codec 连接起来, 暴露稳定 residual 求值接口.
+不负责 solver 迭代策略, backend 选择, benchmark 编排.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -38,11 +44,15 @@ from veqpy.operator.operator_case import OperatorCase
 
 @dataclass(slots=True, frozen=True)
 class ProfileFillSlot:
+    """描述一个 profile 填充动作的轻量槽位."""
+
     fill: Callable[[], None]
 
 
 @dataclass(slots=True, frozen=True)
 class ResidualAssembleSlot:
+    """描述一个 active profile 对应的 residual 写回槽位."""
+
     coeff_row: np.ndarray
     coeff_indices: np.ndarray
     assemble: Callable[[], None]
@@ -50,6 +60,8 @@ class ResidualAssembleSlot:
 
 @dataclass(slots=True, frozen=True)
 class HomotopyStageGroup:
+    """记录 homotopy 分阶段展开时某一阶次对应的 packed 索引集合."""
+
     order: int
     indices: np.ndarray
     shape_profile_ids: np.ndarray
@@ -57,6 +69,16 @@ class HomotopyStageGroup:
 
 @dataclass(slots=True)
 class Operator:
+    """
+    封装一个固定算子名, 导数变量域, grid 与 case 的 residual 求值器.
+
+    Args:
+        name: 算子名, 例如 PF, PP, PI, PJ1, PJ2, PQ.
+        derivative: 导数变量域字符串, 只允许 rho 或 psi.
+        grid: 当前求值使用的离散网格与谱矩阵容器.
+        case: 当前算例输入, 包含 profile 系数, 几何常数和 source 输入.
+    """
+
     name: str
     derivative: str
     grid: Grid = field(repr=False)
@@ -95,6 +117,7 @@ class Operator:
     source_runner: Callable = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        """完成 layout 构造, 运行时缓冲区分配和 case 绑定."""
         spec = validate_operator(self.name, self.derivative)
 
         self.name = spec.name
@@ -110,17 +133,50 @@ class Operator:
         self._refresh_case_runtime()
 
     def __call__(self, x: np.ndarray) -> np.ndarray:
+        """
+        调用 residual 求值主入口.
+
+        Args:
+            x: 一维 packed 状态向量.
+
+        Returns:
+            返回与 x 同 layout 的 packed residual 向量.
+        """
         return self.residual(x)
 
     def replace_case(self, case: OperatorCase) -> None:
+        """
+        在不改变 packed layout 的前提下替换当前 case.
+
+        Args:
+            case: 新的 OperatorCase. 它必须与当前 layout 完全兼容.
+
+        Returns:
+            返回 None. 运行时 profile 偏移, 输入数组和 residual 槽位会同步更新.
+        """
         self._validate_case_compatibility(case)
         self.case = case
         self._refresh_case_runtime()
 
     def encode_initial_state(self) -> np.ndarray:
+        """
+        把当前 case 中的 profile 系数编码成 packed 初值.
+
+        Returns:
+            返回与当前 layout 匹配的一维 packed 状态向量.
+        """
         return encode_packed_state(self.case.coeffs_by_name, self.profile_L, self.coeff_index)
 
     def residual(self, x: np.ndarray) -> np.ndarray:
+        """
+        完整执行 profile, geometry, source, residual 四阶段求值.
+
+        Args:
+            x: 一维 packed 状态向量.
+
+        Returns:
+            返回 packed residual 向量.
+        """
         x_eval = self.coerce_x(x)
         self.stage_a_profile(x_eval)
         self.stage_b_geometry()
@@ -134,6 +190,17 @@ class Operator:
         active_len: int,
         x_template: np.ndarray,
     ) -> np.ndarray:
+        """
+        只激活 packed 向量前缀后求值对应 residual 前缀.
+
+        Args:
+            x_prefix: 前缀状态向量.
+            active_len: 参与求值的前缀长度.
+            x_template: 用于补全其余自由度的完整模板向量.
+
+        Returns:
+            返回长度为 active_len 的 residual 前缀副本.
+        """
         x_full = self._compose_active_state(x_prefix, active_len=active_len, x_template=x_template)
         return self.residual(x_full)[:active_len].copy()
 
@@ -144,10 +211,27 @@ class Operator:
         active_indices: np.ndarray,
         x_template: np.ndarray,
     ) -> np.ndarray:
+        """
+        只替换指定索引集合后求值对应 masked residual.
+
+        Args:
+            x_active: 活跃索引上的状态值.
+            active_indices: 参与求值的 packed 索引集合.
+            x_template: 用于补全其余自由度的完整模板向量.
+
+        Returns:
+            返回与 active_indices 同长度的 residual 副本.
+        """
         x_full = self._compose_masked_state(x_active, active_indices=active_indices, x_template=x_template)
         return self.residual(x_full)[active_indices].copy()
 
     def homotopy_frontiers(self) -> np.ndarray:
+        """
+        返回 packed 向量按阶次展开时的前缀边界.
+
+        Returns:
+            返回升序一维整数数组. 每个元素都表示一个可用于前缀 homotopy 的 frontier.
+        """
         if self.x_size == 0:
             return np.zeros(0, dtype=np.int64)
         frontiers = np.asarray(self.order_offsets[1:], dtype=np.int64)
@@ -156,6 +240,13 @@ class Operator:
         return frontiers.astype(np.int64, copy=False)
 
     def homotopy_stage_groups(self) -> tuple[HomotopyStageGroup, ...]:
+        """
+        构造按阶次分组的 homotopy 元数据.
+
+        Returns:
+            返回 HomotopyStageGroup 的 tuple.
+            每组包含该阶次需要放开的 packed 索引, 以及对应的 shape profile 编号集合.
+        """
         if self.x_size == 0:
             return ()
 
@@ -204,12 +295,28 @@ class Operator:
         return tuple(groups)
 
     def homotopy_truncation_profile_ids(self) -> np.ndarray:
+        """
+        返回参与 shape truncation 的 active profile 编号.
+
+        Returns:
+            返回一维整数数组, 顺序与 PROFILE_NAMES 中的 shape profiles 一致.
+        """
         profile_ids = [
             int(PROFILE_INDEX[name]) for name in ("h", "v", "k", "c0", "c1", "s1", "s2") if int(self.profile_L[PROFILE_INDEX[name]]) >= 0
         ]
         return np.asarray(profile_ids, dtype=np.int64)
 
     def build_coeffs(self, x: np.ndarray, *, include_none: bool = True) -> dict[str, list[float] | None]:
+        """
+        把 packed 状态向量还原成 profile 系数字典.
+
+        Args:
+            x: 一维 packed 状态向量.
+            include_none: 是否保留 inactive profile 的 None 条目.
+
+        Returns:
+            返回 profile 名到系数列表的字典表示.
+        """
         blocks = decode_packed_blocks(x, self.profile_L, self.coeff_index)
         coeffs: dict[str, list[float] | None] = {}
         for name, block in zip(PROFILE_NAMES, blocks, strict=True):
@@ -218,6 +325,15 @@ class Operator:
         return coeffs
 
     def build_equilibrium(self, x: np.ndarray) -> Equilibrium:
+        """
+        从 packed 状态向量构造完整 Equilibrium 快照.
+
+        Args:
+            x: 一维 packed 状态向量.
+
+        Returns:
+            返回基于当前 grid 和 case 生成的 Equilibrium 副本.
+        """
         x_eval = self.coerce_x(x)
         self.stage_a_profile(x_eval)
         self.stage_b_geometry()
@@ -225,10 +341,25 @@ class Operator:
         return self._build_equilibrium_from_runtime()
 
     def stage_a_profile(self, x: np.ndarray) -> None:
+        """
+        执行 profile 阶段, 把 packed 系数写入各个 Profile 运行时缓存.
+
+        Args:
+            x: 一维 packed 状态向量.
+
+        Returns:
+            返回 None. 结果会原地写入 coeff_matrix 与各 profile 缓冲区.
+        """
         decode_packed_state_inplace(x, self.profile_L, self.coeff_index, self.coeff_matrix)
         self._fill_profile_rows(self.active_profile_ids)
 
     def stage_b_geometry(self) -> None:
+        """
+        执行 geometry 阶段, 用当前 shape profiles 刷新几何场.
+
+        Returns:
+            返回 None. 所有几何量都会原地写入 self.geometry.
+        """
         self.geometry.update(
             float(self.case.a),
             float(self.case.R0),
@@ -244,6 +375,12 @@ class Operator:
         )
 
     def stage_c_source(self) -> None:
+        """
+        执行 source 阶段, 更新 psin_r, psin_rr, FFn_r, Pn_r 与归一化系数.
+
+        Returns:
+            返回 None. source 结果会原地写入相应运行时缓冲区.
+        """
         alpha1, alpha2 = self.source_runner(
             self.psin_r,
             self.psin_rr,
@@ -272,10 +409,25 @@ class Operator:
         self.alpha2 = float(alpha2)
 
     def stage_d_residual(self) -> np.ndarray:
+        """
+        执行 residual 阶段并编码 packed 残差.
+
+        Returns:
+            返回 packed residual 向量.
+        """
         self._build_G_inplace()
         return self._assemble_residual()
 
     def coerce_x(self, x: np.ndarray) -> np.ndarray:
+        """
+        校验完整 packed 状态向量形状.
+
+        Args:
+            x: 待校验的状态向量.
+
+        Returns:
+            返回通过校验的 float64 一维数组视图.
+        """
         arr = np.asarray(x, dtype=np.float64)
         if arr.ndim != 1 or arr.shape[0] != self.x_size:
             raise ValueError(f"Expected x to have shape ({self.x_size},), got {arr.shape}")
@@ -433,9 +585,10 @@ class Operator:
         profile = getattr(self, f"{profile_name}_profile")
         if profile_name not in _PROFILE_OFFSET_SOURCES:
             raise ValueError(f"Unsupported profile {profile_name!r}")
+        profile._bind_coeff(coeff_row)
 
         def fill() -> None:
-            profile.update(coeff_row)
+            profile.update()
 
         return ProfileFillSlot(fill=fill)
 

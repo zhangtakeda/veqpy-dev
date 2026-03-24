@@ -1,76 +1,75 @@
 # veqpy
 
-veqpy 是一个用于托卡马克磁流体平衡计算的 Python 包. 服务于 VEQ 项目.
+`veqpy` is a Python package for VEQ (Veloce/Variational Equilibrium),
+a high-performance Python wrapper for plasma equilibrium simulations in magnetic confinement fusion (MCF) devices.
 
-VEQ: Veloce/Variational EQuilbrium code, a high-performance Python wrapper for plasma equilibrium simulations in magnetic confinement devices.
+- Author: `rhzhang`
+- Updated: `2026-03-24`
 
-- 作者: rhzhang
-- 更新日期: 2026-03-24
+This README was prepared with Codex assistance. The source code remains the authoritative reference.
 
-文档由 Codex 生成, 以源码实现为准.
-
-## 项目结构
+## Project Layout
 
 - `veqpy/engine/`
-  - backend 导出面, 以及 `numpy` / `numba` 数值 kernel
+  - Backend export surface and the `numpy` / `numba` numerical kernels
 - `veqpy/model/`
-  - `Grid`、`Profile`、`Geometry`、`Equilibrium`
+  - `Grid`, `Profile`, `Geometry`, and `Equilibrium`
 - `veqpy/operator/`
-  - packed `layout/codec`、`OperatorCase`、完整的 `x -> residual` 算子
+  - Packed `layout/codec`, `OperatorCase`, and the full `x -> residual` operator path
 - `veqpy/solver/`
-  - `Solver`、`SolverConfig`、`SolverRecord`、`SolverResult`
+  - `Solver`, `SolverConfig`, `SolverRecord`, and `SolverResult`
 - `tests/`
-  - `demo.py` 示例入口
-  - `benchmark.py` 多模式基准与一致性检查入口
-  - `benchmark/` 基准产物目录
+  - `demo.py` example entry point
+  - `benchmark.py` multi-mode benchmark and consistency-check entry point
+  - `benchmark/` benchmark artifact directory
 
-## 当前运行时边界
+## Runtime Boundaries
 
-- `Operator` 是完整 packed `x -> residual` 路径的 owner
-- `Operator.__call__(x)` 当前直接串联 Stage A/B/C/D
-- `Solver` 是 nonlinear solve facade, 不持有 packed layout/codec, 也不负责 backend 选择
-- `Solver.solve(...)` 只执行一次求解并返回 packed `x`
-- 求解后的稳定入口包括:
+- `Operator` owns the full packed `x -> residual` runtime path.
+- `Operator.__call__(x)` currently executes the Stage A/B/C/D chain directly.
+- `Solver` is a nonlinear solve facade. It does not own the packed layout/codec and does not choose the backend.
+- `Solver.solve(...)` performs one solve and returns packed `x`.
+- Stable post-solve entry points include:
   - `solver.result`
   - `solver.history`
   - `solver.build_equilibrium()`
   - `solver.build_equilibrium_history()`
   - `solver.build_coeffs()`
   - `solver.build_coeffs_history()`
-- backend 只通过 `VEQPY_BACKEND` 控制, 可选值:
+- The backend is controlled only through `VEQPY_BACKEND`, with supported values:
   - `numpy`
   - `numba`
 
-`veqpy.engine` 在环境变量未设置时默认使用 `numba`.
+`veqpy.engine` defaults to `numba` when the environment variable is not set.
 
-## Solver 能力概览
+## Solver Capabilities
 
-- `SolverConfig.method` 当前支持:
-  - root 路径: `hybr`, `krylov`, `root-lm`, `broyden1`, `broyden2`
-  - least-squares 路径: `trf`, `dogbox`, `lm`
-- root 方法走 `scipy.optimize.root(...)`
-- `lm` / `trf` / `dogbox` 直接走 `scipy.optimize.least_squares(...)`
-- 主方法失败时, `Solver` 会按顺序自动尝试:
+- `SolverConfig.method` currently supports:
+  - Root-based methods: `hybr`, `krylov`, `root-lm`, `broyden1`, `broyden2`
+  - Least-squares methods: `trf`, `dogbox`, `lm`
+- Root-based methods use `scipy.optimize.root(...)`.
+- `lm`, `trf`, and `dogbox` use `scipy.optimize.least_squares(...)` directly.
+- If the primary method fails, `Solver` automatically retries in this order:
   - `least_squares/lm`
   - `least_squares/trf`
-- `enable_homotopy=True` 时, staged solve 会按 profile 阶次逐层扩展 active set
-- homotopy 还支持按 `homotopy_truncation_tol` 和 `homotopy_truncation_patience` 冻结后续高阶 shape 系数
+- When `enable_homotopy=True`, the staged solve expands the active set level by level in profile order.
+- Homotopy also supports freezing higher-order shape coefficients through `homotopy_truncation_tol` and `homotopy_truncation_patience`.
 
-## 安装
+## Installation
 
-基础安装:
+Basic installation:
 
 ```bash
 py -m pip install -e .
 ```
 
-开发安装:
+Development installation:
 
 ```bash
 py -m pip install -e .[dev]
 ```
 
-## 最小示例
+## Minimal Example
 
 ```python
 import numpy as np
@@ -126,31 +125,31 @@ print(solver.result.success, x.shape)
 print(float(eq.Ip), float(eq.beta_t))
 ```
 
-更完整的可运行示例见 `tests/demo.py`.
+For a more complete runnable example, see `tests/demo.py`.
 
-## 常用命令
+## Common Commands
 
-语法检查:
+Syntax check:
 
 ```bash
 py -m compileall veqpy tests
 ```
 
-运行示例并生成演示产物:
+Run the demo and generate demo artifacts:
 
 ```bash
 py tests/demo.py
 ```
 
-运行多模式 benchmark 与物理量 delta 检查:
+Run the multi-mode benchmark and delta checks:
 
 ```bash
 py tests/benchmark.py
 ```
 
-## 产物目录
+## Generated Artifacts
 
-运行 `py tests/demo.py` 后, 会在 `tests/` 下生成:
+After running `py tests/demo.py`, the following files are generated under `tests/`:
 
 - `demo-1.json` / `demo-1.png`
 - `demo-2.json` / `demo-2.png`
@@ -160,7 +159,7 @@ py tests/benchmark.py
 - `demo-grid-comparison.png`
 - `demo-homo-comparison.png`
 
-运行 `py tests/benchmark.py` 后, 默认会生成:
+After running `py tests/benchmark.py`, the default outputs are:
 
 - `tests/benchmark/cold-<backend>/pf_reference_summary.png`
 - `tests/benchmark/cold-<backend>/pf_reference_summary.txt`
@@ -168,43 +167,49 @@ py tests/benchmark.py
 - `tests/benchmark/cold-<backend>/benchmark_notes.txt`
 - `tests/benchmark/cold-<backend>/plots/`
 
-如果把 `tests/benchmark.py` 中的 `WARMSTART` 切到 `True`, 产物目录会切换到 `tests/benchmark/warm-<backend>/`.
+If `WARMSTART` in `tests/benchmark.py` is switched to `True`, the artifact root changes to `tests/benchmark/warm-<backend>/`.
 
-## 关键文件
+## Key Files
 
 - `veqpy/engine/__init__.py`
-  - backend 控制面和稳定导出面
+  - Backend control surface and stable exports
 - `veqpy/operator/operator.py`
-  - 完整 packed-state 到 residual 的运行时主路径
+  - Main runtime path from packed state to residual
 - `veqpy/operator/layout.py`
-  - packed layout 定义
+  - Packed layout definition
 - `veqpy/operator/codec.py`
-  - packed state / residual 编解码
+  - Packed state / residual encoding and decoding
 - `veqpy/solver/solver.py`
-  - 求解生命周期入口, root / least-squares / fallback / homotopy
+  - Solve lifecycle entry point, root / least-squares / fallback / homotopy
 - `veqpy/solver/solver_config.py`
-  - solver 方法和 staged-solve 配置
+  - Solver method configuration and staged-solve options
 - `veqpy/model/equilibrium.py`
-  - snapshot、诊断、绘图、comparison、resample
+  - Snapshots, diagnostics, plotting, comparison, and resampling
 - `tests/demo.py`
-  - 最小示例和演示产物入口
+  - Minimal example and demo artifact entry point
 - `tests/benchmark.py`
-  - 多模式 benchmark、delta 检查和 benchmark 产物入口
+  - Multi-mode benchmark, delta checks, and benchmark artifact entry point
 
-## 当前注意事项
+## Notes
 
-- `replace_case(...)` 只支持 packed layout 兼容的 `OperatorCase`
-- `OperatorCase` 是可变 runtime case, 适合实时更新 `Ip` / `beta` / `heat_input` / `current_input`
-- `SolverRecord` 会复制 `OperatorCase` snapshot, 避免 live case 的后续原位修改污染历史
-- `Grid` 是不可变的
-- `Equilibrium` 是单网格 snapshot, 不是 solver-side 可回写状态
-- `Equilibrium.resample(...)` 的语义是 snapshot 插值, 不是严格参数化重建
-- 改 packed layout、packed codec、operator contract、solver 控制流、engine exports 后, 建议同步更新 `doc/`
+- `replace_case(...)` only supports `OperatorCase` instances compatible with the packed layout.
+- `OperatorCase` is a mutable runtime case and is suitable for live updates to `Ip`, `beta`, `heat_input`, and `current_input`.
+- `SolverRecord` copies `OperatorCase` snapshots to prevent later in-place updates from contaminating history.
+- `Grid` is immutable.
+- `Equilibrium` is a single-grid snapshot, not a solver-side mutable state object.
+- `Equilibrium.resample(...)` is snapshot interpolation, not strict parametric reconstruction.
+- If you change the packed layout, packed codec, operator contract, solver control flow, or engine exports, update `docs/` as well.
 
-## 相关文档
+## Related Documentation
 
-- [`doc/overview.md`](doc/overview.md)
-- [`doc/conventions.md`](doc/conventions.md)
-- [`doc/guardrails.md`](doc/guardrails.md)
-- [`doc/veqpy_operators.md`](doc/veqpy_operators.md)
-- [`doc/veqpy_equilibrium.md`](doc/veqpy_equilibrium.md)
+- [`docs/overview.md`](docs/overview.md)
+- [`docs/conventions.md`](docs/conventions.md)
+- [`docs/guardrails.md`](docs/guardrails.md)
+- [`docs/veqpy_operators.md`](docs/veqpy_operators.md)
+- [`docs/veqpy_equilibrium.md`](docs/veqpy_equilibrium.md)
+
+## Reference
+
+[1] Huasheng Xie and Yueyan Li, "What Is the Minimum Number of Parameters Required to Represent Solutions of the Grad-Shafranov Equation?," arXiv:2601.02942, 2026. [https://arxiv.org/abs/2601.02942](https://arxiv.org/abs/2601.02942)
+
+[2] Xingyu Li, Huasheng Xie, Lai Wei, and Zhengxiong Wang, "Investigation of Toroidal Rotation Effects on Spherical Torus Equilibria using the Fast Spectral Solver VEQ-R," arXiv:2602.11422, 2026. [https://arxiv.org/abs/2602.11422](https://arxiv.org/abs/2602.11422)

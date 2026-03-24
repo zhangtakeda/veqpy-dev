@@ -10,10 +10,6 @@
 - Union / Tuple / Literal 等泛型类型
 
 框架同时支持通过装饰器扩展新的文件格式.
-
-项目: veqpy - VEQ (Veloce Equilibrium) 项目的 Python 接口组件
-作者: rhzhang (DUT.Phys)
-日期: 2026-02-24
 """
 
 import inspect
@@ -132,7 +128,7 @@ class Serial:
             func(self, file, **kwargs)
 
     def check(self) -> None:
-        """校验所有 serial_attributes 的存在性、类型和非空性"""
+        """校验所有 serial_attributes 的存在性, 类型和非空性"""
         spec = type(self).serial_attributes()
         cls = type(self)
         prop_names = {n for n, o in cls.__dict__.items() if isinstance(o, property)}

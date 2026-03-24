@@ -36,6 +36,9 @@ def update_residual(
         alpha1, alpha2: source 与几何项的归一化系数.
         psin_r, psin_rr, FFn_r, Pn_r: 当前 grid 上的一维 root fields, shape=(nr,).
         R, R_t, Z_t, J, JdivR, gttdivJR, grtdivJR_t, gttdivJR_r: 当前几何场及其组合量, shape=(nr, nt).
+
+    Returns:
+        返回 None. 所有 residual 相关二维场都会原地写入 out_psin_R, out_psin_Z, out_G.
     """
     nr, nt = out_G.shape
     for i in range(nr):
@@ -73,6 +76,9 @@ def assemble_h_residual_block(
         y, weights: 径向权重项, shape=(nr,).
         T: 基函数矩阵, shape=(n_basis, nr).
         a: 小半径尺度, 与几何单位一致.
+
+    Returns:
+        返回 None. 组装后的 h 通道投影会原地写入 out.
     """
     _assemble_weighted_projection(out, G, psin_R, y, T, weights, (2.0 * np.pi / G.shape[1]) * a)
 
@@ -96,6 +102,9 @@ def assemble_v_residual_block(
         y, weights: 径向权重项, shape=(nr,).
         T: 基函数矩阵, shape=(n_basis, nr).
         a: 小半径尺度, 与几何单位一致.
+
+    Returns:
+        返回 None. 组装后的 v 通道投影会原地写入 out.
     """
     _assemble_weighted_projection(out, G, psin_Z, y, T, weights, (2.0 * np.pi / G.shape[1]) * a)
 
@@ -122,6 +131,9 @@ def assemble_k_residual_block(
         rho, y, weights: 径向权重项, shape=(nr,).
         T: 基函数矩阵, shape=(n_basis, nr).
         a: 小半径尺度, 与几何单位一致.
+
+    Returns:
+        返回 None. 组装后的 k 通道投影会原地写入 out.
     """
     nr, nt = G.shape
     weighted_rho = np.empty(nr, dtype=G.dtype)
@@ -155,6 +167,9 @@ def assemble_c0_residual_block(
         rho, y, weights: 径向权重项, shape=(nr,).
         T: 基函数矩阵, shape=(n_basis, nr).
         a: 小半径尺度, 与几何单位一致.
+
+    Returns:
+        返回 None. 组装后的 c0 通道投影会原地写入 out.
     """
     nr, nt = G.shape
     weighted_rho = np.empty(nr, dtype=G.dtype)
@@ -190,6 +205,9 @@ def assemble_c1_residual_block(
         rho2, y, weights: 径向权重项, shape=(nr,).
         T: 基函数矩阵, shape=(n_basis, nr).
         a: 小半径尺度, 与几何单位一致.
+
+    Returns:
+        返回 None. 组装后的 c1 通道投影会原地写入 out.
     """
     nr, nt = G.shape
     weighted_rho = np.empty(nr, dtype=G.dtype)
@@ -225,6 +243,9 @@ def assemble_s1_residual_block(
         rho2, y, weights: 径向权重项, shape=(nr,).
         T: 基函数矩阵, shape=(n_basis, nr).
         a: 小半径尺度, 与几何单位一致.
+
+    Returns:
+        返回 None. 组装后的 s1 通道投影会原地写入 out.
     """
     nr, nt = G.shape
     weighted_rho = np.empty(nr, dtype=G.dtype)
@@ -261,6 +282,9 @@ def assemble_s2_residual_block(
         rho, rho2, y, weights: 径向权重项, shape=(nr,).
         T: 基函数矩阵, shape=(n_basis, nr).
         a: 小半径尺度, 与几何单位一致.
+
+    Returns:
+        返回 None. 组装后的 s2 通道投影会原地写入 out.
     """
     nr, nt = G.shape
     weighted_rho = np.empty(nr, dtype=G.dtype)
@@ -290,6 +314,9 @@ def assemble_psin_residual_block(
         G: 二维 residual 场, shape=(nr, nt).
         rho2, y, weights: 径向权重项, shape=(nr,).
         T: 基函数矩阵, shape=(n_basis, nr).
+
+    Returns:
+        返回 None. 组装后的 psin 通道投影会原地写入 out.
     """
     nr, nt = G.shape
     weighted_rho = np.empty(nr, dtype=G.dtype)
@@ -321,6 +348,9 @@ def assemble_F_residual_block(
         y, weights: 径向权重项, shape=(nr,).
         T: 基函数矩阵, shape=(n_basis, nr).
         R0, B0: 参考磁轴半径与磁场强度, 用于 F 通道归一化.
+
+    Returns:
+        返回 None. 组装后的 F 通道投影会原地写入 out.
     """
     nr, nt = G.shape
     weighted_rho = np.empty(nr, dtype=G.dtype)

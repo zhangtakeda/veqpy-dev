@@ -35,6 +35,9 @@ def update_profile(
         env, env_r, env_rr: 系数调制包络及其导数, shape=(nr,).
         offset: profile 常数偏移项.
         coeff: profile 系数向量, shape=(n_active,). None 表示只保留 offset 项.
+
+    Returns:
+        返回 None. 所有结果都会原地写入 out_u, out_u_r, out_u_rr.
     """
     if coeff is None:
         out_u[:] = offset * rp

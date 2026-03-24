@@ -1,3 +1,11 @@
+"""model 层的 Equilibrium 定义.
+
+属于 model 层.
+负责持有单网格上的平衡快照, 从 root fields 重新派生 geometry 和 diagnostics,
+并提供 plotting, comparison, resample 等 inspection 能力.
+不负责 solver runtime ownership, packed state, 或 residual hot path.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -70,11 +78,11 @@ class Equilibrium(Reactive, Serial):
 
     它持有已经在当前 grid 上物化好的 root fields:
     - 7 个一维 shape/profile buffer
-    - `psin_r / psin_rr / FFn_r / Pn_r`
-    - `alpha1 / alpha2`
+    - psin_r, psin_rr, FFn_r, Pn_r
+    - alpha1, alpha2
 
     它不是参数化 profile spec 的容器, 也不承诺保留 solver 侧参数化语义.
-    `resample(...)` 的语义是把这些 root snapshot fields 插值到目标 grid,
+    resample(...) 的语义是把这些 root snapshot fields 插值到目标 grid,
     然后在目标 grid 上重新派生 geometry 和 diagnostics.
 
     在当前架构中它属于 model/control plane, 用于 inspection/plotting.
@@ -103,12 +111,20 @@ class Equilibrium(Reactive, Serial):
         alpha1: float = 1.0,
         alpha2: float = 1.0,
     ):
-        """初始化几何对象.
+        """初始化平衡快照对象.
 
         Args:
-            R0, Z0: 几何中心坐标 (m)
-            a: 小半径尺度 (m)
-            grid: 径向和极向网格对象
+            R0, Z0: 几何中心坐标, 单位 m.
+            B0: 参考磁场, 单位 T.
+            a: 小半径尺度, 单位 m.
+            grid: 当前快照所属的径向和极向网格.
+            active_profiles: 当前快照中视为激活的 profile 名称列表.
+            h_profile, v_profile, k_profile, c0_profile, c1_profile, s1_profile, s2_profile:
+                当前 grid 上的 profile 快照对象.
+            FFn_r, Pn_r, psin_r, psin_rr:
+                当前 grid 上的 root fields, shape=(Nr,).
+            alpha1, alpha2:
+                当前快照关联的 source 缩放系数.
         """
         super().__init__()
 
@@ -136,7 +152,7 @@ class Equilibrium(Reactive, Serial):
             self.s1_profile,
             self.s2_profile,
         ):
-            profile.update(profile.coeff, grid=self.grid)
+            profile.update(grid=self.grid)
 
         if psin_rr is None:
             psin_rr = grid.differentiate(psin_r)
@@ -172,7 +188,11 @@ class Equilibrium(Reactive, Serial):
 
     @classmethod
     def serial_attributes(cls) -> dict[str, type]:
-        """Serialize only the constructor-owned root state, not derived diagnostics."""
+        """声明可序列化的构造根状态.
+
+        Returns:
+            仅包含构造函数持有的 root snapshot fields, 不包含派生 diagnostics.
+        """
         return {
             "R0": float,
             "Z0": float,
@@ -221,6 +241,7 @@ class Equilibrium(Reactive, Serial):
 
     @property
     def geometry(self) -> Geometry:
+        """从当前快照 root fields 重新物化 Geometry."""
         geometry = Geometry(grid=self.grid)
         geometry.update(
             self.a,
@@ -441,10 +462,15 @@ class Equilibrium(Reactive, Serial):
         profile_degree: int | None = None,
         native_grid: bool = False,
     ) -> "Equilibrium":
-        """Resample root snapshot fields onto another grid for diagnostics/plotting.
+        """将当前平衡快照插值到目标网格.
 
-        This is interpolation/resampling of the materialized snapshot, not a strict
-        reconstruction of the same parametric equilibrium.
+        Args:
+            target_grid: 目标网格. 为 None 时使用当前 grid.
+            profile_degree: 可选的 profile 重建阶数.
+            native_grid: 为 True 时优先保留原始 profile 样本点语义.
+
+        Returns:
+            目标 grid 上重新物化的 Equilibrium 快照.
         """
 
         return resample_equilibrium(
@@ -661,7 +687,7 @@ def _build_plot_equilibrium(
 
     def _resample_profile_triplet(profile: Profile) -> Profile:
         out = profile.copy()
-        out.update(out.coeff, grid=plot_grid)
+        out.update(grid=plot_grid)
         return out
 
     psin_r = _resample_profile(
