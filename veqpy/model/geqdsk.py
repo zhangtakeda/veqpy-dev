@@ -13,12 +13,12 @@ Notes:
 """
 
 import re
-
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.path import Path
 from scipy.integrate import simpson
 from scipy.interpolate import interp1d, splev, splprep
+from scipy.optimize import least_squares
 from shapely.geometry import Point, Polygon
 from units import base
 
@@ -304,6 +304,296 @@ class Geqdsk(Serial):
             plt.close()
 
         return all_points
+
+
+    def boundary_shape_params(self, *, R0=None, Z0=None, a=None):
+        """
+        从 LCFS 边界点估计边界形状参数 (ka, c0a, c1a, s1a, s2a).
+
+        Notes
+        -----
+        模型采用
+        R = R0 + a * cos(theta_bar),
+        Z = Z0 - a * ka * sin(theta),
+        theta_bar = theta + c0a + c1a*cos(theta) + s1a*sin(theta) + s2a*sin(2*theta).
+
+        该实现使用几何初值 + 最小二乘拟合, 适合从 GEQDSK 边界直接反推
+        operator case 所需的 edge 参数。
+        """
+
+        if self.boundary.size == 0:
+            raise ValueError("Boundary is empty. Read GEQDSK first.")
+
+        R = self.boundary[:, 0].astype(float)
+        Z = self.boundary[:, 1].astype(float)
+
+        r_min = float(np.nanmin(R))
+        r_max = float(np.nanmax(R))
+        z_min = float(np.nanmin(Z))
+        z_max = float(np.nanmax(Z))
+        r_mid = 0.5 * (r_max + r_min)
+        z_mid = 0.5 * (z_max + z_min)
+        span_r = r_max - r_min
+        span_z = z_max - z_min
+
+        initial_R0 = float(R0) if R0 is not None else float(self.R0 if np.isfinite(self.R0) else r_mid)
+        initial_Z0 = float(Z0) if Z0 is not None else float(self.Z0 if np.isfinite(self.Z0) else z_mid)
+        initial_a = float(a) if a is not None else 0.5 * span_r
+
+        if initial_a <= 0:
+            raise ValueError("a must be positive")
+
+        ka0 = float(0.5 * span_z / initial_a)
+        ka0 = max(ka0, 1e-6)
+
+        def ordered_boundary_variants():
+            start = int(np.argmin(Z))
+            r_ordered = np.roll(R, -start)
+            z_ordered = np.roll(Z, -start)
+            yield r_ordered, z_ordered
+            yield np.concatenate(([r_ordered[0]], r_ordered[:0:-1])), np.concatenate(([z_ordered[0]], z_ordered[:0:-1]))
+
+        def infer_theta(z_points, z0, a_value, ka):
+            sin_theta = np.clip(-(z_points - z0) / (a_value * max(float(ka), 1e-6)), -1.0, 1.0)
+            theta = np.empty_like(sin_theta)
+            theta[0] = 0.5 * np.pi
+            previous = theta[0]
+            step = 2.0 * np.pi / max(len(z_points), 1)
+
+            for index in range(1, len(z_points)):
+                alpha = np.arcsin(sin_theta[index])
+                candidates = []
+                for candidate in (alpha, np.pi - alpha):
+                    while candidate < previous - 1e-12:
+                        candidate += 2.0 * np.pi
+                    candidates.extend((candidate, candidate + 2.0 * np.pi))
+                target = previous + step
+                theta[index] = min(candidates, key=lambda value: abs(value - target))
+                previous = theta[index]
+
+            return theta
+
+        def estimate_phase_coeffs(theta, r_points, r0, a_value):
+            x = np.clip((r_points - r0) / a_value, -1.0, 1.0)
+            base = np.arccos(x)
+            theta_bar = np.empty_like(base)
+            theta_bar[0] = 0.5 * np.pi
+            previous = theta_bar[0]
+            step = 2.0 * np.pi / max(len(r_points), 1)
+
+            for index in range(1, len(r_points)):
+                candidates = []
+                for candidate in (base[index], -base[index]):
+                    while candidate < previous - np.pi:
+                        candidate += 2.0 * np.pi
+                    while candidate > previous + np.pi:
+                        candidate -= 2.0 * np.pi
+                    candidates.extend((candidate - 2.0 * np.pi, candidate, candidate + 2.0 * np.pi))
+                target = previous + step
+                theta_bar[index] = min(candidates, key=lambda value: abs(value - target))
+                previous = theta_bar[index]
+
+            dphi = np.unwrap(theta_bar - theta)
+            basis = np.column_stack((
+                np.ones_like(theta),
+                np.cos(theta),
+                np.sin(theta),
+                np.sin(2.0 * theta),
+            ))
+            return np.linalg.lstsq(basis, dphi, rcond=None)[0]
+
+        base_params = {
+            "R0": initial_R0,
+            "Z0": initial_Z0,
+            "a": initial_a,
+            "ka": ka0,
+            "c0a": 0.0,
+            "c1a": 0.0,
+            "s1a": 0.0,
+            "s2a": 0.0,
+        }
+
+        free_names = []
+        if R0 is None:
+            free_names.append("R0")
+        if Z0 is None:
+            free_names.append("Z0")
+        if a is None:
+            free_names.append("a")
+        free_names.extend(["ka", "c0a", "c1a", "s1a", "s2a"])
+
+        lower_bounds_by_name = {
+            "R0": r_min - 0.25 * span_r,
+            "Z0": z_min - 0.25 * span_z,
+            "a": max(1e-6, 0.25 * initial_a),
+            "ka": 1e-6,
+            "c0a": -10.0,
+            "c1a": -10.0,
+            "s1a": -10.0,
+            "s2a": -10.0,
+        }
+        upper_bounds_by_name = {
+            "R0": r_max + 0.25 * span_r,
+            "Z0": z_max + 0.25 * span_z,
+            "a": max(4.0 * initial_a, span_z, 1.0),
+            "ka": 10.0,
+            "c0a": 10.0,
+            "c1a": 10.0,
+            "s1a": 10.0,
+            "s2a": 10.0,
+        }
+
+        def pack_params(params):
+            return np.array([params[name] for name in free_names], dtype=float)
+
+        def unpack_params(vector):
+            params = dict(base_params)
+            for name, value in zip(free_names, vector):
+                params[name] = float(value)
+            return params
+
+        best_fit = None
+        for r_points, z_points in ordered_boundary_variants():
+            theta0 = infer_theta(z_points, initial_Z0, initial_a, ka0)
+            c0_init, c1_init, s1_init, s2_init = estimate_phase_coeffs(theta0, r_points, initial_R0, initial_a)
+            starts = [
+                {
+                    "R0": initial_R0,
+                    "Z0": initial_Z0,
+                    "a": initial_a,
+                    "ka": ka0,
+                    "c0a": c0_init,
+                    "c1a": c1_init,
+                    "s1a": s1_init,
+                    "s2a": s2_init,
+                },
+                {
+                    "R0": r_mid,
+                    "Z0": z_mid,
+                    "a": 0.5 * span_r,
+                    "ka": max(0.5 * span_z / max(0.5 * span_r, 1e-6), 1e-6),
+                    "c0a": 0.0,
+                    "c1a": 0.0,
+                    "s1a": 0.0,
+                    "s2a": 0.0,
+                },
+                {
+                    "R0": initial_R0,
+                    "Z0": initial_Z0,
+                    "a": initial_a * 0.9,
+                    "ka": ka0,
+                    "c0a": 0.0,
+                    "c1a": 0.0,
+                    "s1a": 0.0,
+                    "s2a": 0.0,
+                },
+                {
+                    "R0": initial_R0,
+                    "Z0": initial_Z0,
+                    "a": initial_a * 1.1,
+                    "ka": ka0,
+                    "c0a": 0.0,
+                    "c1a": 0.0,
+                    "s1a": 0.0,
+                    "s2a": 0.0,
+                },
+                {
+                    "R0": initial_R0,
+                    "Z0": initial_Z0,
+                    "a": initial_a,
+                    "ka": ka0 * 0.9,
+                    "c0a": 0.0,
+                    "c1a": 0.2,
+                    "s1a": 0.0,
+                    "s2a": 0.0,
+                },
+                {
+                    "R0": initial_R0,
+                    "Z0": initial_Z0,
+                    "a": initial_a,
+                    "ka": ka0 * 1.1,
+                    "c0a": 0.0,
+                    "c1a": -0.2,
+                    "s1a": 0.0,
+                    "s2a": 0.0,
+                },
+                {
+                    "R0": r_mid,
+                    "Z0": z_mid,
+                    "a": initial_a * 0.85,
+                    "ka": ka0 * 1.1,
+                    "c0a": 0.1,
+                    "c1a": 0.2,
+                    "s1a": 0.0,
+                    "s2a": 0.0,
+                },
+                {
+                    "R0": r_mid,
+                    "Z0": z_mid,
+                    "a": initial_a * 1.15,
+                    "ka": ka0 * 0.9,
+                    "c0a": -0.1,
+                    "c1a": -0.2,
+                    "s1a": 0.0,
+                    "s2a": 0.0,
+                },
+            ]
+
+            def residual(vector):
+                params = unpack_params(vector)
+                theta = infer_theta(z_points, params["Z0"], params["a"], params["ka"])
+                tb = (
+                    theta
+                    + params["c0a"]
+                    + params["c1a"] * np.cos(theta)
+                    + params["s1a"] * np.sin(theta)
+                    + params["s2a"] * np.sin(2.0 * theta)
+                )
+                r_res = r_points - (params["R0"] + params["a"] * np.cos(tb))
+                z_res = z_points - (params["Z0"] - params["a"] * params["ka"] * np.sin(theta))
+                return np.concatenate([r_res, z_res])
+
+            bounds = (
+                np.array([lower_bounds_by_name[name] for name in free_names], dtype=float),
+                np.array([upper_bounds_by_name[name] for name in free_names], dtype=float),
+            )
+
+            for start in starts:
+                start["a"] = max(start["a"], lower_bounds_by_name["a"])
+                start["ka"] = max(start["ka"], lower_bounds_by_name["ka"])
+                x0 = pack_params(start)
+                fit = least_squares(
+                    residual,
+                    x0=x0,
+                    bounds=bounds,
+                    method="trf",
+                )
+                rms = float(np.sqrt(np.mean(fit.fun**2)))
+                if best_fit is None or rms < best_fit["rms"]:
+                    best_fit = {"fit": fit, "rms": rms, "params": unpack_params(fit.x)}
+
+        fitted = best_fit["params"]
+        R0 = fitted["R0"]
+        Z0 = fitted["Z0"]
+        a = fitted["a"]
+        ka = fitted["ka"]
+        c0a = fitted["c0a"]
+        c1a = fitted["c1a"]
+        s1a = fitted["s1a"]
+        s2a = fitted["s2a"]
+        c0a = float((c0a + np.pi) % (2.0 * np.pi) - np.pi)
+
+        return {
+            "R0": float(R0),
+            "Z0": float(Z0),
+            "a": float(a),
+            "ka": float(ka),
+            "c0a": c0a,
+            "c1a": float(c1a),
+            "s1a": float(s1a),
+            "s2a": float(s2a),
+            "rms": best_fit["rms"],
+        }
 
     def _read_header(self, file):
         line = file.readline()
