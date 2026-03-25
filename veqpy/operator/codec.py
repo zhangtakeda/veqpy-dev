@@ -27,11 +27,13 @@ def encode_packed_state(
     coeffs_by_name: dict[str, list[float] | None],
     profile_L: np.ndarray,
     coeff_index: np.ndarray,
+    *,
+    profile_names: tuple[str, ...] = PROFILE_NAMES,
 ) -> np.ndarray:
     """按 layout 把 profile 系数字典编码成 packed 状态向量."""
     x = np.empty(packed_size(coeff_index), dtype=np.float64)
 
-    for p, name in enumerate(PROFILE_NAMES):
+    for p, name in enumerate(profile_names):
         L = int(profile_L[p])
         coeff = coeffs_by_name.get(name)
 
@@ -54,12 +56,14 @@ def decode_packed_blocks(
     x: np.ndarray,
     profile_L: np.ndarray,
     coeff_index: np.ndarray,
+    *,
+    profile_names: tuple[str, ...] = PROFILE_NAMES,
 ) -> tuple[np.ndarray | None, ...]:
     """把 packed 状态向量解码成按 profile 分块的系数副本."""
     x = validate_packed_state(x, coeff_index)
 
     blocks: list[np.ndarray | None] = []
-    for p, _ in enumerate(PROFILE_NAMES):
+    for p, _ in enumerate(profile_names):
         L = int(profile_L[p])
         if L < 0:
             blocks.append(None)

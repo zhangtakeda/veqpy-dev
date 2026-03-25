@@ -39,31 +39,43 @@ def register_residual_block(name: str) -> Callable:
     return decorator
 
 
+def _decode_residual_block(name: str) -> tuple[str, int, Callable | None]:
+    if name.startswith("c") and name[1:].isdigit():
+        order = int(name[1:])
+        if order == 0:
+            return ("fixed", 0, RESIDUAL_BLOCK_REGISTRY["c0"].implementation)
+        return ("c_family", order, None)
+    if name.startswith("s") and name[1:].isdigit():
+        order = int(name[1:])
+        if order == 0:
+            raise KeyError("s0 is not a valid residual block")
+        return ("s_family", order, None)
+    try:
+        return ("fixed", 0, RESIDUAL_BLOCK_REGISTRY[name].implementation)
+    except KeyError as exc:
+        supported = ", ".join(sorted(RESIDUAL_BLOCK_REGISTRY))
+        raise KeyError(f"Unknown residual block {name!r}. Supported blocks: {supported}, c<k>, s<k>") from exc
+
+
 def bind_residual_runner(
     profile_names: tuple[str, ...],
     coeff_index_rows: np.ndarray,
     lengths: np.ndarray,
     residual_size: int,
 ) -> Callable:
-    kernels: list[Callable] = []
+    specs: list[tuple[str, int, Callable | None]] = []
     for name in profile_names:
-        try:
-            kernels.append(RESIDUAL_BLOCK_REGISTRY[name].implementation)
-        except KeyError as exc:
-            supported = ", ".join(RESIDUAL_BLOCK_REGISTRY)
-            raise KeyError(f"Unknown residual block {name!r}. Supported blocks: {supported}") from exc
-    bound_kernels = tuple(kernels)
+        specs.append(_decode_residual_block(name))
+    bound_specs = tuple(specs)
 
     def runner(
         G: np.ndarray,
         psin_R: np.ndarray,
         psin_Z: np.ndarray,
         sin_tb: np.ndarray,
-        sin_theta: np.ndarray,
-        cos_theta: np.ndarray,
-        sin_2theta: np.ndarray,
-        rho: np.ndarray,
-        rho2: np.ndarray,
+        sin_ktheta: np.ndarray,
+        cos_ktheta: np.ndarray,
+        rho_powers: np.ndarray,
         y: np.ndarray,
         T: np.ndarray,
         weights: np.ndarray,
@@ -72,27 +84,57 @@ def bind_residual_runner(
         B0: float,
     ) -> np.ndarray:
         out = np.zeros(residual_size, dtype=np.float64)
-        for slot, kernel in enumerate(bound_kernels):
+        for slot, (kind, order, kernel) in enumerate(bound_specs):
             coeff_size = int(lengths[slot])
-            kernel(
-                out,
-                coeff_index_rows[slot, :coeff_size],
-                G,
-                psin_R,
-                psin_Z,
-                sin_tb,
-                sin_theta,
-                cos_theta,
-                sin_2theta,
-                rho,
-                rho2,
-                y,
-                T,
-                weights,
-                a,
-                R0,
-                B0,
-            )
+            coeff_indices = coeff_index_rows[slot, :coeff_size]
+            if kind == "fixed":
+                kernel(
+                    out,
+                    coeff_indices,
+                    G,
+                    psin_R,
+                    psin_Z,
+                    sin_tb,
+                    sin_ktheta,
+                    cos_ktheta,
+                    rho_powers,
+                    y,
+                    T,
+                    weights,
+                    a,
+                    R0,
+                    B0,
+                )
+            elif kind == "c_family":
+                assemble_c_family_residual_block(
+                    out,
+                    coeff_indices,
+                    order,
+                    G,
+                    psin_R,
+                    sin_tb,
+                    cos_ktheta,
+                    rho_powers,
+                    y,
+                    T,
+                    weights,
+                    a,
+                )
+            else:
+                assemble_s_family_residual_block(
+                    out,
+                    coeff_indices,
+                    order,
+                    G,
+                    psin_R,
+                    sin_tb,
+                    sin_ktheta,
+                    rho_powers,
+                    y,
+                    T,
+                    weights,
+                    a,
+                )
         return out
 
     return runner
@@ -142,6 +184,60 @@ def update_residual(
     out_G[:] = alpha1 * G1n + alpha2 * G2n
 
 
+def assemble_c_family_residual_block(
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
+    order: int,
+    G: np.ndarray,
+    psin_R: np.ndarray,
+    sin_tb: np.ndarray,
+    cos_ktheta: np.ndarray,
+    rho_powers: np.ndarray,
+    y: np.ndarray,
+    T: np.ndarray,
+    weights: np.ndarray,
+    a: float,
+) -> None:
+    collapsed = _collapse_g_two_fields_theta(G, psin_R, sin_tb, cos_ktheta[order])
+    _scale_and_project_rows_three(
+        out_packed,
+        coeff_indices,
+        T,
+        collapsed,
+        rho_powers[order + 1],
+        y,
+        weights,
+        (2.0 * np.pi / G.shape[1]) * (-a),
+    )
+
+
+def assemble_s_family_residual_block(
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
+    order: int,
+    G: np.ndarray,
+    psin_R: np.ndarray,
+    sin_tb: np.ndarray,
+    sin_ktheta: np.ndarray,
+    rho_powers: np.ndarray,
+    y: np.ndarray,
+    T: np.ndarray,
+    weights: np.ndarray,
+    a: float,
+) -> None:
+    collapsed = _collapse_g_two_fields_theta(G, psin_R, sin_tb, sin_ktheta[order])
+    _scale_and_project_rows_three(
+        out_packed,
+        coeff_indices,
+        T,
+        collapsed,
+        rho_powers[order + 1],
+        y,
+        weights,
+        (2.0 * np.pi / G.shape[1]) * (-a),
+    )
+
+
 @register_residual_block("h")
 def assemble_h_residual_block(
     out_packed: np.ndarray,
@@ -150,11 +246,9 @@ def assemble_h_residual_block(
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
     sin_tb: np.ndarray,
-    sin_theta: np.ndarray,
-    cos_theta: np.ndarray,
-    sin_2theta: np.ndarray,
-    rho: np.ndarray,
-    rho2: np.ndarray,
+    sin_ktheta: np.ndarray,
+    cos_ktheta: np.ndarray,
+    rho_powers: np.ndarray,
     y: np.ndarray,
     T: np.ndarray,
     weights: np.ndarray,
@@ -163,7 +257,7 @@ def assemble_h_residual_block(
     B0: float,
 ) -> None:
     """组装 h 通道 residual block."""
-    del psin_Z, sin_tb, sin_theta, cos_theta, sin_2theta, rho, rho2, R0, B0
+    del psin_Z, sin_tb, sin_ktheta, cos_ktheta, rho_powers, R0, B0
     collapsed = _collapse_g_field(G, psin_R)
     _scale_and_project_rows_two(out_packed, coeff_indices, T, collapsed, y, weights, (2.0 * np.pi / G.shape[1]) * a)
 
@@ -176,11 +270,9 @@ def assemble_v_residual_block(
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
     sin_tb: np.ndarray,
-    sin_theta: np.ndarray,
-    cos_theta: np.ndarray,
-    sin_2theta: np.ndarray,
-    rho: np.ndarray,
-    rho2: np.ndarray,
+    sin_ktheta: np.ndarray,
+    cos_ktheta: np.ndarray,
+    rho_powers: np.ndarray,
     y: np.ndarray,
     T: np.ndarray,
     weights: np.ndarray,
@@ -189,7 +281,7 @@ def assemble_v_residual_block(
     B0: float,
 ) -> None:
     """组装 v 通道 residual block."""
-    del psin_R, sin_tb, sin_theta, cos_theta, sin_2theta, rho, rho2, R0, B0
+    del psin_R, sin_tb, sin_ktheta, cos_ktheta, rho_powers, R0, B0
     collapsed = _collapse_g_field(G, psin_Z)
     _scale_and_project_rows_two(out_packed, coeff_indices, T, collapsed, y, weights, (2.0 * np.pi / G.shape[1]) * a)
 
@@ -202,11 +294,9 @@ def assemble_k_residual_block(
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
     sin_tb: np.ndarray,
-    sin_theta: np.ndarray,
-    cos_theta: np.ndarray,
-    sin_2theta: np.ndarray,
-    rho: np.ndarray,
-    rho2: np.ndarray,
+    sin_ktheta: np.ndarray,
+    cos_ktheta: np.ndarray,
+    rho_powers: np.ndarray,
     y: np.ndarray,
     T: np.ndarray,
     weights: np.ndarray,
@@ -215,10 +305,10 @@ def assemble_k_residual_block(
     B0: float,
 ) -> None:
     """组装 k 通道 residual block."""
-    del psin_R, sin_tb, cos_theta, sin_2theta, rho2, R0, B0
-    collapsed = _collapse_g_field_theta(G, psin_Z, sin_theta)
+    del psin_R, sin_tb, cos_ktheta, R0, B0
+    collapsed = _collapse_g_field_theta(G, psin_Z, sin_ktheta[1])
     _scale_and_project_rows_three(
-        out_packed, coeff_indices, T, collapsed, rho, y, weights, (2.0 * np.pi / G.shape[1]) * (-a)
+        out_packed, coeff_indices, T, collapsed, rho_powers[1], y, weights, (2.0 * np.pi / G.shape[1]) * (-a)
     )
 
 
@@ -230,11 +320,9 @@ def assemble_c0_residual_block(
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
     sin_tb: np.ndarray,
-    sin_theta: np.ndarray,
-    cos_theta: np.ndarray,
-    sin_2theta: np.ndarray,
-    rho: np.ndarray,
-    rho2: np.ndarray,
+    sin_ktheta: np.ndarray,
+    cos_ktheta: np.ndarray,
+    rho_powers: np.ndarray,
     y: np.ndarray,
     T: np.ndarray,
     weights: np.ndarray,
@@ -243,10 +331,10 @@ def assemble_c0_residual_block(
     B0: float,
 ) -> None:
     """组装 c0 通道 residual block."""
-    del psin_Z, sin_theta, cos_theta, sin_2theta, rho2, R0, B0
+    del psin_Z, sin_ktheta, cos_ktheta, R0, B0
     collapsed = _collapse_g_two_fields(G, psin_R, sin_tb)
     _scale_and_project_rows_three(
-        out_packed, coeff_indices, T, collapsed, rho, y, weights, (2.0 * np.pi / G.shape[1]) * (-a)
+        out_packed, coeff_indices, T, collapsed, rho_powers[1], y, weights, (2.0 * np.pi / G.shape[1]) * (-a)
     )
 
 
@@ -258,11 +346,9 @@ def assemble_c1_residual_block(
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
     sin_tb: np.ndarray,
-    sin_theta: np.ndarray,
-    cos_theta: np.ndarray,
-    sin_2theta: np.ndarray,
-    rho: np.ndarray,
-    rho2: np.ndarray,
+    sin_ktheta: np.ndarray,
+    cos_ktheta: np.ndarray,
+    rho_powers: np.ndarray,
     y: np.ndarray,
     T: np.ndarray,
     weights: np.ndarray,
@@ -271,10 +357,9 @@ def assemble_c1_residual_block(
     B0: float,
 ) -> None:
     """组装 c1 通道 residual block."""
-    del psin_Z, sin_theta, sin_2theta, rho, R0, B0
-    collapsed = _collapse_g_two_fields_theta(G, psin_R, sin_tb, cos_theta)
-    _scale_and_project_rows_three(
-        out_packed, coeff_indices, T, collapsed, rho2, y, weights, (2.0 * np.pi / G.shape[1]) * (-a)
+    del psin_Z, sin_ktheta, R0, B0
+    assemble_c_family_residual_block(
+        out_packed, coeff_indices, 1, G, psin_R, sin_tb, cos_ktheta, rho_powers, y, T, weights, a
     )
 
 
@@ -286,11 +371,9 @@ def assemble_s1_residual_block(
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
     sin_tb: np.ndarray,
-    sin_theta: np.ndarray,
-    cos_theta: np.ndarray,
-    sin_2theta: np.ndarray,
-    rho: np.ndarray,
-    rho2: np.ndarray,
+    sin_ktheta: np.ndarray,
+    cos_ktheta: np.ndarray,
+    rho_powers: np.ndarray,
     y: np.ndarray,
     T: np.ndarray,
     weights: np.ndarray,
@@ -299,10 +382,9 @@ def assemble_s1_residual_block(
     B0: float,
 ) -> None:
     """组装 s1 通道 residual block."""
-    del psin_Z, cos_theta, sin_2theta, rho, R0, B0
-    collapsed = _collapse_g_two_fields_theta(G, psin_R, sin_tb, sin_theta)
-    _scale_and_project_rows_three(
-        out_packed, coeff_indices, T, collapsed, rho2, y, weights, (2.0 * np.pi / G.shape[1]) * (-a)
+    del psin_Z, cos_ktheta, R0, B0
+    assemble_s_family_residual_block(
+        out_packed, coeff_indices, 1, G, psin_R, sin_tb, sin_ktheta, rho_powers, y, T, weights, a
     )
 
 
@@ -314,11 +396,9 @@ def assemble_s2_residual_block(
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
     sin_tb: np.ndarray,
-    sin_theta: np.ndarray,
-    cos_theta: np.ndarray,
-    sin_2theta: np.ndarray,
-    rho: np.ndarray,
-    rho2: np.ndarray,
+    sin_ktheta: np.ndarray,
+    cos_ktheta: np.ndarray,
+    rho_powers: np.ndarray,
     y: np.ndarray,
     T: np.ndarray,
     weights: np.ndarray,
@@ -327,10 +407,9 @@ def assemble_s2_residual_block(
     B0: float,
 ) -> None:
     """组装 s2 通道 residual block."""
-    del psin_Z, sin_theta, cos_theta, R0, B0
-    collapsed = _collapse_g_two_fields_theta(G, psin_R, sin_tb, sin_2theta)
-    _scale_and_project_rows_four(
-        out_packed, coeff_indices, T, collapsed, rho, rho2, y, weights, (2.0 * np.pi / G.shape[1]) * (-a)
+    del psin_Z, cos_ktheta, R0, B0
+    assemble_s_family_residual_block(
+        out_packed, coeff_indices, 2, G, psin_R, sin_tb, sin_ktheta, rho_powers, y, T, weights, a
     )
 
 
@@ -342,11 +421,9 @@ def assemble_psin_residual_block(
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
     sin_tb: np.ndarray,
-    sin_theta: np.ndarray,
-    cos_theta: np.ndarray,
-    sin_2theta: np.ndarray,
-    rho: np.ndarray,
-    rho2: np.ndarray,
+    sin_ktheta: np.ndarray,
+    cos_ktheta: np.ndarray,
+    rho_powers: np.ndarray,
     y: np.ndarray,
     T: np.ndarray,
     weights: np.ndarray,
@@ -355,9 +432,11 @@ def assemble_psin_residual_block(
     B0: float,
 ) -> None:
     """组装 psin 通道 residual block."""
-    del psin_R, psin_Z, sin_tb, sin_theta, cos_theta, sin_2theta, rho, a, R0, B0
+    del psin_R, psin_Z, sin_tb, sin_ktheta, cos_ktheta, a, R0, B0
     collapsed = _collapse_g(G)
-    _scale_and_project_rows_three(out_packed, coeff_indices, T, collapsed, rho2, y, weights, 2.0 * np.pi / G.shape[1])
+    _scale_and_project_rows_three(
+        out_packed, coeff_indices, T, collapsed, rho_powers[2], y, weights, 2.0 * np.pi / G.shape[1]
+    )
 
 
 @register_residual_block("F")
@@ -368,11 +447,9 @@ def assemble_F_residual_block(
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
     sin_tb: np.ndarray,
-    sin_theta: np.ndarray,
-    cos_theta: np.ndarray,
-    sin_2theta: np.ndarray,
-    rho: np.ndarray,
-    rho2: np.ndarray,
+    sin_ktheta: np.ndarray,
+    cos_ktheta: np.ndarray,
+    rho_powers: np.ndarray,
     y: np.ndarray,
     T: np.ndarray,
     weights: np.ndarray,
@@ -381,7 +458,7 @@ def assemble_F_residual_block(
     B0: float,
 ) -> None:
     """组装 F 通道 residual block."""
-    del psin_R, psin_Z, sin_tb, sin_theta, cos_theta, sin_2theta, rho, rho2, a
+    del psin_R, psin_Z, sin_tb, sin_ktheta, cos_ktheta, rho_powers, a
     collapsed = _collapse_g(G)
     _scale_and_project_rows_three(
         out_packed, coeff_indices, T, collapsed, y, y, weights, (2.0 * np.pi / G.shape[1]) * (R0 * B0)

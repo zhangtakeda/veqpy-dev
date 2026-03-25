@@ -19,7 +19,6 @@ import numpy as np
 
 from veqpy.engine import update_geometry
 from veqpy.model.grid import Grid
-from veqpy.model.profile import Profile
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,13 +60,11 @@ class Geometry:
         R0: float,
         Z0: float,
         grid: Grid,
-        h_profile: Profile,
-        v_profile: Profile,
-        k_profile: Profile,
-        c0_profile: Profile,
-        c1_profile: Profile,
-        s1_profile: Profile,
-        s2_profile: Profile,
+        h_fields: np.ndarray,
+        v_fields: np.ndarray,
+        k_fields: np.ndarray,
+        c_fields: np.ndarray,
+        s_fields: np.ndarray,
     ):
         """用当前 Grid 和 profile fields 刷新 geometry."""
         if self.R_fields.shape[1:] != (grid.Nr, grid.Nt):
@@ -91,18 +88,18 @@ class Geometry:
             float(Z0),
             grid.rho,
             grid.theta,
-            grid.cos_theta,
-            grid.sin_theta,
-            grid.cos_2theta,
-            grid.sin_2theta,
+            grid.cos_ktheta,
+            grid.sin_ktheta,
+            grid.k_cos_ktheta,
+            grid.k_sin_ktheta,
+            grid.k2_cos_ktheta,
+            grid.k2_sin_ktheta,
             grid.weights,
-            h_profile.u_fields,
-            v_profile.u_fields,
-            k_profile.u_fields,
-            c0_profile.u_fields,
-            c1_profile.u_fields,
-            s1_profile.u_fields,
-            s2_profile.u_fields,
+            h_fields,
+            v_fields,
+            k_fields,
+            c_fields,
+            s_fields,
         )
 
     @property

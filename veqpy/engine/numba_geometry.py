@@ -34,18 +34,18 @@ def update_geometry(
     Z0: float,
     rho: np.ndarray,
     theta: np.ndarray,
-    cos_theta: np.ndarray,
-    sin_theta: np.ndarray,
-    cos_2theta: np.ndarray,
-    sin_2theta: np.ndarray,
+    cos_ktheta: np.ndarray,
+    sin_ktheta: np.ndarray,
+    k_cos_ktheta: np.ndarray,
+    k_sin_ktheta: np.ndarray,
+    k2_cos_ktheta: np.ndarray,
+    k2_sin_ktheta: np.ndarray,
     weights: np.ndarray,
     h_fields: np.ndarray,
     v_fields: np.ndarray,
     k_fields: np.ndarray,
-    c0_fields: np.ndarray,
-    c1_fields: np.ndarray,
-    s1_fields: np.ndarray,
-    s2_fields: np.ndarray,
+    c_fields: np.ndarray,
+    s_fields: np.ndarray,
 ):
     """原地更新 geometry fields 与 geometry integrals."""
     nr = rho.shape[0]
@@ -53,6 +53,8 @@ def update_geometry(
     theta_scale = 2.0 * np.pi / nt
     mean_scale = 1.0 / nt
     two_pi = 2.0 * np.pi
+    c_limit = min(c_fields.shape[0], cos_ktheta.shape[0])
+    s_limit = min(s_fields.shape[0], sin_ktheta.shape[0])
 
     for i in range(nr):
         rho_i = rho[i]
@@ -65,18 +67,9 @@ def update_geometry(
         k_i = k_fields[0, i]
         k_r_i = k_fields[1, i]
         k_rr_i = k_fields[2, i]
-        c0_i = c0_fields[0, i]
-        c0_r_i = c0_fields[1, i]
-        c0_rr_i = c0_fields[2, i]
-        c1_i = c1_fields[0, i]
-        c1_r_i = c1_fields[1, i]
-        c1_rr_i = c1_fields[2, i]
-        s1_i = s1_fields[0, i]
-        s1_r_i = s1_fields[1, i]
-        s1_rr_i = s1_fields[2, i]
-        s2_i = s2_fields[0, i]
-        s2_r_i = s2_fields[1, i]
-        s2_rr_i = s2_fields[2, i]
+        c0_i = c_fields[0, 0, i]
+        c0_r_i = c_fields[0, 1, i]
+        c0_rr_i = c_fields[0, 2, i]
 
         sum_J = 0.0
         sum_JR = 0.0
@@ -85,17 +78,45 @@ def update_geometry(
         sum_JdivR = 0.0
 
         for j in range(nt):
-            cos_t = cos_theta[j]
-            sin_t = sin_theta[j]
-            cos_2t = cos_2theta[j]
-            sin_2t = sin_2theta[j]
+            sin_t = sin_ktheta[1, j]
+            cos_t = cos_ktheta[1, j]
 
-            tb_ij = theta[j] + c0_i + c1_i * cos_t + s1_i * sin_t + s2_i * sin_2t
-            tb_r_ij = c0_r_i + c1_r_i * cos_t + s1_r_i * sin_t + s2_r_i * sin_2t
-            tb_t_ij = 1.0 - c1_i * sin_t + s1_i * cos_t + 2.0 * s2_i * cos_2t
-            tb_rr_ij = c0_rr_i + c1_rr_i * cos_t + s1_rr_i * sin_t + s2_rr_i * sin_2t
-            tb_rt_ij = -c1_r_i * sin_t + s1_r_i * cos_t + 2.0 * s2_r_i * cos_2t
-            tb_tt_ij = -c1_i * cos_t - s1_i * sin_t - 4.0 * s2_i * sin_2t
+            tb_ij = theta[j] + c0_i
+            tb_r_ij = c0_r_i
+            tb_t_ij = 1.0
+            tb_rr_ij = c0_rr_i
+            tb_rt_ij = 0.0
+            tb_tt_ij = 0.0
+
+            for order in range(1, c_limit):
+                cos_kt = cos_ktheta[order, j]
+                k_sin_kt = k_sin_ktheta[order, j]
+                k2_cos_kt = k2_cos_ktheta[order, j]
+                c_i = c_fields[order, 0, i]
+                c_r_i = c_fields[order, 1, i]
+                c_rr_i = c_fields[order, 2, i]
+
+                tb_ij += c_i * cos_kt
+                tb_r_ij += c_r_i * cos_kt
+                tb_t_ij -= c_i * k_sin_kt
+                tb_rr_ij += c_rr_i * cos_kt
+                tb_rt_ij -= c_r_i * k_sin_kt
+                tb_tt_ij -= c_i * k2_cos_kt
+
+            for order in range(1, s_limit):
+                sin_kt = sin_ktheta[order, j]
+                k_cos_kt = k_cos_ktheta[order, j]
+                k2_sin_kt = k2_sin_ktheta[order, j]
+                s_i = s_fields[order, 0, i]
+                s_r_i = s_fields[order, 1, i]
+                s_rr_i = s_fields[order, 2, i]
+
+                tb_ij += s_i * sin_kt
+                tb_r_ij += s_r_i * sin_kt
+                tb_t_ij += s_i * k_cos_kt
+                tb_rr_ij += s_rr_i * sin_kt
+                tb_rt_ij += s_r_i * k_cos_kt
+                tb_tt_ij -= s_i * k2_sin_kt
 
             cos_tb_ij = np.cos(tb_ij)
             sin_tb_ij = np.sin(tb_ij)

@@ -10,6 +10,10 @@ Public API:
 - PROFILE_INDEX
 - PREFIX_PROFILE_NAMES
 - SHAPE_PROFILE_NAMES
+- build_fourier_profile_names
+- build_shape_profile_names
+- build_profile_names
+- build_profile_index
 - build_profile_layout
 - build_active_profile_metadata
 - packed_size
@@ -24,19 +28,53 @@ Notes:
 import numpy as np
 
 PREFIX_PROFILE_NAMES = ("psin", "F")
-SHAPE_PROFILE_NAMES = ("h", "v", "k", "c0", "c1", "s1", "s2")
+CORE_SHAPE_PROFILE_NAMES = ("h", "v", "k")
+
+
+def build_fourier_profile_names(K_max: int) -> tuple[str, ...]:
+    K_max = int(K_max)
+    if K_max < 0:
+        raise ValueError(f"K_max must be non-negative, got {K_max}")
+
+    cosine_names = tuple(f"c{k}" for k in range(K_max + 1))
+    sine_names = tuple(f"s{k}" for k in range(1, K_max + 1))
+    return cosine_names + sine_names
+
+
+def build_shape_profile_names(K_max: int) -> tuple[str, ...]:
+    return CORE_SHAPE_PROFILE_NAMES + build_fourier_profile_names(K_max)
+
+
+def build_profile_names(K_max: int) -> tuple[str, ...]:
+    return PREFIX_PROFILE_NAMES + build_shape_profile_names(K_max)
+
+
+def build_profile_index(profile_names: tuple[str, ...]) -> dict[str, int]:
+    return {name: i for i, name in enumerate(profile_names)}
+
+
+SHAPE_PROFILE_NAMES = build_shape_profile_names(K_max=2)
 PROFILE_NAMES = PREFIX_PROFILE_NAMES + SHAPE_PROFILE_NAMES
-PROFILE_INDEX = {name: i for i, name in enumerate(PROFILE_NAMES)}
+PROFILE_INDEX = build_profile_index(PROFILE_NAMES)
 PROFILE_COUNT = len(PROFILE_NAMES)
 
 
 def build_profile_layout(
     coeffs_by_name: dict[str, list[float] | None],
+    *,
+    profile_names: tuple[str, ...] = PROFILE_NAMES,
+    prefix_profile_names: tuple[str, ...] = PREFIX_PROFILE_NAMES,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """根据 profile 系数字典构造 packed 状态布局."""
-    profile_L = np.full(PROFILE_COUNT, -1, dtype=np.int64)
+    profile_names = tuple(profile_names)
+    prefix_profile_names = tuple(prefix_profile_names)
+    profile_index = build_profile_index(profile_names)
+    profile_count = len(profile_names)
+    profile_L = np.full(profile_count, -1, dtype=np.int64)
 
-    unknown = set(coeffs_by_name) - set(PROFILE_INDEX)
+    shape_profile_names = tuple(name for name in profile_names if name not in prefix_profile_names)
+
+    unknown = set(coeffs_by_name) - set(profile_index)
     if unknown:
         raise KeyError(f"Unknown profile names: {sorted(unknown)}")
 
@@ -44,18 +82,18 @@ def build_profile_layout(
         if coeff is None:
             continue
         coeff_arr = coeff_array_from_list(name, coeff)
-        profile_L[PROFILE_INDEX[name]] = coeff_arr.size - 1
+        profile_L[profile_index[name]] = coeff_arr.size - 1
 
     max_L = int(np.max(profile_L))
     if max_L < 0:
         raise ValueError("At least one active profile is required")
 
-    coeff_index = -np.ones((PROFILE_COUNT, max_L + 1), dtype=np.int64)
+    coeff_index = -np.ones((profile_count, max_L + 1), dtype=np.int64)
     order_offsets = np.zeros(max_L + 2, dtype=np.int64)
 
     x_pos = 0
-    for name in PREFIX_PROFILE_NAMES:
-        p = PROFILE_INDEX[name]
+    for name in prefix_profile_names:
+        p = profile_index[name]
         L = int(profile_L[p])
         if L < 0:
             continue
@@ -65,8 +103,8 @@ def build_profile_layout(
 
     for k in range(max_L + 1):
         order_offsets[k] = x_pos
-        for name in SHAPE_PROFILE_NAMES:
-            p = PROFILE_INDEX[name]
+        for name in shape_profile_names:
+            p = profile_index[name]
             if profile_L[p] >= k:
                 coeff_index[p, k] = x_pos
                 x_pos += 1
@@ -75,11 +113,16 @@ def build_profile_layout(
     return profile_L, coeff_index, order_offsets
 
 
-def build_active_profile_metadata(profile_L: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def build_active_profile_metadata(
+    profile_L: np.ndarray,
+    *,
+    profile_names: tuple[str, ...] = PROFILE_NAMES,
+) -> tuple[np.ndarray, np.ndarray]:
     """从 profile 阶数向量提取 active profile 元数据."""
     profile_L = np.asarray(profile_L, dtype=np.int64)
-    if profile_L.ndim != 1 or profile_L.shape[0] != PROFILE_COUNT:
-        raise ValueError(f"Expected profile_L to have shape ({PROFILE_COUNT},), got {profile_L.shape}")
+    expected_size = len(tuple(profile_names))
+    if profile_L.ndim != 1 or profile_L.shape[0] != expected_size:
+        raise ValueError(f"Expected profile_L to have shape ({expected_size},), got {profile_L.shape}")
 
     active_profile_mask = profile_L >= 0
     active_profile_ids = np.flatnonzero(active_profile_mask).astype(np.int64, copy=False)

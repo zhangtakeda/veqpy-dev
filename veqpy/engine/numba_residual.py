@@ -46,12 +46,32 @@ _BLOCK_CODE_BY_NAME = {
     "v": 1,
     "k": 2,
     "c0": 3,
-    "c1": 4,
-    "s1": 5,
-    "s2": 6,
-    "psin": 7,
-    "F": 8,
+    "c_family": 4,
+    "s_family": 5,
+    "psin": 6,
+    "F": 7,
 }
+
+
+def _decode_residual_block_code(name: str) -> tuple[int, int]:
+    if name.startswith("c") and name[1:].isdigit():
+        order = int(name[1:])
+        if order == 0:
+            return (_BLOCK_CODE_BY_NAME["c0"], 0)
+        return (_BLOCK_CODE_BY_NAME["c_family"], order)
+    if name.startswith("s") and name[1:].isdigit():
+        order = int(name[1:])
+        if order == 0:
+            raise KeyError("s0 is not a valid residual block")
+        return (_BLOCK_CODE_BY_NAME["s_family"], order)
+    if name not in RESIDUAL_BLOCK_REGISTRY:
+        supported = ", ".join(sorted(RESIDUAL_BLOCK_REGISTRY))
+        raise KeyError(f"Unknown residual block {name!r}. Supported blocks: {supported}, c<k>, s<k>")
+    try:
+        return (_BLOCK_CODE_BY_NAME[name], 0)
+    except KeyError as exc:
+        supported = ", ".join(_BLOCK_CODE_BY_NAME)
+        raise KeyError(f"Unknown residual block {name!r}. Supported blocks: {supported}") from exc
 
 
 def bind_residual_runner(
@@ -61,26 +81,18 @@ def bind_residual_runner(
     residual_size: int,
 ) -> Callable:
     block_codes = np.empty(len(profile_names), dtype=np.int64)
+    block_orders = np.zeros(len(profile_names), dtype=np.int64)
     for i, name in enumerate(profile_names):
-        if name not in RESIDUAL_BLOCK_REGISTRY:
-            supported = ", ".join(RESIDUAL_BLOCK_REGISTRY)
-            raise KeyError(f"Unknown residual block {name!r}. Supported blocks: {supported}")
-        try:
-            block_codes[i] = _BLOCK_CODE_BY_NAME[name]
-        except KeyError as exc:
-            supported = ", ".join(_BLOCK_CODE_BY_NAME)
-            raise KeyError(f"Unknown residual block {name!r}. Supported blocks: {supported}") from exc
+        block_codes[i], block_orders[i] = _decode_residual_block_code(name)
 
     def runner(
         G: np.ndarray,
         psin_R: np.ndarray,
         psin_Z: np.ndarray,
         sin_tb: np.ndarray,
-        sin_theta: np.ndarray,
-        cos_theta: np.ndarray,
-        sin_2theta: np.ndarray,
-        rho: np.ndarray,
-        rho2: np.ndarray,
+        sin_ktheta: np.ndarray,
+        cos_ktheta: np.ndarray,
+        rho_powers: np.ndarray,
         y: np.ndarray,
         T: np.ndarray,
         weights: np.ndarray,
@@ -92,17 +104,16 @@ def bind_residual_runner(
         _run_residual_blocks_packed(
             out,
             block_codes,
+            block_orders,
             coeff_index_rows,
             lengths,
             G,
             psin_R,
             psin_Z,
             sin_tb,
-            sin_theta,
-            cos_theta,
-            sin_2theta,
-            rho,
-            rho2,
+            sin_ktheta,
+            cos_ktheta,
+            rho_powers,
             y,
             T,
             weights,
@@ -272,6 +283,66 @@ def assemble_c0_residual_block(
     collapsed = np.empty(nr, dtype=G.dtype)
     _collapse_g_two_fields(collapsed, G, psin_R, sin_tb)
     _scale_and_project_rows_three(out_packed, coeff_indices, T, collapsed, rho, y, weights, (2.0 * np.pi / nt) * (-a))
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def assemble_c_family_residual_block(
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
+    order: int,
+    G: np.ndarray,
+    psin_R: np.ndarray,
+    sin_tb: np.ndarray,
+    cos_ktheta: np.ndarray,
+    rho_powers: np.ndarray,
+    y: np.ndarray,
+    T: np.ndarray,
+    weights: np.ndarray,
+    a: float,
+) -> None:
+    nr, nt = G.shape
+    collapsed = np.empty(nr, dtype=G.dtype)
+    _collapse_g_two_fields_theta(collapsed, G, psin_R, sin_tb, cos_ktheta[order])
+    _scale_and_project_rows_three(
+        out_packed,
+        coeff_indices,
+        T,
+        collapsed,
+        rho_powers[order + 1],
+        y,
+        weights,
+        (2.0 * np.pi / nt) * (-a),
+    )
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def assemble_s_family_residual_block(
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
+    order: int,
+    G: np.ndarray,
+    psin_R: np.ndarray,
+    sin_tb: np.ndarray,
+    sin_ktheta: np.ndarray,
+    rho_powers: np.ndarray,
+    y: np.ndarray,
+    T: np.ndarray,
+    weights: np.ndarray,
+    a: float,
+) -> None:
+    nr, nt = G.shape
+    collapsed = np.empty(nr, dtype=G.dtype)
+    _collapse_g_two_fields_theta(collapsed, G, psin_R, sin_tb, sin_ktheta[order])
+    _scale_and_project_rows_three(
+        out_packed,
+        coeff_indices,
+        T,
+        collapsed,
+        rho_powers[order + 1],
+        y,
+        weights,
+        (2.0 * np.pi / nt) * (-a),
+    )
 
 
 @register_residual_block("c1")
@@ -542,17 +613,16 @@ def _scale_and_project_rows_four(
 def _run_residual_blocks_packed(
     out_packed: np.ndarray,
     block_codes: np.ndarray,
+    block_orders: np.ndarray,
     coeff_index_rows: np.ndarray,
     lengths: np.ndarray,
     G: np.ndarray,
     psin_R: np.ndarray,
     psin_Z: np.ndarray,
     sin_tb: np.ndarray,
-    sin_theta: np.ndarray,
-    cos_theta: np.ndarray,
-    sin_2theta: np.ndarray,
-    rho: np.ndarray,
-    rho2: np.ndarray,
+    sin_ktheta: np.ndarray,
+    cos_ktheta: np.ndarray,
+    rho_powers: np.ndarray,
     y: np.ndarray,
     T: np.ndarray,
     weights: np.ndarray,
@@ -560,9 +630,15 @@ def _run_residual_blocks_packed(
     R0: float,
     B0: float,
 ) -> None:
+    sin_theta = sin_ktheta[1]
+    cos_theta = cos_ktheta[1]
+    sin_2theta = sin_ktheta[2]
+    rho = rho_powers[1]
+    rho2 = rho_powers[2]
     for slot in range(block_codes.shape[0]):
         coeff_indices = coeff_index_rows[slot, : lengths[slot]]
         code = block_codes[slot]
+        order = block_orders[slot]
         if code == 0:
             assemble_h_residual_block(
                 out_packed,
@@ -644,66 +720,36 @@ def _run_residual_blocks_packed(
                 B0,
             )
         elif code == 4:
-            assemble_c1_residual_block(
+            assemble_c_family_residual_block(
                 out_packed,
                 coeff_indices,
+                order,
                 G,
                 psin_R,
-                psin_Z,
                 sin_tb,
-                sin_theta,
-                cos_theta,
-                sin_2theta,
-                rho,
-                rho2,
+                cos_ktheta,
+                rho_powers,
                 y,
                 T,
                 weights,
                 a,
-                R0,
-                B0,
             )
         elif code == 5:
-            assemble_s1_residual_block(
+            assemble_s_family_residual_block(
                 out_packed,
                 coeff_indices,
+                order,
                 G,
                 psin_R,
-                psin_Z,
                 sin_tb,
-                sin_theta,
-                cos_theta,
-                sin_2theta,
-                rho,
-                rho2,
+                sin_ktheta,
+                rho_powers,
                 y,
                 T,
                 weights,
                 a,
-                R0,
-                B0,
             )
         elif code == 6:
-            assemble_s2_residual_block(
-                out_packed,
-                coeff_indices,
-                G,
-                psin_R,
-                psin_Z,
-                sin_tb,
-                sin_theta,
-                cos_theta,
-                sin_2theta,
-                rho,
-                rho2,
-                y,
-                T,
-                weights,
-                a,
-                R0,
-                B0,
-            )
-        elif code == 7:
             assemble_psin_residual_block(
                 out_packed,
                 coeff_indices,

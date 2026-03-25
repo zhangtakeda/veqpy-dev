@@ -32,18 +32,18 @@ def update_geometry(
     Z0: float,
     rho: np.ndarray,
     theta: np.ndarray,
-    cos_theta: np.ndarray,
-    sin_theta: np.ndarray,
-    cos_2theta: np.ndarray,
-    sin_2theta: np.ndarray,
+    cos_ktheta: np.ndarray,
+    sin_ktheta: np.ndarray,
+    k_cos_ktheta: np.ndarray,
+    k_sin_ktheta: np.ndarray,
+    k2_cos_ktheta: np.ndarray,
+    k2_sin_ktheta: np.ndarray,
     weights: np.ndarray,
     h_fields: np.ndarray,
     v_fields: np.ndarray,
     k_fields: np.ndarray,
-    c0_fields: np.ndarray,
-    c1_fields: np.ndarray,
-    s1_fields: np.ndarray,
-    s2_fields: np.ndarray,
+    c_fields: np.ndarray,
+    s_fields: np.ndarray,
 ):
     """原地更新 geometry fields 与 geometry integrals."""
     tb = tb_fields[0]
@@ -87,10 +87,8 @@ def update_geometry(
 
     rho_2d = rho[:, None]
     theta_2d = theta[None, :]
-    cos_t = cos_theta[None, :]
-    sin_t = sin_theta[None, :]
-    cos_2t = cos_2theta[None, :]
-    sin_2t = sin_2theta[None, :]
+    cos_t = cos_ktheta[1][None, :]
+    sin_t = sin_ktheta[1][None, :]
 
     h = h_fields[0]
     h_r = h_fields[1]
@@ -101,46 +99,46 @@ def update_geometry(
     k = k_fields[0]
     k_r = k_fields[1]
     k_rr = k_fields[2]
-    c0 = c0_fields[0]
-    c0_r = c0_fields[1]
-    c0_rr = c0_fields[2]
-    c1 = c1_fields[0]
-    c1_r = c1_fields[1]
-    c1_rr = c1_fields[2]
-    s1 = s1_fields[0]
-    s1_r = s1_fields[1]
-    s1_rr = s1_fields[2]
-    s2 = s2_fields[0]
-    s2_r = s2_fields[1]
-    s2_rr = s2_fields[2]
+    c0 = c_fields[0]
 
-    tb[:] = theta_2d + c0[:, None]
-    tb_r[:] = c0_r[:, None]
+    tb[:] = theta_2d + c0[0][:, None]
+    tb_r[:] = c0[1][:, None]
     tb_t.fill(1.0)
-    tb_rr[:] = c0_rr[:, None]
+    tb_rr[:] = c0[2][:, None]
     tb_rt.fill(0.0)
     tb_tt.fill(0.0)
 
-    tb += c1[:, None] * cos_t
-    tb_r += c1_r[:, None] * cos_t
-    tb_t -= c1[:, None] * sin_t
-    tb_rr += c1_rr[:, None] * cos_t
-    tb_rt -= c1_r[:, None] * sin_t
-    tb_tt -= c1[:, None] * cos_t
+    c_limit = min(c_fields.shape[0], cos_ktheta.shape[0])
+    for order in range(1, c_limit):
+        cos_kt = cos_ktheta[order][None, :]
+        k_sin_kt = k_sin_ktheta[order][None, :]
+        k2_cos_kt = k2_cos_ktheta[order][None, :]
+        c = c_fields[order, 0][:, None]
+        c_r = c_fields[order, 1][:, None]
+        c_rr = c_fields[order, 2][:, None]
 
-    tb += s1[:, None] * sin_t
-    tb_r += s1_r[:, None] * sin_t
-    tb_t += s1[:, None] * cos_t
-    tb_rr += s1_rr[:, None] * sin_t
-    tb_rt += s1_r[:, None] * cos_t
-    tb_tt -= s1[:, None] * sin_t
+        tb += c * cos_kt
+        tb_r += c_r * cos_kt
+        tb_t -= c * k_sin_kt
+        tb_rr += c_rr * cos_kt
+        tb_rt -= c_r * k_sin_kt
+        tb_tt -= c * k2_cos_kt
 
-    tb += s2[:, None] * sin_2t
-    tb_r += s2_r[:, None] * sin_2t
-    tb_t += 2.0 * s2[:, None] * cos_2t
-    tb_rr += s2_rr[:, None] * sin_2t
-    tb_rt += 2.0 * s2_r[:, None] * cos_2t
-    tb_tt -= 4.0 * s2[:, None] * sin_2t
+    s_limit = min(s_fields.shape[0], sin_ktheta.shape[0])
+    for order in range(1, s_limit):
+        sin_kt = sin_ktheta[order][None, :]
+        k_cos_kt = k_cos_ktheta[order][None, :]
+        k2_sin_kt = k2_sin_ktheta[order][None, :]
+        s = s_fields[order, 0][:, None]
+        s_r = s_fields[order, 1][:, None]
+        s_rr = s_fields[order, 2][:, None]
+
+        tb += s * sin_kt
+        tb_r += s_r * sin_kt
+        tb_t += s * k_cos_kt
+        tb_rr += s_rr * sin_kt
+        tb_rt += s_r * k_cos_kt
+        tb_tt -= s * k2_sin_kt
 
     np.cos(tb, out=cos_tb)
     np.sin(tb, out=sin_tb)

@@ -42,10 +42,18 @@ class Grid(Serial):
     Nt: int
     scheme: Literal["legendre", "chebyshev", "lobatto", "radau", "uniform"]
     L_max: int = 21
+    K_max: int = 2
 
     rho: np.ndarray = field(init=False)
     rho2: np.ndarray = field(init=False)
+    rho_powers: np.ndarray = field(init=False)
     theta: np.ndarray = field(init=False)
+    cos_ktheta: np.ndarray = field(init=False)
+    sin_ktheta: np.ndarray = field(init=False)
+    k_cos_ktheta: np.ndarray = field(init=False)
+    k_sin_ktheta: np.ndarray = field(init=False)
+    k2_cos_ktheta: np.ndarray = field(init=False)
+    k2_sin_ktheta: np.ndarray = field(init=False)
     cos_theta: np.ndarray = field(init=False)
     sin_theta: np.ndarray = field(init=False)
     cos_2theta: np.ndarray = field(init=False)
@@ -68,6 +76,7 @@ class Grid(Serial):
             "Nt": int,
             "scheme": str,
             "L_max": int,
+            "K_max": int,
         }
 
     def __post_init__(self):
@@ -90,14 +99,25 @@ class Grid(Serial):
             raise ValueError("Nt must be positive")
         if self.L_max < 0:
             raise ValueError("L_max must be non-negative")
+        if self.K_max < 2:
+            raise ValueError("K_max must be at least 2 during the compatibility transition")
 
         rho, weights = _build_rho_and_weights(self.Nr, scheme)
         theta = np.linspace(0.0, 2.0 * np.pi, self.Nt, endpoint=False)
-        cos_theta = np.cos(theta)
-        sin_theta = np.sin(theta)
-        cos_2theta = cos_theta * cos_theta - sin_theta * sin_theta
-        sin_2theta = 2.0 * sin_theta * cos_theta
+        harmonics = np.arange(self.K_max + 1, dtype=np.float64)[:, None]
+        ktheta = harmonics * theta[None, :]
+        cos_ktheta = np.cos(ktheta)
+        sin_ktheta = np.sin(ktheta)
+        k_cos_ktheta = harmonics * cos_ktheta
+        k_sin_ktheta = harmonics * sin_ktheta
+        k2 = harmonics * harmonics
+        k2_cos_ktheta = k2 * cos_ktheta
+        k2_sin_ktheta = k2 * sin_ktheta
         rho2 = rho * rho
+        rho_powers = np.empty((self.K_max + 2, self.Nr), dtype=np.float64)
+        rho_powers[0].fill(1.0)
+        for power in range(1, self.K_max + 2):
+            rho_powers[power] = rho**power
         x = 2.0 * rho2 - 1.0
         y = 1.0 - rho2
 
@@ -110,13 +130,32 @@ class Grid(Serial):
 
         T_fields = _build_chebyshev_tables(rho, x, self.L_max)
 
+        trig_tables = (
+            np.asarray(cos_ktheta, dtype=np.float64),
+            np.asarray(sin_ktheta, dtype=np.float64),
+            np.asarray(k_cos_ktheta, dtype=np.float64),
+            np.asarray(k_sin_ktheta, dtype=np.float64),
+            np.asarray(k2_cos_ktheta, dtype=np.float64),
+            np.asarray(k2_sin_ktheta, dtype=np.float64),
+        )
+        for table in trig_tables:
+            table.flags.writeable = False
+
         object.__setattr__(self, "rho", np.asarray(rho, dtype=np.float64))
         object.__setattr__(self, "rho2", np.asarray(rho2, dtype=np.float64))
+        rho_powers.flags.writeable = False
+        object.__setattr__(self, "rho_powers", rho_powers)
         object.__setattr__(self, "theta", np.asarray(theta, dtype=np.float64))
-        object.__setattr__(self, "cos_theta", np.asarray(cos_theta, dtype=np.float64))
-        object.__setattr__(self, "sin_theta", np.asarray(sin_theta, dtype=np.float64))
-        object.__setattr__(self, "cos_2theta", np.asarray(cos_2theta, dtype=np.float64))
-        object.__setattr__(self, "sin_2theta", np.asarray(sin_2theta, dtype=np.float64))
+        object.__setattr__(self, "cos_ktheta", trig_tables[0])
+        object.__setattr__(self, "sin_ktheta", trig_tables[1])
+        object.__setattr__(self, "k_cos_ktheta", trig_tables[2])
+        object.__setattr__(self, "k_sin_ktheta", trig_tables[3])
+        object.__setattr__(self, "k2_cos_ktheta", trig_tables[4])
+        object.__setattr__(self, "k2_sin_ktheta", trig_tables[5])
+        object.__setattr__(self, "cos_theta", trig_tables[0][1])
+        object.__setattr__(self, "sin_theta", trig_tables[1][1])
+        object.__setattr__(self, "cos_2theta", trig_tables[0][2])
+        object.__setattr__(self, "sin_2theta", trig_tables[1][2])
         object.__setattr__(self, "weights", np.asarray(weights, dtype=np.float64))
         object.__setattr__(self, "integration_matrix", np.asarray(integration_matrix, dtype=np.float64))
         object.__setattr__(self, "differentiation_matrix", np.asarray(differentiation_matrix, dtype=np.float64))
@@ -141,6 +180,7 @@ class Grid(Serial):
         tree.add(f"Nr: {self.Nr}")
         tree.add(f"Nt: {self.Nt}")
         tree.add(f"scheme: {self.scheme}")
+        tree.add(f"K_max: {self.K_max}")
         return tree
 
     def __str__(self) -> str:
