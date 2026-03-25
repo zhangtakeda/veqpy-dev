@@ -12,8 +12,9 @@ from typing import Callable
 import numpy as np
 
 from veqpy.engine import (
-    bind_residual_block,
+    bind_residual_runner,
     bind_runner,
+    update_profiles_packed_bulk,
     update_residual,
     validate_operator,
 )
@@ -23,11 +24,7 @@ from veqpy.model.profile import (
     fill_profile_runtime_view,
     fill_profile_runtime_view_from_packed,
 )
-from veqpy.operator.codec import (
-    decode_packed_blocks,
-    encode_packed_residual,
-    encode_packed_state,
-)
+from veqpy.operator.codec import decode_packed_blocks, encode_packed_state
 from veqpy.operator.layout import (
     PROFILE_INDEX,
     PROFILE_NAMES,
@@ -38,14 +35,6 @@ from veqpy.operator.layout import (
     packed_size,
 )
 from veqpy.operator.operator_case import OperatorCase
-
-@dataclass(slots=True, frozen=True)
-class ResidualAssembleSlot:
-    """描述一个 active profile 对应的 residual 写回槽位."""
-
-    coeff_indices: np.ndarray
-    kernel: Callable
-
 
 @dataclass(slots=True, frozen=True)
 class HomotopyStageGroup:
@@ -105,7 +94,14 @@ class Operator:
     profile_runtime_views: tuple[ProfileRuntimeView, ...] = field(init=False, repr=False)
     active_profile_runtime_views: tuple[ProfileRuntimeView, ...] = field(init=False, repr=False)
     fixed_profile_runtime_views: tuple[ProfileRuntimeView, ...] = field(init=False, repr=False)
-    residual_slots: tuple[ResidualAssembleSlot, ...] = field(init=False, repr=False)
+    active_u_fields: np.ndarray = field(init=False, repr=False)
+    active_rp_fields: np.ndarray = field(init=False, repr=False)
+    active_env_fields: np.ndarray = field(init=False, repr=False)
+    active_offsets: np.ndarray = field(init=False, repr=False)
+    active_scales: np.ndarray = field(init=False, repr=False)
+    active_lengths: np.ndarray = field(init=False, repr=False)
+    active_coeff_index_rows: np.ndarray = field(init=False, repr=False)
+    residual_runner: Callable = field(init=False, repr=False)
     source_runner: Callable = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -124,7 +120,7 @@ class Operator:
         self.profile_runtime_views = ()
         self.active_profile_runtime_views = ()
         self.fixed_profile_runtime_views = ()
-        self.residual_slots = ()
+        self.residual_runner = lambda *args, **kwargs: np.zeros(self.x_size, dtype=np.float64)
         self._refresh_case_runtime()
 
     def __call__(self, x: np.ndarray) -> np.ndarray:
@@ -343,7 +339,7 @@ class Operator:
         Returns:
         返回 None. 结果会原地写入各 profile 缓冲区.
         """
-        self._fill_profile_views_from_packed(x, self.active_profile_runtime_views)
+        self._fill_active_profile_views_from_packed_bulk(x)
 
     def stage_b_geometry(self) -> None:
         """
@@ -484,6 +480,10 @@ class Operator:
     def _allocate_runtime_arrays(self) -> None:
         nr = self.grid.Nr
         nt = self.grid.Nt
+        n_active = int(self.active_profile_ids.size)
+        max_active_len = 0
+        if n_active > 0:
+            max_active_len = max(int(self.profile_L[int(p)]) + 1 for p in self.active_profile_ids)
 
         self.h_profile = Profile(offset=0.0, coeff=self._profile_coeff_from_case(PROFILE_INDEX["h"]))
         self.v_profile = Profile(offset=0.0, coeff=self._profile_coeff_from_case(PROFILE_INDEX["v"]))
@@ -523,9 +523,17 @@ class Operator:
         self.Pn_r = self.root_fields[3]
         self.alpha1 = 0.0
         self.alpha2 = 0.0
+        self.active_u_fields = np.empty((n_active, 3, nr), dtype=np.float64)
+        self.active_rp_fields = np.empty((n_active, 3, nr), dtype=np.float64)
+        self.active_env_fields = np.empty((n_active, 3, nr), dtype=np.float64)
+        self.active_offsets = np.empty(n_active, dtype=np.float64)
+        self.active_scales = np.empty(n_active, dtype=np.float64)
+        self.active_lengths = np.empty(n_active, dtype=np.int64)
+        self.active_coeff_index_rows = np.full((n_active, max_active_len), -1, dtype=np.int64)
 
     def _refresh_case_runtime(self) -> None:
         self._sync_profile_specs()
+        self._prepare_active_stage_a_plan()
         self.profile_runtime_views = self._build_profile_runtime_views()
         self._rebind_runtime()
 
@@ -585,11 +593,32 @@ class Operator:
             raise ValueError(f"Expected heat_input/current_input to have shape ({self.grid.Nr},)")
 
     def _rebind_runtime(self) -> None:
-        self.residual_slots = self._build_residual_slots()
+        self.residual_runner = self._build_residual_runner()
         self.active_profile_runtime_views = self._profile_views_from_ids(self.active_profile_ids)
         fixed_profile_ids = np.flatnonzero(~self.active_profile_mask).astype(np.int64, copy=False)
         self.fixed_profile_runtime_views = self._profile_views_from_ids(fixed_profile_ids)
         self._fill_profile_views(self.fixed_profile_runtime_views)
+
+    def _prepare_active_stage_a_plan(self) -> None:
+        if self.active_profile_ids.size == 0:
+            return
+
+        for slot, p in enumerate(self.active_profile_ids):
+            p_int = int(p)
+            profile_name = PROFILE_NAMES[p_int]
+            profile = getattr(self, f"{profile_name}_profile")
+            L = int(self.profile_L[p_int])
+            coeff_indices = self.coeff_index[p_int, : L + 1]
+
+            profile.u_fields = self.active_u_fields[slot]
+            self.active_rp_fields[slot] = profile.rp_fields
+            self.active_env_fields[slot] = profile.env_fields
+            self.active_offsets[slot] = profile.offset
+            self.active_scales[slot] = profile.scale
+            self.active_lengths[slot] = coeff_indices.size
+            if self.active_coeff_index_rows.shape[1] > 0:
+                self.active_coeff_index_rows[slot].fill(-1)
+                self.active_coeff_index_rows[slot, : coeff_indices.size] = coeff_indices
 
     def _build_profile_runtime_views(self) -> tuple[ProfileRuntimeView, ...]:
         views: list[ProfileRuntimeView] = []
@@ -605,25 +634,19 @@ class Operator:
         )
         return profile._runtime_view(coeff_indices=coeff_indices)
 
-    def _build_residual_slots(self) -> tuple[ResidualAssembleSlot, ...]:
-        slots: list[ResidualAssembleSlot] = []
-        for p in self.active_profile_ids:
-            slots.append(self._build_residual_slot(int(p)))
-        return tuple(slots)
-
-    def _build_residual_slot(self, p: int) -> ResidualAssembleSlot:
-        L = int(self.profile_L[p])
-        profile_name = PROFILE_NAMES[p]
-        coeff_indices = self.coeff_index[p, : L + 1]
+    def _build_residual_runner(self) -> Callable:
+        profile_names = tuple(PROFILE_NAMES[int(p)] for p in self.active_profile_ids)
         try:
-            kernel = bind_residual_block(profile_name)
+            return bind_residual_runner(
+                profile_names,
+                self.active_coeff_index_rows,
+                self.active_lengths,
+                self.x_size,
+            )
         except KeyError as exc:
-            raise ValueError(f"Unsupported active profile {profile_name!r}") from exc
-
-        return ResidualAssembleSlot(
-            coeff_indices=coeff_indices,
-            kernel=kernel,
-        )
+            raise ValueError(
+                f"Unsupported active residual block set {profile_names!r}"
+            ) from exc
 
     def _profile_views_from_ids(self, profile_ids: np.ndarray) -> tuple[ProfileRuntimeView, ...]:
         return tuple(self.profile_runtime_views[int(p)] for p in profile_ids)
@@ -635,6 +658,21 @@ class Operator:
     def _fill_profile_views_from_packed(self, x: np.ndarray, views: tuple[ProfileRuntimeView, ...]) -> None:
         for view in views:
             fill_profile_runtime_view_from_packed(view, x)
+
+    def _fill_active_profile_views_from_packed_bulk(self, x: np.ndarray) -> None:
+        if self.active_profile_ids.size == 0:
+            return
+        update_profiles_packed_bulk(
+            self.active_u_fields,
+            self.grid.T_fields,
+            self.active_rp_fields,
+            self.active_env_fields,
+            self.active_offsets,
+            self.active_scales,
+            x,
+            self.active_coeff_index_rows,
+            self.active_lengths,
+        )
 
     def _build_G_inplace(self) -> None:
         update_residual(
@@ -649,9 +687,7 @@ class Operator:
         )
 
     def _assemble_residual(self) -> np.ndarray:
-        return encode_packed_residual(
-            self.residual_slots,
-            self.x_size,
+        return self.residual_runner(
             self.G,
             self.psin_R,
             self.psin_Z,

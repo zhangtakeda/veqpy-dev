@@ -8,8 +8,6 @@ from typing import Callable
 
 import numpy as np
 
-from veqpy.operator.layout import PROFILE_NAMES
-
 geometry_module = importlib.import_module("veqpy.model.geometry")
 profile_module = importlib.import_module("veqpy.model.profile")
 operator_module = importlib.import_module("veqpy.operator.operator")
@@ -93,14 +91,17 @@ class ProbeSummary:
             )
 
         stage_a = self.metric("operator.stage_a_profile")
-        packed_fill = self.metric("stage_a.fill_profile_views_from_packed")
+        packed_fill = self.metric("stage_a.fill_active_profile_views_from_packed_bulk")
         fill_rows = self.metric("stage_a.fill_profile_views")
         profile_update = self.metric("stage_a.fill_profile_runtime_view_from_packed")
-        profile_kernel = self.metric("stage_a.engine.update_profile_packed")
+        profile_kernel = (
+            self.metric("stage_a.engine.update_profile_packed")
+            + self.metric("stage_a.engine.update_profiles_packed_bulk")
+        )
         lines.append("stage_a detail:")
         lines.append(
-            f"  fill views from packed x: {packed_fill / 1000:.3f} ms "
-            f"(calls={self.count('stage_a.fill_profile_views_from_packed')})"
+            f"  fill active views from packed x: {packed_fill / 1000:.3f} ms "
+            f"(calls={self.count('stage_a.fill_active_profile_views_from_packed_bulk')})"
         )
         lines.append(
             f"  fill profile views: {fill_rows / 1000:.3f} ms "
@@ -111,8 +112,8 @@ class ProbeSummary:
             f"(calls={self.count('stage_a.fill_profile_runtime_view_from_packed')})"
         )
         lines.append(
-            f"  engine.update_profile_packed: {profile_kernel / 1000:.3f} ms "
-            f"(calls={self.count('stage_a.engine.update_profile_packed')})"
+            f"  engine.update_profile*_packed: {profile_kernel / 1000:.3f} ms "
+            f"(calls={self.count('stage_a.engine.update_profile_packed') + self.count('stage_a.engine.update_profiles_packed_bulk')})"
         )
         lines.append(
             f"  stage_a Python/non-kernel remainder: "
@@ -157,19 +158,7 @@ class ProbeSummary:
         build_g = self.metric("stage_d.build_G_inplace")
         update_residual = self.metric("stage_d.engine.update_residual")
         assemble_total = self.metric("stage_d.assemble_residual")
-        encode_total = self.metric("stage_d.encode_packed_residual")
-        block_names = (
-            "stage_d.block.h",
-            "stage_d.block.v",
-            "stage_d.block.k",
-            "stage_d.block.c0",
-            "stage_d.block.c1",
-            "stage_d.block.s1",
-            "stage_d.block.s2",
-            "stage_d.block.psin",
-            "stage_d.block.F",
-        )
-        block_total = sum(self.metric(name) for name in block_names)
+        residual_runner = self.metric("stage_d.residual_runner")
         lines.append("stage_d detail:")
         lines.append(
             f"  build_G total: {build_g / 1000:.3f} ms "
@@ -184,24 +173,12 @@ class ProbeSummary:
             f"(calls={self.count('stage_d.assemble_residual')})"
         )
         lines.append(
-            f"  encode_packed_residual total: {encode_total / 1000:.3f} ms "
-            f"(calls={self.count('stage_d.encode_packed_residual')})"
-        )
-        for name in block_names:
-            elapsed_us = self.metric(name)
-            if elapsed_us <= 0.0:
-                continue
-            lines.append(
-                f"  {name.split('.')[-1]} block kernel: {elapsed_us / 1000:.3f} ms "
-                f"(calls={self.count(name)})"
-            )
-        lines.append(
             f"  stage_d Python/non-kernel remainder: "
-            f"{max(stage_d - update_residual - block_total, 0.0) / 1000:.3f} ms"
+            f"{max(stage_d - update_residual - residual_runner, 0.0) / 1000:.3f} ms"
         )
         lines.append(
-            f"  residual packing/scatter remainder inside encode: "
-            f"{max(encode_total - block_total, 0.0) / 1000:.3f} ms"
+            f"  residual_runner total: {residual_runner / 1000:.3f} ms "
+            f"(calls={self.count('stage_d.residual_runner')})"
         )
         overhead_us = total_elapsed_us - attempt_total_us
         lines.append(f"outer overhead: {overhead_us / 1000:.3f} ms")
@@ -390,7 +367,17 @@ def install_probe(*, solver: Solver, summary: ProbeSummary):
 
         return wrapped
 
-    def wrap_fill_views_from_packed(original: Callable) -> Callable:
+    def wrap_bulk_profile_kernel(original: Callable) -> Callable:
+        def wrapped(*args, **kwargs):
+            started = perf_counter()
+            try:
+                return original(*args, **kwargs)
+            finally:
+                summary.add("stage_a.engine.update_profiles_packed_bulk", (perf_counter() - started) * 1e6)
+
+        return wrapped
+
+    def wrap_fill_active_views_from_packed_bulk(original: Callable) -> Callable:
         def wrapped(self, *args, **kwargs):
             if self is not target_operator:
                 return original(self, *args, **kwargs)
@@ -398,7 +385,7 @@ def install_probe(*, solver: Solver, summary: ProbeSummary):
             try:
                 return original(self, *args, **kwargs)
             finally:
-                summary.add("stage_a.fill_profile_views_from_packed", (perf_counter() - started) * 1e6)
+                summary.add("stage_a.fill_active_profile_views_from_packed_bulk", (perf_counter() - started) * 1e6)
 
         return wrapped
 
@@ -544,28 +531,15 @@ def install_probe(*, solver: Solver, summary: ProbeSummary):
 
         return wrapped
 
-    def wrap_encode_packed_residual(original: Callable) -> Callable:
+    def wrap_residual_runner(original: Callable) -> Callable:
         def wrapped(*args, **kwargs):
             started = perf_counter()
             try:
                 return original(*args, **kwargs)
             finally:
-                summary.add("stage_d.encode_packed_residual", (perf_counter() - started) * 1e6)
+                summary.add("stage_d.residual_runner", (perf_counter() - started) * 1e6)
 
         return wrapped
-
-    def wrap_residual_block(metric_name: str) -> Callable[[Callable], Callable]:
-        def factory(original: Callable) -> Callable:
-            def wrapped(*args, **kwargs):
-                started = perf_counter()
-                try:
-                    return original(*args, **kwargs)
-                finally:
-                    summary.add(metric_name, (perf_counter() - started) * 1e6)
-
-            return wrapped
-
-        return factory
 
     with ExitStack() as stack:
         stack.enter_context(_patch_method(Solver, "_try_solve_attempt", wrap_attempt))
@@ -581,7 +555,13 @@ def install_probe(*, solver: Solver, summary: ProbeSummary):
         stack.enter_context(_patch_method(Operator, "stage_d_residual", wrap_stage("operator.stage_d_residual")))
         fill_method_name = "_fill_profile_views"
         stack.enter_context(_patch_method(Operator, fill_method_name, wrap_fill_views))
-        stack.enter_context(_patch_method(Operator, "_fill_profile_views_from_packed", wrap_fill_views_from_packed))
+        stack.enter_context(
+            _patch_method(
+                Operator,
+                "_fill_active_profile_views_from_packed_bulk",
+                wrap_fill_active_views_from_packed_bulk,
+            )
+        )
         runtime_fill = getattr(operator_module, "fill_profile_runtime_view_from_packed", None)
         stack.enter_context(
             _patch_attr(
@@ -593,6 +573,13 @@ def install_probe(*, solver: Solver, summary: ProbeSummary):
         stack.enter_context(
             _patch_attr(profile_module, "update_profile_packed", wrap_profile_kernel(profile_module.update_profile_packed))
         )
+        stack.enter_context(
+            _patch_attr(
+                operator_module,
+                "update_profiles_packed_bulk",
+                wrap_bulk_profile_kernel(operator_module.update_profiles_packed_bulk),
+            )
+        )
         stack.enter_context(_patch_method(geometry_module.Geometry, "update", wrap_geometry_update))
         stack.enter_context(_patch_attr(geometry_module, "update_geometry", wrap_geometry_kernel(geometry_module.update_geometry)))
         stack.enter_context(_patch_attr(target_operator, "source_runner", wrap_source_runner(original_source_runner)))
@@ -600,18 +587,8 @@ def install_probe(*, solver: Solver, summary: ProbeSummary):
         stack.enter_context(_patch_attr(operator_module, "update_residual", wrap_update_residual_kernel(operator_module.update_residual)))
         stack.enter_context(_patch_method(Operator, "_assemble_residual", wrap_assemble_residual))
         stack.enter_context(
-            _patch_attr(operator_module, "encode_packed_residual", wrap_encode_packed_residual(operator_module.encode_packed_residual))
+            _patch_attr(target_operator, "residual_runner", wrap_residual_runner(target_operator.residual_runner))
         )
-        wrapped_slots = []
-        for p, slot in zip(target_operator.active_profile_ids, target_operator.residual_slots, strict=True):
-            profile_name = PROFILE_NAMES[int(p)]
-            wrapped_slots.append(
-                operator_module.ResidualAssembleSlot(
-                    coeff_indices=slot.coeff_indices,
-                    kernel=wrap_residual_block(f"stage_d.block.{profile_name}")(slot.kernel),
-                )
-            )
-        stack.enter_context(_patch_attr(target_operator, "residual_slots", tuple(wrapped_slots)))
         yield
 
 

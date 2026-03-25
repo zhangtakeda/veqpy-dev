@@ -91,3 +91,56 @@ def update_profile_packed(
         return
     coeff = np.asarray(x, dtype=np.float64)[coeff_indices]
     update_profile(out_fields, T_fields, rp_fields, env_fields, offset, coeff)
+
+
+def update_profiles_packed_bulk(
+    out_fields_all: np.ndarray,
+    T_fields: np.ndarray,
+    rp_fields_all: np.ndarray,
+    env_fields_all: np.ndarray,
+    offsets: np.ndarray,
+    scales: np.ndarray,
+    x: np.ndarray,
+    coeff_index_rows: np.ndarray,
+    lengths: np.ndarray,
+) -> None:
+    """
+    批量从 packed 状态向量读取所有 active profiles 的系数并刷新输出字段.
+
+    Args:
+        out_fields_all: 批量输出缓冲区, shape=(n_active, 3, nr).
+        T_fields: 基函数及其导数表, shape=(3, n_basis, nr).
+        rp_fields_all: 每个 active profile 的 power 缓存, shape=(n_active, 3, nr).
+        env_fields_all: 每个 active profile 的 envelope 缓存, shape=(n_active, 3, nr).
+        offsets: 每个 active profile 的 offset.
+        scales: 每个 active profile 的 scale.
+        x: 当前 packed 状态向量.
+        coeff_index_rows: 每个 active profile 对应的 packed 索引行, shape=(n_active, max_len).
+        lengths: 每个 active profile 实际使用的系数长度.
+    """
+    x_arr = np.asarray(x, dtype=np.float64)
+    n_active = out_fields_all.shape[0]
+    for p in range(n_active):
+        coeff_size = int(lengths[p])
+        if coeff_size == 0:
+            update_profile(
+                out_fields_all[p],
+                T_fields,
+                rp_fields_all[p],
+                env_fields_all[p],
+                float(offsets[p]),
+                None,
+            )
+        else:
+            coeff = x_arr[coeff_index_rows[p, :coeff_size]]
+            update_profile(
+                out_fields_all[p],
+                T_fields,
+                rp_fields_all[p],
+                env_fields_all[p],
+                float(offsets[p]),
+                coeff,
+            )
+        scale = float(scales[p])
+        if scale != 1.0:
+            np.multiply(out_fields_all[p], scale, out=out_fields_all[p])

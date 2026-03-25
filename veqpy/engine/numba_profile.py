@@ -120,3 +120,64 @@ def update_profile_packed(
         out_fields[0, i] = rp * amp
         out_fields[1, i] = rp_r * amp + rp * base_r
         out_fields[2, i] = rp_rr * amp + 2.0 * rp_r * base_r + rp * base_rr
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def update_profiles_packed_bulk(
+    out_fields_all: np.ndarray,
+    T_fields: np.ndarray,
+    rp_fields_all: np.ndarray,
+    env_fields_all: np.ndarray,
+    offsets: np.ndarray,
+    scales: np.ndarray,
+    x: np.ndarray,
+    coeff_index_rows: np.ndarray,
+    lengths: np.ndarray,
+) -> None:
+    """
+    批量从 packed 状态向量读取所有 active profiles 的系数并刷新输出字段.
+
+    Args:
+        out_fields_all: 批量输出缓冲区, shape=(n_active, 3, nr).
+        T_fields: 基函数及其导数表, shape=(3, n_basis, nr).
+        rp_fields_all: 每个 active profile 的 power 缓存, shape=(n_active, 3, nr).
+        env_fields_all: 每个 active profile 的 envelope 缓存, shape=(n_active, 3, nr).
+        offsets: 每个 active profile 的 offset.
+        scales: 每个 active profile 的 scale.
+        x: 当前 packed 状态向量.
+        coeff_index_rows: 每个 active profile 对应的 packed 索引行, shape=(n_active, max_len).
+        lengths: 每个 active profile 实际使用的系数长度.
+    """
+    n_active = out_fields_all.shape[0]
+    nr = out_fields_all.shape[2]
+
+    for p in range(n_active):
+        coeff_size = lengths[p]
+        offset = offsets[p]
+        scale = scales[p]
+
+        for i in range(nr):
+            series = 0.0
+            series_r = 0.0
+            series_rr = 0.0
+
+            for k in range(coeff_size):
+                c = x[coeff_index_rows[p, k]]
+                series += c * T_fields[0, k, i]
+                series_r += c * T_fields[1, k, i]
+                series_rr += c * T_fields[2, k, i]
+
+            env = env_fields_all[p, 0, i]
+            env_r = env_fields_all[p, 1, i]
+            env_rr = env_fields_all[p, 2, i]
+            base = env * series
+            base_r = env_r * series + env * series_r
+            base_rr = env_rr * series + 2.0 * env_r * series_r + env * series_rr
+            amp = offset + base
+
+            rp = rp_fields_all[p, 0, i]
+            rp_r = rp_fields_all[p, 1, i]
+            rp_rr = rp_fields_all[p, 2, i]
+            out_fields_all[p, 0, i] = scale * (rp * amp)
+            out_fields_all[p, 1, i] = scale * (rp_r * amp + rp * base_r)
+            out_fields_all[p, 2, i] = scale * (rp_rr * amp + 2.0 * rp_r * base_r + rp * base_rr)

@@ -39,6 +39,61 @@ def bind_residual_block(name: str) -> Callable:
     return spec.implementation
 
 
+def bind_residual_runner(
+    profile_names: tuple[str, ...],
+    coeff_index_rows: np.ndarray,
+    lengths: np.ndarray,
+    residual_size: int,
+) -> Callable:
+    kernels: list[Callable] = []
+    for name in profile_names:
+        kernels.append(bind_residual_block(name))
+    bound_kernels = tuple(kernels)
+
+    def runner(
+        G: np.ndarray,
+        psin_R: np.ndarray,
+        psin_Z: np.ndarray,
+        sin_tb: np.ndarray,
+        sin_theta: np.ndarray,
+        cos_theta: np.ndarray,
+        sin_2theta: np.ndarray,
+        rho: np.ndarray,
+        rho2: np.ndarray,
+        y: np.ndarray,
+        T: np.ndarray,
+        weights: np.ndarray,
+        a: float,
+        R0: float,
+        B0: float,
+    ) -> np.ndarray:
+        out = np.zeros(residual_size, dtype=np.float64)
+        for slot, kernel in enumerate(bound_kernels):
+            coeff_size = int(lengths[slot])
+            kernel(
+                out,
+                coeff_index_rows[slot, :coeff_size],
+                G,
+                psin_R,
+                psin_Z,
+                sin_tb,
+                sin_theta,
+                cos_theta,
+                sin_2theta,
+                rho,
+                rho2,
+                y,
+                T,
+                weights,
+                a,
+                R0,
+                B0,
+            )
+        return out
+
+    return runner
+
+
 def update_residual(
     out_fields: np.ndarray,
     alpha1: float,
