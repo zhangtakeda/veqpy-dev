@@ -31,17 +31,15 @@ from veqpy.engine import (
 from veqpy.model import Equilibrium, Geometry, Grid, Profile
 from veqpy.operator.codec import decode_packed_blocks, encode_packed_state
 from veqpy.operator.layout import (
+    PREFIX_PROFILE_NAMES,
     PROFILE_INDEX,
     PROFILE_NAMES,
-    PREFIX_PROFILE_NAMES,
     SHAPE_PROFILE_NAMES,
     build_active_profile_metadata,
     build_profile_layout,
     packed_size,
 )
-from veqpy.operator.operator_case import OperatorCase
-from veqpy.operator.operator_case import SHAPE_PROFILE_OFFSET_FIELDS
-
+from veqpy.operator.operator_case import SHAPE_PROFILE_OFFSET_FIELDS, OperatorCase
 
 _PROFILE_STATIC_KWARGS: dict[str, dict[str, int]] = {
     "c1": {"power": 1},
@@ -239,7 +237,9 @@ class Operator:
 
     def homotopy_truncation_profile_ids(self) -> np.ndarray:
         """返回参与 shape truncation 的 active profile 编号."""
-        profile_ids = [int(PROFILE_INDEX[name]) for name in SHAPE_PROFILE_NAMES if int(self.profile_L[PROFILE_INDEX[name]]) >= 0]
+        profile_ids = [
+            int(PROFILE_INDEX[name]) for name in SHAPE_PROFILE_NAMES if int(self.profile_L[PROFILE_INDEX[name]]) >= 0
+        ]
         return np.asarray(profile_ids, dtype=np.int64)
 
     def build_coeffs(self, x: np.ndarray, *, include_none: bool = True) -> dict[str, list[float] | None]:
@@ -502,9 +502,7 @@ class Operator:
                 self.x_size,
             )
         except KeyError as exc:
-            raise ValueError(
-                f"Unsupported active residual block set {profile_names!r}"
-            ) from exc
+            raise ValueError(f"Unsupported active residual block set {profile_names!r}") from exc
 
     def _fill_active_profile_views_from_packed_bulk(self, x: np.ndarray) -> None:
         if self.active_profile_ids.size == 0:
@@ -581,10 +579,7 @@ class Operator:
         return copied
 
     def _snapshot_equilibrium_profiles(self, coeff_blocks: tuple[np.ndarray | None, ...]) -> dict[str, Profile]:
-        return {
-            name: self._snapshot_profile(name, coeff_blocks[PROFILE_INDEX[name]])
-            for name in SHAPE_PROFILE_NAMES
-        }
+        return {name: self._snapshot_profile(name, coeff_blocks[PROFILE_INDEX[name]]) for name in SHAPE_PROFILE_NAMES}
 
     def _equilibrium_profile_kwargs(self, snapshots: dict[str, Profile]) -> dict[str, Profile]:
         return {f"{name}_profile": snapshots[name] for name in SHAPE_PROFILE_NAMES}

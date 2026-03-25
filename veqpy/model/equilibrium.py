@@ -583,6 +583,7 @@ def plot_comparison(
 
     return errors
 
+
 def _resample_equilibrium_snapshot(
     equilibrium: Equilibrium,
     *,
@@ -657,7 +658,9 @@ def _build_resampled_equilibrium(
         a=equilibrium.a,
         grid=plot_grid,
         active_profiles=equilibrium.active_profiles,
-        **_shape_profile_kwargs({name: _resample_profile_triplet(profile) for name, profile in _shape_profiles(equilibrium).items()}),
+        **_shape_profile_kwargs(
+            {name: _resample_profile_triplet(profile) for name, profile in _shape_profiles(equilibrium).items()}
+        ),
         FFn_r=FFn_r,
         Pn_r=Pn_r,
         psin_r=psin_r,

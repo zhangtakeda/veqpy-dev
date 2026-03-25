@@ -15,10 +15,10 @@ Notes:
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import replace
 from time import perf_counter
 from types import SimpleNamespace
-import warnings
 
 import numpy as np
 from rich.console import Console
@@ -676,7 +676,11 @@ class Solver:
         covered = np.concatenate([stage.indices for stage in groups]) if groups else np.zeros(0, dtype=np.int64)
         missing = np.setdiff1d(np.arange(x_size, dtype=np.int64), np.unique(covered), assume_unique=False)
         if missing.size:
-            groups.append(type(groups[-1])(order=groups[-1].order + 1, indices=missing, shape_profile_ids=np.zeros(0, dtype=np.int64)))
+            groups.append(
+                type(groups[-1])(
+                    order=groups[-1].order + 1, indices=missing, shape_profile_ids=np.zeros(0, dtype=np.int64)
+                )
+            )
         return groups
 
     def _init_homotopy_truncation_state(self) -> dict[str, np.ndarray]:
@@ -825,8 +829,10 @@ def _accepted_residual_norm(solve_config: SolverConfig) -> float:
 
 
 def _residual_within_acceptance(residual_norm: float | None, solve_config: SolverConfig) -> bool:
-    return residual_norm is not None and np.isfinite(residual_norm) and residual_norm <= _accepted_residual_norm(
-        solve_config
+    return (
+        residual_norm is not None
+        and np.isfinite(residual_norm)
+        and residual_norm <= _accepted_residual_norm(solve_config)
     )
 
 

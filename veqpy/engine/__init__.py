@@ -29,43 +29,43 @@ if BACKEND == "numpy":
     from veqpy.engine.numpy_geometry import update_geometry
     from veqpy.engine.numpy_profile import update_profile, update_profiles_packed_bulk
     from veqpy.engine.numpy_residual import (
-        update_residual,
         bind_residual_runner,
+        update_residual,
     )
     from veqpy.engine.numpy_source import (
-        RHO_AXIS,
-        THETA_AXIS,
         DERIVATIVE_NAMES,
         PSI_DERIVATIVE,
+        RHO_AXIS,
         RHO_DERIVATIVE,
+        THETA_AXIS,
         bind_source_runner,
-        validate_operator,
-        full_differentiation,
-        theta_reduction,
-        quadrature,
-        full_integration,
         corrected_integration,
+        full_differentiation,
+        full_integration,
+        quadrature,
+        theta_reduction,
+        validate_operator,
     )
 elif BACKEND == "numba":
     from veqpy.engine.numba_geometry import update_geometry
     from veqpy.engine.numba_profile import update_profile, update_profiles_packed_bulk
     from veqpy.engine.numba_residual import (
-        update_residual,
         bind_residual_runner,
+        update_residual,
     )
     from veqpy.engine.numba_source import (
-        RHO_AXIS,
-        THETA_AXIS,
         DERIVATIVE_NAMES,
         PSI_DERIVATIVE,
+        RHO_AXIS,
         RHO_DERIVATIVE,
+        THETA_AXIS,
         bind_source_runner,
-        validate_operator,
-        full_differentiation,
-        theta_reduction,
-        quadrature,
-        full_integration,
         corrected_integration,
+        full_differentiation,
+        full_integration,
+        quadrature,
+        theta_reduction,
+        validate_operator,
     )
 
 

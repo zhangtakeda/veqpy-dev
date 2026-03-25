@@ -13,9 +13,9 @@ Notes:
 - 不负责 source route, residual 组装, 或 solver runtime 状态.
 """
 
+import warnings
 from dataclasses import dataclass, field
 from typing import Literal
-import warnings
 
 import numpy as np
 from rich.console import Console
@@ -28,8 +28,8 @@ from veqpy.engine import (
     corrected_integration,
     full_differentiation,
     full_integration,
-    theta_reduction,
     quadrature,
+    theta_reduction,
 )
 from veqpy.model.serial import Serial
 

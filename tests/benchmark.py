@@ -8,6 +8,10 @@ from pathlib import Path
 
 import numpy as np
 
+from veqpy.model import Equilibrium, Grid
+from veqpy.operator import PROFILE_INDEX, Operator, OperatorCase, build_profile_layout
+from veqpy.solver import Solver, SolverConfig
+
 PLOT = False
 SHOW_PROGRESS = True
 WARMSTART = False
@@ -34,23 +38,15 @@ BENCHMARK_MODE_CONSTRAINTS = {
 }
 
 try:
-    from demo import (
-        CASE_1 as PF_REFERENCE_CASE,
-        CONFIG as PF_REFERENCE_SOLVER_CONFIG,
-        COEFFS as PF_REFERENCE_COEFFS,
-        pf_reference_profiles,
-    )
+    from demo import CASE_1 as PF_REFERENCE_CASE
+    from demo import COEFFS as PF_REFERENCE_COEFFS
+    from demo import CONFIG as PF_REFERENCE_SOLVER_CONFIG
+    from demo import pf_reference_profiles
 except ImportError:
-    from veqpy.demo import (
-        CASE_1 as PF_REFERENCE_CASE,
-        CONFIG as PF_REFERENCE_SOLVER_CONFIG,
-        COEFFS as PF_REFERENCE_COEFFS,
-        pf_reference_profiles,
-    )
-
-from veqpy.model import Equilibrium, Grid
-from veqpy.operator import PROFILE_INDEX, Operator, OperatorCase, build_profile_layout
-from veqpy.solver import Solver, SolverConfig
+    from veqpy.demo import CASE_1 as PF_REFERENCE_CASE
+    from veqpy.demo import COEFFS as PF_REFERENCE_COEFFS
+    from veqpy.demo import CONFIG as PF_REFERENCE_SOLVER_CONFIG
+    from veqpy.demo import pf_reference_profiles
 
 PF_REFERENCE_GRID = Grid(
     Nr=32,

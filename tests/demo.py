@@ -5,7 +5,6 @@ from veqpy.model import Grid
 from veqpy.operator import Operator, OperatorCase
 from veqpy.solver import Solver, SolverConfig
 
-
 COEFFS = {
     "h": [0.0] * 3,
     "v": None,

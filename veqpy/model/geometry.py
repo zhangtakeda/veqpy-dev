@@ -21,6 +21,7 @@ from veqpy.engine import update_geometry
 from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile
 
+
 @dataclass(frozen=True, slots=True)
 class Geometry:
     """单个 Grid 上的 geometry runtime 容器."""

@@ -12,14 +12,15 @@ Notes:
 - 当前注释优先保留业务可读性, 暂不按 runtime hot-path 风格重写内部实现.
 """
 
-from units import base
-from matplotlib.path import Path
-from shapely.geometry import Point, Polygon
-from scipy.interpolate import splprep, splev, interp1d
-from scipy.integrate import simpson
+import re
+
 import matplotlib.pyplot as plt
 import numpy as np
-import re
+from matplotlib.path import Path
+from scipy.integrate import simpson
+from scipy.interpolate import interp1d, splev, splprep
+from shapely.geometry import Point, Polygon
+from units import base
 
 from veqpy.model.serial import Serial
 
@@ -196,7 +197,9 @@ class Geqdsk(Serial):
 
         # 通过 count 参数获得函数
         if isinstance(count, int):
-            count = lambda xi: count
+
+            def count(xi):
+                return count
         elif not callable(count):
             raise ValueError("Num must be an integer or a function")
 

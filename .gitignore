@@ -14,6 +14,8 @@ __pycache__
 .backup
 .codex
 .ruff_cache
+.venv
 .vscode
 
+uv.lock
 TODO.md
