@@ -90,6 +90,48 @@ Named properties such as `grid.T`, `profile.u`, and `geometry.R` remain valid se
 - When `enable_homotopy=True`, the staged solve expands the active set level by level in profile order.
 - Homotopy also supports freezing higher-order shape coefficients through `homotopy_truncation_tol` and `homotopy_truncation_patience`.
 
+## Profiling Notes
+
+- There are two useful solve timing metrics:
+  - full wall-clock around `solver.solve(...)`
+  - `SolverResult.elapsed`, which measures only the core solve-attempt region around `_solve_with_fallbacks(...)`
+- `SolverResult.elapsed` does not include later `SolverRecord` construction or `history.append(...)`.
+- Therefore:
+  - use full wall-clock when you want user-visible end-to-end `solve(...)` latency
+  - use `SolverResult.elapsed` when you want solve-core latency
+- The current hotspot script in [`tests/hotspot.py`](tests/hotspot.py) uses `enable_history=False`, so its reported solve totals track solve-core structure rather than full history-recording overhead.
+
+Recent warm single-solve wall-clock vs core-latency check on the demo case:
+
+- with `enable_history=False`:
+  - full `solver.solve(...)` wall-clock mean: about `1.098 ms`
+  - `SolverResult.elapsed` mean: about `1.042 ms`
+- with `enable_history=True`:
+  - full `solver.solve(...)` wall-clock mean: about `1.157 ms`
+  - `SolverResult.elapsed` mean: about `1.100 ms`
+- in both cases, the mean gap between full wall-clock and `SolverResult.elapsed` is about `0.056-0.057 ms`
+
+Recent warm single-solve hotspot snapshot from `tests/hotspot.py`:
+
+- total profiled solve: about `0.812 ms`
+- attempt envelope: about `99.1%` of solve
+- `Operator.residual(...)`: about `84.4%` of solve
+- staged operator time: about `79.7%` of solve
+
+Stage breakdown in that snapshot:
+
+- `Stage-A profile`: about `14.9%` of solve
+- `Stage-B geometry`: about `20.0%` of solve
+- `Stage-C source`: about `19.2%` of solve
+- `Stage-D residual`: about `25.4%` of solve
+
+Engine-compute share in that same snapshot:
+
+- `Stage-A`: about `43.0%` of Stage-A
+- `Stage-B`: about `71.8%` of Stage-B
+- `Stage-C`: about `69.2%` of Stage-C
+- `Stage-D`: about `56.0%` of Stage-D
+
 ## Installation
 
 Basic installation:
