@@ -48,7 +48,7 @@ except ImportError:
         pf_reference_profiles,
     )
 
-from veqpy.model import Equilibrium, Grid, resample_equilibrium
+from veqpy.model import Equilibrium, Grid
 from veqpy.operator import PROFILE_INDEX, Operator, OperatorCase, build_profile_layout
 from veqpy.solver import Solver, SolverConfig
 
@@ -346,7 +346,7 @@ def _extract_shape_x(coeffs_by_name: dict[str, list[float] | None], x: np.ndarra
 
 def _pf_reference_profiles() -> PFReferenceBundle:
     solver, result, equilibrium = solve_pf_reference(PF_REFERENCE_GRID, config=CONFIG)
-    equilibrium_on_grid = resample_equilibrium(equilibrium, target_grid=GRID)
+    equilibrium_on_grid = equilibrium.resample(target_grid=GRID)
     reference_shape_x = _extract_shape_x(
         solver.operator.case.coeffs_by_name,
         np.asarray(result.x, dtype=np.float64),

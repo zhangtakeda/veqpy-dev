@@ -1,7 +1,17 @@
 """
-operator 层 case 容器.
-负责把算例输入规范化为稳定的只含标量, 一维数组和 Python 列表的配置对象, 供 Operator 复用.
-不负责 layout 构造, residual 计算, solver 策略管理.
+Module: operator.operator_case
+
+Role:
+- 负责把算例输入规范化为稳定的 case 配置对象.
+
+Public API:
+- OperatorCase
+- SHAPE_PROFILE_OFFSET_FIELDS
+- SHAPE_PROFILE_OFFSET_FIELD_NAMES
+
+Notes:
+- `OperatorCase` 只保存 case 输入.
+- 不负责 layout 构造, residual 计算, 或 solver 策略管理.
 """
 
 from __future__ import annotations
@@ -13,19 +23,19 @@ from rich.console import Console
 from rich.text import Text
 from rich.tree import Tree
 
+SHAPE_PROFILE_OFFSET_FIELDS: dict[str, str] = {
+    "k": "ka",
+    "c0": "c0a",
+    "c1": "c1a",
+    "s1": "s1a",
+    "s2": "s2a",
+}
+SHAPE_PROFILE_OFFSET_FIELD_NAMES = tuple(SHAPE_PROFILE_OFFSET_FIELDS.values())
+
 
 @dataclass(slots=True)
 class OperatorCase:
-    """
-    描述一次 operator 求值所需的静态 case 输入.
-
-    Args:
-        coeffs_by_name: profile 名到系数列表的映射. None 表示 profile 不激活.
-        a, R0, Z0, B0: 基本几何尺度与参考磁场参数.
-        heat_input, current_input: 定义在 grid.rho 上的一维输入 profile.
-        ka, c0a, c1a, s1a, s2a: shape profile 的常数偏移项.
-        Ip, beta: 可选约束量. None 会在运行时归一化为 NaN 表示未指定.
-    """
+    """描述一次 operator 求值所需的静态 case 输入."""
 
     coeffs_by_name: dict[str, list[float] | None]
     a: float
@@ -53,23 +63,14 @@ class OperatorCase:
         object.__setattr__(self, name, value)
 
     def copy(self) -> OperatorCase:
-        """
-        创建一个与当前 case 独立的副本.
-
-        Returns:
-            返回新的 OperatorCase. 其中数组和系数列表都会复制, 便于后续安全修改.
-        """
+        """创建一个与当前 case 独立的副本."""
         return OperatorCase(
             coeffs_by_name=_copy_coeffs(self.coeffs_by_name),
             a=self.a,
             R0=self.R0,
             Z0=self.Z0,
             B0=self.B0,
-            ka=self.ka,
-            c0a=self.c0a,
-            c1a=self.c1a,
-            s1a=self.s1a,
-            s2a=self.s2a,
+            **{field_name: getattr(self, field_name) for field_name in SHAPE_PROFILE_OFFSET_FIELD_NAMES},
             heat_input=self.heat_input.copy(),
             current_input=self.current_input.copy(),
             Ip=self.Ip,
@@ -82,11 +83,8 @@ class OperatorCase:
         tree.add(Text(f"R0: {self.R0:.3f} [m]"))
         tree.add(Text(f"Z0: {self.Z0:.3f} [m]"))
         tree.add(f"B0: {self.B0:.3f} [T]")
-        tree.add(f"ka: {self.ka:.3f}")
-        tree.add(f"c0a: {self.c0a:.3f}")
-        tree.add(f"c1a: {self.c1a:.3f}")
-        tree.add(f"s1a: {self.s1a:.3f}")
-        tree.add(f"s2a: {self.s2a:.3f}")
+        for field_name in SHAPE_PROFILE_OFFSET_FIELD_NAMES:
+            tree.add(f"{field_name}: {getattr(self, field_name):.3f}")
         if np.isfinite(self.Ip):
             tree.add(f"Ip: {self.Ip:.3e} [A]")
         if np.isfinite(self.beta):
@@ -148,7 +146,7 @@ def _normalize_case_value(name: str, value):
     return value
 
 
-_FLOAT_FIELD_NAMES = {"a", "R0", "Z0", "B0", "ka", "c0a", "c1a", "s1a", "s2a"}
+_FLOAT_FIELD_NAMES = {"a", "R0", "Z0", "B0", *SHAPE_PROFILE_OFFSET_FIELD_NAMES}
 _OPTIONAL_FLOAT_FIELD_NAMES = {"Ip", "beta"}
 _ARRAY_FIELD_NAMES = {"heat_input", "current_input"}
 _CASE_FIELD_NAMES = {

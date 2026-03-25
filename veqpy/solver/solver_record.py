@@ -1,7 +1,15 @@
 """
-solver 层 history 快照对象.
-负责把一次求解对应的 case, config 和 result 打包为不可变记录, 便于追踪和重建.
-不负责求解执行, packed codec, 数值核更新.
+Module: solver.solver_record
+
+Role:
+- 负责持有一次求解对应的 history 快照.
+
+Public API:
+- SolverRecord
+
+Notes:
+- `SolverRecord` 只打包 case, config 和 result 快照.
+- 不负责求解执行, packed codec, 或数值核更新.
 """
 
 from dataclasses import dataclass
@@ -16,14 +24,7 @@ from veqpy.solver.solver_result import SolverResult
 
 @dataclass(frozen=True, slots=True)
 class SolverRecord:
-    """
-    描述一次求解完成后的不可变 history 快照.
-
-    Args:
-        case_snapshot: 求解时使用的 OperatorCase 副本.
-        config_snapshot: 本次求解实际生效的 SolverConfig.
-        result_snapshot: 本次求解输出的 SolverResult.
-    """
+    """描述一次求解完成后的不可变 history 快照."""
 
     case_snapshot: OperatorCase
     config_snapshot: SolverConfig

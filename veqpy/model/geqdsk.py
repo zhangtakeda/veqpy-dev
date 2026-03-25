@@ -1,3 +1,17 @@
+"""
+Module: model.geqdsk
+
+Role:
+- 负责读取, 持有, 插值与绘制 GEQDSK 风格平衡数据.
+
+Public API:
+- Geqdsk
+
+Notes:
+- 这个文件偏 legacy utility.
+- 当前注释优先保留业务可读性, 暂不按 runtime hot-path 风格重写内部实现.
+"""
+
 from units import base
 from matplotlib.path import Path
 from shapely.geometry import Point, Polygon

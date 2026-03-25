@@ -1,16 +1,17 @@
-"""响应式缓存框架 (Reactive Caching Framework).
+"""
+Module: model.reactive
 
-提供 Reactive 基类, 支持自动依赖图构建, 懒惰缓存 (lazy caching) 和
-级联失效 (cascading invalidation).
+Role:
+- 负责提供响应式缓存与依赖失效框架.
+- 负责根据 property 依赖关系构建缓存拓扑.
 
-子类只需:
-1. 在 __init__ 中声明根属性 (root attributes)
-2. 使用 @property 定义派生属性 (derived properties)
+Public API:
+- Reactive
+- depends_on
 
-框架会通过 AST (Abstract Syntax Tree) 分析自动推断依赖关系.
-若存在无法静态分析的依赖, 可使用 @depends_on 装饰器进行显式声明.
-
-当根属性发生修改时, 所有受影响的下游缓存会自动失效并重新计算.
+Notes:
+- 依赖默认通过 AST 推断.
+- 无法静态分析的依赖可以用 `depends_on` 显式声明.
 """
 
 import ast
@@ -24,7 +25,7 @@ import numpy as np
 
 
 def _is_none(node: ast.expr) -> bool:
-    """检查 AST 节点是否为 None 字面量"""
+    """检查 AST 节点是否为 None 字面量."""
     return isinstance(node, ast.Constant) and node.value is None
 
 
@@ -48,14 +49,7 @@ def _parse_dependency(func) -> Set[str]:
 
 
 def depends_on(*deps: str):
-    """显式声明 property 的额外依赖, 与 AST 分析结果合并
-
-    用法:
-        @property
-        @depends_on("rho", "ni_coeffs")
-        def ni(self):
-            return self.ni_coeffs.value(self.rho)
-    """
+    """显式声明 property 的额外依赖."""
 
     def decorator(func):
         setattr(func, "_reactive_deps", set(deps))
@@ -65,14 +59,7 @@ def depends_on(*deps: str):
 
 
 class Reactive:
-    """响应式缓存的基类, 并自动构建依赖图和响应图
-
-    设计要点:
-    - cache hit 仅需一次 dict __contains__ 检查, O(1)
-    - root set 时通过 reaction_graph 批量清除所有受影响的缓存
-    - 支持 @depends_on 显式声明额外依赖, 与 AST 自动分析结果合并
-    - O(V+E) 拓扑排序
-    """
+    """响应式缓存基类."""
 
     dependency_graph: Dict[str, Set[str]]
     downstream_map: Dict[str, Set[str]]
@@ -116,10 +103,7 @@ class Reactive:
         return cloned
 
     def invalidate(self, *names: str):
-        """手动使指定属性及其所有下游派生属性的缓存失效
-
-        无参数时清空所有缓存.
-        """
+        """使指定属性及其下游缓存失效."""
         if not names:
             self.cache.clear()
             return
@@ -131,10 +115,9 @@ class Reactive:
             for dep in downstream.get(name, set()):
                 cache.pop(dep, None)
 
-    # ====================  私有方法 ====================
     @classmethod
     def _setup_root_properties(cls):
-        """为根属性创建带缓存清除的 property"""
+        """为根属性创建带缓存清除的 property."""
 
         for name in cls.root_properties:
             if isinstance(getattr(cls, name, None), property):
@@ -169,7 +152,7 @@ class Reactive:
 
     @classmethod
     def _wrap_derived_properties(cls):
-        """将派生属性包装成惰性缓存版本, cache hit = 单次 dict 查找"""
+        """将派生属性包装成惰性缓存版本."""
 
         for name in cls.dependency_graph:
             attr = None

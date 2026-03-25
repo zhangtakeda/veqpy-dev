@@ -1,8 +1,16 @@
-"""model 层的 Grid 定义.
+"""
+Module: model.grid
 
-属于 model 层.
-负责持有单个网格配置及其派生的节点, 权重, 积分矩阵, 微分矩阵和基函数表.
-不负责 source route, residual 组装, 或 solver runtime 状态.
+Role:
+- 负责持有径向-极角网格配置及其派生 tables.
+- 负责生成节点, 权重, 谱矩阵与 basis fields.
+
+Public API:
+- Grid
+
+Notes:
+- `Grid` 是不可变的 model 层配置对象.
+- 不负责 source route, residual 组装, 或 solver runtime 状态.
 """
 
 from dataclasses import dataclass, field
@@ -28,12 +36,7 @@ from veqpy.model.serial import Serial
 
 @dataclass(frozen=True, slots=True)
 class Grid(Serial):
-    """径向-极角离散化的网格配置.
-
-    Grid 是不可变的网格配置对象.
-    只需指定 Nr, Nt, scheme 和 L_max, 即可自动生成节点, 权重, 谱矩阵与 Chebyshev 表.
-    它属于 model 层的数据对象, 不是可回写的 runtime buffer.
-    """
+    """径向-极角离散化的网格配置."""
 
     Nr: int
     Nt: int
@@ -58,11 +61,7 @@ class Grid(Serial):
 
     @classmethod
     def serial_attributes(cls) -> dict[str, type]:
-        """声明可序列化的根属性.
-
-        Returns:
-            仅包含可重建 Grid 的根参数. 派生数组在反序列化后重新计算.
-        """
+        """声明可序列化的根属性."""
 
         return {
             "Nr": int,
@@ -72,7 +71,7 @@ class Grid(Serial):
         }
 
     def __post_init__(self):
-        """根据 Nr / Nt / scheme 自动构造网格与谱表."""
+        """根据根参数构造网格与谱表."""
         scheme = self.scheme.lower()
         if scheme not in {"legendre", "chebyshev", "lobatto", "radau", "uniform"}:
             raise ValueError(f"Unknown grid scheme: {scheme}")
@@ -154,30 +153,13 @@ class Grid(Serial):
         return str(self)
 
     def differentiate(self, f_1D: np.ndarray, *, out: np.ndarray | None = None) -> np.ndarray:
-        """在当前径向网格上对 1D 场做谱微分.
-
-        Args:
-            f_1D: 当前 grid 上的 1D 场, shape=(Nr,).
-            out: 可选输出缓冲区, shape=(Nr,).
-
-        Returns:
-            当前 grid 上的径向导数, shape=(Nr,).
-        """
+        """在当前 Grid 上对 1D 场做谱微分."""
         if out is None:
             out = np.empty_like(f_1D)
         return full_differentiation(out, f_1D, self.differentiation_matrix)
 
     def integrate(self, f_1D: np.ndarray, *, p: int | None = None, out: np.ndarray | None = None) -> np.ndarray:
-        """在当前径向网格上对 1D 场做积分.
-
-        Args:
-            f_1D: 当前 grid 上的 1D 被积函数, shape=(Nr,).
-            p: 可选的轴正则阶数. 为 None 时使用全积分矩阵.
-            out: 可选输出缓冲区, shape=(Nr,).
-
-        Returns:
-            当前 grid 上的积分结果, shape=(Nr,).
-        """
+        """在当前 Grid 上对 1D 场做积分."""
         if out is None:
             out = np.empty_like(f_1D)
         if p is None:
@@ -199,16 +181,7 @@ class Grid(Serial):
         axis: int | None = None,
         out: np.ndarray | None = None,
     ) -> float | np.ndarray:
-        """在当前网格上执行求积.
-
-        Args:
-            f: 当前 grid 上的 1D 或 2D 数组.
-            axis: 对 2D 数组做径向或极向压缩时指定轴.
-            out: 可选输出缓冲区.
-
-        Returns:
-            1D 输入时返回标量求积值. 2D 输入时返回沿指定轴压缩后的 1D 数组.
-        """
+        """在当前 Grid 上执行求积."""
         if out is None:
             if axis is None:
                 return quadrature(f, self.weights)

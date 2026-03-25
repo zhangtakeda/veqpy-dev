@@ -1,11 +1,23 @@
-"""model 层包级导出.
+"""
+Module: model.__init__
 
-属于 model 层.
-负责导出 Grid, Profile, Geometry, Equilibrium 等模型对象与基础支撑类型.
-不负责 packed runtime ownership, solver policy, 或 backend 选择.
+Role:
+- 负责导出 model 层的公开类型与包级入口.
+
+Public API:
+- Grid
+- Profile
+- Geometry
+- Equilibrium
+- Reactive
+- Serial
+
+Notes:
+- 这里只做包级导出.
+- 不负责 packed runtime ownership, solver policy, 或 backend 选择.
 """
 
-from veqpy.model.equilibrium import Equilibrium, resample_equilibrium
+from veqpy.model.equilibrium import Equilibrium
 from veqpy.model.geometry import Geometry
 from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile
@@ -18,6 +30,5 @@ __all__ = [
     "Grid",
     "Profile",
     "Reactive",
-    "resample_equilibrium",
     "Serial",
 ]

@@ -8,34 +8,32 @@ a high-performance Python wrapper for plasma equilibrium simulations in magnetic
 
 This README was prepared with Codex assistance. The source code remains the authoritative reference.
 
-### Timing Scope
+## What veqpy provides
 
-PF mode (9 parameters, 12x12) with zeros for all coefficients:
+- Packed-state equilibrium solving with a fixed `x -> residual` operator path.
+- A layered runtime split into:
+  - `engine` for array-first numerical kernels
+  - `model` for grids, runtime buffers, and equilibrium snapshots
+  - `operator` for packed layout, cases, and the full residual operator
+  - `solver` for SciPy-based nonlinear solve orchestration
+- Snapshot and post-processing utilities through `Equilibrium`.
+- Benchmark and profiling entry points under `tests/`.
 
-| Item                                 |       Time | Share of full solve |
-| ------------------------------------ | ---------: | ------------------: |
-| full `solver.solve(...)` wall time   | `0.585 ms` |            `100.0%` |
-| solve core (`_solve_with_fallbacks`) | `0.541 ms` |             `92.5%` |
-| SciPy solve call(s)                  | `0.496 ms` |             `84.8%` |
-| `SolverResult` construction          | `0.005 ms` |              `0.9%` |
-| `SolverRecord` construction          | `0.020 ms` |              `3.4%` |
-| `history.append(...)`                | `0.000 ms` |              `0.0%` |
-| history bookkeeping total            | `0.021 ms` |              `3.5%` |
+## Quick Start
 
-| Item                         |      Value |
-| ---------------------------- | ---------: |
-| solve success                |     `True` |
-| `nfev`                       |       `25` |
-| packed state size (`x_size`) |        `9` |
-| residual total               | `0.436 ms` |
-| average per residual         | `0.017 ms` |
+Basic installation:
 
-| Stage            | Time (ms) | Total | Engine (ms / %) |
-| ---------------- | --------: | ----: | --------------- |
-| Stage-A profile  |     0.036 |  6.2% | 0.027 (75%)     |
-| Stage-B geometry |     0.142 | 24.3% | 0.119 (84%)     |
-| Stage-C source   |     0.120 | 20.6% | 0.095 (79%)     |
-| Stage-D residual |     0.102 | 17.4% | 0.071 (70%)     |
+```bash
+py -m pip install -e .
+```
+
+Development installation:
+
+```bash
+py -m pip install -e .[dev]
+```
+
+For a runnable example, see [tests/demo.py](E:/Dev/veqpy-dev/tests/demo.py).
 
 ## Project Layout
 
@@ -51,6 +49,13 @@ PF mode (9 parameters, 12x12) with zeros for all coefficients:
   - `demo.py` example entry point
   - `benchmark.py` multi-mode benchmark and consistency-check entry point
   - `benchmark/` benchmark artifact directory
+
+## Runtime Model
+
+- `Operator` owns the packed runtime path from `x` to residual.
+- `Solver` owns solve orchestration, warmstart state, and history records.
+- `Equilibrium` is a snapshot object, not a mutable solver-side runtime.
+- `OperatorCase` may change physical inputs and profile values, but may not change packed topology.
 
 ## Runtime Boundaries
 
@@ -119,6 +124,69 @@ Named properties such as `grid.T`, `profile.u`, and `geometry.R` remain valid se
 - When `enable_homotopy=True`, the staged solve expands the active set level by level in profile order.
 - Homotopy also supports freezing higher-order shape coefficients through `homotopy_truncation_tol` and `homotopy_truncation_patience`.
 
+## Key Files
+
+- `veqpy/engine/__init__.py`
+  - Backend control surface and stable exports
+- `veqpy/operator/operator.py`
+  - Main runtime path from packed state to residual
+- `veqpy/operator/layout.py`
+  - Packed layout definition
+- `veqpy/operator/codec.py`
+  - Packed state / residual encoding and decoding
+- `veqpy/solver/solver.py`
+  - Solve lifecycle entry point, root / least-squares / fallback / homotopy
+- `veqpy/solver/solver_config.py`
+  - Solver method configuration and staged-solve options
+- `veqpy/model/equilibrium.py`
+  - Snapshots, diagnostics, plotting, comparison, and resampling
+- `tests/demo.py`
+  - Minimal example and demo artifact entry point
+- `tests/benchmark.py`
+  - Multi-mode benchmark, delta checks, and benchmark artifact entry point
+
+## Notes
+
+- `replace_case(...)` only supports `OperatorCase` instances compatible with the packed layout.
+- `SolverRecord` copies `OperatorCase` snapshots to prevent later in-place updates from contaminating history.
+- `Grid` is immutable.
+- `Equilibrium.resample(...)` is snapshot interpolation, not strict parametric reconstruction.
+- If you change the packed layout, packed codec, operator contract, solver control flow, or engine exports, update `docs/` as well.
+
+## Related Documentation
+
+- [`docs/overview.md`](docs/overview.md)
+- [`docs/conventions.md`](docs/conventions.md)
+- [`docs/guardrails.md`](docs/guardrails.md)
+
+### Runtime/Passive Engines
+
+[docs/theory/profile.md](docs/theory/profile.md): Parameterized profile computation
+
+- `veqpy/engine/numpy_profile.py`
+- `veqpy/engine/numba_profile.py`
+
+[docs/theory/geometry.md](docs/theory/geometry.md): Metric and geometry computation
+
+- `veqpy/engine/numpy_geometry.py`
+- `veqpy/engine/numba_geometry.py`
+
+[docs/theory/source.md](docs/theory/source.md): Source term computation and source families definition
+
+- `veqpy/engine/numpy_source.py`
+- `veqpy/engine/numba_source.py`
+
+[docs/theory/residual.md](docs/theory/residual.md): Residual field and packed residual assembly
+
+- `veqpy/engine/numpy_residual.py`
+- `veqpy/engine/numba_residual.py`
+
+### Facade Models
+
+[docs/theory/equilibrium.md](docs/theory/equilibrium.md): Data-driven equilibrium snapshot modeling and diagnostics
+
+- `veqpy/model/equilibrium.py`
+
 ## Profiling Notes
 
 - There are two useful solve timing metrics:
@@ -130,6 +198,10 @@ Named properties such as `grid.T`, `profile.u`, and `geometry.R` remain valid se
   - use `SolverResult.elapsed` when you want solve-core latency
 
 The tables below come from a warm single solve of the demo case with internal source-level probes enabled and `enable_history=True`.
+
+### Timing Scope
+
+PF mode, 9 parameters, 12x12, all coefficients set to zero.
 
 ### Solve Breakdown
 
@@ -180,64 +252,6 @@ The tables below come from a warm single solve of the demo case with internal so
 | Stage-B | `Geometry.update(...)` wrapper, argument passing, and Python-to-engine call boundary                                                  |
 | Stage-C | `source_runner(...)` wrapper, scalar/array argument passing, and Python-to-engine call boundary                                       |
 | Stage-D | `stage_d_residual()` / `_assemble_residual()` Python shell plus fresh packed residual allocation before residual blocks write into it |
-
-## Installation
-
-Basic installation:
-
-```bash
-py -m pip install -e .
-```
-
-Development installation:
-
-```bash
-py -m pip install -e .[dev]
-```
-
-## Minimal Example
-
-For a more complete runnable example, see `tests/demo.py`.
-
-## Key Files
-
-- `veqpy/engine/__init__.py`
-  - Backend control surface and stable exports
-- `veqpy/operator/operator.py`
-  - Main runtime path from packed state to residual
-- `veqpy/operator/layout.py`
-  - Packed layout definition
-- `veqpy/operator/codec.py`
-  - Packed state / residual encoding and decoding
-- `veqpy/solver/solver.py`
-  - Solve lifecycle entry point, root / least-squares / fallback / homotopy
-- `veqpy/solver/solver_config.py`
-  - Solver method configuration and staged-solve options
-- `veqpy/model/equilibrium.py`
-  - Snapshots, diagnostics, plotting, comparison, and resampling
-- `tests/demo.py`
-  - Minimal example and demo artifact entry point
-- `tests/benchmark.py`
-  - Multi-mode benchmark, delta checks, and benchmark artifact entry point
-
-## Notes
-
-- `replace_case(...)` only supports `OperatorCase` instances compatible with the packed layout.
-- `OperatorCase` is a mutable runtime case and is suitable for live updates to `Ip`, `beta`, `heat_input`, and `current_input`.
-- `replace_case(...)` may change physical inputs and profile values, but not packed topology, active profile set, or profile order.
-- `SolverRecord` copies `OperatorCase` snapshots to prevent later in-place updates from contaminating history.
-- `Grid` is immutable.
-- `Equilibrium` is a single-grid snapshot, not a solver-side mutable state object.
-- `Equilibrium.resample(...)` is snapshot interpolation, not strict parametric reconstruction.
-- If you change the packed layout, packed codec, operator contract, solver control flow, or engine exports, update `docs/` as well.
-
-## Related Documentation
-
-- [`docs/overview.md`](docs/overview.md)
-- [`docs/conventions.md`](docs/conventions.md)
-- [`docs/guardrails.md`](docs/guardrails.md)
-- [`docs/veqpy_operators.md`](docs/veqpy_operators.md)
-- [`docs/veqpy_equilibrium.md`](docs/veqpy_equilibrium.md)
 
 ## Reference
 

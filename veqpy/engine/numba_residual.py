@@ -1,7 +1,17 @@
 """
-engine 层 Numba residual 核.
-负责计算 Grad-Shafranov residual 相关场, 并把二维残差投影到一维基函数系数空间.
-不负责算子路由, packed layout/codec, solver 收敛控制.
+Module: engine.numba_residual
+
+Role:
+- 负责在 numba backend 下生成 residual fields.
+- 负责把 residual blocks 组装成 packed residual.
+
+Public API:
+- update_residual
+- bind_residual_runner
+
+Notes:
+- residual block registration 保留在本模块内.
+- operator 层只负责 bind 并调用 residual runner.
 """
 
 from dataclasses import dataclass
@@ -31,15 +41,6 @@ def register_residual_block(name: str) -> Callable:
     return decorator
 
 
-def bind_residual_block(name: str) -> Callable:
-    try:
-        spec = RESIDUAL_BLOCK_REGISTRY[name]
-    except KeyError as exc:
-        supported = ", ".join(RESIDUAL_BLOCK_REGISTRY)
-        raise KeyError(f"Unknown residual block {name!r}. Supported blocks: {supported}") from exc
-    return spec.implementation
-
-
 _BLOCK_CODE_BY_NAME = {
     "h": 0,
     "v": 1,
@@ -61,7 +62,9 @@ def bind_residual_runner(
 ) -> Callable:
     block_codes = np.empty(len(profile_names), dtype=np.int64)
     for i, name in enumerate(profile_names):
-        bind_residual_block(name)
+        if name not in RESIDUAL_BLOCK_REGISTRY:
+            supported = ", ".join(RESIDUAL_BLOCK_REGISTRY)
+            raise KeyError(f"Unknown residual block {name!r}. Supported blocks: {supported}")
         try:
             block_codes[i] = _BLOCK_CODE_BY_NAME[name]
         except KeyError as exc:
@@ -123,18 +126,7 @@ def update_residual(
     J_fields: np.ndarray,
     g_fields: np.ndarray,
 ) -> None:
-    """
-    原地更新 residual 相关二维场.
-
-    Args:
-        out_fields: 调用方持有的二维输出 fields, shape=(3, nr, nt).
-        alpha1, alpha2: source 与几何项的归一化系数.
-        root_fields: 当前 grid 上的一维 root fields, shape=(4, nr).
-        R_fields, Z_fields, J_fields, g_fields: 当前几何 packed fields.
-
-    Returns:
-        返回 None. 所有 residual 相关二维场都会原地写入 out_fields.
-    """
+    """原地更新 residual 相关二维 fields."""
     out_psin_R = out_fields[0]
     out_psin_Z = out_fields[1]
     out_G = out_fields[2]
@@ -191,20 +183,11 @@ def assemble_h_residual_block(
     R0: float,
     B0: float,
 ) -> None:
-    """
-    组装 h 通道的一维 residual 投影块.
-
-    Args:
-        out: 输出系数缓冲区, shape=(n_basis,).
-        G, psin_R: 二维 residual 相关场, shape=(nr, nt).
-        y, weights: 径向权重项, shape=(nr,).
-        T: 基函数矩阵, shape=(n_basis, nr).
-        a: 小半径尺度, 与几何单位一致.
-
-    Returns:
-        返回 None. 组装后的 h 通道投影会原地写入 out.
-    """
-    _assemble_weighted_projection(out_packed, coeff_indices, G, psin_R, y, T, weights, (2.0 * np.pi / G.shape[1]) * a)
+    """组装 h 通道 residual block."""
+    nr = G.shape[0]
+    collapsed = np.empty(nr, dtype=G.dtype)
+    _collapse_g_field(collapsed, G, psin_R)
+    _scale_and_project_rows_two(out_packed, coeff_indices, T, collapsed, y, weights, (2.0 * np.pi / G.shape[1]) * a)
 
 
 @register_residual_block("v")
@@ -228,20 +211,11 @@ def assemble_v_residual_block(
     R0: float,
     B0: float,
 ) -> None:
-    """
-    组装 v 通道的一维 residual 投影块.
-
-    Args:
-        out: 输出系数缓冲区, shape=(n_basis,).
-        G, psin_Z: 二维 residual 相关场, shape=(nr, nt).
-        y, weights: 径向权重项, shape=(nr,).
-        T: 基函数矩阵, shape=(n_basis, nr).
-        a: 小半径尺度, 与几何单位一致.
-
-    Returns:
-        返回 None. 组装后的 v 通道投影会原地写入 out.
-    """
-    _assemble_weighted_projection(out_packed, coeff_indices, G, psin_Z, y, T, weights, (2.0 * np.pi / G.shape[1]) * a)
+    """组装 v 通道 residual block."""
+    nr = G.shape[0]
+    collapsed = np.empty(nr, dtype=G.dtype)
+    _collapse_g_field(collapsed, G, psin_Z)
+    _scale_and_project_rows_two(out_packed, coeff_indices, T, collapsed, y, weights, (2.0 * np.pi / G.shape[1]) * a)
 
 
 @register_residual_block("k")
@@ -265,29 +239,11 @@ def assemble_k_residual_block(
     R0: float,
     B0: float,
 ) -> None:
-    """
-    组装 k 通道的一维 residual 投影块.
-
-    Args:
-        out: 输出系数缓冲区, shape=(n_basis,).
-        G, psin_Z: 二维 residual 相关场, shape=(nr, nt).
-        sin_theta: theta 基函数取值, shape=(nt,).
-        rho, y, weights: 径向权重项, shape=(nr,).
-        T: 基函数矩阵, shape=(n_basis, nr).
-        a: 小半径尺度, 与几何单位一致.
-
-    Returns:
-        返回 None. 组装后的 k 通道投影会原地写入 out.
-    """
+    """组装 k 通道 residual block."""
     nr, nt = G.shape
-    weighted_rho = np.empty(nr, dtype=G.dtype)
-    scale = (2.0 * np.pi / nt) * (-a)
-    for i in range(nr):
-        collapsed = 0.0
-        for j in range(nt):
-            collapsed += G[i, j] * psin_Z[i, j] * sin_theta[j]
-        weighted_rho[i] = collapsed * rho[i] * y[i] * weights[i] * scale
-    _project_rows_to_packed(out_packed, coeff_indices, T, weighted_rho)
+    collapsed = np.empty(nr, dtype=G.dtype)
+    _collapse_g_field_theta(collapsed, G, psin_Z, sin_theta)
+    _scale_and_project_rows_three(out_packed, coeff_indices, T, collapsed, rho, y, weights, (2.0 * np.pi / nt) * (-a))
 
 
 @register_residual_block("c0")
@@ -311,28 +267,11 @@ def assemble_c0_residual_block(
     R0: float,
     B0: float,
 ) -> None:
-    """
-    组装 c0 通道的一维 residual 投影块.
-
-    Args:
-        out: 输出系数缓冲区, shape=(n_basis,).
-        G, psin_R, sin_tb: 二维 residual 相关场, shape=(nr, nt).
-        rho, y, weights: 径向权重项, shape=(nr,).
-        T: 基函数矩阵, shape=(n_basis, nr).
-        a: 小半径尺度, 与几何单位一致.
-
-    Returns:
-        返回 None. 组装后的 c0 通道投影会原地写入 out.
-    """
+    """组装 c0 通道 residual block."""
     nr, nt = G.shape
-    weighted_rho = np.empty(nr, dtype=G.dtype)
-    scale = (2.0 * np.pi / nt) * (-a)
-    for i in range(nr):
-        collapsed = 0.0
-        for j in range(nt):
-            collapsed += G[i, j] * psin_R[i, j] * sin_tb[i, j]
-        weighted_rho[i] = collapsed * rho[i] * y[i] * weights[i] * scale
-    _project_rows_to_packed(out_packed, coeff_indices, T, weighted_rho)
+    collapsed = np.empty(nr, dtype=G.dtype)
+    _collapse_g_two_fields(collapsed, G, psin_R, sin_tb)
+    _scale_and_project_rows_three(out_packed, coeff_indices, T, collapsed, rho, y, weights, (2.0 * np.pi / nt) * (-a))
 
 
 @register_residual_block("c1")
@@ -356,29 +295,11 @@ def assemble_c1_residual_block(
     R0: float,
     B0: float,
 ) -> None:
-    """
-    组装 c1 通道的一维 residual 投影块.
-
-    Args:
-        out: 输出系数缓冲区, shape=(n_basis,).
-        G, psin_R, sin_tb: 二维 residual 相关场, shape=(nr, nt).
-        cos_theta: theta 基函数取值, shape=(nt,).
-        rho2, y, weights: 径向权重项, shape=(nr,).
-        T: 基函数矩阵, shape=(n_basis, nr).
-        a: 小半径尺度, 与几何单位一致.
-
-    Returns:
-        返回 None. 组装后的 c1 通道投影会原地写入 out.
-    """
+    """组装 c1 通道 residual block."""
     nr, nt = G.shape
-    weighted_rho = np.empty(nr, dtype=G.dtype)
-    scale = (2.0 * np.pi / nt) * (-a)
-    for i in range(nr):
-        collapsed = 0.0
-        for j in range(nt):
-            collapsed += G[i, j] * psin_R[i, j] * sin_tb[i, j] * cos_theta[j]
-        weighted_rho[i] = collapsed * rho2[i] * y[i] * weights[i] * scale
-    _project_rows_to_packed(out_packed, coeff_indices, T, weighted_rho)
+    collapsed = np.empty(nr, dtype=G.dtype)
+    _collapse_g_two_fields_theta(collapsed, G, psin_R, sin_tb, cos_theta)
+    _scale_and_project_rows_three(out_packed, coeff_indices, T, collapsed, rho2, y, weights, (2.0 * np.pi / nt) * (-a))
 
 
 @register_residual_block("s1")
@@ -402,29 +323,11 @@ def assemble_s1_residual_block(
     R0: float,
     B0: float,
 ) -> None:
-    """
-    组装 s1 通道的一维 residual 投影块.
-
-    Args:
-        out: 输出系数缓冲区, shape=(n_basis,).
-        G, psin_R, sin_tb: 二维 residual 相关场, shape=(nr, nt).
-        sin_theta: theta 基函数取值, shape=(nt,).
-        rho2, y, weights: 径向权重项, shape=(nr,).
-        T: 基函数矩阵, shape=(n_basis, nr).
-        a: 小半径尺度, 与几何单位一致.
-
-    Returns:
-        返回 None. 组装后的 s1 通道投影会原地写入 out.
-    """
+    """组装 s1 通道 residual block."""
     nr, nt = G.shape
-    weighted_rho = np.empty(nr, dtype=G.dtype)
-    scale = (2.0 * np.pi / nt) * (-a)
-    for i in range(nr):
-        collapsed = 0.0
-        for j in range(nt):
-            collapsed += G[i, j] * psin_R[i, j] * sin_tb[i, j] * sin_theta[j]
-        weighted_rho[i] = collapsed * rho2[i] * y[i] * weights[i] * scale
-    _project_rows_to_packed(out_packed, coeff_indices, T, weighted_rho)
+    collapsed = np.empty(nr, dtype=G.dtype)
+    _collapse_g_two_fields_theta(collapsed, G, psin_R, sin_tb, sin_theta)
+    _scale_and_project_rows_three(out_packed, coeff_indices, T, collapsed, rho2, y, weights, (2.0 * np.pi / nt) * (-a))
 
 
 @register_residual_block("s2")
@@ -448,29 +351,13 @@ def assemble_s2_residual_block(
     R0: float,
     B0: float,
 ) -> None:
-    """
-    组装 s2 通道的一维 residual 投影块.
-
-    Args:
-        out: 输出系数缓冲区, shape=(n_basis,).
-        G, psin_R, sin_tb: 二维 residual 相关场, shape=(nr, nt).
-        sin_2theta: 二倍角 theta 基函数取值, shape=(nt,).
-        rho, rho2, y, weights: 径向权重项, shape=(nr,).
-        T: 基函数矩阵, shape=(n_basis, nr).
-        a: 小半径尺度, 与几何单位一致.
-
-    Returns:
-        返回 None. 组装后的 s2 通道投影会原地写入 out.
-    """
+    """组装 s2 通道 residual block."""
     nr, nt = G.shape
-    weighted_rho = np.empty(nr, dtype=G.dtype)
-    scale = (2.0 * np.pi / nt) * (-a)
-    for i in range(nr):
-        collapsed = 0.0
-        for j in range(nt):
-            collapsed += G[i, j] * psin_R[i, j] * sin_tb[i, j] * sin_2theta[j]
-        weighted_rho[i] = collapsed * rho[i] * rho2[i] * y[i] * weights[i] * scale
-    _project_rows_to_packed(out_packed, coeff_indices, T, weighted_rho)
+    collapsed = np.empty(nr, dtype=G.dtype)
+    _collapse_g_two_fields_theta(collapsed, G, psin_R, sin_tb, sin_2theta)
+    _scale_and_project_rows_four(
+        out_packed, coeff_indices, T, collapsed, rho, rho2, y, weights, (2.0 * np.pi / nt) * (-a)
+    )
 
 
 @register_residual_block("psin")
@@ -494,27 +381,11 @@ def assemble_psin_residual_block(
     R0: float,
     B0: float,
 ) -> None:
-    """
-    组装 psin 通道的一维 residual 投影块.
-
-    Args:
-        out: 输出系数缓冲区, shape=(n_basis,).
-        G: 二维 residual 场, shape=(nr, nt).
-        rho2, y, weights: 径向权重项, shape=(nr,).
-        T: 基函数矩阵, shape=(n_basis, nr).
-
-    Returns:
-        返回 None. 组装后的 psin 通道投影会原地写入 out.
-    """
+    """组装 psin 通道 residual block."""
     nr, nt = G.shape
-    weighted_rho = np.empty(nr, dtype=G.dtype)
-    scale = 2.0 * np.pi / nt
-    for i in range(nr):
-        collapsed = 0.0
-        for j in range(nt):
-            collapsed += G[i, j]
-        weighted_rho[i] = collapsed * rho2[i] * y[i] * weights[i] * scale
-    _project_rows_to_packed(out_packed, coeff_indices, T, weighted_rho)
+    collapsed = np.empty(nr, dtype=G.dtype)
+    _collapse_g(collapsed, G)
+    _scale_and_project_rows_three(out_packed, coeff_indices, T, collapsed, rho2, y, weights, 2.0 * np.pi / nt)
 
 
 @register_residual_block("F")
@@ -538,49 +409,69 @@ def assemble_F_residual_block(
     R0: float,
     B0: float,
 ) -> None:
-    """
-    组装 F 通道的一维 residual 投影块.
-
-    Args:
-        out: 输出系数缓冲区, shape=(n_basis,).
-        G: 二维 residual 场, shape=(nr, nt).
-        y, weights: 径向权重项, shape=(nr,).
-        T: 基函数矩阵, shape=(n_basis, nr).
-        R0, B0: 参考磁轴半径与磁场强度, 用于 F 通道归一化.
-
-    Returns:
-        返回 None. 组装后的 F 通道投影会原地写入 out.
-    """
+    """组装 F 通道 residual block."""
     nr, nt = G.shape
-    weighted_rho = np.empty(nr, dtype=G.dtype)
-    scale = (2.0 * np.pi / nt) * (R0 * B0)
+    collapsed = np.empty(nr, dtype=G.dtype)
+    _collapse_g(collapsed, G)
+    _scale_and_project_rows_three(
+        out_packed, coeff_indices, T, collapsed, y, y, weights, (2.0 * np.pi / nt) * (R0 * B0)
+    )
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def _collapse_g(out: np.ndarray, G: np.ndarray) -> None:
+    nr, nt = G.shape
     for i in range(nr):
         collapsed = 0.0
         for j in range(nt):
             collapsed += G[i, j]
-        weighted_rho[i] = collapsed * y[i] * y[i] * weights[i] * scale
-    _project_rows_to_packed(out_packed, coeff_indices, T, weighted_rho)
+        out[i] = collapsed
 
 
 @njit(cache=True, fastmath=True, nogil=True)
-def _assemble_weighted_projection(
-    out_packed: np.ndarray,
-    coeff_indices: np.ndarray,
-    G: np.ndarray,
-    field: np.ndarray,
-    y: np.ndarray,
-    T: np.ndarray,
-    weights: np.ndarray,
-    scale: float,
-) -> None:
+def _collapse_g_field(out: np.ndarray, G: np.ndarray, field: np.ndarray) -> None:
     nr, nt = G.shape
-    weighted_rho = np.empty(nr, dtype=G.dtype)
     for i in range(nr):
         collapsed = 0.0
         for j in range(nt):
             collapsed += G[i, j] * field[i, j]
-        weighted_rho[i] = collapsed * y[i] * weights[i] * scale
-    _project_rows_to_packed(out_packed, coeff_indices, T, weighted_rho)
+        out[i] = collapsed
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def _collapse_g_field_theta(out: np.ndarray, G: np.ndarray, field: np.ndarray, theta_weight: np.ndarray) -> None:
+    nr, nt = G.shape
+    for i in range(nr):
+        collapsed = 0.0
+        for j in range(nt):
+            collapsed += G[i, j] * field[i, j] * theta_weight[j]
+        out[i] = collapsed
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def _collapse_g_two_fields(out: np.ndarray, G: np.ndarray, field_a: np.ndarray, field_b: np.ndarray) -> None:
+    nr, nt = G.shape
+    for i in range(nr):
+        collapsed = 0.0
+        for j in range(nt):
+            collapsed += G[i, j] * field_a[i, j] * field_b[i, j]
+        out[i] = collapsed
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def _collapse_g_two_fields_theta(
+    out: np.ndarray,
+    G: np.ndarray,
+    field_a: np.ndarray,
+    field_b: np.ndarray,
+    theta_weight: np.ndarray,
+) -> None:
+    nr, nt = G.shape
+    for i in range(nr):
+        collapsed = 0.0
+        for j in range(nt):
+            collapsed += G[i, j] * field_a[i, j] * field_b[i, j] * theta_weight[j]
+        out[i] = collapsed
 
 
 @njit(cache=True, fastmath=True, nogil=True)
@@ -597,6 +488,54 @@ def _project_rows_to_packed(
         for j in range(cols):
             total += T[i, j] * weighted_rho[j]
         out_packed[coeff_indices[i]] = total
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def _scale_and_project_rows_two(
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
+    T: np.ndarray,
+    collapsed: np.ndarray,
+    weight_a: np.ndarray,
+    weight_b: np.ndarray,
+    scalar: float,
+) -> None:
+    for i in range(collapsed.shape[0]):
+        collapsed[i] *= weight_a[i] * weight_b[i] * scalar
+    _project_rows_to_packed(out_packed, coeff_indices, T, collapsed)
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def _scale_and_project_rows_three(
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
+    T: np.ndarray,
+    collapsed: np.ndarray,
+    weight_a: np.ndarray,
+    weight_b: np.ndarray,
+    weight_c: np.ndarray,
+    scalar: float,
+) -> None:
+    for i in range(collapsed.shape[0]):
+        collapsed[i] *= weight_a[i] * weight_b[i] * weight_c[i] * scalar
+    _project_rows_to_packed(out_packed, coeff_indices, T, collapsed)
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def _scale_and_project_rows_four(
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
+    T: np.ndarray,
+    collapsed: np.ndarray,
+    weight_a: np.ndarray,
+    weight_b: np.ndarray,
+    weight_c: np.ndarray,
+    weight_d: np.ndarray,
+    scalar: float,
+) -> None:
+    for i in range(collapsed.shape[0]):
+        collapsed[i] *= weight_a[i] * weight_b[i] * weight_c[i] * weight_d[i] * scalar
+    _project_rows_to_packed(out_packed, coeff_indices, T, collapsed)
 
 
 @njit(cache=True, fastmath=True, nogil=True)
@@ -625,20 +564,182 @@ def _run_residual_blocks_packed(
         coeff_indices = coeff_index_rows[slot, : lengths[slot]]
         code = block_codes[slot]
         if code == 0:
-            assemble_h_residual_block(out_packed, coeff_indices, G, psin_R, psin_Z, sin_tb, sin_theta, cos_theta, sin_2theta, rho, rho2, y, T, weights, a, R0, B0)
+            assemble_h_residual_block(
+                out_packed,
+                coeff_indices,
+                G,
+                psin_R,
+                psin_Z,
+                sin_tb,
+                sin_theta,
+                cos_theta,
+                sin_2theta,
+                rho,
+                rho2,
+                y,
+                T,
+                weights,
+                a,
+                R0,
+                B0,
+            )
         elif code == 1:
-            assemble_v_residual_block(out_packed, coeff_indices, G, psin_R, psin_Z, sin_tb, sin_theta, cos_theta, sin_2theta, rho, rho2, y, T, weights, a, R0, B0)
+            assemble_v_residual_block(
+                out_packed,
+                coeff_indices,
+                G,
+                psin_R,
+                psin_Z,
+                sin_tb,
+                sin_theta,
+                cos_theta,
+                sin_2theta,
+                rho,
+                rho2,
+                y,
+                T,
+                weights,
+                a,
+                R0,
+                B0,
+            )
         elif code == 2:
-            assemble_k_residual_block(out_packed, coeff_indices, G, psin_R, psin_Z, sin_tb, sin_theta, cos_theta, sin_2theta, rho, rho2, y, T, weights, a, R0, B0)
+            assemble_k_residual_block(
+                out_packed,
+                coeff_indices,
+                G,
+                psin_R,
+                psin_Z,
+                sin_tb,
+                sin_theta,
+                cos_theta,
+                sin_2theta,
+                rho,
+                rho2,
+                y,
+                T,
+                weights,
+                a,
+                R0,
+                B0,
+            )
         elif code == 3:
-            assemble_c0_residual_block(out_packed, coeff_indices, G, psin_R, psin_Z, sin_tb, sin_theta, cos_theta, sin_2theta, rho, rho2, y, T, weights, a, R0, B0)
+            assemble_c0_residual_block(
+                out_packed,
+                coeff_indices,
+                G,
+                psin_R,
+                psin_Z,
+                sin_tb,
+                sin_theta,
+                cos_theta,
+                sin_2theta,
+                rho,
+                rho2,
+                y,
+                T,
+                weights,
+                a,
+                R0,
+                B0,
+            )
         elif code == 4:
-            assemble_c1_residual_block(out_packed, coeff_indices, G, psin_R, psin_Z, sin_tb, sin_theta, cos_theta, sin_2theta, rho, rho2, y, T, weights, a, R0, B0)
+            assemble_c1_residual_block(
+                out_packed,
+                coeff_indices,
+                G,
+                psin_R,
+                psin_Z,
+                sin_tb,
+                sin_theta,
+                cos_theta,
+                sin_2theta,
+                rho,
+                rho2,
+                y,
+                T,
+                weights,
+                a,
+                R0,
+                B0,
+            )
         elif code == 5:
-            assemble_s1_residual_block(out_packed, coeff_indices, G, psin_R, psin_Z, sin_tb, sin_theta, cos_theta, sin_2theta, rho, rho2, y, T, weights, a, R0, B0)
+            assemble_s1_residual_block(
+                out_packed,
+                coeff_indices,
+                G,
+                psin_R,
+                psin_Z,
+                sin_tb,
+                sin_theta,
+                cos_theta,
+                sin_2theta,
+                rho,
+                rho2,
+                y,
+                T,
+                weights,
+                a,
+                R0,
+                B0,
+            )
         elif code == 6:
-            assemble_s2_residual_block(out_packed, coeff_indices, G, psin_R, psin_Z, sin_tb, sin_theta, cos_theta, sin_2theta, rho, rho2, y, T, weights, a, R0, B0)
+            assemble_s2_residual_block(
+                out_packed,
+                coeff_indices,
+                G,
+                psin_R,
+                psin_Z,
+                sin_tb,
+                sin_theta,
+                cos_theta,
+                sin_2theta,
+                rho,
+                rho2,
+                y,
+                T,
+                weights,
+                a,
+                R0,
+                B0,
+            )
         elif code == 7:
-            assemble_psin_residual_block(out_packed, coeff_indices, G, psin_R, psin_Z, sin_tb, sin_theta, cos_theta, sin_2theta, rho, rho2, y, T, weights, a, R0, B0)
+            assemble_psin_residual_block(
+                out_packed,
+                coeff_indices,
+                G,
+                psin_R,
+                psin_Z,
+                sin_tb,
+                sin_theta,
+                cos_theta,
+                sin_2theta,
+                rho,
+                rho2,
+                y,
+                T,
+                weights,
+                a,
+                R0,
+                B0,
+            )
         else:
-            assemble_F_residual_block(out_packed, coeff_indices, G, psin_R, psin_Z, sin_tb, sin_theta, cos_theta, sin_2theta, rho, rho2, y, T, weights, a, R0, B0)
+            assemble_F_residual_block(
+                out_packed,
+                coeff_indices,
+                G,
+                psin_R,
+                psin_Z,
+                sin_tb,
+                sin_theta,
+                cos_theta,
+                sin_2theta,
+                rho,
+                rho2,
+                y,
+                T,
+                weights,
+                a,
+                R0,
+                B0,
+            )

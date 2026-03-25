@@ -1,7 +1,17 @@
 """
-engine 层 NumPy source 核.
-负责 source operator 注册, 路由绑定, 以及一维 source profile 的数值核实现.
-不负责 backend 选择, packed layout/codec, solver 收敛控制.
+Module: engine.numpy_source
+
+Role:
+- 负责在 numpy backend 下注册 source operators.
+- 负责校验 operator/derivative 组合并执行 source kernels.
+
+Public API:
+- register_operator
+- validate_operator
+- bind_source_runner
+
+Notes:
+- 这个文件同时作为 Stage-C source routing 与 field update 的 vectorized reference.
 """
 
 import warnings
@@ -30,14 +40,14 @@ DERIVATIVE_CODES = {
 
 
 @dataclass(frozen=True, slots=True)
-class _OperatorSpec:
+class _SourceSpec:
     name: str
     family: str
     supported_derivatives: tuple[int, ...]
     implementation: Callable
 
 
-OPERATOR_REGISTRY: dict[str, _OperatorSpec] = {}
+OPERATOR_REGISTRY: dict[str, _SourceSpec] = {}
 
 
 def register_operator(
@@ -46,24 +56,14 @@ def register_operator(
     family: str,
     supported_derivatives: tuple[int, ...] = (RHO_DERIVATIVE, PSI_DERIVATIVE),
 ) -> Callable:
-    """
-    按符号名注册一个 source operator kernel.
-
-    Args:
-        name: 算子名, 例如 PF, PP, PI, PJ1, PJ2, PQ.
-        family: 算子族标签, 用于区分 strict 或 robust 路由语义.
-        supported_derivatives: 允许的变量域编码集合.
-
-    Returns:
-        返回装饰器. 装饰后的函数会写入 OPERATOR_REGISTRY, 并保持原 callable 不变.
-    """
+    """注册一个 source operator kernel."""
 
     def decorator(func: Callable) -> Callable:
         existing = OPERATOR_REGISTRY.get(name)
         if existing is not None:
-            raise ValueError(f"_OperatorSpec {name!r} is already registered")
+            raise ValueError(f"_SourceSpec {name!r} is already registered")
 
-        OPERATOR_REGISTRY[name] = _OperatorSpec(
+        OPERATOR_REGISTRY[name] = _SourceSpec(
             name=name,
             family=family,
             supported_derivatives=supported_derivatives,
@@ -77,17 +77,8 @@ def register_operator(
 def validate_operator(
     name: str,
     derivative: str,
-) -> _OperatorSpec:
-    """
-    校验算子名和导数变量域, 并返回注册规格.
-
-    Args:
-        name: 算子名.
-        derivative: 导数变量域字符串, 只允许 rho 或 psi.
-
-    Returns:
-        返回对应的 _OperatorSpec. 不更新任何运行时缓冲区.
-    """
+) -> _SourceSpec:
+    """校验 operator/derivative 组合并返回注册规格."""
 
     derivative_code = _normalize_derivative(derivative)
     try:
@@ -98,27 +89,17 @@ def validate_operator(
 
     if derivative_code not in spec.supported_derivatives:
         raise ValueError(
-            f"_OperatorSpec {name!r} does not support derivative={derivative!r}. "
-            f"Supported: {spec.supported_derivatives}"
+            f"_SourceSpec {name!r} does not support derivative={derivative!r}. Supported: {spec.supported_derivatives}"
         )
 
     return spec
 
 
-def bind_runner(
+def bind_source_runner(
     name: str,
     derivative: str,
 ) -> Callable:
-    """
-    绑定一个稳定的算子执行入口, 避免运行期重复做路由查找.
-
-    Args:
-        name: 算子名.
-        derivative: 导数变量域字符串, 只允许 rho 或 psi.
-
-    Returns:
-        返回 runner callable. 调用该 runner 会原地写入输出 profile, 并返回 alpha1, alpha2.
-    """
+    """绑定 Stage-C source runner."""
 
     derivative_code = _normalize_derivative(derivative)
     spec = validate_operator(name, derivative)
@@ -190,8 +171,8 @@ def update_PF(
     out_psin_rr: np.ndarray,
     out_FFn_r: np.ndarray,
     out_Pn_r: np.ndarray,
-    heat_input: np.ndarray,  # 压力相关输入, 可能表示 Pn_r / Pn_psi / P_r / P_psi
-    current_input: np.ndarray,  # 电流相关输入, 可能表示 FFn_r / FFn_psi / FF_r / FF_psi
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
     derivative: int,
     R0: float,
     B0: float,
@@ -210,27 +191,11 @@ def update_PF(
     Ip: float,
     beta: float,
 ) -> tuple[float, float]:
-    """
-    根据 PF 约束更新 source root fields.
-
-    Args:
-        out_psin_r, out_psin_rr, out_FFn_r, out_Pn_r: 调用方持有的一维输出缓冲区, shape=(nr,).
-        heat_input, current_input: 当前算子给出的热源和电流 profile 输入, shape=(nr,).
-        derivative: 导数变量域编码, 只允许 rho 或 psi.
-        R0, B0, Ip, beta: 参考尺度与约束量. Ip, beta 可以为 NaN 表示未给定约束.
-        weights, differentiation_matrix, integration_matrix, rho: 径向网格与谱离散矩阵, shape=(nr,) 或 (nr, nr).
-        V_r, Kn, Kn_r, Ln_r, S_r: 当前 grid 上的一维几何积分量, shape=(nr,).
-        R, JdivR, F: 当前几何相关场, shape=(nr, nt) 或 (nr,).
-
-    Returns:
-        返回 (alpha1, alpha2). 同时原地更新四个输出 profile 缓冲区.
-    """
+    """根据 PF 约束更新 source root fields."""
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
 
     pressure_scale = MU0 if not has_Ip and not has_beta else 1.0
-
-    # 这里的输入可能表示 Xn, Yn, 也可能已是 psi_r 变量域下的 profile.
     if derivative == RHO_DERIVATIVE:
         integrand = Kn * (current_input * Ln_r + V_r * (pressure_scale * heat_input) / (4.0 * np.pi**2))
         corrected_integration(
@@ -304,8 +269,8 @@ def update_PP(
     out_psin_rr: np.ndarray,
     out_FFn_r: np.ndarray,
     out_Pn_r: np.ndarray,
-    heat_input: np.ndarray,  # 压力相关输入, 可能表示 Pn_r / Pn_psi / P_r / P_psi
-    current_input: np.ndarray,  # 极向磁通导数输入, 可能表示 psin_r / psi_r
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
     derivative: int,
     R0: float,
     B0: float,
@@ -324,21 +289,7 @@ def update_PP(
     Ip: float,
     beta: float,
 ) -> tuple[float, float]:
-    """
-    根据 PP 约束更新 source root fields.
-
-    Args:
-        out_psin_r, out_psin_rr, out_FFn_r, out_Pn_r: 调用方持有的一维输出缓冲区, shape=(nr,).
-        heat_input, current_input: 当前算子给出的热源和磁通导数输入, shape=(nr,).
-        derivative: 导数变量域编码, 只允许 rho 或 psi.
-        R0, B0, Ip, beta: 参考尺度与约束量. Ip, beta 可以为 NaN 表示未给定约束.
-        weights, differentiation_matrix, integration_matrix, rho: 径向网格与谱离散矩阵, shape=(nr,) 或 (nr, nr).
-        V_r, Kn, Kn_r, Ln_r, S_r: 当前 grid 上的一维几何积分量, shape=(nr,).
-        R, JdivR, F: 当前几何相关场, shape=(nr, nt) 或 (nr,).
-
-    Returns:
-        返回 (alpha1, alpha2). 同时原地更新四个输出 profile 缓冲区.
-    """
+    """根据 PP 约束更新 source root fields."""
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
 
@@ -375,8 +326,8 @@ def update_PI(
     out_psin_rr: np.ndarray,
     out_FFn_r: np.ndarray,
     out_Pn_r: np.ndarray,
-    heat_input: np.ndarray,  # 压力相关输入, 可能表示 Pn_r / Pn_psi / P_r / P_psi
-    current_input: np.ndarray,  # 环向电流输入, 可能表示 Itorn / Itor
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
     derivative: int,
     R0: float,
     B0: float,
@@ -395,21 +346,7 @@ def update_PI(
     Ip: float,
     beta: float,
 ) -> tuple[float, float]:
-    """
-    根据 PI 约束更新 source root fields.
-
-    Args:
-        out_psin_r, out_psin_rr, out_FFn_r, out_Pn_r: 调用方持有的一维输出缓冲区, shape=(nr,).
-        heat_input, current_input: 当前算子给出的热源和环向电流输入, shape=(nr,).
-        derivative: 导数变量域编码, 只允许 rho 或 psi.
-        R0, B0, Ip, beta: 参考尺度与约束量. Ip, beta 可以为 NaN 表示未给定约束.
-        weights, differentiation_matrix, integration_matrix, rho: 径向网格与谱离散矩阵, shape=(nr,) 或 (nr, nr).
-        V_r, Kn, Kn_r, Ln_r, S_r: 当前 grid 上的一维几何积分量, shape=(nr,).
-        R, JdivR, F: 当前几何相关场, shape=(nr, nt) 或 (nr,).
-
-    Returns:
-        返回 (alpha1, alpha2). 同时原地更新四个输出 profile 缓冲区.
-    """
+    """根据 PI 约束更新 source root fields."""
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
 
@@ -446,8 +383,8 @@ def update_PJ(
     out_psin_rr: np.ndarray,
     out_FFn_r: np.ndarray,
     out_Pn_r: np.ndarray,
-    heat_input: np.ndarray,  # 压力相关输入, 可能表示 Pn_r / Pn_psi / P_r / P_psi
-    current_input: np.ndarray,  # 环向电流密度输入, 可能表示 jtorn / jtor
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
     derivative: int,
     R0: float,
     B0: float,
@@ -466,21 +403,7 @@ def update_PJ(
     Ip: float,
     beta: float,
 ) -> tuple[float, float]:
-    """
-    根据 PJ1 约束更新 source root fields.
-
-    Args:
-        out_psin_r, out_psin_rr, out_FFn_r, out_Pn_r: 调用方持有的一维输出缓冲区, shape=(nr,).
-        heat_input, current_input: 当前算子给出的热源和环向电流密度输入, shape=(nr,).
-        derivative: 导数变量域编码, 只允许 rho 或 psi.
-        R0, B0, Ip, beta: 参考尺度与约束量. Ip, beta 可以为 NaN 表示未给定约束.
-        weights, differentiation_matrix, integration_matrix, rho: 径向网格与谱离散矩阵, shape=(nr,) 或 (nr, nr).
-        V_r, Kn, Kn_r, Ln_r, S_r: 当前 grid 上的一维几何积分量, shape=(nr,).
-        R, JdivR, F: 当前几何相关场, shape=(nr, nt) 或 (nr,).
-
-    Returns:
-        返回 (alpha1, alpha2). 同时原地更新四个输出 profile 缓冲区.
-    """
+    """根据 PJ1 约束更新 source root fields."""
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
 
@@ -529,8 +452,8 @@ def update_PJ2(
     out_psin_rr: np.ndarray,
     out_FFn_r: np.ndarray,
     out_Pn_r: np.ndarray,
-    heat_input: np.ndarray,  # 压力相关输入, 可能表示 Pn_r / Pn_psi / P_r / P_psi
-    current_input: np.ndarray,  # 平行电流密度输入, 可能表示 jparan / jpara
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
     derivative: int,
     R0: float,
     B0: float,
@@ -549,21 +472,7 @@ def update_PJ2(
     Ip: float,
     beta: float,
 ) -> tuple[float, float]:
-    """
-    根据 PJ2 约束更新 source root fields.
-
-    Args:
-        out_psin_r, out_psin_rr, out_FFn_r, out_Pn_r: 调用方持有的一维输出缓冲区, shape=(nr,).
-        heat_input, current_input: 当前算子给出的热源和平行电流密度输入, shape=(nr,).
-        derivative: 导数变量域编码, 只允许 rho 或 psi.
-        R0, B0, Ip, beta: 参考尺度与约束量. Ip, beta 可以为 NaN 表示未给定约束.
-        weights, differentiation_matrix, integration_matrix, rho: 径向网格与谱离散矩阵, shape=(nr,) 或 (nr, nr).
-        V_r, Kn, Kn_r, Ln_r, S_r: 当前 grid 上的一维几何积分量, shape=(nr,).
-        R, JdivR, F: 当前几何相关场, shape=(nr, nt) 或 (nr,).
-
-    Returns:
-        返回 (alpha1, alpha2). 同时原地更新四个输出 profile 缓冲区.
-    """
+    """根据 PJ2 约束更新 source root fields."""
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
 
@@ -611,8 +520,8 @@ def update_PQ(
     out_psin_rr: np.ndarray,
     out_FFn_r: np.ndarray,
     out_Pn_r: np.ndarray,
-    heat_input: np.ndarray,  # 压力相关输入, 可能表示 Pn_r / Pn_psi / P_r / P_psi
-    current_input: np.ndarray,  # 安全因子输入, 可能表示 qn / q
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
     derivative: int,
     R0: float,
     B0: float,
@@ -631,21 +540,7 @@ def update_PQ(
     Ip: float,
     beta: float,
 ) -> tuple[float, float]:
-    """
-    根据 PQ 约束更新 source root fields.
-
-    Args:
-        out_psin_r, out_psin_rr, out_FFn_r, out_Pn_r: 调用方持有的一维输出缓冲区, shape=(nr,).
-        heat_input, current_input: 当前算子给出的热源和安全因子输入, shape=(nr,).
-        derivative: 导数变量域编码, 只允许 rho 或 psi.
-        R0, B0, Ip, beta: 参考尺度与约束量. Ip, beta 可以为 NaN 表示未给定约束.
-        weights, differentiation_matrix, integration_matrix, rho: 径向网格与谱离散矩阵, shape=(nr,) 或 (nr, nr).
-        V_r, Kn, Kn_r, Ln_r, S_r: 当前 grid 上的一维几何积分量, shape=(nr,).
-        R, JdivR, F: 当前几何相关场, shape=(nr, nt) 或 (nr,).
-
-    Returns:
-        返回 (alpha1, alpha2). 同时原地更新四个输出 profile 缓冲区.
-    """
+    """根据 PQ 约束更新 source root fields."""
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
 
@@ -684,17 +579,7 @@ def full_differentiation(
     arr: np.ndarray,
     differentiation_matrix: np.ndarray,
 ) -> np.ndarray:
-    """
-    执行稳定的全径向微分核.
-
-    Args:
-        out: 输出缓冲区, shape=(nr,).
-        arr: 输入向量, shape=(nr,).
-        differentiation_matrix: 径向微分矩阵, shape=(nr, nr).
-
-    Returns:
-        返回 out. 结果会原地写入调用方提供的缓冲区.
-    """
+    """执行全径向微分."""
 
     _validate_vector_matrix_kernel(
         out=out,
@@ -712,18 +597,7 @@ def theta_reduction(
     weights: np.ndarray,
     axis: int,
 ) -> np.ndarray:
-    """
-    沿指定轴执行稳定的求积约化.
-
-    Args:
-        out: 输出缓冲区. 当 axis 为 rho 时 shape=(nt,), 当 axis 为 theta 时 shape=(nr,).
-        arr: 输入数组, shape=(nr, nt) 或兼容的一维数组.
-        weights: 径向权重, shape=(nr,).
-        axis: 约化轴编码, 只允许 RHO_AXIS 或 THETA_AXIS.
-
-    Returns:
-        返回 out. 结果会原地写入调用方提供的缓冲区.
-    """
+    """沿指定轴执行求积约化."""
 
     if arr.ndim not in (1, 2):
         raise ValueError(f"Expected 1D or 2D array, got {arr.shape}")
@@ -750,16 +624,7 @@ def quadrature(
     arr: np.ndarray,
     weights: np.ndarray,
 ) -> float:
-    """
-    返回一维或二维数组的全域标量求积值.
-
-    Args:
-        arr: 输入数组, shape=(nr,) 或 (nr, nt).
-        weights: 径向权重, shape=(nr,).
-
-    Returns:
-        返回一个 float 标量, 表示当前数组在全域上的求积结果.
-    """
+    """返回全域标量求积值."""
 
     if arr.ndim not in (1, 2):
         raise ValueError(f"Expected 1D or 2D array, got {arr.shape}")
@@ -777,17 +642,7 @@ def full_integration(
     arr: np.ndarray,
     integration_matrix: np.ndarray,
 ) -> np.ndarray:
-    """
-    执行稳定的全径向积分核.
-
-    Args:
-        out: 输出缓冲区, shape=(nr,).
-        arr: 输入向量, shape=(nr,).
-        integration_matrix: 径向积分矩阵, shape=(nr, nr).
-
-    Returns:
-        返回 out. 结果会原地写入调用方提供的缓冲区.
-    """
+    """执行全径向积分."""
 
     _validate_vector_matrix_kernel(
         out=out,
@@ -808,20 +663,7 @@ def corrected_integration(
     rho: np.ndarray,
     differentiation_matrix: np.ndarray,
 ) -> np.ndarray:
-    """
-    执行修正原点奇点后的径向积分.
-
-    Args:
-        out: 输出缓冲区, shape=(nr,).
-        arr: 输入向量, shape=(nr,).
-        integration_matrix: 全径向积分矩阵, shape=(nr, nr).
-        p: 原点修正阶数, 对应 rho^p 型奇性.
-        rho: 径向网格, shape=(nr,).
-        differentiation_matrix: 径向微分矩阵, shape=(nr, nr).
-
-    Returns:
-        返回 out. 若修正积分失效, 会发出 warning 并回退到 full_integration.
-    """
+    """执行原点修正后的径向积分."""
 
     _validate_vector_matrix_kernel(
         out=out,

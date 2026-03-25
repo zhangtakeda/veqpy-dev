@@ -1,8 +1,16 @@
-"""model 层的 Geometry 定义.
+"""
+Module: model.geometry
 
-属于 model 层.
-负责持有单个 Grid 上物化后的几何 runtime buffer, 以及由 profile 派生的一维几何积分量.
-不负责 packed state ownership, source route, residual 组装, 或 solver policy.
+Role:
+- 负责持有单个 Grid 上物化后的 geometry fields 与积分量.
+- 负责把 shape profiles 映射成 geometry runtime fields.
+
+Public API:
+- Geometry
+
+Notes:
+- `Geometry` 属于 model 层 runtime 容器.
+- 不负责 packed state ownership, source route, residual 组装, 或 solver policy.
 """
 
 from dataclasses import InitVar, dataclass, field
@@ -15,7 +23,7 @@ from veqpy.model.profile import Profile
 
 @dataclass(frozen=True, slots=True)
 class Geometry:
-    """单个 grid 上的几何 runtime 容器."""
+    """单个 Grid 上的 geometry runtime 容器."""
 
     grid: InitVar[Grid]
 
@@ -60,7 +68,7 @@ class Geometry:
         s1_profile: Profile,
         s2_profile: Profile,
     ):
-        """用当前 Grid 和 profile 值刷新几何场."""
+        """用当前 Grid 和 profile fields 刷新 geometry."""
         if self.R_fields.shape[1:] != (grid.Nr, grid.Nt):
             raise ValueError(
                 f"Expected geometry shape {(self.R_fields.shape[1], self.R_fields.shape[2])}, got {(grid.Nr, grid.Nt)}"

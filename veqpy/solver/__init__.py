@@ -1,7 +1,18 @@
 """
-solver 层导出面.
-负责暴露 Solver, SolverConfig, SolverRecord 和 SolverResult 四个稳定接口.
-不负责 packed layout 定义, engine backend 选择, benchmark 组织.
+Module: solver.__init__
+
+Role:
+- 负责导出 solver 层的公开类型与包级入口.
+
+Public API:
+- Solver
+- SolverConfig
+- SolverRecord
+- SolverResult
+
+Notes:
+- 这里只做包级导出.
+- 不负责 packed layout 定义, engine backend 选择, 或 benchmark 组织.
 """
 
 from veqpy.solver.solver import Solver

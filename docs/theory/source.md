@@ -1,15 +1,4 @@
-## 当前实现说明
-
-- 本文档主要描述算子模式与物理公式.
-- 当前实现上的 packed hot-path 规则以 `README.md`, `docs/overview.md`, `docs/guardrails.md` 为准.
-- 当前 profile 权威顺序固定为:
-  - `psin`, `F`, `h`, `v`, `k`, `c0`, `c1`, `s1`, `s2`
-- 当前 residual runtime 仍保持:
-  - `Stage-A` 的 per-profile Python loop
-  - `Stage-D` 的 residual block registry
-- packed state / packed residual 的位置语义统一由 `coeff_index` / `coeff_indices` 定义.
-
-## 物理约束
+## source
 
 ### 1. 总电流约束
 
@@ -124,7 +113,7 @@ $$
   \end{aligned}
   $$
 
-### 1. 环向场函数 (Strict)
+### 1. 环向场函数 (PF-Strict)
 
 - $\hat{P}_\rho+\hat{FF_\rho} +I_p$
 - $\hat{P}_\rho+\hat{FF_\rho}+\beta_t$
@@ -170,7 +159,7 @@ $$
 \end{aligned}
 $$
 
-### 2. 极向磁通 (Strict)
+### 2. 极向磁通 (PP-Strict)
 
 - $(\hat{P}_\rho+\beta_t)+(\hat{\psi}_\rho +I_p)$
 - ${P}_\rho+(\hat{\psi}_\rho+I_p)$
@@ -206,7 +195,7 @@ $$
 \end{aligned}
 $$
 
-### 3. 环向电流 (Strict)
+### 3. 环向电流 (PI-Strict)
 
 - $(\hat{P}_\rho+\beta_t)+(\hat{I}_{\rm tor} +I_p)$
 - ${P}_\rho+(\hat{I}_{\rm tor}+I_p)$
@@ -244,14 +233,14 @@ $$
 \end{aligned}
 $$
 
-### 4. 环向电流密度 (Strict)
+### 4. 环向电流密度 (PJ1-Strict)
 
 - $(\hat{P}_\rho+\beta_t)+(\hat{j}_{\rm tor} +I_p)$
 - ${P}_\rho+(\hat{j}_{\rm tor}+I_p)$
 - $(\hat{P}_\rho+\beta_t)+{j}_{\rm tor}$
 - ${P}_\rho+{j}_{\rm tor}$
 
-**PJ** 支持使用总电流和比压约束:
+**PJ1** 支持使用总电流和比压约束:
 
 $$
 \begin{aligned}
@@ -283,7 +272,7 @@ $$
 \end{aligned}
 $$
 
-### 5. 平行电流密度 (F-Robust)
+### 5. 平行电流密度 (PJ2-Robust)
 
 - $(\hat{P}_\rho+\beta_t)+(\hat{j}_{\|} +I_p)$
 - ${P}_\rho+(\hat{j}_{\|}+I_p)$
@@ -321,7 +310,7 @@ $$
 \end{aligned}
 $$
 
-### 6. 安全因子 (F-Robust)
+### 6. 安全因子 (PQ-Robust)
 
 - $(\hat{P}_\rho+\beta_t)+(\hat{q} +I_p)$
 - ${P}_\rho+(\hat{q} +I_p)$

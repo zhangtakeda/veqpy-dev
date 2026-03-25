@@ -13,6 +13,7 @@
 目标:
 
 - 统一编码和注释风格
+- 统一生命周期和阶段表述
 - 固定模块边界
 - 降低 public 接口漂移
 - 约束运行时输出和数值语义说明
@@ -28,34 +29,39 @@
 - 注释和 docstring 统一使用中文字符 + 英文标点.
 - 注释禁止使用中文全角标点.
 - 注释和 docstring 中禁止使用 Markdown 反引号包裹代码片段.
-- 注释优先写职责, 边界, shape, 单位, 变量域, 不变量, 兼容约束.
+- 注释优先写职责, 边界, 不变量, 兼容约束.
 - 禁止低价值翻译式注释.
+- 非头注释尽量简短, 最好只有一行.
+- 非必要不写 `#` 注释.
+- 非必要不给私有实现加注释.
 
 文件头规则:
 
 - 每个 Python 文件都要有顶层 docstring.
+- 文件头统一使用这组关键字:
+  - `Module:`
+  - `Role:`
+  - `Public API:`
+  - `Notes:`
+- 文件头正文使用中文, 多个点一律用 `-` 分点.
 - 文件头应该说明:
-  - 属于哪一层
-  - 负责什么
-  - 不负责什么(不必须, 易引发歧义时说明)
-  - 主要的实现或者接口
+  - 模块位置
+  - 核心职责
+  - 公开 API
+  - 边界或实现要点
+- 文件头推荐形态:
+  - `Module:` 写模块路径
+  - `Role:` 写 1-3 个职责点
+  - `Public API:` 写稳定入口
+  - `Notes:` 写边界, 假设, 兼容约束
 
 public 接口规则:
 
 - 重要 public 接口必须有 docstring.
-- 至少覆盖:
-  - 职责边界
-  - 输入
-  - 输出
-  - 兼容约束
-  - 是否会更新内部状态
-- 输入和返回统一用:
-  - `Args:`
-  - `Returns:`
-- 不使用:
-  - `输入语义:`
-  - `输出语义:`
-  - `返回值依次为:`
+- public docstring 默认优先使用一行短句.
+- 只有在边界, 单位, shape, 变量域, fallback, 兼容约束不明显时, 才展开写长说明.
+- 不强制使用 `Args:` / `Returns:`.
+- 不要求把显然能从签名读出的内容再重复一遍.
 
 私有符号规则:
 
@@ -69,6 +75,24 @@ public 接口规则:
 - 数值稳定性
 - 单位, shape, 变量域
 - 不变量和 fallback 语义
+
+## Shared Terms
+
+- 生命周期统一使用:
+  - `setup`
+  - `runtime`
+  - `refresh`
+  - `snapshot`
+- 四个计算阶段统一使用:
+  - `profile`
+  - `geometry`
+  - `source`
+  - `residual`
+- 不混用下列近义词来表示同一过程:
+  - `setup` vs `allocate/init/prepare`
+  - `refresh` vs `reload/rebind/resync`
+  - `snapshot` vs `build/export/dump`
+- 如需引入新术语, 必须先确认现有术语无法准确表达.
 
 ## Runtime Output
 
@@ -134,6 +158,13 @@ public 接口规则:
   - `residual_fields`
 - 语义化 property 可以保留, 但热 operator 路径优先直接使用 `*_fields[...]`.
 
+## Registry And Runner Terms
+
+- `registry` 表示 name/code 到实现体的静态映射.
+- `runner` 表示绑定完 runtime plan 后可直接调用的执行入口.
+- `bind_*` 表示把静态实现和当前 runtime state 绑定成 runner.
+- 不把一次性 helper, closure, callback 都泛称为 `runner`.
+
 ## Packed Layout Rules
 
 - packed state 和 packed residual 的唯一位置语义是 `coeff_index` / `coeff_indices`.
@@ -159,6 +190,8 @@ public 接口规则:
 - 不变量
 - 边界条件
 
+但只在这些信息不明显时说明, 不要求在每个函数里机械重复.
+
 典型必须说清的内容:
 
 - `u / u_r / u_rr` 是 profile 值和导数
@@ -174,8 +207,11 @@ public 接口规则:
 - 注释是否使用中文字符 + 英文标点
 - 注释是否含中文全角标点
 - 注释是否使用反引号
+- 文件头是否使用 `Module:` / `Role:` / `Public API:` / `Notes:`
+- 文件头多点说明是否使用 `-` 分点
 - 重要 public 接口是否有 docstring
-- public docstring 是否使用 `Args:` / `Returns:`
+- public docstring 是否足够短且表达清楚
+- 是否存在低价值长注释或翻译式注释
 - runtime 输出是否为纯英文
 - 是否引入重复 owner 或重复状态
 - 跨子模块导入是否经过包级接口

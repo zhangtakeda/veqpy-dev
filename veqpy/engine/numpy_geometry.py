@@ -1,7 +1,16 @@
 """
-engine 层 NumPy 几何核.
-负责从径向参数化 profile 生成二维几何场和 theta 积分量.
-不负责 backend 选择, packed layout/codec, solver 状态编排.
+Module: engine.numpy_geometry
+
+Role:
+- 负责在 numpy backend 下物化 geometry fields.
+- 负责同步更新 geometry integrals.
+
+Public API:
+- update_geometry
+
+Notes:
+- 输入和输出都采用 packed fields 语义.
+- 这个文件同时作为 geometry stage 的 vectorized reference.
 """
 
 import numpy as np
@@ -36,7 +45,7 @@ def update_geometry(
     s1_fields: np.ndarray,
     s2_fields: np.ndarray,
 ):
-    """原地更新几何场及其径向积分量."""
+    """原地更新 geometry fields 与 geometry integrals."""
     tb = tb_fields[0]
     tb_r = tb_fields[1]
     tb_t = tb_fields[2]
@@ -185,7 +194,7 @@ def _theta_integral(
     arr: np.ndarray,
     weights: np.ndarray,
 ) -> np.ndarray:
-    """按 theta 方向做全角积分并写回调用方缓冲区."""
+    """按 theta 方向积分并写回 out."""
     np.sum(arr, axis=1, out=out)
     out *= 2.0 * np.pi / arr.shape[1]
     return out

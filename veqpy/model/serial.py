@@ -1,15 +1,18 @@
-"""统一序列化框架 (Unified Serialization Framework).
+"""
+Module: model.serial
 
-提供 Serial 基类, 为数据对象提供 JSON (orjson) 和 Pickle 两种序列化格式.
+Role:
+- 负责提供统一序列化框架.
+- 负责处理 JSON, Pickle 与嵌套对象序列化.
 
-子类通过 serial_attributes() 类方法声明可序列化字段及其类型.
-框架自动处理:
-- 类型校验 (type validation)
-- 嵌套对象 (nested objects)
-- numpy 数组 (NumPy arrays)
-- Union / Tuple / Literal 等泛型类型
+Public API:
+- Serial
+- read_serializer
+- write_serializer
 
-框架同时支持通过装饰器扩展新的文件格式.
+Notes:
+- 子类通过 `serial_attributes()` 声明可序列化字段.
+- dataclass 默认可以推断 serial 字段类型.
 """
 
 import inspect
@@ -35,9 +38,8 @@ _orjson_dumps = orjson.dumps
 _OPT_NP = orjson.OPT_SERIALIZE_NUMPY
 
 
-# ==================== 装饰器 ====================
 def read_serializer(*exts: str):
-    """注册读取处理器, 按文件扩展名分发"""
+    """注册读取处理器."""
 
     def wrapper(func: Callable) -> Callable:
         for ext in exts:
@@ -48,7 +50,7 @@ def read_serializer(*exts: str):
 
 
 def write_serializer(*exts: str):
-    """注册写入处理器, 按文件扩展名分发"""
+    """注册写入处理器."""
 
     def wrapper(func: Callable) -> Callable:
         for ext in exts:
@@ -58,15 +60,8 @@ def write_serializer(*exts: str):
     return wrapper
 
 
-# ==================== Serial 基类 ====================
 class Serial:
-    """统一序列化基类
-
-    子类可通过 serial_attributes() -> dict[str, type] 显式声明可序列化字段.
-    对 dataclass, 默认会把 dataclass 字段当作可序列化字段, 但子类仍可覆盖该方法
-    以只保留可重建的根属性.
-    支持 JSON (orjson) 和 Pickle 两种格式, 可通过装饰器扩展更多格式.
-    """
+    """统一序列化基类."""
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -85,7 +80,7 @@ class Serial:
 
     @classmethod
     def load(cls, file: str, **kwargs) -> Self:
-        """从文件反序列化为实例 (类方法, 推荐入口)"""
+        """从文件反序列化为实例."""
         ext = _resolve_ext(file, _read_handlers)
 
         if ext in ("json", "jsonl"):
@@ -109,7 +104,7 @@ class Serial:
         return instance
 
     def read(self, file: str, func: Callable | str | None = None, **kwargs) -> Self:
-        """读取文件到当前实例"""
+        """读取文件到当前实例."""
         if func is None:
             _dispatch("read", self, file, **kwargs)
         elif isinstance(func, str):
@@ -119,7 +114,7 @@ class Serial:
         return self
 
     def write(self, file: str, func: Callable | str | None = None, **kwargs) -> None:
-        """将当前实例写入文件"""
+        """将当前实例写入文件."""
         if func is None:
             _dispatch("write", self, file, **kwargs)
         elif isinstance(func, str):
@@ -128,7 +123,7 @@ class Serial:
             func(self, file, **kwargs)
 
     def check(self) -> None:
-        """校验所有 serial_attributes 的存在性, 类型和非空性"""
+        """校验 serial_attributes 的存在性, 类型和非空性."""
         spec = type(self).serial_attributes()
         cls = type(self)
         prop_names = {n for n, o in cls.__dict__.items() if isinstance(o, property)}
@@ -212,7 +207,6 @@ def _dispatch(op: str, instance: Serial, file: str, **kwargs) -> None:
     registry[ext](instance, file, **kwargs)
 
 
-# ====================  类型检查与转换 ====================
 def _unwrap_typed_dict(data: Any, expected_name: str) -> dict:
     """如果 data 是 {TypeName: {attrs}} 且 TypeName 匹配, 剥离外层"""
     if isinstance(data, dict) and len(data) == 1:

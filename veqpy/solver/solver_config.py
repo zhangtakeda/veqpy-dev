@@ -1,7 +1,18 @@
 """
-solver 层配置对象.
-负责描述一次 nonlinear solve 的方法选择, 容差, 迭代上限和同伦开关.
-不负责实际求解执行, history 存储, residual 评估.
+Module: solver.solver_config
+
+Role:
+- 负责描述一次 nonlinear solve 的配置.
+
+Public API:
+- SolverConfig
+- SUPPORTED_ROOT_METHODS
+- SUPPORTED_LEAST_SQUARES_METHODS
+- SUPPORTED_SOLVER_METHODS
+
+Notes:
+- `SolverConfig` 只保存配置, 不执行求解.
+- 不负责 history 存储, 或 residual 评估.
 """
 
 from dataclasses import dataclass
@@ -28,20 +39,7 @@ SUPPORTED_SOLVER_METHODS = SUPPORTED_ROOT_METHODS + SUPPORTED_LEAST_SQUARES_METH
 
 @dataclass(frozen=True, slots=True)
 class SolverConfig:
-    """
-    描述 Solver 的默认配置与单次求解覆盖项.
-
-    Args:
-        method: 求解方法名. 支持 root 系列方法与 least_squares 系列方法.
-        rtol, atol: 相对与绝对容差控制参数.
-        root_maxiter, root_maxfev: 迭代与函数评估上限.
-        enable_warmstart: 是否默认沿用上次求解后的 x0.
-        enable_homotopy: 是否启用按阶次逐步放开的 homotopy 求解.
-        enable_verbose: 是否打印 solve record.
-        enable_history: 是否记录 solve history.
-        homotopy_truncation_tol: 同伦截断判定的小系数阈值.
-        homotopy_truncation_patience: 连续多少阶都足够小后冻结该 profile.
-    """
+    """描述 Solver 的默认配置与单次求解覆盖项."""
 
     method: str = "hybr"
     rtol: float = 1e-6

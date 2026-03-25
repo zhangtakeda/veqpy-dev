@@ -1,7 +1,16 @@
 """
-engine 层 Numba 几何核.
-负责以循环形式生成二维几何场和 theta 积分量, 与 NumPy 实现保持数值语义一致.
-不负责 backend 选择, packed layout/codec, solver 状态编排.
+Module: engine.numba_geometry
+
+Role:
+- 负责在 numba backend 下物化 geometry fields.
+- 负责同步更新 geometry integrals.
+
+Public API:
+- update_geometry
+
+Notes:
+- 输入和输出都采用 packed fields 语义.
+- backend dispatch 与 operator staging 不在这里处理.
 """
 
 import numpy as np
@@ -38,7 +47,7 @@ def update_geometry(
     s1_fields: np.ndarray,
     s2_fields: np.ndarray,
 ):
-    """原地更新几何场及其径向积分量."""
+    """原地更新 geometry fields 与 geometry integrals."""
     nr = rho.shape[0]
     nt = theta.shape[0]
     theta_scale = 2.0 * np.pi / nt
