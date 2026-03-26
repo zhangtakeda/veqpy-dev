@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from veqpy.model import Grid
+from veqpy.model import Boundary, Grid
 from veqpy.operator import Operator, OperatorCase
 from veqpy.operator.layout import build_profile_names
 
@@ -59,8 +59,8 @@ def _pf_reference_profiles(rho: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _make_case(grid: Grid, *, activate_high_order: bool) -> OperatorCase:
-    coeffs_by_name = {name: None for name in build_profile_names(grid.K_max)}
-    coeffs_by_name.update(
+    profile_coeffs = {name: None for name in build_profile_names(grid.K_max)}
+    profile_coeffs.update(
         {
             "psin": [0.0, 1.0],
             "F": [1.0],
@@ -69,11 +69,11 @@ def _make_case(grid: Grid, *, activate_high_order: bool) -> OperatorCase:
             "s1": [0.0, 0.0, 0.0],
         }
     )
-    if "v" in coeffs_by_name:
-        coeffs_by_name["v"] = None
+    if "v" in profile_coeffs:
+        profile_coeffs["v"] = None
     if activate_high_order:
-        coeffs_by_name["c3"] = [0.0, 0.0, 0.0]
-        coeffs_by_name["s4"] = [0.0, 0.0, 0.0]
+        profile_coeffs["c3"] = [0.0, 0.0, 0.0]
+        profile_coeffs["s4"] = [0.0, 0.0, 0.0]
 
     current_input, heat_input = _pf_reference_profiles(grid.rho)
     c_offsets = np.zeros(grid.K_max + 1, dtype=np.float64)
@@ -81,14 +81,16 @@ def _make_case(grid: Grid, *, activate_high_order: bool) -> OperatorCase:
     s_offsets[1] = float(np.arcsin(0.5))
 
     return OperatorCase(
-        coeffs_by_name=coeffs_by_name,
-        a=1.05 / 1.85,
-        R0=1.05,
-        Z0=0.0,
-        B0=3.0,
-        ka=2.2,
-        c_offsets=c_offsets,
-        s_offsets=s_offsets,
+        profile_coeffs=profile_coeffs,
+        boundary=Boundary(
+            a=1.05 / 1.85,
+            R0=1.05,
+            Z0=0.0,
+            B0=3.0,
+            ka=2.2,
+            c_offsets=c_offsets,
+            s_offsets=s_offsets,
+        ),
         heat_input=heat_input,
         current_input=current_input,
         Ip=3.0e6,
@@ -132,7 +134,7 @@ def _build_operator_case(case_name: str) -> tuple[Operator, np.ndarray]:
 
 def _benchmark_operator(case_name: str) -> CaseTiming:
     operator, x = _build_operator_case(case_name)
-    active_profiles = [name for name in operator.profile_names if operator.case.coeffs_by_name.get(name) is not None]
+    active_profiles = [name for name in operator.profile_names if operator.case.profile_coeffs.get(name) is not None]
 
     for _ in range(WARMUP_REPEATS):
         operator.stage_a_profile(x)

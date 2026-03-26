@@ -4,7 +4,7 @@
 a high-performance Python wrapper for plasma equilibrium simulations in magnetic confinement fusion (MCF) devices.
 
 - Author: `rhzhang`
-- Version: `0.1.3`
+- Version: `0.2.0`
 - Updated: `2026-03-26`
 
 ## Code Structure

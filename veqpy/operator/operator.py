@@ -138,7 +138,7 @@ class Operator:
         self.s_profile_names = tuple(name for name in fourier_profile_names if name.startswith("s"))
 
         self.profile_L, self.coeff_index, self.order_offsets = build_profile_layout(
-            self.case.coeffs_by_name,
+            self.case.profile_coeffs,
             profile_names=self.profile_names,
             prefix_profile_names=self.prefix_profile_names,
         )
@@ -171,7 +171,7 @@ class Operator:
     def encode_initial_state(self) -> np.ndarray:
         """把当前 case 中的 profile 系数编码成 packed 初值."""
         return encode_packed_state(
-            self.case.coeffs_by_name,
+            self.case.profile_coeffs,
             self.profile_L,
             self.coeff_index,
             profile_names=self.profile_names,
@@ -501,7 +501,7 @@ class Operator:
         L = int(self.profile_L[p])
         if L < 0:
             return None
-        coeff = self.case.coeffs_by_name.get(self.profile_names[p])
+        coeff = self.case.profile_coeffs.get(self.profile_names[p])
         if coeff is None:
             return None
         arr = np.asarray(coeff, dtype=np.float64)
@@ -514,7 +514,7 @@ class Operator:
 
     def _validate_case_compatibility(self, case: OperatorCase) -> None:
         profile_L, coeff_index, order_offsets = build_profile_layout(
-            case.coeffs_by_name,
+            case.profile_coeffs,
             profile_names=self.profile_names,
             prefix_profile_names=self.prefix_profile_names,
         )
@@ -614,7 +614,7 @@ class Operator:
         effective_order = int(minimum_order)
         for name in profile_names:
             order = int(name[1:])
-            if self.case.coeffs_by_name.get(name) is not None:
+            if self.case.profile_coeffs.get(name) is not None:
                 effective_order = max(effective_order, order)
                 continue
             if abs(self._offset_from_array(offsets, order)) > 1e-14:
@@ -660,9 +660,7 @@ class Operator:
             B0=case.B0,
             a=case.a,
             grid=self.grid,
-            active_profiles=[name for name in self.shape_profile_names if case.coeffs_by_name.get(name) is not None],
-            shape_profile_names=list(self.shape_profile_names),
-            shape_profiles=[snapshot_profiles[name] for name in self.shape_profile_names],
+            active_profiles=snapshot_profiles,
             FFn_r=self.FFn_r.copy(),
             Pn_r=self.Pn_r.copy(),
             psin_r=self.psin_r.copy(),

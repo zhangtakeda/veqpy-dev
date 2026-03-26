@@ -51,7 +51,7 @@ def build_profile_index(profile_names: tuple[str, ...]) -> dict[str, int]:
 
 
 def build_profile_layout(
-    coeffs_by_name: dict[str, list[float] | None],
+    profile_coeffs: dict[str, list[float] | None],
     *,
     profile_names: tuple[str, ...],
     prefix_profile_names: tuple[str, ...] = PREFIX_PROFILE_NAMES,
@@ -65,11 +65,11 @@ def build_profile_layout(
 
     shape_profile_names = tuple(name for name in profile_names if name not in prefix_profile_names)
 
-    unknown = set(coeffs_by_name) - set(profile_index)
+    unknown = set(profile_coeffs) - set(profile_index)
     if unknown:
         raise KeyError(f"Unknown profile names: {sorted(unknown)}")
 
-    for name, coeff in coeffs_by_name.items():
+    for name, coeff in profile_coeffs.items():
         if coeff is None:
             continue
         coeff_arr = coeff_array_from_list(name, coeff)

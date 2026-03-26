@@ -82,8 +82,9 @@ class SolverConfig:
         tree.add(f"enable_homotopy: {self.enable_homotopy}")
         tree.add(f"enable_verbose: {self.enable_verbose}")
         tree.add(f"enable_history: {self.enable_history}")
-        tree.add(f"homotopy_truncation_tol: {self.homotopy_truncation_tol:.6g}")
-        tree.add(f"homotopy_truncation_patience: {self.homotopy_truncation_patience}")
+        if self.enable_homotopy:
+            tree.add(f"homotopy_truncation_tol: {self.homotopy_truncation_tol:.6g}")
+            tree.add(f"homotopy_truncation_patience: {self.homotopy_truncation_patience}")
         return tree
 
     def __str__(self) -> str:

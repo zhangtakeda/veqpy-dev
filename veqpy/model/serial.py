@@ -260,6 +260,15 @@ def _check_type(value: Any, expected: type | tuple) -> bool:
             return all(_check_type(v, t) for v, t in zip(value, args))
         return True
 
+    if origin is dict:
+        if not isinstance(value, dict):
+            return False
+        args = get_args(expected)
+        if len(args) == 2 and value:
+            key_t, value_t = args
+            return all(_check_type(k, key_t) and _check_type(v, value_t) for k, v in value.items())
+        return True
+
     if origin is Literal:
         return value in get_args(expected)
 
@@ -307,6 +316,9 @@ def _python_to_json(value: Any) -> Any:
     if isinstance(value, tuple):
         return [_python_to_json(v) for v in value]
 
+    if isinstance(value, dict):
+        return {k: _python_to_json(v) for k, v in value.items()}
+
     return value
 
 
@@ -337,6 +349,13 @@ def _json_to_python(data: Any, expected: type | tuple) -> Any:
         if args:
             return tuple(_json_to_python(item, t) for item, t in zip(data, args))
         return tuple(data)
+
+    if origin is dict and isinstance(data, dict):
+        args = get_args(expected)
+        if len(args) == 2:
+            key_t, value_t = args
+            return {_json_to_python(key, key_t): _json_to_python(value, value_t) for key, value in data.items()}
+        return dict(data)
 
     if origin is Literal:
         return data

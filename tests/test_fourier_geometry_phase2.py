@@ -2,7 +2,7 @@ import numpy as np
 
 from veqpy.engine.numba_geometry import update_geometry as numba_update_geometry
 from veqpy.engine.numpy_geometry import update_geometry as numpy_update_geometry
-from veqpy.model import Geometry, Grid
+from veqpy.model import Boundary, Geometry, Grid
 from veqpy.operator import Operator
 from veqpy.operator.layout import build_profile_names
 from veqpy.operator.operator_case import OperatorCase
@@ -148,18 +148,20 @@ def test_numpy_and_numba_geometry_match_with_high_order_fourier_terms():
 
 def test_operator_stage_b_geometry_propagates_high_order_offset_profiles():
     grid = Grid(Nr=8, Nt=16, scheme="uniform", K_max=4)
-    coeffs_by_name = {name: None for name in build_profile_names(grid.K_max)}
-    coeffs_by_name["psin"] = [0.0]
+    profile_coeffs = {name: None for name in build_profile_names(grid.K_max)}
+    profile_coeffs["psin"] = [0.0]
     case = OperatorCase(
-        coeffs_by_name=coeffs_by_name,
-        a=1.1,
-        R0=1.7,
-        Z0=0.2,
-        B0=3.0,
+        profile_coeffs=profile_coeffs,
+        boundary=Boundary(
+            a=1.1,
+            R0=1.7,
+            Z0=0.2,
+            B0=3.0,
+            c_offsets=np.array([0.03, 0.0, -0.02, 0.05, 0.0]),
+            s_offsets=np.array([0.0, 0.01, 0.0, 0.0, -0.04]),
+        ),
         heat_input=np.zeros(grid.Nr),
         current_input=np.zeros(grid.Nr),
-        c_offsets=np.array([0.03, 0.0, -0.02, 0.05, 0.0]),
-        s_offsets=np.array([0.0, 0.01, 0.0, 0.0, -0.04]),
     )
     operator = Operator(name="PF", derivative="rho", grid=grid, case=case)
 

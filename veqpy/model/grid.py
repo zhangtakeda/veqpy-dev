@@ -41,8 +41,8 @@ class Grid(Serial):
     Nr: int
     Nt: int
     scheme: Literal["legendre", "chebyshev", "lobatto", "radau", "uniform"]
-    L_max: int = 11
-    K_max: int = 5
+    K_max: int = 10
+    L_max: int = 10
 
     rho: np.ndarray = field(init=False)
     rho_powers: np.ndarray = field(init=False)

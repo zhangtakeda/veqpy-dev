@@ -5,7 +5,8 @@
 /veqpy-*
 
 build 
-tests/_artifacts
+tests/demo
+tests/benchmark
 tests/**/*.png
 tests/**/*.txt
 tests/**/*.json

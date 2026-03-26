@@ -15,7 +15,6 @@ Notes:
 """
 
 from __future__ import annotations
-
 from pathlib import Path
 
 import matplotlib
@@ -59,19 +58,12 @@ plt.rcParams.update(
 )
 
 SHAPE_PROFILE_PLOT_META = {
-    "h": {"color": "#1f77b4", "label": r"$h$"},
-    "v": {"color": "#17becf", "label": r"$v$"},
-    "k": {"color": "#ff7f0e", "label": r"$\kappa$"},
-    "c0": {"color": "#8c564b", "label": r"$c_0$"},
-    "c1": {"color": "#e377c2", "label": r"$c_1$"},
-    "s1": {"color": "#2ca02c", "label": r"$s_1$"},
-    "s2": {"color": "#d62728", "label": r"$s_2$"},
+    "h": {"color": "#1f77b4", "label": r"$h$", "linestyle": "-", "marker": None},
+    "v": {"color": "#ff7f0e", "label": r"$v$", "linestyle": "-", "marker": None},
+    "k": {"color": "#2ca02c", "label": r"$\kappa$", "linestyle": "-", "marker": None},
 }
 SHAPE_PROFILE_NAMES = tuple(SHAPE_PROFILE_PLOT_META)
-_DYNAMIC_SHAPE_PROFILE_COLORS = (
-    "#1f77b4",
-    "#ff7f0e",
-    "#2ca02c",
+_EXTRA_SHAPE_PROFILE_COLORS = (
     "#d62728",
     "#9467bd",
     "#8c564b",
@@ -102,13 +94,7 @@ class Equilibrium(Reactive, Serial):
         B0: float,
         a: float,
         grid: Grid,
-        active_profiles: list[str] | None = None,
-        *,
-        shape_profile_names: list[str] | None = None,
-        shape_profiles: list[Profile] | None = None,
-        h_profile: Profile | None = None,
-        v_profile: Profile | None = None,
-        k_profile: Profile | None = None,
+        active_profiles: dict[str, Profile],
         FFn_r: np.ndarray,
         Pn_r: np.ndarray,
         psin_r: np.ndarray,
@@ -124,25 +110,17 @@ class Equilibrium(Reactive, Serial):
         self.B0 = B0
         self.a = a
         self.grid = grid
-        profile_map = _normalize_shape_profiles(
-            shape_profile_names=shape_profile_names,
-            shape_profiles=shape_profiles,
-            h_profile=h_profile,
-            v_profile=v_profile,
-            k_profile=k_profile,
-        )
-        self.shape_profile_names = list(profile_map)
-        self.shape_profiles = [profile_map[name] for name in self.shape_profile_names]
-        self.profiles_by_name = profile_map
-        self.active_profiles = list(self.shape_profile_names) if active_profiles is None else list(active_profiles)
+        self.active_profiles = _normalize_shape_profiles(active_profiles)
 
-        for name, profile in profile_map.items():
+        for name, profile in self.active_profiles.items():
             setattr(self, f"{name}_profile", profile)
-        self.h_profile = profile_map.get("h")
-        self.v_profile = profile_map.get("v")
-        self.k_profile = profile_map.get("k")
+        self.h_profile = self.active_profiles.get("h", _build_default_shape_profile("h"))
+        self.v_profile = self.active_profiles.get("v", _build_default_shape_profile("v"))
+        self.k_profile = self.active_profiles.get("k", _build_default_shape_profile("k"))
 
-        for profile in _shape_profiles(self).values():
+        for profile in _unique_profiles(
+            (*self.active_profiles.values(), self.h_profile, self.v_profile, self.k_profile)
+        ):
             profile.update(grid=self.grid)
 
         if psin_rr is None:
@@ -186,9 +164,7 @@ class Equilibrium(Reactive, Serial):
             "B0": float,
             "a": float,
             "grid": Grid,
-            "active_profiles": list[str],
-            "shape_profile_names": list[str] | None,
-            "shape_profiles": list[Profile] | None,
+            "active_profiles": dict[str, Profile],
             "FFn_r": np.ndarray,
             "Pn_r": np.ndarray,
             "psin_r": np.ndarray,
@@ -475,61 +451,90 @@ def _extrapolate_inplace(
         y[0] = (y[1] * r2 - y[2] * r1) / (r2 - r1)
 
 
-def _normalize_shape_profiles(
-    *,
-    shape_profile_names: list[str] | None,
-    shape_profiles: list[Profile] | None,
-    h_profile: Profile | None,
-    v_profile: Profile | None,
-    k_profile: Profile | None,
-) -> dict[str, Profile]:
-    if shape_profile_names is not None or shape_profiles is not None:
-        if shape_profile_names is None or shape_profiles is None:
-            raise ValueError("shape_profile_names and shape_profiles must be provided together")
-        if len(shape_profile_names) != len(shape_profiles):
-            raise ValueError("shape_profile_names and shape_profiles must have the same length")
-        return dict(zip(shape_profile_names, shape_profiles, strict=True))
-
-    legacy_profiles = {
-        "h": h_profile,
-        "v": v_profile,
-        "k": k_profile,
-    }
-    profile_map = {name: profile for name, profile in legacy_profiles.items() if profile is not None}
-    if not profile_map:
-        raise ValueError("At least one shape profile must be provided")
-    return profile_map
+def _normalize_shape_profiles(active_profiles: dict[str, Profile]) -> dict[str, Profile]:
+    if not isinstance(active_profiles, dict):
+        raise TypeError(f"active_profiles must be dict[str, Profile], got {type(active_profiles).__name__}")
+    for name, profile in active_profiles.items():
+        if not isinstance(name, str):
+            raise TypeError(f"active profile names must be str, got {type(name).__name__}")
+        profile_type = type(profile)
+        if not (
+            isinstance(profile, Profile)
+            or (
+                profile_type.__name__ == Profile.__name__
+                and getattr(profile_type, "__module__", None) == Profile.__module__
+            )
+        ):
+            raise TypeError(f"active profile {name!r} must be Profile, got {type(profile).__name__}")
+    return _minimize_shape_profiles(active_profiles)
 
 
 def _shape_profiles(equilibrium: Equilibrium) -> dict[str, Profile]:
-    if hasattr(equilibrium, "profiles_by_name"):
-        return dict(equilibrium.profiles_by_name)
-    if hasattr(equilibrium, "shape_profile_names") and hasattr(equilibrium, "shape_profiles"):
-        return dict(zip(equilibrium.shape_profile_names, equilibrium.shape_profiles, strict=True))
-    raise AttributeError("Equilibrium is missing canonical shape profile storage")
+    return equilibrium.active_profiles
 
 
-def _shape_profile_payload(profiles: dict[str, Profile]) -> dict[str, list[str] | list[Profile]]:
-    names = list(profiles)
+def _shape_profile_payload(profiles: dict[str, Profile]) -> dict[str, dict[str, Profile]]:
     return {
-        "shape_profile_names": names,
-        "shape_profiles": [profiles[name] for name in names],
+        "active_profiles": _minimize_shape_profiles(profiles),
     }
 
 
-def _shape_profile_plot_meta(name: str) -> dict[str, str]:
+def _build_default_shape_profile(name: str) -> Profile:
+    power = 0
+    if name.startswith(("c", "s")) and name[1:].isdigit():
+        power = int(name[1:])
+    return Profile(scale=1.0, power=power, envelope_power=1, offset=0.0, coeff=None)
+
+
+def _is_default_shape_profile(name: str, profile: Profile) -> bool:
+    default = _build_default_shape_profile(name)
+    coeff = None if profile.coeff is None else np.asarray(profile.coeff, dtype=np.float64)
+    coeff_is_zero = coeff is None or coeff.size == 0 or np.allclose(coeff, 0.0, atol=1e-14, rtol=0.0)
+    return (
+        np.isclose(profile.scale, default.scale)
+        and int(profile.power) == int(default.power)
+        and int(profile.envelope_power) == int(default.envelope_power)
+        and np.isclose(profile.offset, default.offset)
+        and coeff_is_zero
+    )
+
+
+def _minimize_shape_profiles(profiles: dict[str, Profile]) -> dict[str, Profile]:
+    minimized: dict[str, Profile] = {}
+    for name, profile in profiles.items():
+        copied = profile.copy()
+        if copied.coeff is not None:
+            coeff = np.asarray(copied.coeff, dtype=np.float64)
+            copied.coeff = None if coeff.size == 0 or np.allclose(coeff, 0.0, atol=1e-14, rtol=0.0) else coeff.copy()
+        if _is_default_shape_profile(name, copied):
+            continue
+        minimized[name] = copied
+    return minimized
+
+
+def _unique_profiles(profiles) -> list[Profile]:
+    unique: dict[int, Profile] = {}
+    for profile in profiles:
+        unique.setdefault(id(profile), profile)
+    return list(unique.values())
+
+
+def _shape_profile_plot_meta(name: str) -> dict[str, str | None]:
     meta = SHAPE_PROFILE_PLOT_META.get(name)
     if meta is not None:
         return meta
 
     if name.startswith("c") and name[1:].isdigit():
         label = rf"$c_{int(name[1:])}$"
+        style = {"linestyle": "--", "marker": None}
     elif name.startswith("s") and name[1:].isdigit():
         label = rf"$s_{int(name[1:])}$"
+        style = {"linestyle": "-", "marker": "x"}
     else:
         label = name
-    color = _DYNAMIC_SHAPE_PROFILE_COLORS[sum(ord(ch) for ch in name) % len(_DYNAMIC_SHAPE_PROFILE_COLORS)]
-    return {"color": color, "label": label}
+        style = {"linestyle": "-", "marker": None}
+    color = _EXTRA_SHAPE_PROFILE_COLORS[sum(ord(ch) for ch in name) % len(_EXTRA_SHAPE_PROFILE_COLORS)]
+    return {"color": color, "label": label, **style}
 
 
 def plot_equilibrium(
@@ -569,7 +574,7 @@ def plot_comparison(
     label_ref: str = "reference",
     label_other: str = "current",
 ) -> dict[str, float]:
-    """Render a veqpy-poor-style 3x3 comparison figure."""
+    """Render a veqpy-poor-style comparison figure with one shared surface panel."""
     ref_plot = reference
     other_plot = other
 
@@ -619,9 +624,35 @@ def plot_comparison(
         return np.interp(rho2, rho1, y1), y2
 
     errors: dict[str, float] = {}
-    fig, axes = plt.subplots(3, 3, figsize=(12, 7.5), sharex=True)
+    fig = plt.figure(figsize=(15, 7.5))
+    gs = GridSpec(
+        3,
+        4,
+        figure=fig,
+        width_ratios=[1.05, 1.0, 1.0, 1.0],
+        hspace=0.42,
+        wspace=0.35,
+        top=0.9,
+        bottom=0.08,
+        left=0.06,
+        right=0.98,
+    )
 
-    for i, (ax, (key, ylabel, scale)) in enumerate(zip(axes.flatten(), groups, strict=True)):
+    ref_surface_data = _build_surface_panel_data(ref_plot)
+    other_surface_data = _build_surface_panel_data(other_plot)
+    shared_boundary = _merge_surface_boundaries(ref_surface_data["boundary"], other_surface_data["boundary"])
+    _render_comparison_surface_overlay_panel(
+        fig.add_subplot(gs[:, 0]),
+        ref_surface_data,
+        other_surface_data,
+        shared_boundary,
+        label_ref=label_ref,
+        label_other=label_other,
+        title="(a) Flux Surfaces",
+    )
+
+    metric_axes = [fig.add_subplot(gs[row, col]) for row in range(3) for col in range(1, 4)]
+    for i, (ax, (key, ylabel, scale)) in enumerate(zip(metric_axes, groups, strict=True)):
         if not key:
             ax.set_visible(False)
             continue
@@ -659,8 +690,6 @@ def plot_comparison(
         fontsize=12,
         fontweight="bold",
     )
-    fig.tight_layout()
-
     if outpath is not None:
         fig.savefig(Path(outpath), dpi=300, facecolor="white")
     if show:
@@ -744,7 +773,6 @@ def _build_resampled_equilibrium(
         B0=equilibrium.B0,
         a=equilibrium.a,
         grid=plot_grid,
-        active_profiles=equilibrium.active_profiles,
         **_shape_profile_payload(
             {name: _resample_profile_triplet(profile) for name, profile in _shape_profiles(equilibrium).items()}
         ),
@@ -830,16 +858,19 @@ def _build_surface_panel_data(equilibrium: Equilibrium) -> dict:
     }
 
 
+def _merge_surface_boundaries(*boundaries: dict) -> dict:
+    if not boundaries:
+        raise ValueError("At least one boundary must be provided")
+    R = np.concatenate([np.asarray(boundary["R"], dtype=np.float64) for boundary in boundaries])
+    Z = np.concatenate([np.asarray(boundary["Z"], dtype=np.float64) for boundary in boundaries])
+    return {"R": R, "Z": Z}
+
+
 def _build_shape_panel_data(equilibrium: Equilibrium) -> dict:
     profiles = _shape_profiles(equilibrium)
 
-    values: dict[str, np.ndarray] = {}
-    rho = equilibrium.rho
-    active_set = set(equilibrium.active_profiles)
-    for key in equilibrium.shape_profile_names:
-        if key in active_set:
-            values[key] = profiles[key].u
-    return {"shape": {"rho": rho, "values": values}}
+    values = {key: profile.u for key, profile in profiles.items()}
+    return {"shape": {"rho": equilibrium.rho, "values": values}}
 
 
 def _build_source_panel_data(equilibrium: Equilibrium) -> dict:
@@ -890,9 +921,8 @@ def _comparison_profile_values(equilibrium: Equilibrium, key: str) -> np.ndarray
 
 
 def _active_shape_keys(reference: Equilibrium, other: Equilibrium) -> list[str]:
-    active_set = set(reference.active_profiles) | set(other.active_profiles)
-    names = list(dict.fromkeys(reference.shape_profile_names + other.shape_profile_names))
-    return [key for key in names if key in active_set]
+    names = list(dict.fromkeys([*_shape_profiles(reference), *_shape_profiles(other)]))
+    return [key for key in names if key in _shape_profiles(reference) or key in _shape_profiles(other)]
 
 
 def _apply_rz_limits(ax: plt.Axes, boundary_data: dict):
@@ -946,18 +976,86 @@ def _render_panel_a_surfaces(ax: plt.Axes, fig: plt.Figure, data: dict):
     fig.colorbar(sm, cax=cax).set_label(r"$\rho$")
 
 
+def _render_comparison_surface_overlay_panel(
+    ax: plt.Axes,
+    reference_data: dict,
+    other_data: dict,
+    boundary: dict,
+    *,
+    label_ref: str,
+    label_other: str,
+    title: str,
+) -> None:
+    ax.set_title(title)
+    for ray in reference_data.get("rays", []):
+        ax.plot(ray["R"], ray["Z"], color="#c5c8ce", linewidth=0.6, alpha=0.35, zorder=1)
+    for ray in other_data.get("rays", []):
+        ax.plot(ray["R"], ray["Z"], color="#f0b3b3", linewidth=0.6, alpha=0.25, zorder=1)
+
+    for ci, surf in enumerate(reference_data["surfaces"]):
+        ax.plot(
+            surf["R"],
+            surf["Z"],
+            color=BLACK,
+            linewidth=1.15 if ci < len(reference_data["surfaces"]) - 1 else 1.6,
+            alpha=0.85,
+            zorder=2,
+            label=label_ref if ci == 0 else None,
+        )
+    for ci, surf in enumerate(other_data["surfaces"]):
+        ax.plot(
+            surf["R"],
+            surf["Z"],
+            color=RED,
+            linewidth=1.15 if ci < len(other_data["surfaces"]) - 1 else 1.6,
+            alpha=0.75,
+            zorder=3,
+            label=label_other if ci == 0 else None,
+        )
+
+    ax.plot(
+        reference_data["axis"]["R"],
+        reference_data["axis"]["Z"],
+        marker="o",
+        color=BLACK,
+        markersize=3,
+        linestyle="None",
+        zorder=4,
+    )
+    ax.plot(
+        other_data["axis"]["R"],
+        other_data["axis"]["Z"],
+        marker="o",
+        color=RED,
+        markersize=3,
+        linestyle="None",
+        zorder=4,
+    )
+    _apply_rz_limits(ax, boundary)
+    ax.grid(True, linestyle=":", alpha=0.35)
+    ax.legend(loc="upper right", frameon=False, fontsize=9)
+
+
 def _render_panel_b_shapes(ax: plt.Axes, data: dict):
     ax.set_title("(b) Shape Profiles")
     shape = data["shape"]
     for key, vals in shape["values"].items():
         meta = _shape_profile_plot_meta(key)
-        color = meta["color"]
-        label = meta["label"]
-        ax.plot(shape["rho"], vals, "-", color=color, label=label)
+        ax.plot(
+            shape["rho"],
+            vals,
+            linestyle=meta["linestyle"],
+            marker=meta["marker"],
+            color=meta["color"],
+            label=meta["label"],
+        )
 
     ax.set(xlabel=r"$\rho$", ylabel="Profile")
     if shape["values"]:
-        ax.legend(loc="center left")
+        if len(shape["values"]) < 5:
+            ax.legend(loc="center left")
+        else:
+            ax.legend(loc="center left", ncols=2)
     ax.grid(True)
 
 

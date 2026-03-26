@@ -1,5 +1,4 @@
 import sys
-import types
 from pathlib import Path
 
 import matplotlib
@@ -9,12 +8,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-units_module = types.ModuleType("units")
-units_module.base = types.SimpleNamespace(get_mesh=lambda mesh: mesh)
-sys.modules.setdefault("units", units_module)
-
+from veqpy.model import Boundary
+from veqpy.model.boundary import _fit_boundary_params
 from veqpy.model.geqdsk import Geqdsk
-
 
 TRUTH = {
     "R0": 1.72,
@@ -28,16 +24,18 @@ TRUTH = {
 
 def build_boundary(*, R0, Z0, a, ka, c_offsets, s_offsets, n=721):
     theta = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
-    theta_bar = (
-        theta
-        + c_offsets[0]
-        + c_offsets[1] * np.cos(theta)
-        + s_offsets[1] * np.sin(theta)
-        + s_offsets[2] * np.sin(2.0 * theta)
-    )
+    theta_bar = theta + c_offsets[0]
+    for order in range(1, len(c_offsets)):
+        theta_bar += c_offsets[order] * np.cos(order * theta)
+    for order in range(1, len(s_offsets)):
+        theta_bar += s_offsets[order] * np.sin(order * theta)
     R = R0 + a * np.cos(theta_bar)
     Z = Z0 - a * ka * np.sin(theta)
     return np.column_stack((R, Z))
+
+
+def close_path(points):
+    return np.vstack((points, points[0]))
 
 
 def max_bidirectional_distance(points_a, points_b):
@@ -79,26 +77,34 @@ def build_info_lines(title, params, boundary_error, extra_lines=None, truth=None
                 f"Z0   : {params['Z0']:+.6f}",
                 f"a    : {params['a']:+.6f}",
                 f"ka   : {params['ka']:+.6f}",
+                f"M/N  : {params['M']}/{params['N']}",
                 f"c0   : {params['c_offsets'][0]:+.6f}",
-                f"c1   : {params['c_offsets'][1]:+.6f}",
-                f"s1   : {params['s_offsets'][1]:+.6f}",
-                f"s2   : {params['s_offsets'][2]:+.6f}",
+                f"c1   : {params['c_offsets'][1]:+.6f}" if len(params["c_offsets"]) > 1 else "c1   : n/a",
+                f"s1   : {params['s_offsets'][1]:+.6f}" if len(params["s_offsets"]) > 1 else "s1   : n/a",
+                f"s2   : {params['s_offsets'][2]:+.6f}" if len(params["s_offsets"]) > 2 else "s2   : n/a",
             ]
         )
     return lines
 
 
 def render_plot(boundary, fitted_boundary, params, output_path, *, title, info_lines):
-    boundary_error = max_bidirectional_distance(boundary, fitted_boundary)
+    boundary_closed = close_path(boundary)
+    fitted_boundary_closed = close_path(fitted_boundary)
 
     fig = plt.figure(figsize=(11, 5.5))
     ax = fig.add_subplot(121)
     ax_text = fig.add_subplot(122)
 
-    ax.plot(boundary[:, 0], boundary[:, 1], color="#1f77b4", linewidth=2.2, label="Original boundary")
     ax.plot(
-        fitted_boundary[:, 0],
-        fitted_boundary[:, 1],
+        boundary_closed[:, 0],
+        boundary_closed[:, 1],
+        color="#1f77b4",
+        linewidth=2.2,
+        label="Original boundary",
+    )
+    ax.plot(
+        fitted_boundary_closed[:, 0],
+        fitted_boundary_closed[:, 1],
         "--",
         color="#d62728",
         linewidth=1.8,
@@ -139,15 +145,18 @@ def render_plot(boundary, fitted_boundary, params, output_path, *, title, info_l
 def run_synthetic(output_path: Path):
     geqdsk = Geqdsk()
     geqdsk.boundary = build_boundary(**TRUTH)
+    geqdsk.R0 = TRUTH["R0"]
+    geqdsk.Z0 = TRUTH["Z0"]
 
-    params = geqdsk.boundary_shape_params(R0=TRUTH["R0"], Z0=TRUTH["Z0"], a=TRUTH["a"])
+    params = _fit_boundary_params(geqdsk, M=1, N=2, R0=None, Z0=None, a=None, ka=None)
+    boundary = Boundary.from_geqdsk(geqdsk, M=1, N=2)
     fitted_boundary = build_boundary(
-        R0=params["R0"],
-        Z0=params["Z0"],
-        a=params["a"],
-        ka=params["ka"],
-        c_offsets=params["c_offsets"],
-        s_offsets=params["s_offsets"],
+        R0=boundary.R0,
+        Z0=boundary.Z0,
+        a=boundary.a,
+        ka=boundary.ka,
+        c_offsets=boundary.c_offsets,
+        s_offsets=boundary.s_offsets,
     )
     boundary_error = max_bidirectional_distance(geqdsk.boundary, fitted_boundary)
     info_lines = build_info_lines("Synthetic boundary fit", params, boundary_error, truth=TRUTH)
@@ -163,14 +172,15 @@ def run_synthetic(output_path: Path):
 
 def run_geqdsk(input_path: Path, output_path: Path):
     geqdsk = Geqdsk(str(input_path))
-    params = geqdsk.boundary_shape_params()
+    params = _fit_boundary_params(geqdsk, M=None, N=None, R0=None, Z0=None, a=None, ka=None)
+    boundary = Boundary.from_geqdsk(geqdsk)
     fitted_boundary = build_boundary(
-        R0=params["R0"],
-        Z0=params["Z0"],
-        a=params["a"],
-        ka=params["ka"],
-        c_offsets=params["c_offsets"],
-        s_offsets=params["s_offsets"],
+        R0=boundary.R0,
+        Z0=boundary.Z0,
+        a=boundary.a,
+        ka=boundary.ka,
+        c_offsets=boundary.c_offsets,
+        s_offsets=boundary.s_offsets,
         n=len(geqdsk.boundary),
     )
     boundary_error = max_bidirectional_distance(geqdsk.boundary, fitted_boundary)

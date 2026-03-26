@@ -5,6 +5,7 @@ Role:
 - 负责导出 model 层的公开类型与包级入口.
 
 Public API:
+- Boundary
 - Grid
 - Profile
 - Geometry
@@ -17,6 +18,7 @@ Notes:
 - 不负责 packed runtime ownership, solver policy, 或 backend 选择.
 """
 
+from veqpy.model.boundary import Boundary
 from veqpy.model.equilibrium import Equilibrium
 from veqpy.model.geometry import Geometry
 from veqpy.model.grid import Grid
@@ -28,6 +30,7 @@ __all__ = [
     "Equilibrium",
     "Geometry",
     "Grid",
+    "Boundary",
     "Profile",
     "Reactive",
     "Serial",

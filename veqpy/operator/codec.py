@@ -23,7 +23,7 @@ from veqpy.operator.layout import (
 
 
 def encode_packed_state(
-    coeffs_by_name: dict[str, list[float] | None],
+    profile_coeffs: dict[str, list[float] | None],
     profile_L: np.ndarray,
     coeff_index: np.ndarray,
     *,
@@ -34,7 +34,7 @@ def encode_packed_state(
 
     for p, name in enumerate(profile_names):
         L = int(profile_L[p])
-        coeff = coeffs_by_name.get(name)
+        coeff = profile_coeffs.get(name)
 
         if L < 0:
             continue

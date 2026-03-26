@@ -67,7 +67,7 @@ packed runtime 的权威定义只在 [`veqpy/operator/layout.py`](../veqpy/opera
   - `build_fourier_profile_names(K_max)`
   - `build_shape_profile_names(K_max)`
   - `build_profile_names(K_max)`
-  生成当前 packed ABI
+    生成当前 packed ABI
 - packed state 和 packed residual 的唯一位置语义都是:
   - `coeff_index`
   - `coeff_indices`
@@ -230,7 +230,7 @@ backend control surface 只有 [`veqpy/engine/__init__.py`](../veqpy/engine/__in
 
 当前语义是:
 
-- 高阶 profile `coeffs_by_name[name] is None` 时, 它不参与 packed 优化
+- 高阶 profile `profile_coeffs[name] is None` 时, 它不参与 packed 优化
 - 如果对应边界 offset 也为 0, 那么它不会进入当前 geometry 有效阶数
 - 如果边界 offset 非 0, 它会作为 fixed profile 保留在有效阶数内
 

@@ -18,32 +18,26 @@ from dataclasses import dataclass
 
 import numpy as np
 from rich.console import Console
-from rich.text import Text
 from rich.tree import Tree
+
+from veqpy.model import Boundary
 
 
 @dataclass(slots=True)
 class OperatorCase:
     """描述一次 operator 求值所需的静态 case 输入."""
 
-    coeffs_by_name: dict[str, list[float] | None]
-    a: float
-    R0: float
-    Z0: float
-    B0: float
+    profile_coeffs: dict[str, list[float] | None]
+    boundary: Boundary
     heat_input: np.ndarray
     current_input: np.ndarray
-    ka: float = 1.0
-    c_offsets: np.ndarray | None = None
-    s_offsets: np.ndarray | None = None
     Ip: float | None = None
     beta: float | None = None
 
     def __post_init__(self) -> None:
         """在构造后把各字段规整为稳定运行时表示."""
-        object.__setattr__(self, "coeffs_by_name", _normalize_case_value("coeffs_by_name", self.coeffs_by_name))
-        for name in _ORDERED_FLOAT_FIELD_NAMES:
-            object.__setattr__(self, name, _normalize_case_value(name, getattr(self, name)))
+        object.__setattr__(self, "profile_coeffs", _normalize_case_value("profile_coeffs", self.profile_coeffs))
+        object.__setattr__(self, "boundary", _normalize_case_value("boundary", self.boundary))
         for name in _ORDERED_OPTIONAL_FLOAT_FIELD_NAMES:
             object.__setattr__(self, name, _normalize_case_value(name, getattr(self, name)))
         for name in _ORDERED_ARRAY_FIELD_NAMES:
@@ -57,14 +51,16 @@ class OperatorCase:
     def copy(self) -> OperatorCase:
         """创建一个与当前 case 独立的副本."""
         return OperatorCase(
-            coeffs_by_name=_copy_coeffs(self.coeffs_by_name),
-            a=self.a,
-            R0=self.R0,
-            Z0=self.Z0,
-            B0=self.B0,
-            ka=self.ka,
-            c_offsets=self.c_offsets.copy(),
-            s_offsets=self.s_offsets.copy(),
+            profile_coeffs=_copy_coeffs(self.profile_coeffs),
+            boundary=Boundary(
+                a=self.a,
+                R0=self.R0,
+                Z0=self.Z0,
+                B0=self.B0,
+                ka=self.ka,
+                c_offsets=self.c_offsets.copy(),
+                s_offsets=self.s_offsets.copy(),
+            ),
             heat_input=self.heat_input.copy(),
             current_input=self.current_input.copy(),
             Ip=self.Ip,
@@ -73,13 +69,7 @@ class OperatorCase:
 
     def __rich__(self):
         tree = Tree("[bold blue]OperatorCase[/]")
-        tree.add(Text(f"a: {self.a:.3f} [m]"))
-        tree.add(Text(f"R0: {self.R0:.3f} [m]"))
-        tree.add(Text(f"Z0: {self.Z0:.3f} [m]"))
-        tree.add(f"B0: {self.B0:.3f} [T]")
-        tree.add(f"ka: {self.ka:.3f}")
-        tree.add(f"c_offsets: {np.array2string(self.c_offsets, precision=3, separator=', ')}")
-        tree.add(f"s_offsets: {np.array2string(self.s_offsets, precision=3, separator=', ')}")
+        tree.add(self.boundary)
         if np.isfinite(self.Ip):
             tree.add(f"Ip: {self.Ip:.3e} [A]")
         if np.isfinite(self.beta):
@@ -95,12 +85,40 @@ class OperatorCase:
     def __repr__(self) -> str:
         return str(self)
 
+    @property
+    def a(self) -> float:
+        return self.boundary.a
+
+    @property
+    def R0(self) -> float:
+        return self.boundary.R0
+
+    @property
+    def Z0(self) -> float:
+        return self.boundary.Z0
+
+    @property
+    def B0(self) -> float:
+        return self.boundary.B0
+
+    @property
+    def ka(self) -> float:
+        return self.boundary.ka
+
+    @property
+    def c_offsets(self) -> np.ndarray:
+        return self.boundary.c_offsets
+
+    @property
+    def s_offsets(self) -> np.ndarray:
+        return self.boundary.s_offsets
+
 
 def _normalize_coeffs(
-    coeffs_by_name: dict[str, list[float] | None],
+    profile_coeffs: dict[str, list[float] | None],
 ) -> dict[str, list[float] | None]:
     coeffs: dict[str, list[float] | None] = {}
-    for name, coeff in coeffs_by_name.items():
+    for name, coeff in profile_coeffs.items():
         if coeff is None:
             coeffs[name] = None
             continue
@@ -110,9 +128,9 @@ def _normalize_coeffs(
     return coeffs
 
 
-def _copy_coeffs(coeffs_by_name: dict[str, list[float] | None]) -> dict[str, list[float] | None]:
+def _copy_coeffs(profile_coeffs: dict[str, list[float] | None]) -> dict[str, list[float] | None]:
     copied: dict[str, list[float] | None] = {}
-    for name, coeff in coeffs_by_name.items():
+    for name, coeff in profile_coeffs.items():
         copied[name] = None if coeff is None else list(coeff)
     return copied
 
@@ -130,52 +148,28 @@ def _as_1d_coeff_list(value: list[float], *, name: str) -> list[float]:
 
 
 def _normalize_case_value(name: str, value):
-    if name == "coeffs_by_name":
+    if name == "profile_coeffs":
         return _normalize_coeffs(value)
-    if name in _FLOAT_FIELD_NAMES:
-        return float(value)
+    if name == "boundary":
+        if isinstance(value, Boundary):
+            return value
+        if isinstance(value, dict):
+            return Boundary(**value)
+        raise TypeError(f"boundary must be Boundary or dict, got {type(value).__name__}")
     if name in _OPTIONAL_FLOAT_FIELD_NAMES:
         return np.nan if value is None else float(value)
     if name in _ARRAY_FIELD_NAMES:
-        if name in {"c_offsets", "s_offsets"}:
-            return _normalize_offset_array(value, name=name)
         return _as_1d_array(value, name=name).copy()
     return value
 
 
-def _normalize_offset_array(value, *, name: str) -> np.ndarray:
-    if value is None:
-        return _default_offset_array(name)
-    arr = _as_1d_array(value, name=name).copy()
-    if arr.size == 0:
-        raise ValueError(f"{name} must have at least one entry")
-    min_size = 2 if name == "c_offsets" else 3
-    if arr.size < min_size:
-        padded = np.zeros(min_size, dtype=np.float64)
-        padded[: arr.size] = arr
-        arr = padded
-    if name == "s_offsets":
-        arr[0] = 0.0
-    return arr
-
-
-def _default_offset_array(name: str) -> np.ndarray:
-    if name == "c_offsets":
-        return np.zeros(2, dtype=np.float64)
-    if name == "s_offsets":
-        return np.zeros(3, dtype=np.float64)
-    raise KeyError(f"Unknown offset array {name!r}")
-
-
-_FLOAT_FIELD_NAMES = {"a", "R0", "Z0", "B0", "ka"}
 _OPTIONAL_FLOAT_FIELD_NAMES = {"Ip", "beta"}
-_ARRAY_FIELD_NAMES = {"heat_input", "current_input", "c_offsets", "s_offsets"}
-_ORDERED_FLOAT_FIELD_NAMES = ("a", "R0", "Z0", "B0", "ka")
+_ARRAY_FIELD_NAMES = {"heat_input", "current_input"}
 _ORDERED_OPTIONAL_FLOAT_FIELD_NAMES = ("Ip", "beta")
-_ORDERED_ARRAY_FIELD_NAMES = ("heat_input", "current_input", "c_offsets", "s_offsets")
+_ORDERED_ARRAY_FIELD_NAMES = ("heat_input", "current_input")
 _CASE_FIELD_NAMES = {
-    "coeffs_by_name",
-    *_FLOAT_FIELD_NAMES,
+    "profile_coeffs",
+    "boundary",
     *_OPTIONAL_FLOAT_FIELD_NAMES,
     *_ARRAY_FIELD_NAMES,
 }

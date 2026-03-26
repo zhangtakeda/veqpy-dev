@@ -28,7 +28,7 @@ $$
 - `Grid.cos_ktheta` / `Grid.sin_ktheta` 保存 `k = 0 .. K` 的 Fourier 表
 - `OperatorCase.c_offsets` 保存 `c0 .. cK`
 - `OperatorCase.s_offsets` 保存 `s0 .. sK`，其中 `s0` 恒为 0
-- `coeffs_by_name` 中的 `c{k}` / `s{k}` 表示对应阶数的可优化径向修正
+- `profile_coeffs` 中的 `c{k}` / `s{k}` 表示对应阶数的可优化径向修正
 
 在径向展开到 $L$ 阶, 有:
 

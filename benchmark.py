@@ -8,7 +8,11 @@ from pathlib import Path
 
 import numpy as np
 
-from veqpy.model import Equilibrium, Grid
+from demo import CASE_1 as PF_REFERENCE_CASE
+from demo import COEFFS as PF_REFERENCE_COEFFS
+from demo import CONFIG as PF_REFERENCE_SOLVER_CONFIG
+from demo import pf_reference_profiles
+from veqpy.model import Boundary, Equilibrium, Grid
 from veqpy.operator import Operator, OperatorCase, build_profile_index, build_profile_layout, build_profile_names
 from veqpy.solver import Solver, SolverConfig
 
@@ -37,17 +41,6 @@ BENCHMARK_MODE_CONSTRAINTS = {
     "PQ": ("Ip_beta", "Ip", "beta", "null"),
 }
 
-try:
-    from demo import CASE_1 as PF_REFERENCE_CASE
-    from demo import COEFFS as PF_REFERENCE_COEFFS
-    from demo import CONFIG as PF_REFERENCE_SOLVER_CONFIG
-    from demo import pf_reference_profiles
-except ImportError:
-    from veqpy.demo import CASE_1 as PF_REFERENCE_CASE
-    from veqpy.demo import COEFFS as PF_REFERENCE_COEFFS
-    from veqpy.demo import CONFIG as PF_REFERENCE_SOLVER_CONFIG
-    from veqpy.demo import pf_reference_profiles
-
 PF_REFERENCE_GRID = Grid(
     Nr=32,
     Nt=32,
@@ -58,15 +51,15 @@ GRID = Grid(Nr=12, Nt=12, scheme="legendre", L_max=PF_REFERENCE_GRID.L_max)
 CONFIG = SolverConfig(method=PF_REFERENCE_SOLVER_CONFIG.method)
 BENCHMARK_SOLVE_CONFIG = replace(CONFIG, enable_warmstart=False, enable_verbose=False, enable_history=False)
 
-PF_REFERENCE_CASE_KWARGS = {
-    "a": PF_REFERENCE_CASE.a,
-    "R0": PF_REFERENCE_CASE.R0,
-    "Z0": PF_REFERENCE_CASE.Z0,
-    "B0": PF_REFERENCE_CASE.B0,
-    "ka": PF_REFERENCE_CASE.ka,
-    "c_offsets": PF_REFERENCE_CASE.c_offsets.copy(),
-    "s_offsets": PF_REFERENCE_CASE.s_offsets.copy(),
-}
+PF_REFERENCE_BOUNDARY = Boundary(
+    a=PF_REFERENCE_CASE.a,
+    R0=PF_REFERENCE_CASE.R0,
+    Z0=PF_REFERENCE_CASE.Z0,
+    B0=PF_REFERENCE_CASE.B0,
+    ka=PF_REFERENCE_CASE.ka,
+    c_offsets=PF_REFERENCE_CASE.c_offsets.copy(),
+    s_offsets=PF_REFERENCE_CASE.s_offsets.copy(),
+)
 PF_REFERENCE_IP = PF_REFERENCE_CASE.Ip
 PF_REFERENCE_PROFILE_COEFF_COUNTS = {
     name: (0 if coeffs is None else len(coeffs)) for name, coeffs in PF_REFERENCE_COEFFS.items()
@@ -170,11 +163,11 @@ def make_pf_reference_solver(
     grid = grid or PF_REFERENCE_GRID
     current_input, heat_input = pf_reference_profiles(grid.rho)
     case = OperatorCase(
-        coeffs_by_name=make_zero_reference_coeffs(),
+        profile_coeffs=make_zero_reference_coeffs(),
+        boundary=PF_REFERENCE_BOUNDARY,
         heat_input=heat_input,
         current_input=current_input,
         Ip=PF_REFERENCE_IP,
-        **PF_REFERENCE_CASE_KWARGS,
     )
     operator = Operator(grid=grid, case=case, name="PF", derivative="rho")
     return Solver(operator=operator, config=config or CONFIG)
@@ -326,10 +319,10 @@ def format_share(share: float) -> str:
     return f"{100.0 * share:.1f}%"
 
 
-def _extract_shape_x(coeffs_by_name: dict[str, list[float] | None], x: np.ndarray) -> np.ndarray:
+def _extract_shape_x(profile_coeffs: dict[str, list[float] | None], x: np.ndarray) -> np.ndarray:
     profile_names = build_profile_names(PF_REFERENCE_GRID.K_max)
     profile_index = build_profile_index(profile_names)
-    _, coeff_index, _ = build_profile_layout(coeffs_by_name, profile_names=profile_names)
+    _, coeff_index, _ = build_profile_layout(profile_coeffs, profile_names=profile_names)
     shape_values: list[float] = []
     shape_names = tuple(name for name in PF_REFERENCE_PROFILE_COEFF_COUNTS)
     for k in range(coeff_index.shape[1]):
@@ -344,7 +337,7 @@ def _pf_reference_profiles() -> PFReferenceBundle:
     solver, result, equilibrium = solve_pf_reference(PF_REFERENCE_GRID, config=CONFIG)
     equilibrium_on_grid = equilibrium.resample(target_grid=GRID)
     reference_shape_x = _extract_shape_x(
-        solver.operator.case.coeffs_by_name,
+        solver.operator.case.profile_coeffs,
         np.asarray(result.x, dtype=np.float64),
     )
     return PFReferenceBundle(
@@ -461,12 +454,12 @@ def _make_benchmark_solver_case(
     beta = float(ref["beta_constraint"]) if constraint in {"beta", "Ip_beta"} else None
 
     return OperatorCase(
-        coeffs_by_name=coeffs,
+        profile_coeffs=coeffs,
+        boundary=PF_REFERENCE_BOUNDARY,
         heat_input=heat_input,
         current_input=current_input,
         Ip=Ip,
         beta=beta,
-        **PF_REFERENCE_CASE_KWARGS,
     )
 
 
@@ -596,7 +589,7 @@ def _benchmark_case_result(
 
     equilibrium = solver.build_equilibrium()
     rel_max, rel_var, extra = _rel_stats_vs_ref(bundle.equilibrium_on_grid, equilibrium)
-    current_shape_x = _extract_shape_x(case.coeffs_by_name, result.x)
+    current_shape_x = _extract_shape_x(case.profile_coeffs, result.x)
     shape_error = _shape_error(bundle.reference_shape_x, current_shape_x)
     notes = _collect_case_notes(result, equilibrium, rel_max, rel_var, extra, shape_error=shape_error)
 

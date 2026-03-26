@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+from veqpy.model import Boundary
 from veqpy.model.grid import Grid
 from veqpy.operator import Operator
 from veqpy.operator.layout import (
@@ -50,30 +51,29 @@ def test_grid_requires_kmax_at_least_two_during_transition():
 
 def test_operator_case_defaults_missing_offsets_to_zero_family_arrays():
     case = OperatorCase(
-        coeffs_by_name={},
-        a=1.0,
-        R0=1.7,
-        Z0=0.1,
-        B0=3.0,
+        profile_coeffs={},
+        boundary=Boundary(a=1.0, R0=1.7, Z0=0.1, B0=3.0),
         heat_input=np.zeros(4),
         current_input=np.zeros(4),
     )
 
-    assert np.allclose(case.c_offsets, [0.0, 0.0])
-    assert np.allclose(case.s_offsets, [0.0, 0.0, 0.0])
+    assert np.allclose(case.c_offsets, [0.0])
+    assert np.allclose(case.s_offsets, [0.0])
 
 
 def test_operator_case_normalizes_family_arrays_and_forces_s0_zero():
     case = OperatorCase(
-        coeffs_by_name={},
-        a=1.0,
-        R0=1.7,
-        Z0=0.1,
-        B0=3.0,
+        profile_coeffs={},
+        boundary=Boundary(
+            a=1.0,
+            R0=1.7,
+            Z0=0.1,
+            B0=3.0,
+            c_offsets=np.array([0.03, 0.14, -0.02]),
+            s_offsets=np.array([9.9, -0.05, 0.07, -0.01]),
+        ),
         heat_input=np.zeros(4),
         current_input=np.zeros(4),
-        c_offsets=np.array([0.03, 0.14, -0.02]),
-        s_offsets=np.array([9.9, -0.05, 0.07, -0.01]),
     )
 
     assert np.allclose(case.c_offsets, [0.03, 0.14, -0.02])
@@ -84,34 +84,38 @@ def test_operator_case_normalizes_family_arrays_and_forces_s0_zero():
     assert not hasattr(case, "s2a")
 
 
-def test_operator_case_pads_short_family_arrays():
+def test_boundary_keeps_short_family_arrays_without_padding():
     case = OperatorCase(
-        coeffs_by_name={},
-        a=1.0,
-        R0=1.7,
-        Z0=0.1,
-        B0=3.0,
+        profile_coeffs={},
+        boundary=Boundary(
+            a=1.0,
+            R0=1.7,
+            Z0=0.1,
+            B0=3.0,
+            c_offsets=np.array([0.03]),
+            s_offsets=np.array([-9.0, -0.05]),
+        ),
         heat_input=np.zeros(4),
         current_input=np.zeros(4),
-        c_offsets=np.array([0.03]),
-        s_offsets=np.array([-9.0, -0.05]),
     )
 
-    assert np.allclose(case.c_offsets, [0.03, 0.0])
-    assert np.allclose(case.s_offsets, [0.0, -0.05, 0.0])
+    assert np.allclose(case.c_offsets, [0.03])
+    assert np.allclose(case.s_offsets, [0.0, -0.05])
 
 
 def test_operator_case_copy_keeps_family_arrays_independent():
     case = OperatorCase(
-        coeffs_by_name={},
-        a=1.0,
-        R0=1.7,
-        Z0=0.1,
-        B0=3.0,
+        profile_coeffs={},
+        boundary=Boundary(
+            a=1.0,
+            R0=1.7,
+            Z0=0.1,
+            B0=3.0,
+            c_offsets=np.array([0.03, 0.14, -0.02]),
+            s_offsets=np.array([0.0, -0.05, 0.07, -0.01]),
+        ),
         heat_input=np.zeros(4),
         current_input=np.zeros(4),
-        c_offsets=np.array([0.03, 0.14, -0.02]),
-        s_offsets=np.array([0.0, -0.05, 0.07, -0.01]),
     )
 
     copied = case.copy()
@@ -131,7 +135,7 @@ def test_layout_builders_expand_fourier_names_from_kmax():
 def test_layout_accepts_dynamic_profile_names_and_keeps_ordering_stable():
     profile_names = build_profile_names(3)
     profile_index = build_profile_index(profile_names)
-    coeffs_by_name = {
+    profile_coeffs = {
         "psin": [1.0, 2.0],
         "h": [0.1],
         "c0": [0.0],
@@ -140,7 +144,7 @@ def test_layout_accepts_dynamic_profile_names_and_keeps_ordering_stable():
     }
 
     profile_L, coeff_index, order_offsets = build_profile_layout(
-        coeffs_by_name,
+        profile_coeffs,
         profile_names=profile_names,
     )
     active_mask, active_ids = build_active_profile_metadata(profile_L, profile_names=profile_names)
@@ -162,7 +166,7 @@ def test_layout_accepts_dynamic_profile_names_and_keeps_ordering_stable():
 
 
 def test_operator_accepts_kmax_larger_than_legacy_when_only_low_order_profiles_are_active():
-    coeffs_by_name = {
+    profile_coeffs = {
         "psin": [0.0, 1.0],
         "F": [1.0],
         "h": [0.0],
@@ -179,15 +183,17 @@ def test_operator_accepts_kmax_larger_than_legacy_when_only_low_order_profiles_a
         "s4": None,
     }
     case = OperatorCase(
-        coeffs_by_name=coeffs_by_name,
-        a=1.0,
-        R0=1.7,
-        Z0=0.0,
-        B0=3.0,
+        profile_coeffs=profile_coeffs,
+        boundary=Boundary(
+            a=1.0,
+            R0=1.7,
+            Z0=0.0,
+            B0=3.0,
+            c_offsets=np.zeros(5),
+            s_offsets=np.zeros(5),
+        ),
         heat_input=np.zeros(8),
         current_input=np.zeros(8),
-        c_offsets=np.zeros(5),
-        s_offsets=np.zeros(5),
     )
     grid = Grid(Nr=8, Nt=8, scheme="uniform", K_max=4)
 
@@ -202,8 +208,8 @@ def test_operator_accepts_kmax_larger_than_legacy_when_only_low_order_profiles_a
 
 
 def test_operator_trims_effective_fourier_order_when_high_orders_are_zero_and_inactive():
-    coeffs_by_name = {name: None for name in build_profile_names(4)}
-    coeffs_by_name.update(
+    profile_coeffs = {name: None for name in build_profile_names(4)}
+    profile_coeffs.update(
         {
             "psin": [0.0, 1.0],
             "F": [1.0],
@@ -213,15 +219,17 @@ def test_operator_trims_effective_fourier_order_when_high_orders_are_zero_and_in
         }
     )
     case = OperatorCase(
-        coeffs_by_name=coeffs_by_name,
-        a=1.0,
-        R0=1.7,
-        Z0=0.0,
-        B0=3.0,
+        profile_coeffs=profile_coeffs,
+        boundary=Boundary(
+            a=1.0,
+            R0=1.7,
+            Z0=0.0,
+            B0=3.0,
+            c_offsets=np.zeros(5),
+            s_offsets=np.zeros(5),
+        ),
         heat_input=np.zeros(8),
         current_input=np.zeros(8),
-        c_offsets=np.zeros(5),
-        s_offsets=np.zeros(5),
     )
     operator = Operator(name="PF", derivative="rho", grid=Grid(Nr=8, Nt=8, scheme="uniform", K_max=4), case=case)
 
@@ -230,8 +238,8 @@ def test_operator_trims_effective_fourier_order_when_high_orders_are_zero_and_in
 
 
 def test_operator_keeps_fixed_nonzero_high_order_offsets_in_effective_order():
-    coeffs_by_name = {name: None for name in build_profile_names(4)}
-    coeffs_by_name.update(
+    profile_coeffs = {name: None for name in build_profile_names(4)}
+    profile_coeffs.update(
         {
             "psin": [0.0, 1.0],
             "F": [1.0],
@@ -239,15 +247,17 @@ def test_operator_keeps_fixed_nonzero_high_order_offsets_in_effective_order():
         }
     )
     case = OperatorCase(
-        coeffs_by_name=coeffs_by_name,
-        a=1.0,
-        R0=1.7,
-        Z0=0.0,
-        B0=3.0,
+        profile_coeffs=profile_coeffs,
+        boundary=Boundary(
+            a=1.0,
+            R0=1.7,
+            Z0=0.0,
+            B0=3.0,
+            c_offsets=np.array([0.0, 0.0, 0.0, 0.05, 0.0]),
+            s_offsets=np.array([0.0, 0.0, 0.0, 0.0, -0.04]),
+        ),
         heat_input=np.zeros(8),
         current_input=np.zeros(8),
-        c_offsets=np.array([0.0, 0.0, 0.0, 0.05, 0.0]),
-        s_offsets=np.array([0.0, 0.0, 0.0, 0.0, -0.04]),
     )
     operator = Operator(name="PF", derivative="rho", grid=Grid(Nr=8, Nt=8, scheme="uniform", K_max=4), case=case)
 
