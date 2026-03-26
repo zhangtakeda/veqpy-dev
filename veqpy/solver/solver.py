@@ -367,7 +367,12 @@ class Solver:
         attempt: tuple[np.ndarray, bool, str, int, int, int, float] | None,
         error: Exception | None,
     ) -> bool:
-        return error is None and attempt is not None and bool(attempt[1])
+        return bool(
+            error is None
+            and attempt is not None
+            and bool(attempt[1])
+            and np.isfinite(float(attempt[6]))
+        )
 
     def _display_method_label(self, solve_config: SolverConfig) -> str:
         if _uses_least_squares_api(solve_config):
@@ -402,13 +407,13 @@ class Solver:
         selected_result: tuple[np.ndarray, bool, str, int, int, int, float],
     ) -> tuple[np.ndarray, bool, str, int, int, int, float]:
         message = "; ".join(
-            f"attempt(method={label}) {'succeeded' if res is not None and res[1] and err is None else 'failed'}: "
+            f"attempt(method={label}) {'succeeded' if self._attempt_succeeded(res, err) else 'failed'}: "
             f"{self._format_attempt_failure(method=label, result=res, error=err)}"
             for label, res, err in attempts
         )
         return (
             selected_result[0],
-            bool(selected_result[1]),
+            self._attempt_succeeded(selected_result, None),
             f"{message}; selected method={selected_label}",
             sum(int(result[3]) for _, result, _ in attempts if result is not None),
             sum(int(result[4]) for _, result, _ in attempts if result is not None),
@@ -444,9 +449,12 @@ class Solver:
             opt = run_full(x_guess, solve_config=solve_config)
             x_opt = self.operator.coerce_x(opt.x)
             residual_norm = _opt_residual_norm(opt)
-            if residual_norm is None and not bool(opt.success):
+            if residual_norm is None or not np.isfinite(residual_norm):
                 residual_norm, _ = self._safe_residual_norm(x_opt)
-            accepted = bool(opt.success) or _residual_within_acceptance(residual_norm, solve_config)
+            accepted = bool(
+                (bool(opt.success) and residual_norm is not None and np.isfinite(residual_norm))
+                or _residual_within_acceptance(residual_norm, solve_config)
+            )
             message = str(opt.message)
             if not bool(opt.success) and accepted:
                 message = f"{message} [accepted by residual]"
@@ -486,7 +494,7 @@ class Solver:
             last_active_size = int(active_indices.shape[0])
             stage_message = f"{opt.message} [active_size={last_active_size}] [order={stage_group.order}]"
             stage_residual_norm = _opt_residual_norm(opt)
-            if stage_residual_norm is None and not bool(opt.success):
+            if stage_residual_norm is None or not np.isfinite(stage_residual_norm):
                 try:
                     stage_residual = self.operator.residual_masked(
                         x_stage[active_indices],
@@ -497,7 +505,10 @@ class Solver:
                     stage_residual_norm = None
                 else:
                     stage_residual_norm = float(np.linalg.norm(stage_residual))
-            accepted = bool(opt.success) or _residual_within_acceptance(stage_residual_norm, solve_config)
+            accepted = bool(
+                (bool(opt.success) and stage_residual_norm is not None and np.isfinite(stage_residual_norm))
+                or _residual_within_acceptance(stage_residual_norm, solve_config)
+            )
             last_stage_residual_norm = stage_residual_norm
             last_stage_accepted = bool(accepted)
             if not bool(opt.success) and accepted:
@@ -840,7 +851,7 @@ def _accepted_residual_norm(solve_config: SolverConfig) -> float:
 
 
 def _residual_within_acceptance(residual_norm: float | None, solve_config: SolverConfig) -> bool:
-    return (
+    return bool(
         residual_norm is not None
         and np.isfinite(residual_norm)
         and residual_norm <= _accepted_residual_norm(solve_config)
