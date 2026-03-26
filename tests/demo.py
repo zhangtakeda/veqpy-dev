@@ -5,6 +5,24 @@ from veqpy.model import Boundary, Grid
 from veqpy.operator import Operator, OperatorCase
 from veqpy.solver import Solver, SolverConfig
 
+WARMUP_TIMES = 10
+
+BOUNDARY = Boundary(
+    a=1.05 / 1.85,
+    R0=1.05,
+    Z0=0.0,
+    B0=3.0,
+    ka=2.2,
+    s_offsets=np.array([0.0, float(np.arcsin(0.5))]),
+)
+
+CONFIG = SolverConfig(
+    method="hybr",
+    enable_verbose=True,
+    enable_warmstart=False,
+)
+
+
 COEFFS = {
     "h": [0.0] * 3,
     "v": None,
@@ -18,9 +36,9 @@ COEFFS = {
 
 HIGH_PRECISION_COEFFS = {
     "h": [0.0] * 10,
-    "v": [0.0] * 5,
+    "v": [0.0] * 10,
     "k": [0.0] * 10,
-    "c0": [0.0] * 5,
+    "c0": [0.0] * 10,
     "c1": [0.0] * 5,
     "c2": [0.0] * 5,
     "s1": [0.0] * 10,
@@ -28,15 +46,6 @@ HIGH_PRECISION_COEFFS = {
     "s3": [0.0] * 5,
 }
 
-
-BOUNDARY = Boundary(
-    a=1.05 / 1.85,
-    R0=1.05,
-    Z0=0.0,
-    B0=3.0,
-    ka=2.2,
-    s_offsets=np.array([0.0, float(np.arcsin(0.5))]),
-)
 
 GRID = Grid(
     Nr=12,
@@ -51,11 +60,10 @@ HIGH_PRECISION_GRID = Grid(
 )
 
 
-CONFIG = SolverConfig(
-    method="hybr",
-    enable_verbose=True,
-    enable_warmstart=False,
-)
+def warmup_solver(solver: Solver) -> None:
+    """Run one silent solve so demo timings exclude first-call JIT overhead."""
+    for _ in range(WARMUP_TIMES):
+        solver.solve(enable_verbose=False, enable_history=False)
 
 
 def pf_reference_profiles(rho: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -108,14 +116,18 @@ if __name__ == "__main__":
     solver_2 = Solver(operator=operator_2, config=CONFIG)
     solver_3 = Solver(operator=operator_3, config=CONFIG)
 
-    print("\n=== Typical Coefficients + Typical Grid ===")
+    warmup_solver(solver_1)
+    warmup_solver(solver_2)
+    warmup_solver(solver_3)
+
+    print("\n\n=== Typical Coefficients + Typical Grid ===")
     x1 = solver_1.solve()
     eq1 = solver_1.build_equilibrium()
     eq1.write("tests/demo/demo-1.json")
     eq1.plot("tests/demo/demo-1.png")
     print(eq1)
 
-    print("\n=== High Precision Coefficients + High Precision Grid ===")
+    print("\n\n=== High Precision Coefficients + High Precision Grid ===")
     x2 = solver_2.solve()
     eq2 = solver_2.build_equilibrium()
     eq2.write("tests/demo/demo-2.json")
@@ -128,7 +140,7 @@ if __name__ == "__main__":
     )
     print(eq2)
 
-    print("\n=== Typical Coefficients + High Precision Grid ===")
+    print("\n\n=== Typical Coefficients + High Precision Grid ===")
     x3 = solver_3.solve()
     eq3 = solver_3.build_equilibrium()
     eq3.write("tests/demo/demo-3.json")

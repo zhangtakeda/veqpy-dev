@@ -411,6 +411,9 @@ class Equilibrium(Reactive, Serial):
         show: bool = False,
         label_ref: str = "reference",
         label_other: str = "current",
+        target_grid: Grid | None = None,
+        profile_degree: int | None = None,
+        native_grid: bool = False,
     ) -> dict[str, float]:
         """Compare this equilibrium against another one."""
 
@@ -421,6 +424,9 @@ class Equilibrium(Reactive, Serial):
             show=show,
             label_ref=label_ref,
             label_other=label_other,
+            target_grid=target_grid,
+            profile_degree=profile_degree,
+            native_grid=native_grid,
         )
 
     def resample(
@@ -573,6 +579,9 @@ def plot_comparison(
     show: bool = False,
     label_ref: str = "reference",
     label_other: str = "current",
+    target_grid: Grid | None = None,
+    profile_degree: int | None = None,
+    native_grid: bool = False,
 ) -> dict[str, float]:
     """Render a veqpy-poor-style comparison figure with one shared surface panel."""
     ref_plot = reference
@@ -638,8 +647,25 @@ def plot_comparison(
         right=0.98,
     )
 
-    ref_surface_data = _build_surface_panel_data(ref_plot)
-    other_surface_data = _build_surface_panel_data(other_plot)
+    surface_grid = target_grid or Grid(
+        Nr=64,
+        Nt=32,
+        scheme="uniform",
+        L_max=max(reference.grid.L_max, other.grid.L_max),
+        K_max=max(reference.grid.K_max, other.grid.K_max),
+    )
+    ref_surface = ref_plot.resample(
+        target_grid=surface_grid,
+        profile_degree=profile_degree,
+        native_grid=native_grid,
+    )
+    other_surface = other_plot.resample(
+        target_grid=surface_grid,
+        profile_degree=profile_degree,
+        native_grid=native_grid,
+    )
+    ref_surface_data = _build_surface_panel_data(ref_surface)
+    other_surface_data = _build_surface_panel_data(other_surface)
     shared_boundary = _merge_surface_boundaries(ref_surface_data["boundary"], other_surface_data["boundary"])
     _render_comparison_surface_overlay_panel(
         fig.add_subplot(gs[:, 0]),

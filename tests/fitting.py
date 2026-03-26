@@ -11,9 +11,9 @@ from veqpy.model import Boundary
 from veqpy.model.boundary import _fit_boundary_params
 from veqpy.model.geqdsk import Geqdsk
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent / "fitting"
 GEQDSK_PATH = ROOT / "geqdsk.txt"
-OUTPUT_PATH = ROOT / "geqdsk-boundary-fit.png"
+OUTPUT_PATH = ROOT / "geqdsk-boundary.png"
 
 
 def build_boundary_curve(boundary: Boundary, *, n: int = 144) -> np.ndarray:

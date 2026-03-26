@@ -257,23 +257,31 @@ backend control surface 只有 [`veqpy/engine/__init__.py`](../veqpy/engine/__in
 - [`docs/conventions.md`](./conventions.md)
 - [`docs/guardrails.md`](./guardrails.md)
 
+同时必须核对:
+
+- 命令示例是否仍然要求在项目虚拟环境中执行
+- `tests/demo.py` / `tests/benchmark.py` / 核心回归测试入口路径是否仍然正确
+
 ## Minimum Validation
 
 只改文档:
 
 - 至少核对路径, 文件名, 入口命名仍然存在.
+- 命令示例默认必须以已激活的项目虚拟环境为前提.
 
 改任意源码:
 
-- `py -m compileall veqpy tests`
+- `python -m compileall veqpy tests`
 
 改 runtime 主链或 solver:
 
-- `py -m compileall veqpy tests`
-- `py tests/demo.py`
+- `python -m compileall veqpy tests`
+- `python tests/demo.py`
+- `python -m pytest tests/test_model_core_regression.py tests/test_operator_core_regression.py tests/test_engine_core_regression.py tests/test_solver_core_regression.py -q`
 
 改 benchmark 口径, source route, residual runner:
 
-- `py -m compileall veqpy tests`
-- `py tests/demo.py`
-- `py tests/benchmark.py`
+- `python -m compileall veqpy tests`
+- `python tests/demo.py`
+- `python tests/benchmark.py`
+- `python -m pytest tests/test_model_core_regression.py tests/test_operator_core_regression.py tests/test_engine_core_regression.py tests/test_solver_core_regression.py -q`

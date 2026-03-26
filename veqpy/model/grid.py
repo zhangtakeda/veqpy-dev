@@ -153,6 +153,22 @@ class Grid(Serial):
         object.__setattr__(self, "y", np.asarray(y, dtype=np.float64))
         object.__setattr__(self, "T_fields", np.asarray(T_fields, dtype=np.float64))
 
+    def __rich__(self):
+        tree = Tree("[bold blue]Grid[/]")
+        tree.add(f"Nr: {self.Nr}")
+        tree.add(f"Nt: {self.Nt}")
+        tree.add(f"scheme: {self.scheme}")
+        return tree
+
+    def __str__(self) -> str:
+        console = Console(color_system=None, force_terminal=False, width=120, record=True, soft_wrap=False)
+        with console.capture() as capture:
+            console.print(self.__rich__())
+        return capture.get().rstrip()
+
+    def __repr__(self) -> str:
+        return str(self)
+
     @property
     def T(self) -> np.ndarray:
         return self.T_fields[0]
@@ -164,23 +180,6 @@ class Grid(Serial):
     @property
     def T_rr(self) -> np.ndarray:
         return self.T_fields[2]
-
-    def __rich__(self):
-        tree = Tree("[bold blue]Grid[/]")
-        tree.add(f"Nr: {self.Nr}")
-        tree.add(f"Nt: {self.Nt}")
-        tree.add(f"scheme: {self.scheme}")
-        tree.add(f"K_max: {self.K_max}")
-        return tree
-
-    def __str__(self) -> str:
-        console = Console(color_system=None, force_terminal=False, width=120, record=True, soft_wrap=False)
-        with console.capture() as capture:
-            console.print(self.__rich__())
-        return capture.get().rstrip()
-
-    def __repr__(self) -> str:
-        return str(self)
 
     def differentiate(self, f_1D: np.ndarray, *, out: np.ndarray | None = None) -> np.ndarray:
         """在当前 Grid 上对 1D 场做谱微分."""

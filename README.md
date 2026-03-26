@@ -20,7 +20,44 @@ a high-performance Python wrapper for plasma equilibrium simulations in magnetic
 - `veqpy/solver/`
   - SciPy solve orchestration, fallback logic, history, and result objects.
 - `tests/`
-  - Demo, benchmark, and focused regression tests.
+  - Focused regression tests.
+
+## Environment
+
+All scripts, benchmarks, compile checks, and `pytest` runs should be executed inside the project virtual environment.
+
+Recommended workflow on Windows PowerShell:
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -U pip
+python -m pip install -e .
+python -m pip install pytest
+```
+
+After activation, prefer:
+
+- `python -m pytest ...`
+- `python tests/demo.py`
+- `python tests/benchmark.py`
+- `python -m compileall veqpy tests`
+
+Avoid running repository commands from system Python or a non-project interpreter.  
+If you cannot activate the environment, use `.\.venv\Scripts\python.exe ...` explicitly.
+
+## Regression Suites
+
+Core regressions are now organized by submodule instead of by temporary refactor phase:
+
+- [tests/test_model_core_regression.py](/E:/Dev/veqpy-dev/tests/test_model_core_regression.py)
+  - `Grid`, `Boundary.from_geqdsk`, `Equilibrium` snapshot/serialization/comparison semantics
+- [tests/test_operator_core_regression.py](/E:/Dev/veqpy-dev/tests/test_operator_core_regression.py)
+  - `OperatorCase`, packed layout naming/order, effective Fourier order behavior
+- [tests/test_engine_core_regression.py](/E:/Dev/veqpy-dev/tests/test_engine_core_regression.py)
+  - `numpy`/`numba` geometry and residual consistency, high-order runtime propagation
+- [tests/test_solver_core_regression.py](/E:/Dev/veqpy-dev/tests/test_solver_core_regression.py)
+  - solve facade, history, reset/clear, equilibrium-history rebuild semantics
 
 The main runtime path is:
 
@@ -46,8 +83,7 @@ This means the remaining cost from the more general `K_max` architecture is smal
 
 Benchmark entry points:
 
-- [tests/benchmark_fourier_runtime.py](E:/Dev/veqpy-dev/tests/benchmark_fourier_runtime.py)
-- [tests/benchmark.py](E:/Dev/veqpy-dev/tests/benchmark.py)
+- [benchmark.py](/E:/Dev/veqpy-dev/tests/benchmark.py)
 
 ## Project Understanding
 
@@ -87,6 +123,7 @@ When changing performance-sensitive code:
 ## Related Docs
 
 - [docs/overview.md](E:/Dev/veqpy-dev/docs/overview.md)
+- [docs/agent-context.md](E:/Dev/veqpy-dev/docs/agent-context.md)
 - [docs/theory/profile.md](E:/Dev/veqpy-dev/docs/theory/profile.md)
 - [docs/theory/geometry.md](E:/Dev/veqpy-dev/docs/theory/geometry.md)
 - [docs/theory/residual.md](E:/Dev/veqpy-dev/docs/theory/residual.md)

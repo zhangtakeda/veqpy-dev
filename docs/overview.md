@@ -10,6 +10,7 @@
 
 如果要看风格和注释规则, 读 [`docs/conventions.md`](./conventions.md).  
 如果要看边界合同和不能打破的约束, 读 [`docs/guardrails.md`](./guardrails.md).
+如果要把当前仓库心智模型和隐含知识交接给后续 agent, 读 [`docs/agent-context.md`](./agent-context.md).
 
 ## Repository Map
 
@@ -30,6 +31,38 @@
   - 最小示例和 demo 产物入口.
 - [`tests/benchmark.py`](../tests/benchmark.py)
   - 多模式 benchmark 和差异检查入口.
+- [`tests/test_model_core_regression.py`](../tests/test_model_core_regression.py)
+  - `model` 核心回归集.
+- [`tests/test_operator_core_regression.py`](../tests/test_operator_core_regression.py)
+  - `operator` 核心回归集.
+- [`tests/test_engine_core_regression.py`](../tests/test_engine_core_regression.py)
+  - `engine` 核心回归集.
+- [`tests/test_solver_core_regression.py`](../tests/test_solver_core_regression.py)
+  - `solver` 核心回归集.
+
+## Environment
+
+运行仓库脚本时默认前提是: 已进入项目虚拟环境.
+
+推荐 PowerShell 工作流:
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -U pip
+python -m pip install -e .
+python -m pip install pytest
+```
+
+后续统一优先使用:
+
+- `python -m pytest ...`
+- `python tests/demo.py`
+- `python tests/benchmark.py`
+- `python -m compileall veqpy tests`
+
+不要默认依赖系统 Python 或全局 `pytest`.  
+如果当前 shell 没激活虚拟环境, 请显式使用 `.\.venv\Scripts\python.exe ...`.
 
 ## Runtime Path
 
@@ -258,21 +291,24 @@ backend control surface 只有 [`veqpy/engine/__init__.py`](../veqpy/engine/__in
 只改文档:
 
 - 至少核对路径, 命令, 环境变量, 入口文件仍存在.
+- 命令示例默认以已激活的项目虚拟环境为前提.
 
 改任意 Python 源码:
 
-- `py -m compileall veqpy tests`
+- `python -m compileall veqpy tests`
 
 改 runtime 主链:
 
-- `py -m compileall veqpy tests`
-- `py tests/demo.py`
+- `python -m compileall veqpy tests`
+- `python tests/demo.py`
+- `python -m pytest tests/test_model_core_regression.py tests/test_operator_core_regression.py tests/test_engine_core_regression.py tests/test_solver_core_regression.py -q`
 
 改 solver 策略, benchmark 口径, source route, residual runner:
 
-- `py -m compileall veqpy tests`
-- `py tests/demo.py`
-- `py tests/benchmark.py`
+- `python -m compileall veqpy tests`
+- `python tests/demo.py`
+- `python tests/benchmark.py`
+- `python -m pytest tests/test_model_core_regression.py tests/test_operator_core_regression.py tests/test_engine_core_regression.py tests/test_solver_core_regression.py -q`
 
 ## High-Risk Files
 

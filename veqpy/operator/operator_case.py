@@ -48,6 +48,32 @@ class OperatorCase:
             value = _normalize_case_value(name, value)
         object.__setattr__(self, name, value)
 
+    def __rich__(self):
+        tree = Tree("[bold blue]OperatorCase[/]")
+        tree.add(self.boundary)
+        tree.add(
+            f"heat_input: shape={self.heat_input.shape}, "
+            f"min={float(np.min(self.heat_input)):.3f}, max={float(np.max(self.heat_input)):.3f}"
+        )
+        tree.add(
+            f"current_input: shape={self.current_input.shape}, "
+            f"min={float(np.min(self.current_input)):.3f}, max={float(np.max(self.current_input)):.3f}"
+        )
+        if np.isfinite(self.Ip):
+            tree.add(f"Ip: {self.Ip:.3e} [A]")
+        if np.isfinite(self.beta):
+            tree.add(f"beta: {self.beta:.3e}")
+        return tree
+
+    def __str__(self) -> str:
+        console = Console(color_system=None, force_terminal=False, width=120, record=True, soft_wrap=False)
+        with console.capture() as capture:
+            console.print(self.__rich__())
+        return capture.get().rstrip()
+
+    def __repr__(self) -> str:
+        return str(self)
+
     def copy(self) -> OperatorCase:
         """创建一个与当前 case 独立的副本."""
         return OperatorCase(
@@ -66,24 +92,6 @@ class OperatorCase:
             Ip=self.Ip,
             beta=self.beta,
         )
-
-    def __rich__(self):
-        tree = Tree("[bold blue]OperatorCase[/]")
-        tree.add(self.boundary)
-        if np.isfinite(self.Ip):
-            tree.add(f"Ip: {self.Ip:.3e} [A]")
-        if np.isfinite(self.beta):
-            tree.add(f"beta: {self.beta:.3e}")
-        return tree
-
-    def __str__(self) -> str:
-        console = Console(color_system=None, force_terminal=False, width=120, record=True, soft_wrap=False)
-        with console.capture() as capture:
-            console.print(self.__rich__())
-        return capture.get().rstrip()
-
-    def __repr__(self) -> str:
-        return str(self)
 
     @property
     def a(self) -> float:

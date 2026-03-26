@@ -53,11 +53,19 @@ class Solver:
         self.history: list[SolverRecord] = []
 
         self.x0 = self.operator.encode_initial_state()
+        self.x1 = self.x0.copy()
+        self._x1_valid = False
+        self._x1_residual_norm = float("inf")
+        self._x1_nfev = 0
 
     def reset(self) -> None:
-        """将 solver 持有的 x0 原地清零."""
+        """将 solver 持有的 x0/x1 原地清零."""
 
         self.x0.fill(0.0)
+        self.x1.fill(0.0)
+        self._x1_valid = False
+        self._x1_residual_norm = float("inf")
+        self._x1_nfev = 0
 
     def clear(self) -> None:
         """清空 solve history, 不改当前 x0."""
@@ -139,6 +147,9 @@ class Solver:
             nit=int(nit),
             elapsed=elapsed,
         )
+        self.x1 = x_final.copy()
+        self._x1_valid = np.isfinite(residual_norm_final)
+        self._x1_residual_norm = float(residual_norm_final)
 
         record = SolverRecord(
             case_snapshot=self.operator.case.copy(),
@@ -188,6 +199,10 @@ class Solver:
         saved_config = self.config
         saved_result = self.result
         saved_x0 = self.x0.copy()
+        saved_x1 = self.x1.copy()
+        saved_x1_valid = self._x1_valid
+        saved_x1_residual_norm = self._x1_residual_norm
+        saved_x1_nfev = self._x1_nfev
 
         try:
             equilibria: list[Equilibrium] = []
@@ -201,6 +216,10 @@ class Solver:
             self.config = saved_config
             self.result = saved_result
             self.x0 = saved_x0
+            self.x1 = saved_x1
+            self._x1_valid = saved_x1_valid
+            self._x1_residual_norm = saved_x1_residual_norm
+            self._x1_nfev = saved_x1_nfev
             self.operator(self.x0)
 
     def _resolve_solve_config(
@@ -305,18 +324,37 @@ class Solver:
     ) -> tuple[tuple[np.ndarray, bool, str, int, int, int, float] | None, Exception | None]:
         """包装一次 solve stage, 让 fallback 流程也能处理数值异常."""
 
+        self._reset_x1_monitor(x_guess)
         try:
             return self._solve_opt_problem(x_guess, solve_config=solve_config), None
         except Exception as exc:
+            if self._x1_valid and _residual_within_acceptance(self._x1_residual_norm, solve_config):
+                return (
+                    (
+                        self.x1.copy(),
+                        True,
+                        (
+                            f"{type(exc).__name__}: {exc}"
+                            f" [accepted by monitored residual={self._x1_residual_norm:.6e}]"
+                        ),
+                        int(self._x1_nfev),
+                        0,
+                        0,
+                        float(self._x1_residual_norm),
+                    ),
+                    None,
+                )
+            x_candidate = self.x1.copy() if self._x1_valid else self.operator.coerce_x(x_guess).copy()
+            residual_norm = float(self._x1_residual_norm) if self._x1_valid else float("nan")
             return (
                 (
-                    self.operator.coerce_x(x_guess).copy(),
+                    x_candidate,
                     False,
                     f"{type(exc).__name__}: {exc}",
+                    int(self._x1_nfev),
                     0,
                     0,
-                    0,
-                    float("nan"),
+                    residual_norm,
                 ),
                 exc,
             )
@@ -417,6 +455,43 @@ class Solver:
         if not candidate_indices:
             return None
         return min(candidate_indices, key=lambda idx: self._attempt_residual_norm(attempts[idx][1]))
+
+    def _reset_x1_monitor(self, x_guess: np.ndarray) -> None:
+        self.x1 = self.operator.coerce_x(x_guess).copy()
+        self._x1_valid = False
+        self._x1_residual_norm = float("inf")
+        self._x1_nfev = 0
+
+    def _record_x1(self, x_full: np.ndarray, residual: np.ndarray) -> np.ndarray:
+        self._x1_nfev += 1
+        residual_arr = np.asarray(residual, dtype=np.float64)
+        residual_norm = float(np.linalg.norm(residual_arr))
+        if np.isfinite(residual_norm):
+            self.x1 = self.operator.coerce_x(x_full).copy()
+            self._x1_valid = True
+            self._x1_residual_norm = residual_norm
+        return residual
+
+    def _monitored_residual_full(self, x: np.ndarray) -> np.ndarray:
+        x_full = self.operator.coerce_x(x)
+        residual = self.operator(x_full)
+        return self._record_x1(x_full, residual)
+
+    def _monitored_residual_masked(
+        self,
+        x_active: np.ndarray,
+        *,
+        active_indices: np.ndarray,
+        x_template: np.ndarray,
+    ) -> np.ndarray:
+        x_full = self.operator._compose_masked_state(
+            x_active,
+            active_indices=active_indices,
+            x_template=x_template,
+        )
+        residual_full = self.operator.residual(x_full)
+        self._record_x1(x_full, residual_full)
+        return residual_full[active_indices].copy()
 
     def _solve_opt_problem(
         self,
@@ -571,7 +646,7 @@ class Solver:
         """在完整 packed x 上调用一次 `scipy.optimize.root`."""
 
         return root(
-            self.operator,
+            self._monitored_residual_full,
             x_guess,
             method=_root_method_name_for(solve_config),
             tol=solve_config.atol,
@@ -587,7 +662,7 @@ class Solver:
         """在完整 packed x 上调用一次 `scipy.optimize.least_squares`."""
 
         return least_squares(
-            self.operator,
+            self._monitored_residual_full,
             x_guess,
             **_least_squares_kwargs_for(solve_config),
         )
@@ -616,7 +691,7 @@ class Solver:
         x_template = self.operator.coerce_x(x_stage).copy()
 
         return root(
-            lambda x_active: self.operator.residual_masked(
+            lambda x_active: self._monitored_residual_masked(
                 x_active,
                 active_indices=active_indices,
                 x_template=x_template,
@@ -651,7 +726,7 @@ class Solver:
         x_template = self.operator.coerce_x(x_stage).copy()
 
         return least_squares(
-            lambda x_active: self.operator.residual_masked(
+            lambda x_active: self._monitored_residual_masked(
                 x_active,
                 active_indices=active_indices,
                 x_template=x_template,
