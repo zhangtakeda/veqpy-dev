@@ -25,12 +25,8 @@ CONFIG = SolverConfig(
 
 LOWER_COEFFS = {
     "h": [0.0] * 3,
-    "v": None,
     "k": [0.0] * 3,
-    "c0": None,
-    "c1": None,
     "s1": [0.0] * 3,
-    "s2": None,
 }
 
 

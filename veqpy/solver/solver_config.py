@@ -48,14 +48,11 @@ class SolverConfig:
     enable_warmstart: bool = True
     enable_fallback: bool = True
     fallback_methods: tuple[str, ...] = field(default_factory=lambda: ("root-lm", "trf"))
-    enable_homotopy: bool = False
     enable_verbose: bool = False
     enable_history: bool = True
-    homotopy_truncation_tol: float = 1e-3
-    homotopy_truncation_patience: int = 2
 
     def __post_init__(self) -> None:
-        """校验方法名与 homotopy 相关参数是否合法."""
+        """校验方法名与 fallback 相关参数是否合法."""
 
         method = str(self.method)
         fallback_methods = tuple(str(method_name) for method_name in self.fallback_methods)
@@ -84,11 +81,6 @@ class SolverConfig:
             raise ValueError(
                 f"Unsupported fallback solver method(s): {unsupported}. Supported methods are: {supported}."
             )
-        if float(self.homotopy_truncation_tol) < 0.0:
-            raise ValueError("homotopy_truncation_tol must be >= 0")
-        if int(self.homotopy_truncation_patience) < 1:
-            raise ValueError("homotopy_truncation_patience must be >= 1")
-
         object.__setattr__(self, "method", method)
         object.__setattr__(self, "enable_fallback", bool(self.enable_fallback))
         object.__setattr__(self, "fallback_methods", tuple(deduped_fallback_methods))
@@ -104,12 +96,8 @@ class SolverConfig:
         tree.add(f"enable_fallback: {self.enable_fallback}")
         if self.enable_fallback:
             tree.add(f"fallback_methods: {list(self.fallback_methods)}")
-        tree.add(f"enable_homotopy: {self.enable_homotopy}")
         tree.add(f"enable_verbose: {self.enable_verbose}")
         tree.add(f"enable_history: {self.enable_history}")
-        if self.enable_homotopy:
-            tree.add(f"homotopy_truncation_tol: {self.homotopy_truncation_tol:.6g}")
-            tree.add(f"homotopy_truncation_patience: {self.homotopy_truncation_patience}")
         return tree
 
     def __str__(self) -> str:

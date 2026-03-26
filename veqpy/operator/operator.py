@@ -6,7 +6,6 @@ Role:
 - 负责暴露稳定的 residual 求值接口.
 
 Public API:
-- HomotopyStageGroup
 - Operator
 
 Notes:
@@ -53,18 +52,7 @@ _PROFILE_OFFSET_SPECS: dict[str, float | str] = {
     "psin": 1.0,
     "F": 1.0,
 }
-_PROFILE_SCALE_SPECS: dict[str, tuple[str, ...]] = {
-    "F": ("R0", "B0"),
-}
-
-
-@dataclass(slots=True, frozen=True)
-class HomotopyStageGroup:
-    """记录 homotopy 某一阶次对应的 packed 索引集合."""
-
-    order: int
-    indices: np.ndarray
-    shape_profile_ids: np.ndarray
+_PROFILE_SCALE_SPECS: dict[str, tuple[str, ...]] = {"F": ("R0", "B0")}
 
 
 @dataclass(slots=True)
@@ -209,73 +197,6 @@ class Operator:
         """只替换指定索引集合后求值对应 masked residual."""
         x_full = self._compose_masked_state(x_active, active_indices=active_indices, x_template=x_template)
         return self.residual(x_full)[active_indices].copy()
-
-    def homotopy_frontiers(self) -> np.ndarray:
-        """返回 packed 向量按阶次展开时的前缀边界."""
-        if self.x_size == 0:
-            return np.zeros(0, dtype=np.int64)
-        frontiers = np.asarray(self.order_offsets[1:], dtype=np.int64)
-        frontiers = np.unique(frontiers)
-        frontiers = frontiers[(frontiers > 0) & (frontiers <= self.x_size)]
-        return frontiers.astype(np.int64, copy=False)
-
-    def homotopy_stage_groups(self) -> tuple[HomotopyStageGroup, ...]:
-        """构造按阶次分组的 homotopy 元数据."""
-        if self.x_size == 0:
-            return ()
-
-        prefix_indices: list[int] = []
-        for name in self.prefix_profile_names:
-            p = self.profile_index[name]
-            L = int(self.profile_L[p])
-            if L < 0:
-                continue
-            for k in range(L + 1):
-                idx = int(self.coeff_index[p, k])
-                if idx >= 0:
-                    prefix_indices.append(idx)
-
-        shape_profile_ids = [int(self.profile_index[name]) for name in self.shape_profile_names]
-        active_shape_ids = [p for p in shape_profile_ids if int(self.profile_L[p]) >= 0]
-        if not active_shape_ids:
-            if prefix_indices:
-                return (
-                    HomotopyStageGroup(
-                        order=0,
-                        indices=np.asarray(prefix_indices, dtype=np.int64),
-                        shape_profile_ids=np.zeros(0, dtype=np.int64),
-                    ),
-                )
-            return ()
-
-        max_shape_order = max(int(self.profile_L[p]) for p in active_shape_ids)
-        groups: list[HomotopyStageGroup] = []
-        for order in range(max_shape_order + 1):
-            shape_ids = [p for p in active_shape_ids if int(self.profile_L[p]) >= order]
-            indices = list(prefix_indices) if order == 0 else []
-            for p in shape_ids:
-                idx = int(self.coeff_index[p, order])
-                if idx >= 0:
-                    indices.append(idx)
-            if not indices:
-                continue
-            groups.append(
-                HomotopyStageGroup(
-                    order=order,
-                    indices=np.asarray(indices, dtype=np.int64),
-                    shape_profile_ids=np.asarray(shape_ids, dtype=np.int64),
-                )
-            )
-        return tuple(groups)
-
-    def homotopy_truncation_profile_ids(self) -> np.ndarray:
-        """返回参与 shape truncation 的 active profile 编号."""
-        profile_ids = [
-            int(self.profile_index[name])
-            for name in self.shape_profile_names
-            if int(self.profile_L[self.profile_index[name]]) >= 0
-        ]
-        return np.asarray(profile_ids, dtype=np.int64)
 
     def build_coeffs(self, x: np.ndarray, *, include_none: bool = True) -> dict[str, list[float] | None]:
         """把 packed 状态向量还原成 profile 系数字典."""

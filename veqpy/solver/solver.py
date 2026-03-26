@@ -16,9 +16,8 @@ Notes:
 from __future__ import annotations
 
 import warnings
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from time import perf_counter
-from types import SimpleNamespace
 
 import numpy as np
 from rich.console import Console
@@ -27,9 +26,16 @@ from scipy.optimize import least_squares, root
 from veqpy.model import Equilibrium
 from veqpy.operator.operator import Operator
 from veqpy.operator.operator_case import OperatorCase
-from veqpy.solver.solver_config import LEAST_SQUARES_METHODS, ROOT_METHODS, SolverConfig
+from veqpy.solver.solver_config import LEAST_SQUARES_METHODS, SolverConfig
 from veqpy.solver.solver_record import SolverRecord
 from veqpy.solver.solver_result import SolverResult
+
+
+@dataclass(frozen=True, slots=True)
+class _SolveAttemptPlan:
+    label: str
+    x_guess: np.ndarray
+    solve_config: SolverConfig
 
 
 class Solver:
@@ -82,7 +88,6 @@ class Solver:
         enable_warmstart: bool | None = None,
         enable_fallback: bool | None = None,
         fallback_methods: tuple[str, ...] | list[str] | None = None,
-        enable_homotopy: bool | None = None,
         enable_verbose: bool | None = None,
         enable_history: bool | None = None,
     ) -> np.ndarray:
@@ -97,7 +102,6 @@ class Solver:
             enable_warmstart=enable_warmstart,
             enable_fallback=enable_fallback,
             fallback_methods=fallback_methods,
-            enable_homotopy=enable_homotopy,
             enable_verbose=enable_verbose,
             enable_history=enable_history,
         )
@@ -115,6 +119,7 @@ class Solver:
         x_opt, success, message, nfev, njev, nit, residual_norm_final = self._solve_with_fallbacks(
             x_guess,
             solve_config=solve_config,
+            x0_was_provided=x0 is not None,
         )
         elapsed = (perf_counter() - started) * 1e6
 
@@ -124,8 +129,10 @@ class Solver:
             residual_norm_final, residual_final_exc = self._safe_residual_norm(x_final)
         if residual_final_exc is not None:
             success = False
-            message = f"{message} [final residual evaluation failed: {type(residual_final_exc).__name__}:"
-            f" {residual_final_exc}]"
+            message = (
+                f"{message} [final residual evaluation failed: "
+                f"{type(residual_final_exc).__name__}: {residual_final_exc}]"
+            )
 
         self.result = SolverResult(
             x0=x_guess,
@@ -214,7 +221,6 @@ class Solver:
         enable_warmstart: bool | None,
         enable_fallback: bool | None,
         fallback_methods: tuple[str, ...] | list[str] | None,
-        enable_homotopy: bool | None,
         enable_verbose: bool | None,
         enable_history: bool | None,
     ) -> SolverConfig:
@@ -237,8 +243,6 @@ class Solver:
             overrides["enable_fallback"] = bool(enable_fallback)
         if fallback_methods is not None:
             overrides["fallback_methods"] = tuple(str(method_name) for method_name in fallback_methods)
-        if enable_homotopy is not None:
-            overrides["enable_homotopy"] = bool(enable_homotopy)
         if enable_verbose is not None:
             overrides["enable_verbose"] = bool(enable_verbose)
         if enable_history is not None:
@@ -252,22 +256,21 @@ class Solver:
         x_guess: np.ndarray,
         *,
         solve_config: SolverConfig,
+        x0_was_provided: bool,
     ) -> tuple[np.ndarray, bool, str, int, int, int, float]:
         """按主方法求解, 必要时按配置顺序回退到备用 solver 方法."""
 
         attempts: list[tuple[str, tuple[np.ndarray, bool, str, int, int, int, float] | None, Exception | None]] = []
 
-        candidate_configs = [solve_config]
-        seen_methods = {solve_config.method}
-        for fallback_method in solve_config.fallback_methods if solve_config.enable_fallback else ():
-            if fallback_method in seen_methods:
-                continue
-            seen_methods.add(fallback_method)
-            candidate_configs.append(replace(solve_config, method=fallback_method))
+        attempt_plans = self._build_attempt_plans(
+            x_guess,
+            solve_config=solve_config,
+            x0_was_provided=x0_was_provided,
+        )
 
-        for idx, attempt_config in enumerate(candidate_configs):
-            label = self._display_method_label(attempt_config)
-            result, error = self._try_solve_attempt(x_guess, solve_config=attempt_config)
+        for idx, attempt_plan in enumerate(attempt_plans):
+            result, error = self._try_solve_attempt(attempt_plan.x_guess, solve_config=attempt_plan.solve_config)
+            label = attempt_plan.label
             attempts.append((label, result, error))
             if self._attempt_succeeded(result, error):
                 if result is None:
@@ -276,10 +279,10 @@ class Solver:
                     return result
                 return self._finalize_attempts(attempts)
 
-            if idx + 1 >= len(candidate_configs):
+            if idx + 1 >= len(attempt_plans):
                 break
 
-            next_label = self._display_method_label(candidate_configs[idx + 1])
+            next_label = attempt_plans[idx + 1].label
             failure = self._format_attempt_failure(
                 method=label,
                 result=result,
@@ -292,6 +295,50 @@ class Solver:
             )
 
         return self._finalize_attempts(attempts)
+
+    def _build_attempt_plans(
+        self,
+        x_guess: np.ndarray,
+        *,
+        solve_config: SolverConfig,
+        x0_was_provided: bool,
+    ) -> list[_SolveAttemptPlan]:
+        x_initial = self.operator.coerce_x(x_guess).copy()
+        x_cold = np.zeros_like(x_initial)
+        attempt_plans = [
+            _SolveAttemptPlan(
+                label=self._display_attempt_label(
+                    solve_config,
+                    start_kind="warm-start" if self._is_warm_initial_guess(x_initial, x0_was_provided) else "cold-start",
+                ),
+                x_guess=x_initial,
+                solve_config=solve_config,
+            )
+        ]
+
+        if self._should_retry_from_reset(x_initial, x0_was_provided=x0_was_provided):
+            attempt_plans.append(
+                _SolveAttemptPlan(
+                    label=self._display_attempt_label(solve_config, start_kind="reset"),
+                    x_guess=x_cold.copy(),
+                    solve_config=solve_config,
+                )
+            )
+
+        seen_methods = {solve_config.method}
+        for fallback_method in solve_config.fallback_methods if solve_config.enable_fallback else ():
+            if fallback_method in seen_methods:
+                continue
+            seen_methods.add(fallback_method)
+            fallback_config = replace(solve_config, method=fallback_method)
+            attempt_plans.append(
+                _SolveAttemptPlan(
+                    label=self._display_attempt_label(fallback_config, start_kind="cold-fallback"),
+                    x_guess=x_cold.copy(),
+                    solve_config=fallback_config,
+                )
+            )
+        return attempt_plans
 
     def _try_solve_attempt(
         self,
@@ -374,10 +421,25 @@ class Solver:
             and np.isfinite(float(attempt[6]))
         )
 
+    def _display_attempt_label(self, solve_config: SolverConfig, *, start_kind: str) -> str:
+        return f"{self._display_method_label(solve_config)} [{start_kind}]"
+
     def _display_method_label(self, solve_config: SolverConfig) -> str:
         if _uses_least_squares_api(solve_config):
             return f"least_squares/{solve_config.method}"
         return f"root/{solve_config.method}"
+
+    def _is_warm_initial_guess(self, x_guess: np.ndarray, x0_was_provided: bool) -> bool:
+        return bool(x0_was_provided or not self._is_zero_guess(x_guess))
+
+    def _should_retry_from_reset(self, x_guess: np.ndarray, *, x0_was_provided: bool) -> bool:
+        if not self._is_warm_initial_guess(x_guess, x0_was_provided):
+            return False
+        return not self._is_zero_guess(x_guess)
+
+    def _is_zero_guess(self, x_guess: np.ndarray) -> bool:
+        x_eval = self.operator.coerce_x(x_guess)
+        return bool(np.all(x_eval == 0.0))
 
     def _finalize_attempts(
         self,
@@ -440,117 +502,28 @@ class Solver:
         *,
         solve_config: SolverConfig,
     ) -> tuple[np.ndarray, bool, str, int, int, int, float]:
-        """执行 full solve 或 homotopy solve."""
+        """执行一次完整 nonlinear solve."""
 
-        stage_groups = self._build_stage_groups(solve_config=solve_config)
-        run_full = self._run_solve_full
-        run_masked = self._run_solve_masked
-        if len(stage_groups) == 1 and _stage_group_is_full(stage_groups[0], self.operator.x_size):
-            opt = run_full(x_guess, solve_config=solve_config)
-            x_opt = self.operator.coerce_x(opt.x)
-            residual_norm = _opt_residual_norm(opt)
-            if residual_norm is None or not np.isfinite(residual_norm):
-                residual_norm, _ = self._safe_residual_norm(x_opt)
-            accepted = bool(
-                (bool(opt.success) and residual_norm is not None and np.isfinite(residual_norm))
-                or _residual_within_acceptance(residual_norm, solve_config)
-            )
-            message = str(opt.message)
-            if not bool(opt.success) and accepted:
-                message = f"{message} [accepted by residual]"
-            return (
-                x_opt,
-                accepted,
-                message,
-                _count_opt_attr(opt, "nfev"),
-                _count_opt_attr(opt, "njev"),
-                _count_opt_attr(opt, "nit"),
-                float("nan") if residual_norm is None else float(residual_norm),
-            )
-
-        x_stage = x_guess.copy()
-        active_indices = np.zeros(0, dtype=np.int64)
-        total_nfev = 0
-        total_njev = 0
-        total_nit = 0
-        stage_message = "homotopy continuation completed"
-        last_opt = None
-        truncation_state = self._init_homotopy_truncation_state()
-        last_active_size = 0
-        last_stage_residual_norm: float | None = None
-        last_stage_accepted = False
-
-        for stage_group in stage_groups:
-            stage_new_indices = self._select_stage_indices(stage_group, truncation_state)
-            if stage_new_indices.size == 0:
-                continue
-            active_indices = np.concatenate([active_indices, stage_new_indices])
-            opt = run_masked(x_stage, active_indices=active_indices, solve_config=solve_config)
-            x_stage[active_indices] = np.asarray(opt.x, dtype=np.float64)
-            total_nfev += _count_opt_attr(opt, "nfev")
-            total_njev += _count_opt_attr(opt, "njev")
-            total_nit += _count_opt_attr(opt, "nit")
-            last_opt = opt
-            last_active_size = int(active_indices.shape[0])
-            stage_message = f"{opt.message} [active_size={last_active_size}] [order={stage_group.order}]"
-            stage_residual_norm = _opt_residual_norm(opt)
-            if stage_residual_norm is None or not np.isfinite(stage_residual_norm):
-                try:
-                    stage_residual = self.operator.residual_masked(
-                        x_stage[active_indices],
-                        active_indices=active_indices,
-                        x_template=x_stage,
-                    )
-                except Exception:
-                    stage_residual_norm = None
-                else:
-                    stage_residual_norm = float(np.linalg.norm(stage_residual))
-            accepted = bool(
-                (bool(opt.success) and stage_residual_norm is not None and np.isfinite(stage_residual_norm))
-                or _residual_within_acceptance(stage_residual_norm, solve_config)
-            )
-            last_stage_residual_norm = stage_residual_norm
-            last_stage_accepted = bool(accepted)
-            if not bool(opt.success) and accepted:
-                stage_message = f"{stage_message} [accepted by residual]"
-            if accepted:
-                self._update_homotopy_truncation_state(
-                    stage_group=stage_group,
-                    x_stage=x_stage,
-                    truncation_state=truncation_state,
-                    solve_config=solve_config,
-                )
-            if active_indices.shape[0] == self.operator.x_size and accepted:
-                break
-            if not accepted:
-                break
-
-        if last_opt is None:
-            raise RuntimeError("No solve stage was executed")
-
-        residual_norm_final = float("nan")
-        if last_stage_residual_norm is not None:
-            residual_norm_final = float(last_stage_residual_norm)
-        elif not bool(last_opt.success):
-            try:
-                stage_residual = self.operator.residual_masked(
-                    x_stage[active_indices],
-                    active_indices=active_indices,
-                    x_template=x_stage,
-                )
-            except Exception:
-                residual_norm_final = float("nan")
-            else:
-                residual_norm_final = float(np.linalg.norm(stage_residual))
-
+        opt = self._run_solve_full(x_guess, solve_config=solve_config)
+        x_opt = self.operator.coerce_x(opt.x)
+        residual_norm = _opt_residual_norm(opt)
+        if residual_norm is None or not np.isfinite(residual_norm):
+            residual_norm, _ = self._safe_residual_norm(x_opt)
+        accepted = bool(
+            (bool(opt.success) and residual_norm is not None and np.isfinite(residual_norm))
+            or _residual_within_acceptance(residual_norm, solve_config)
+        )
+        message = str(opt.message)
+        if not bool(opt.success) and accepted:
+            message = f"{message} [accepted by residual]"
         return (
-            self.operator.coerce_x(x_stage),
-            bool(last_stage_accepted),
-            stage_message,
-            total_nfev,
-            total_njev,
-            total_nit,
-            residual_norm_final,
+            x_opt,
+            accepted,
+            message,
+            _count_opt_attr(opt, "nfev"),
+            _count_opt_attr(opt, "njev"),
+            _count_opt_attr(opt, "nit"),
+            float("nan") if residual_norm is None else float(residual_norm),
         )
 
     def _run_solve_full(
@@ -562,27 +535,6 @@ class Solver:
         if _uses_least_squares_api(solve_config):
             return self._run_least_squares_full(x_guess, solve_config=solve_config)
         return self._run_root_full(x_guess, solve_config=solve_config)
-
-    def _run_solve_prefix(
-        self,
-        x_stage: np.ndarray,
-        *,
-        active_len: int,
-        solve_config: SolverConfig,
-    ):
-        active_indices = np.arange(int(active_len), dtype=np.int64)
-        return self._run_solve_masked(x_stage, active_indices=active_indices, solve_config=solve_config)
-
-    def _run_solve_masked(
-        self,
-        x_stage: np.ndarray,
-        *,
-        active_indices: np.ndarray,
-        solve_config: SolverConfig,
-    ):
-        if _uses_least_squares_api(solve_config):
-            return self._run_least_squares_masked(x_stage, active_indices=active_indices, solve_config=solve_config)
-        return self._run_root_masked(x_stage, active_indices=active_indices, solve_config=solve_config)
 
     def _run_root_full(
         self,
@@ -613,170 +565,6 @@ class Solver:
             x_guess,
             **_least_squares_kwargs_for(solve_config),
         )
-
-    def _run_root_prefix(
-        self,
-        x_stage: np.ndarray,
-        *,
-        active_len: int,
-        solve_config: SolverConfig,
-    ):
-        """在 prefix 子问题上调用 `root`."""
-
-        active_indices = np.arange(int(active_len), dtype=np.int64)
-        return self._run_root_masked(x_stage, active_indices=active_indices, solve_config=solve_config)
-
-    def _run_root_masked(
-        self,
-        x_stage: np.ndarray,
-        *,
-        active_indices: np.ndarray,
-        solve_config: SolverConfig,
-    ):
-        active_indices = np.asarray(active_indices, dtype=np.int64)
-        x_active0 = np.asarray(x_stage[active_indices], dtype=np.float64).copy()
-        x_template = self.operator.coerce_x(x_stage).copy()
-
-        return root(
-            lambda x_active: self.operator.residual_masked(
-                x_active,
-                active_indices=active_indices,
-                x_template=x_template,
-            ),
-            x_active0,
-            method=_root_method_name_for(solve_config),
-            tol=solve_config.atol,
-            options=_root_options_for(solve_config),
-        )
-
-    def _run_least_squares_prefix(
-        self,
-        x_stage: np.ndarray,
-        *,
-        active_len: int,
-        solve_config: SolverConfig,
-    ):
-        """在 prefix 子问题上调用 `least_squares`."""
-
-        active_indices = np.arange(int(active_len), dtype=np.int64)
-        return self._run_least_squares_masked(x_stage, active_indices=active_indices, solve_config=solve_config)
-
-    def _run_least_squares_masked(
-        self,
-        x_stage: np.ndarray,
-        *,
-        active_indices: np.ndarray,
-        solve_config: SolverConfig,
-    ):
-        active_indices = np.asarray(active_indices, dtype=np.int64)
-        x_active0 = np.asarray(x_stage[active_indices], dtype=np.float64).copy()
-        x_template = self.operator.coerce_x(x_stage).copy()
-
-        return least_squares(
-            lambda x_active: self.operator.residual_masked(
-                x_active,
-                active_indices=active_indices,
-                x_template=x_template,
-            ),
-            x_active0,
-            **_least_squares_kwargs_for(solve_config),
-        )
-
-    def _build_stage_groups(
-        self,
-        *,
-        solve_config: SolverConfig,
-    ) -> list:
-        x_size = self.operator.x_size
-        if not solve_config.enable_homotopy:
-            return [_full_stage_group(x_size)]
-
-        groups = list(self.operator.homotopy_stage_groups())
-        if not groups:
-            return [_full_stage_group(x_size)]
-
-        covered = np.concatenate([stage.indices for stage in groups]) if groups else np.zeros(0, dtype=np.int64)
-        missing = np.setdiff1d(np.arange(x_size, dtype=np.int64), np.unique(covered), assume_unique=False)
-        if missing.size:
-            groups.append(
-                type(groups[-1])(
-                    order=groups[-1].order + 1, indices=missing, shape_profile_ids=np.zeros(0, dtype=np.int64)
-                )
-            )
-        return groups
-
-    def _init_homotopy_truncation_state(self) -> dict[str, np.ndarray]:
-        profile_ids = self.operator.homotopy_truncation_profile_ids()
-        shape = self.operator.profile_L.shape
-        return {
-            "profile_ids": profile_ids,
-            "small_streak": np.zeros(shape, dtype=np.int64),
-            "frozen_profile_mask": np.zeros(shape, dtype=bool),
-        }
-
-    def _select_stage_indices(self, stage_group, truncation_state: dict[str, np.ndarray]) -> np.ndarray:
-        if int(stage_group.order) == 0:
-            return np.asarray(stage_group.indices, dtype=np.int64)
-
-        frozen_profile_mask = truncation_state["frozen_profile_mask"]
-        indices: list[int] = []
-        for profile_id in np.asarray(stage_group.shape_profile_ids, dtype=np.int64):
-            if bool(frozen_profile_mask[int(profile_id)]):
-                continue
-            idx = int(self.operator.coeff_index[int(profile_id), int(stage_group.order)])
-            if idx >= 0:
-                indices.append(idx)
-        return np.asarray(indices, dtype=np.int64)
-
-    def _update_homotopy_truncation_state(
-        self,
-        *,
-        stage_group,
-        x_stage: np.ndarray,
-        truncation_state: dict[str, np.ndarray],
-        solve_config: SolverConfig,
-    ) -> None:
-        order = int(stage_group.order)
-        profile_ids = truncation_state["profile_ids"]
-        small_streak = truncation_state["small_streak"]
-        frozen_profile_mask = truncation_state["frozen_profile_mask"]
-        tol = float(solve_config.homotopy_truncation_tol)
-        patience = int(solve_config.homotopy_truncation_patience)
-
-        for profile_id in profile_ids:
-            profile_id = int(profile_id)
-            if bool(frozen_profile_mask[profile_id]):
-                continue
-            if int(self.operator.profile_L[profile_id]) < order:
-                continue
-            coeff_idx = int(self.operator.coeff_index[profile_id, order])
-            if coeff_idx < 0:
-                continue
-            if abs(float(x_stage[coeff_idx])) < tol:
-                small_streak[profile_id] += 1
-            else:
-                small_streak[profile_id] = 0
-            if small_streak[profile_id] >= patience:
-                frozen_profile_mask[profile_id] = True
-
-    def _build_stage_lengths(
-        self,
-        *,
-        solve_config: SolverConfig,
-    ) -> list[int]:
-        """生成 homotopy frontier 序列."""
-
-        x_size = self.operator.x_size
-        if not solve_config.enable_homotopy:
-            return [x_size]
-
-        frontiers = [int(frontier) for frontier in self.operator.homotopy_frontiers()]
-        if not frontiers:
-            return [x_size]
-
-        if frontiers[-1] != x_size:
-            frontiers.append(x_size)
-        return frontiers
 
 
 def _root_options_for(solve_config: SolverConfig) -> dict[str, object]:
@@ -824,26 +612,8 @@ def _opt_residual_norm(opt) -> float | None:
         arr = arr.reshape(1)
     return float(np.linalg.norm(arr))
 
-
-def _uses_root_api(solve_config: SolverConfig) -> bool:
-    return solve_config.method in ROOT_METHODS
-
-
 def _uses_least_squares_api(solve_config: SolverConfig) -> bool:
     return solve_config.method in LEAST_SQUARES_METHODS
-
-
-def _full_stage_group(x_size: int):
-    return SimpleNamespace(
-        order=0,
-        indices=np.arange(int(x_size), dtype=np.int64),
-        shape_profile_ids=np.zeros(0, dtype=np.int64),
-    )
-
-
-def _stage_group_is_full(stage_group, x_size: int) -> bool:
-    indices = np.asarray(stage_group.indices, dtype=np.int64)
-    return indices.shape[0] == int(x_size) and np.array_equal(indices, np.arange(int(x_size), dtype=np.int64))
 
 
 def _accepted_residual_norm(solve_config: SolverConfig) -> float:

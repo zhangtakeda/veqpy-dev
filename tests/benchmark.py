@@ -7,13 +7,13 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
-from demo import COEFFS as PF_REFERENCE_COEFFS
 from demo import CONFIG as PF_REFERENCE_SOLVER_CONFIG
 from demo import LOWER_CASE as PF_REFERENCE_CASE
 from demo import pf_reference_profiles
 
 from veqpy.model import Boundary, Equilibrium, Grid
 from veqpy.operator import Operator, OperatorCase, build_profile_index, build_profile_layout, build_profile_names
+from veqpy.operator.layout import build_shape_profile_names
 from veqpy.solver import Solver, SolverConfig
 
 PLOT = False
@@ -61,8 +61,11 @@ PF_REFERENCE_BOUNDARY = Boundary(
     s_offsets=PF_REFERENCE_CASE.s_offsets.copy(),
 )
 PF_REFERENCE_IP = PF_REFERENCE_CASE.Ip
+PF_REFERENCE_SHAPE_PROFILE_NAMES = build_shape_profile_names(PF_REFERENCE_GRID.K_max)
 PF_REFERENCE_PROFILE_COEFF_COUNTS = {
-    name: (0 if coeffs is None else len(coeffs)) for name, coeffs in PF_REFERENCE_COEFFS.items()
+    name: (0 if coeffs is None else len(coeffs))
+    for name in PF_REFERENCE_SHAPE_PROFILE_NAMES
+    for coeffs in (PF_REFERENCE_CASE.profile_coeffs.get(name),)
 }
 
 
@@ -75,7 +78,6 @@ def _solve_with_config(solver: Solver, *, x0: np.ndarray | None = None, config: 
         root_maxiter=config.root_maxiter,
         root_maxfev=config.root_maxfev,
         enable_warmstart=config.enable_warmstart,
-        enable_homotopy=config.enable_homotopy,
         enable_verbose=config.enable_verbose,
         enable_history=config.enable_history,
     )
@@ -324,9 +326,8 @@ def _extract_shape_x(profile_coeffs: dict[str, list[float] | None], x: np.ndarra
     profile_index = build_profile_index(profile_names)
     _, coeff_index, _ = build_profile_layout(profile_coeffs, profile_names=profile_names)
     shape_values: list[float] = []
-    shape_names = tuple(name for name in PF_REFERENCE_PROFILE_COEFF_COUNTS)
     for k in range(coeff_index.shape[1]):
-        for name in shape_names:
+        for name in PF_REFERENCE_SHAPE_PROFILE_NAMES:
             idx = int(coeff_index[profile_index[name], k])
             if idx >= 0:
                 shape_values.append(float(x[idx]))
