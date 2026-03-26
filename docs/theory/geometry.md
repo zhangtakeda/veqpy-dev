@@ -13,6 +13,21 @@ Z(\rho, \theta) &= Z_0+a(v -\rho  \kappa  \sin \theta)\\
 \end{aligned}
 $$
 
+当前代码里的 geometry kernel 不再把 `c1/s2` 写死, 而是:
+
+- `Grid` 预计算到 `K_max` 的三角表
+- `Geometry.update(...)` 接收连续的 `c_fields/s_fields`
+- backend kernel 按 `c_active_order/s_active_order` 循环
+
+因此实现上区分两个上界:
+
+- `K_max`
+  - 表示当前网格允许的最大 Fourier 阶数
+- `effective active order`
+  - 表示当前一次 geometry 求值真正需要参与的最高阶
+
+如果高阶 `c/s` 项既不在优化变量里, 边界值也为 0, 它不会进入当前 geometry 有效循环上界.
+
 协变度规 (这里下标代表协变基而不是偏导数):
 
 $$

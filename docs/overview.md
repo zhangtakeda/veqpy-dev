@@ -58,8 +58,16 @@ packed runtime 的权威定义只在 [`veqpy/operator/layout.py`](../veqpy/opera
 
 当前必须知道的事实:
 
-- profile 权威顺序固定为:
-  - `psin`, `F`, `h`, `v`, `k`, `c0`, `c1`, `s1`, `s2`
+- profile 权威顺序由 `Grid.K_max` 驱动:
+  - `psin`, `F`
+  - `h`, `v`, `k`
+  - `c0 .. cK`
+  - `s1 .. sK`
+- `veqpy/operator/layout.py` 通过:
+  - `build_fourier_profile_names(K_max)`
+  - `build_shape_profile_names(K_max)`
+  - `build_profile_names(K_max)`
+  生成当前 packed ABI
 - packed state 和 packed residual 的唯一位置语义都是:
   - `coeff_index`
   - `coeff_indices`
@@ -77,6 +85,13 @@ engine 边界当前优先使用 field bundles, 不优先使用 exploded argument
 当前主要 bundles 是:
 
 - `Grid.T_fields`
+- `Grid.cos_ktheta`
+- `Grid.sin_ktheta`
+- `Grid.k_cos_ktheta`
+- `Grid.k_sin_ktheta`
+- `Grid.k2_cos_ktheta`
+- `Grid.k2_sin_ktheta`
+- `Grid.rho_powers`
 - `Profile.u_fields`
 - `Profile.rp_fields`
 - `Profile.env_fields`
@@ -87,6 +102,8 @@ engine 边界当前优先使用 field bundles, 不优先使用 exploded argument
 - `Geometry.g_fields`
 - `Operator.root_fields`
 - `Operator.residual_fields`
+- `Operator.c_family_fields`
+- `Operator.s_family_fields`
 
 热路径可以直接使用 `*_fields[...]`.  
 语义化 property 仍然保留给阅读和冷路径使用, 例如:
@@ -94,6 +111,22 @@ engine 边界当前优先使用 field bundles, 不优先使用 exploded argument
 - `grid.T`
 - `profile.u`
 - `geometry.R`
+
+当前 `Grid` 不再单独缓存:
+
+- `rho2`
+- `cos_theta`
+- `sin_theta`
+- `cos_2theta`
+- `sin_2theta`
+
+这些低阶量都应从:
+
+- `Grid.rho_powers`
+- `Grid.cos_ktheta`
+- `Grid.sin_ktheta`
+
+派生得到.
 
 ## Backend Surface
 
@@ -175,11 +208,36 @@ backend control surface 只有 [`veqpy/engine/__init__.py`](../veqpy/engine/__in
 
 - Stage-A bulk profile update
 - Stage-D engine-level residual runner
+- Stage-B / Stage-D Fourier-family kernels with `effective active order` trimming
 
 不再是旧的:
 
 - `coeff_matrix` 中转
 - per-block Python residual assembly
+
+## Fourier Runtime
+
+当前 `c/s` 边界族不再由固定低阶字段控制, 而是:
+
+- `Grid.K_max`
+  - 控制运行时允许的最大 Fourier 阶数
+- `OperatorCase.c_offsets`
+- `OperatorCase.s_offsets`
+  - 作为 canonical 边界偏移表示
+- `Operator.c_effective_order`
+- `Operator.s_effective_order`
+  - 控制 geometry hot path 实际需要跑到几阶
+
+当前语义是:
+
+- 高阶 profile `coeffs_by_name[name] is None` 时, 它不参与 packed 优化
+- 如果对应边界 offset 也为 0, 那么它不会进入当前 geometry 有效阶数
+- 如果边界 offset 非 0, 它会作为 fixed profile 保留在有效阶数内
+
+这意味着:
+
+- `K_max` 决定可表示的上界
+- `effective_order` 决定当前一次 runtime 求值真正需要计算的上界
 
 ## Key Files
 

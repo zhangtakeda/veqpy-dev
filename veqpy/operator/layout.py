@@ -6,10 +6,7 @@ Role:
 - 负责提供 packed state 形状校验工具.
 
 Public API:
-- PROFILE_NAMES
-- PROFILE_INDEX
 - PREFIX_PROFILE_NAMES
-- SHAPE_PROFILE_NAMES
 - build_fourier_profile_names
 - build_shape_profile_names
 - build_profile_names
@@ -53,16 +50,10 @@ def build_profile_index(profile_names: tuple[str, ...]) -> dict[str, int]:
     return {name: i for i, name in enumerate(profile_names)}
 
 
-SHAPE_PROFILE_NAMES = build_shape_profile_names(K_max=2)
-PROFILE_NAMES = PREFIX_PROFILE_NAMES + SHAPE_PROFILE_NAMES
-PROFILE_INDEX = build_profile_index(PROFILE_NAMES)
-PROFILE_COUNT = len(PROFILE_NAMES)
-
-
 def build_profile_layout(
     coeffs_by_name: dict[str, list[float] | None],
     *,
-    profile_names: tuple[str, ...] = PROFILE_NAMES,
+    profile_names: tuple[str, ...],
     prefix_profile_names: tuple[str, ...] = PREFIX_PROFILE_NAMES,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """根据 profile 系数字典构造 packed 状态布局."""
@@ -116,7 +107,7 @@ def build_profile_layout(
 def build_active_profile_metadata(
     profile_L: np.ndarray,
     *,
-    profile_names: tuple[str, ...] = PROFILE_NAMES,
+    profile_names: tuple[str, ...],
 ) -> tuple[np.ndarray, np.ndarray]:
     """从 profile 阶数向量提取 active profile 元数据."""
     profile_L = np.asarray(profile_L, dtype=np.int64)

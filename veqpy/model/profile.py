@@ -118,7 +118,7 @@ class Profile(Serial):
         """绑定 Grid 并准备 runtime 缓存."""
         self.T_fields = grid.T_fields
         self.rp_fields = _power_terms(grid.rho, self.power)
-        self.env_fields = _envelope_terms(grid.rho, grid.rho2, grid.y, self.envelope_power)
+        self.env_fields = _envelope_terms(grid.rho, grid.rho_powers[2], grid.y, self.envelope_power)
         self.rp_fields.flags.writeable = False
         self.env_fields.flags.writeable = False
 

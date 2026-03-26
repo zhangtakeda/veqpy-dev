@@ -46,6 +46,8 @@ def update_geometry(
     k_fields: np.ndarray,
     c_fields: np.ndarray,
     s_fields: np.ndarray,
+    c_active_order: int,
+    s_active_order: int,
 ):
     """原地更新 geometry fields 与 geometry integrals."""
     nr = rho.shape[0]
@@ -53,8 +55,8 @@ def update_geometry(
     theta_scale = 2.0 * np.pi / nt
     mean_scale = 1.0 / nt
     two_pi = 2.0 * np.pi
-    c_limit = min(c_fields.shape[0], cos_ktheta.shape[0])
-    s_limit = min(s_fields.shape[0], sin_ktheta.shape[0])
+    c_limit = min(c_active_order + 1, c_fields.shape[0], cos_ktheta.shape[0])
+    s_limit = min(s_active_order + 1, s_fields.shape[0], sin_ktheta.shape[0])
 
     for i in range(nr):
         rho_i = rho[i]

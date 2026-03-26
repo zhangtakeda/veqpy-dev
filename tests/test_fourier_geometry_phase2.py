@@ -116,6 +116,8 @@ def test_numpy_and_numba_geometry_match_with_high_order_fourier_terms():
         k_fields,
         c_fields,
         s_fields,
+        grid.K_max,
+        grid.K_max,
     )
     numba_update_geometry(
         *numba_outputs,
@@ -136,6 +138,8 @@ def test_numpy_and_numba_geometry_match_with_high_order_fourier_terms():
         k_fields,
         c_fields,
         s_fields,
+        grid.K_max,
+        grid.K_max,
     )
 
     for numpy_arr, numba_arr in zip(numpy_outputs, numba_outputs, strict=True):

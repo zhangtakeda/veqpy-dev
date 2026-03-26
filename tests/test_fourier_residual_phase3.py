@@ -155,3 +155,44 @@ def test_build_equilibrium_preserves_high_order_shape_profiles():
         assert np.allclose(loaded.profiles_by_name["s4"].u, equilibrium.profiles_by_name["s4"].u)
     finally:
         outpath.unlink(missing_ok=True)
+
+
+def test_equilibrium_compare_reports_only_h_v_k_shape_errors():
+    grid = Grid(Nr=8, Nt=16, scheme="uniform", K_max=4)
+    coeffs_by_name = {name: None for name in build_profile_names(grid.K_max)}
+    coeffs_by_name.update(
+        {
+            "psin": [0.0, 1.0],
+            "F": [1.0],
+            "h": [0.0],
+            "v": [0.0],
+            "k": [0.0],
+            "s1": [0.02],
+        }
+    )
+    case_ref = OperatorCase(
+        coeffs_by_name=coeffs_by_name,
+        a=1.1,
+        R0=1.7,
+        Z0=0.2,
+        B0=3.0,
+        heat_input=np.zeros(grid.Nr),
+        current_input=np.zeros(grid.Nr),
+        c_offsets=np.zeros(grid.K_max + 1),
+        s_offsets=np.zeros(grid.K_max + 1),
+    )
+    case_cur = case_ref.copy()
+    case_cur.coeffs_by_name["v"] = [0.03]
+    case_cur.coeffs_by_name["s1"] = [0.08]
+
+    ref_operator = Operator(name="PF", derivative="rho", grid=grid, case=case_ref)
+    ref_eq = ref_operator.build_equilibrium(ref_operator.encode_initial_state())
+    cur_operator = Operator(name="PF", derivative="rho", grid=grid, case=case_cur)
+    cur_eq = cur_operator.build_equilibrium(cur_operator.encode_initial_state())
+
+    errors = ref_eq.compare(cur_eq)
+
+    assert "rel_h_max" in errors
+    assert "rel_v_max" in errors
+    assert "rel_k_max" in errors
+    assert "rel_s1_max" not in errors

@@ -44,6 +44,8 @@ def update_geometry(
     k_fields: np.ndarray,
     c_fields: np.ndarray,
     s_fields: np.ndarray,
+    c_active_order: int,
+    s_active_order: int,
 ):
     """原地更新 geometry fields 与 geometry integrals."""
     tb = tb_fields[0]
@@ -108,7 +110,7 @@ def update_geometry(
     tb_rt.fill(0.0)
     tb_tt.fill(0.0)
 
-    c_limit = min(c_fields.shape[0], cos_ktheta.shape[0])
+    c_limit = min(int(c_active_order) + 1, c_fields.shape[0], cos_ktheta.shape[0])
     for order in range(1, c_limit):
         cos_kt = cos_ktheta[order][None, :]
         k_sin_kt = k_sin_ktheta[order][None, :]
@@ -124,7 +126,7 @@ def update_geometry(
         tb_rt -= c_r * k_sin_kt
         tb_tt -= c * k2_cos_kt
 
-    s_limit = min(s_fields.shape[0], sin_ktheta.shape[0])
+    s_limit = min(int(s_active_order) + 1, s_fields.shape[0], sin_ktheta.shape[0])
     for order in range(1, s_limit):
         sin_kt = sin_ktheta[order][None, :]
         k_cos_kt = k_cos_ktheta[order][None, :]

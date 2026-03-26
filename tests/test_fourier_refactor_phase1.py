@@ -14,7 +14,7 @@ from veqpy.operator.layout import (
 from veqpy.operator.operator_case import OperatorCase
 
 
-def test_grid_builds_fourier_tables_and_legacy_views():
+def test_grid_builds_fourier_tables_and_rho_powers():
     grid = Grid(Nr=8, Nt=16, scheme="uniform", K_max=5)
 
     assert grid.cos_ktheta.shape == (6, 16)
@@ -34,17 +34,13 @@ def test_grid_builds_fourier_tables_and_legacy_views():
     assert np.allclose(grid.k2_sin_ktheta[4], 16.0 * np.sin(4.0 * theta))
     assert np.allclose(grid.rho_powers[0], 1.0)
     assert np.allclose(grid.rho_powers[1], grid.rho)
-    assert np.allclose(grid.rho_powers[2], grid.rho2)
+    assert np.allclose(grid.rho_powers[2], grid.rho**2)
     assert np.allclose(grid.rho_powers[6], grid.rho**6)
-
-    assert np.shares_memory(grid.cos_theta, grid.cos_ktheta)
-    assert np.shares_memory(grid.sin_theta, grid.sin_ktheta)
-    assert np.shares_memory(grid.cos_2theta, grid.cos_ktheta)
-    assert np.shares_memory(grid.sin_2theta, grid.sin_ktheta)
-    assert np.allclose(grid.cos_theta, grid.cos_ktheta[1])
-    assert np.allclose(grid.sin_theta, grid.sin_ktheta[1])
-    assert np.allclose(grid.cos_2theta, grid.cos_ktheta[2])
-    assert np.allclose(grid.sin_2theta, grid.sin_ktheta[2])
+    assert not hasattr(grid, "rho2")
+    assert not hasattr(grid, "cos_theta")
+    assert not hasattr(grid, "sin_theta")
+    assert not hasattr(grid, "cos_2theta")
+    assert not hasattr(grid, "sin_2theta")
 
 
 def test_grid_requires_kmax_at_least_two_during_transition():
@@ -52,7 +48,7 @@ def test_grid_requires_kmax_at_least_two_during_transition():
         Grid(Nr=8, Nt=16, scheme="uniform", K_max=1)
 
 
-def test_operator_case_normalizes_legacy_offsets_to_family_arrays():
+def test_operator_case_defaults_missing_offsets_to_zero_family_arrays():
     case = OperatorCase(
         coeffs_by_name={},
         a=1.0,
@@ -61,17 +57,13 @@ def test_operator_case_normalizes_legacy_offsets_to_family_arrays():
         B0=3.0,
         heat_input=np.zeros(4),
         current_input=np.zeros(4),
-        c0a=0.02,
-        c1a=0.13,
-        s1a=-0.04,
-        s2a=0.06,
     )
 
-    assert np.allclose(case.c_offsets, [0.02, 0.13])
-    assert np.allclose(case.s_offsets, [0.0, -0.04, 0.06])
+    assert np.allclose(case.c_offsets, [0.0, 0.0])
+    assert np.allclose(case.s_offsets, [0.0, 0.0, 0.0])
 
 
-def test_operator_case_normalizes_family_arrays_to_legacy_offsets():
+def test_operator_case_normalizes_family_arrays_and_forces_s0_zero():
     case = OperatorCase(
         coeffs_by_name={},
         a=1.0,
@@ -86,26 +78,27 @@ def test_operator_case_normalizes_family_arrays_to_legacy_offsets():
 
     assert np.allclose(case.c_offsets, [0.03, 0.14, -0.02])
     assert np.allclose(case.s_offsets, [0.0, -0.05, 0.07, -0.01])
-    assert case.c0a == pytest.approx(0.03)
-    assert case.c1a == pytest.approx(0.14)
-    assert case.s1a == pytest.approx(-0.05)
-    assert case.s2a == pytest.approx(0.07)
+    assert not hasattr(case, "c0a")
+    assert not hasattr(case, "c1a")
+    assert not hasattr(case, "s1a")
+    assert not hasattr(case, "s2a")
 
 
-def test_operator_case_rejects_conflicting_legacy_and_family_offsets():
-    with pytest.raises(ValueError, match="conflict"):
-        OperatorCase(
-            coeffs_by_name={},
-            a=1.0,
-            R0=1.7,
-            Z0=0.1,
-            B0=3.0,
-            heat_input=np.zeros(4),
-            current_input=np.zeros(4),
-            c_offsets=np.array([0.03, 0.14]),
-            s_offsets=np.array([0.0, -0.05, 0.07]),
-            c0a=0.08,
-        )
+def test_operator_case_pads_short_family_arrays():
+    case = OperatorCase(
+        coeffs_by_name={},
+        a=1.0,
+        R0=1.7,
+        Z0=0.1,
+        B0=3.0,
+        heat_input=np.zeros(4),
+        current_input=np.zeros(4),
+        c_offsets=np.array([0.03]),
+        s_offsets=np.array([-9.0, -0.05]),
+    )
+
+    assert np.allclose(case.c_offsets, [0.03, 0.0])
+    assert np.allclose(case.s_offsets, [0.0, -0.05, 0.0])
 
 
 def test_operator_case_copy_keeps_family_arrays_independent():
@@ -204,3 +197,59 @@ def test_operator_accepts_kmax_larger_than_legacy_when_only_low_order_profiles_a
     assert operator.profile_index["c4"] > operator.profile_index["c1"]
     assert "c4" in operator.profiles_by_name
     assert "s4" in operator.profiles_by_name
+    assert not hasattr(operator, "c0_profile")
+    assert not hasattr(operator, "s1_profile")
+
+
+def test_operator_trims_effective_fourier_order_when_high_orders_are_zero_and_inactive():
+    coeffs_by_name = {name: None for name in build_profile_names(4)}
+    coeffs_by_name.update(
+        {
+            "psin": [0.0, 1.0],
+            "F": [1.0],
+            "h": [0.0],
+            "k": [0.0],
+            "s1": [0.0],
+        }
+    )
+    case = OperatorCase(
+        coeffs_by_name=coeffs_by_name,
+        a=1.0,
+        R0=1.7,
+        Z0=0.0,
+        B0=3.0,
+        heat_input=np.zeros(8),
+        current_input=np.zeros(8),
+        c_offsets=np.zeros(5),
+        s_offsets=np.zeros(5),
+    )
+    operator = Operator(name="PF", derivative="rho", grid=Grid(Nr=8, Nt=8, scheme="uniform", K_max=4), case=case)
+
+    assert operator.c_effective_order == 0
+    assert operator.s_effective_order == 1
+
+
+def test_operator_keeps_fixed_nonzero_high_order_offsets_in_effective_order():
+    coeffs_by_name = {name: None for name in build_profile_names(4)}
+    coeffs_by_name.update(
+        {
+            "psin": [0.0, 1.0],
+            "F": [1.0],
+            "h": [0.0],
+        }
+    )
+    case = OperatorCase(
+        coeffs_by_name=coeffs_by_name,
+        a=1.0,
+        R0=1.7,
+        Z0=0.0,
+        B0=3.0,
+        heat_input=np.zeros(8),
+        current_input=np.zeros(8),
+        c_offsets=np.array([0.0, 0.0, 0.0, 0.05, 0.0]),
+        s_offsets=np.array([0.0, 0.0, 0.0, 0.0, -0.04]),
+    )
+    operator = Operator(name="PF", derivative="rho", grid=Grid(Nr=8, Nt=8, scheme="uniform", K_max=4), case=case)
+
+    assert operator.c_effective_order == 3
+    assert operator.s_effective_order == 4

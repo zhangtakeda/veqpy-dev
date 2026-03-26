@@ -16,7 +16,6 @@ Notes:
 import numpy as np
 
 from veqpy.operator.layout import (
-    PROFILE_NAMES,
     coeff_array_from_list,
     packed_size,
     validate_packed_state,
@@ -28,7 +27,7 @@ def encode_packed_state(
     profile_L: np.ndarray,
     coeff_index: np.ndarray,
     *,
-    profile_names: tuple[str, ...] = PROFILE_NAMES,
+    profile_names: tuple[str, ...],
 ) -> np.ndarray:
     """按 layout 把 profile 系数字典编码成 packed 状态向量."""
     x = np.empty(packed_size(coeff_index), dtype=np.float64)
@@ -57,7 +56,7 @@ def decode_packed_blocks(
     profile_L: np.ndarray,
     coeff_index: np.ndarray,
     *,
-    profile_names: tuple[str, ...] = PROFILE_NAMES,
+    profile_names: tuple[str, ...],
 ) -> tuple[np.ndarray | None, ...]:
     """把 packed 状态向量解码成按 profile 分块的系数副本."""
     x = validate_packed_state(x, coeff_index)

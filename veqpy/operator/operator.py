@@ -32,9 +32,8 @@ from veqpy.model import Equilibrium, Geometry, Grid, Profile
 from veqpy.operator.codec import decode_packed_blocks, encode_packed_state
 from veqpy.operator.layout import (
     PREFIX_PROFILE_NAMES,
-    SHAPE_PROFILE_NAMES,
-    build_fourier_profile_names,
     build_active_profile_metadata,
+    build_fourier_profile_names,
     build_profile_index,
     build_profile_layout,
     build_profile_names,
@@ -81,10 +80,6 @@ class Operator:
     h_profile: Profile = field(init=False)
     v_profile: Profile = field(init=False)
     k_profile: Profile = field(init=False)
-    c0_profile: Profile = field(init=False)
-    c1_profile: Profile = field(init=False)
-    s1_profile: Profile = field(init=False)
-    s2_profile: Profile = field(init=False)
     psin_profile: Profile = field(init=False)
     F_profile: Profile = field(init=False)
     profiles_by_name: dict[str, Profile] = field(init=False, repr=False)
@@ -123,6 +118,8 @@ class Operator:
     active_coeff_index_rows: np.ndarray = field(init=False, repr=False)
     c_family_fields: np.ndarray = field(init=False, repr=False)
     s_family_fields: np.ndarray = field(init=False, repr=False)
+    c_effective_order: int = field(init=False, repr=False)
+    s_effective_order: int = field(init=False, repr=False)
     residual_stage_runner: Callable = field(init=False, repr=False)
     source_stage_runner: Callable = field(init=False, repr=False)
 
@@ -311,6 +308,8 @@ class Operator:
             self.k_profile.u_fields,
             self.c_family_fields,
             self.s_family_fields,
+            c_active_order=self.c_effective_order,
+            s_active_order=self.s_effective_order,
         )
 
     def stage_c_source(self) -> None:
@@ -449,6 +448,7 @@ class Operator:
 
     def _refresh_runtime_state(self) -> None:
         self._refresh_profile_runtime()
+        self._refresh_fourier_family_metadata()
         self._refresh_stage_a_runtime()
         self._refresh_runtime_bindings()
 
@@ -582,14 +582,44 @@ class Operator:
         )
 
     def _refresh_fourier_family_fields(self) -> None:
-        for name in self.c_profile_names:
+        for name in self.c_profile_names[: self.c_effective_order + 1]:
             order = int(name[1:])
             self.c_family_fields[order] = self._profile_by_name(name).u_fields
 
         self.s_family_fields[0].fill(0.0)
-        for name in self.s_profile_names:
+        for name in self.s_profile_names[: self.s_effective_order]:
             order = int(name[1:])
             self.s_family_fields[order] = self._profile_by_name(name).u_fields
+
+    def _refresh_fourier_family_metadata(self) -> None:
+        self.c_effective_order = self._effective_family_order(
+            self.c_profile_names, self.case.c_offsets, minimum_order=0
+        )
+        self.s_effective_order = self._effective_family_order(
+            self.s_profile_names, self.case.s_offsets, minimum_order=0
+        )
+
+        if self.c_effective_order + 1 < self.c_family_fields.shape[0]:
+            self.c_family_fields[self.c_effective_order + 1 :].fill(0.0)
+        if self.s_effective_order + 1 < self.s_family_fields.shape[0]:
+            self.s_family_fields[self.s_effective_order + 1 :].fill(0.0)
+
+    def _effective_family_order(
+        self,
+        profile_names: tuple[str, ...],
+        offsets: np.ndarray | None,
+        *,
+        minimum_order: int,
+    ) -> int:
+        effective_order = int(minimum_order)
+        for name in profile_names:
+            order = int(name[1:])
+            if self.case.coeffs_by_name.get(name) is not None:
+                effective_order = max(effective_order, order)
+                continue
+            if abs(self._offset_from_array(offsets, order)) > 1e-14:
+                effective_order = max(effective_order, order)
+        return effective_order
 
     def _build_G_inplace(self) -> None:
         update_residual(
@@ -650,4 +680,7 @@ class Operator:
         return copied
 
     def _snapshot_equilibrium_profiles(self, coeff_blocks: tuple[np.ndarray | None, ...]) -> dict[str, Profile]:
-        return {name: self._snapshot_profile(name, coeff_blocks[self.profile_index[name]]) for name in self.shape_profile_names}
+        return {
+            name: self._snapshot_profile(name, coeff_blocks[self.profile_index[name]])
+            for name in self.shape_profile_names
+        }

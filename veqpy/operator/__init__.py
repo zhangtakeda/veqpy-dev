@@ -8,9 +8,9 @@ Public API:
 - Operator
 - OperatorCase
 - build_profile_layout
+- build_profile_names
+- build_profile_index
 - decode_packed_blocks
-- PROFILE_INDEX
-- PROFILE_NAMES
 
 Notes:
 - 这里只做包级导出.
@@ -18,15 +18,15 @@ Notes:
 """
 
 from veqpy.operator.codec import decode_packed_blocks
-from veqpy.operator.layout import PROFILE_INDEX, PROFILE_NAMES, build_profile_layout
+from veqpy.operator.layout import build_profile_index, build_profile_layout, build_profile_names
 from veqpy.operator.operator import Operator
 from veqpy.operator.operator_case import OperatorCase
 
 __all__ = [
     "build_profile_layout",
+    "build_profile_index",
+    "build_profile_names",
     "decode_packed_blocks",
     "Operator",
     "OperatorCase",
-    "PROFILE_INDEX",
-    "PROFILE_NAMES",
 ]

@@ -68,7 +68,6 @@ SHAPE_PROFILE_PLOT_META = {
     "s2": {"color": "#d62728", "label": r"$s_2$"},
 }
 SHAPE_PROFILE_NAMES = tuple(SHAPE_PROFILE_PLOT_META)
-SHAPE_PROFILE_ATTR_NAMES = tuple(f"{name}_profile" for name in SHAPE_PROFILE_NAMES)
 _DYNAMIC_SHAPE_PROFILE_COLORS = (
     "#1f77b4",
     "#ff7f0e",
@@ -110,10 +109,6 @@ class Equilibrium(Reactive, Serial):
         h_profile: Profile | None = None,
         v_profile: Profile | None = None,
         k_profile: Profile | None = None,
-        c0_profile: Profile | None = None,
-        c1_profile: Profile | None = None,
-        s1_profile: Profile | None = None,
-        s2_profile: Profile | None = None,
         FFn_r: np.ndarray,
         Pn_r: np.ndarray,
         psin_r: np.ndarray,
@@ -135,10 +130,6 @@ class Equilibrium(Reactive, Serial):
             h_profile=h_profile,
             v_profile=v_profile,
             k_profile=k_profile,
-            c0_profile=c0_profile,
-            c1_profile=c1_profile,
-            s1_profile=s1_profile,
-            s2_profile=s2_profile,
         )
         self.shape_profile_names = list(profile_map)
         self.shape_profiles = [profile_map[name] for name in self.shape_profile_names]
@@ -147,9 +138,9 @@ class Equilibrium(Reactive, Serial):
 
         for name, profile in profile_map.items():
             setattr(self, f"{name}_profile", profile)
-        for name in SHAPE_PROFILE_NAMES:
-            if not hasattr(self, f"{name}_profile"):
-                setattr(self, f"{name}_profile", None)
+        self.h_profile = profile_map.get("h")
+        self.v_profile = profile_map.get("v")
+        self.k_profile = profile_map.get("k")
 
         for profile in _shape_profiles(self).values():
             profile.update(grid=self.grid)
@@ -205,7 +196,6 @@ class Equilibrium(Reactive, Serial):
             "alpha1": float,
             "alpha2": float,
         }
-        attrs.update({attr_name: Profile | None for attr_name in SHAPE_PROFILE_ATTR_NAMES})
         return attrs
 
     @property
@@ -218,11 +208,11 @@ class Equilibrium(Reactive, Serial):
 
     @property
     def cos_theta(self) -> np.ndarray:
-        return self.grid.cos_theta
+        return self.grid.cos_ktheta[1]
 
     @property
     def sin_theta(self) -> np.ndarray:
-        return self.grid.sin_theta
+        return self.grid.sin_ktheta[1]
 
     @property
     def R(self) -> np.ndarray:
@@ -238,15 +228,19 @@ class Equilibrium(Reactive, Serial):
         geometry = Geometry(grid=self.grid)
         c_fields = np.zeros((self.grid.K_max + 1, 3, self.grid.Nr), dtype=np.float64)
         s_fields = np.zeros((self.grid.K_max + 1, 3, self.grid.Nr), dtype=np.float64)
+        c_active_order = 0
+        s_active_order = 0
         for name, profile in _shape_profiles(self).items():
             if name.startswith("c") and name[1:].isdigit():
                 order = int(name[1:])
                 if order <= self.grid.K_max:
                     c_fields[order] = profile.u_fields
+                    c_active_order = max(c_active_order, order)
             elif name.startswith("s") and name[1:].isdigit():
                 order = int(name[1:])
                 if order <= self.grid.K_max:
                     s_fields[order] = profile.u_fields
+                    s_active_order = max(s_active_order, order)
         geometry.update(
             self.a,
             self.R0,
@@ -257,6 +251,8 @@ class Equilibrium(Reactive, Serial):
             self.k_profile.u_fields,
             c_fields,
             s_fields,
+            c_active_order=c_active_order,
+            s_active_order=s_active_order,
         )
         return geometry
 
@@ -486,10 +482,6 @@ def _normalize_shape_profiles(
     h_profile: Profile | None,
     v_profile: Profile | None,
     k_profile: Profile | None,
-    c0_profile: Profile | None,
-    c1_profile: Profile | None,
-    s1_profile: Profile | None,
-    s2_profile: Profile | None,
 ) -> dict[str, Profile]:
     if shape_profile_names is not None or shape_profiles is not None:
         if shape_profile_names is None or shape_profiles is None:
@@ -502,10 +494,6 @@ def _normalize_shape_profiles(
         "h": h_profile,
         "v": v_profile,
         "k": k_profile,
-        "c0": c0_profile,
-        "c1": c1_profile,
-        "s1": s1_profile,
-        "s2": s2_profile,
     }
     profile_map = {name: profile for name, profile in legacy_profiles.items() if profile is not None}
     if not profile_map:
@@ -518,11 +506,7 @@ def _shape_profiles(equilibrium: Equilibrium) -> dict[str, Profile]:
         return dict(equilibrium.profiles_by_name)
     if hasattr(equilibrium, "shape_profile_names") and hasattr(equilibrium, "shape_profiles"):
         return dict(zip(equilibrium.shape_profile_names, equilibrium.shape_profiles, strict=True))
-    return {
-        name: getattr(equilibrium, f"{name}_profile")
-        for name in SHAPE_PROFILE_NAMES
-        if getattr(equilibrium, f"{name}_profile", None) is not None
-    }
+    raise AttributeError("Equilibrium is missing canonical shape profile storage")
 
 
 def _shape_profile_payload(profiles: dict[str, Profile]) -> dict[str, list[str] | list[Profile]]:
@@ -589,7 +573,7 @@ def plot_comparison(
     ref_plot = reference
     other_plot = other
 
-    shape_keys = [key for key in ("h", "k", "s1") if key in _shape_profiles(reference) or key in _shape_profiles(other)]
+    shape_keys = [key for key in ("h", "v", "k") if key in _shape_profiles(reference) or key in _shape_profiles(other)]
     groups = [(key, _shape_profile_plot_meta(key)["label"], None) for key in shape_keys]
     groups.extend(
         [

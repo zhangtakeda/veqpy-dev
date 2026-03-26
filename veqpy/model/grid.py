@@ -41,11 +41,10 @@ class Grid(Serial):
     Nr: int
     Nt: int
     scheme: Literal["legendre", "chebyshev", "lobatto", "radau", "uniform"]
-    L_max: int = 21
-    K_max: int = 2
+    L_max: int = 11
+    K_max: int = 5
 
     rho: np.ndarray = field(init=False)
-    rho2: np.ndarray = field(init=False)
     rho_powers: np.ndarray = field(init=False)
     theta: np.ndarray = field(init=False)
     cos_ktheta: np.ndarray = field(init=False)
@@ -54,10 +53,6 @@ class Grid(Serial):
     k_sin_ktheta: np.ndarray = field(init=False)
     k2_cos_ktheta: np.ndarray = field(init=False)
     k2_sin_ktheta: np.ndarray = field(init=False)
-    cos_theta: np.ndarray = field(init=False)
-    sin_theta: np.ndarray = field(init=False)
-    cos_2theta: np.ndarray = field(init=False)
-    sin_2theta: np.ndarray = field(init=False)
 
     weights: np.ndarray = field(init=False)
     integration_matrix: np.ndarray = field(init=False, default=None)
@@ -142,7 +137,6 @@ class Grid(Serial):
             table.flags.writeable = False
 
         object.__setattr__(self, "rho", np.asarray(rho, dtype=np.float64))
-        object.__setattr__(self, "rho2", np.asarray(rho2, dtype=np.float64))
         rho_powers.flags.writeable = False
         object.__setattr__(self, "rho_powers", rho_powers)
         object.__setattr__(self, "theta", np.asarray(theta, dtype=np.float64))
@@ -152,10 +146,6 @@ class Grid(Serial):
         object.__setattr__(self, "k_sin_ktheta", trig_tables[3])
         object.__setattr__(self, "k2_cos_ktheta", trig_tables[4])
         object.__setattr__(self, "k2_sin_ktheta", trig_tables[5])
-        object.__setattr__(self, "cos_theta", trig_tables[0][1])
-        object.__setattr__(self, "sin_theta", trig_tables[1][1])
-        object.__setattr__(self, "cos_2theta", trig_tables[0][2])
-        object.__setattr__(self, "sin_2theta", trig_tables[1][2])
         object.__setattr__(self, "weights", np.asarray(weights, dtype=np.float64))
         object.__setattr__(self, "integration_matrix", np.asarray(integration_matrix, dtype=np.float64))
         object.__setattr__(self, "differentiation_matrix", np.asarray(differentiation_matrix, dtype=np.float64))

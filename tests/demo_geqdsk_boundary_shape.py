@@ -21,16 +21,20 @@ TRUTH = {
     "Z0": -0.08,
     "a": 0.43,
     "ka": 1.68,
-    "c0a": 0.01,
-    "c1a": 0.08,
-    "s1a": -0.01,
-    "s2a": 0.01,
+    "c_offsets": np.array([0.01, 0.08]),
+    "s_offsets": np.array([0.0, -0.01, 0.01]),
 }
 
 
-def build_boundary(*, R0, Z0, a, ka, c0a, c1a, s1a, s2a, n=721):
+def build_boundary(*, R0, Z0, a, ka, c_offsets, s_offsets, n=721):
     theta = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
-    theta_bar = theta + c0a + c1a * np.cos(theta) + s1a * np.sin(theta) + s2a * np.sin(2.0 * theta)
+    theta_bar = (
+        theta
+        + c_offsets[0]
+        + c_offsets[1] * np.cos(theta)
+        + s_offsets[1] * np.sin(theta)
+        + s_offsets[2] * np.sin(2.0 * theta)
+    )
     R = R0 + a * np.cos(theta_bar)
     Z = Z0 - a * ka * np.sin(theta)
     return np.column_stack((R, Z))
@@ -61,10 +65,10 @@ def build_info_lines(title, params, boundary_error, extra_lines=None, truth=None
                 f"Z0   : {truth['Z0']:+.6f} -> {params['Z0']:+.6f}",
                 f"a    : {truth['a']:+.6f} -> {params['a']:+.6f}",
                 f"ka   : {truth['ka']:+.6f} -> {params['ka']:+.6f}",
-                f"c0a  : {truth['c0a']:+.6f} -> {params['c0a']:+.6f}",
-                f"c1a  : {truth['c1a']:+.6f} -> {params['c1a']:+.6f}",
-                f"s1a  : {truth['s1a']:+.6f} -> {params['s1a']:+.6f}",
-                f"s2a  : {truth['s2a']:+.6f} -> {params['s2a']:+.6f}",
+                f"c0   : {truth['c_offsets'][0]:+.6f} -> {params['c_offsets'][0]:+.6f}",
+                f"c1   : {truth['c_offsets'][1]:+.6f} -> {params['c_offsets'][1]:+.6f}",
+                f"s1   : {truth['s_offsets'][1]:+.6f} -> {params['s_offsets'][1]:+.6f}",
+                f"s2   : {truth['s_offsets'][2]:+.6f} -> {params['s_offsets'][2]:+.6f}",
             ]
         )
     else:
@@ -75,10 +79,10 @@ def build_info_lines(title, params, boundary_error, extra_lines=None, truth=None
                 f"Z0   : {params['Z0']:+.6f}",
                 f"a    : {params['a']:+.6f}",
                 f"ka   : {params['ka']:+.6f}",
-                f"c0a  : {params['c0a']:+.6f}",
-                f"c1a  : {params['c1a']:+.6f}",
-                f"s1a  : {params['s1a']:+.6f}",
-                f"s2a  : {params['s2a']:+.6f}",
+                f"c0   : {params['c_offsets'][0]:+.6f}",
+                f"c1   : {params['c_offsets'][1]:+.6f}",
+                f"s1   : {params['s_offsets'][1]:+.6f}",
+                f"s2   : {params['s_offsets'][2]:+.6f}",
             ]
         )
     return lines
@@ -142,10 +146,8 @@ def run_synthetic(output_path: Path):
         Z0=params["Z0"],
         a=params["a"],
         ka=params["ka"],
-        c0a=params["c0a"],
-        c1a=params["c1a"],
-        s1a=params["s1a"],
-        s2a=params["s2a"],
+        c_offsets=params["c_offsets"],
+        s_offsets=params["s_offsets"],
     )
     boundary_error = max_bidirectional_distance(geqdsk.boundary, fitted_boundary)
     info_lines = build_info_lines("Synthetic boundary fit", params, boundary_error, truth=TRUTH)
@@ -167,10 +169,8 @@ def run_geqdsk(input_path: Path, output_path: Path):
         Z0=params["Z0"],
         a=params["a"],
         ka=params["ka"],
-        c0a=params["c0a"],
-        c1a=params["c1a"],
-        s1a=params["s1a"],
-        s2a=params["s2a"],
+        c_offsets=params["c_offsets"],
+        s_offsets=params["s_offsets"],
         n=len(geqdsk.boundary),
     )
     boundary_error = max_bidirectional_distance(geqdsk.boundary, fitted_boundary)

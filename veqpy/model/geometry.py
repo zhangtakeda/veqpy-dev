@@ -65,12 +65,19 @@ class Geometry:
         k_fields: np.ndarray,
         c_fields: np.ndarray,
         s_fields: np.ndarray,
+        *,
+        c_active_order: int | None = None,
+        s_active_order: int | None = None,
     ):
         """用当前 Grid 和 profile fields 刷新 geometry."""
         if self.R_fields.shape[1:] != (grid.Nr, grid.Nt):
             raise ValueError(
                 f"Expected geometry shape {(self.R_fields.shape[1], self.R_fields.shape[2])}, got {(grid.Nr, grid.Nt)}"
             )
+        if c_active_order is None:
+            c_active_order = int(c_fields.shape[0] - 1)
+        if s_active_order is None:
+            s_active_order = int(s_fields.shape[0] - 1)
 
         update_geometry(
             self.tb_fields,
@@ -100,6 +107,8 @@ class Geometry:
             k_fields,
             c_fields,
             s_fields,
+            int(c_active_order),
+            int(s_active_order),
         )
 
     @property

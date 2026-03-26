@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from veqpy.model import Equilibrium, Grid
-from veqpy.operator import PROFILE_INDEX, Operator, OperatorCase, build_profile_layout
+from veqpy.operator import Operator, OperatorCase, build_profile_index, build_profile_layout, build_profile_names
 from veqpy.solver import Solver, SolverConfig
 
 PLOT = False
@@ -64,10 +64,8 @@ PF_REFERENCE_CASE_KWARGS = {
     "Z0": PF_REFERENCE_CASE.Z0,
     "B0": PF_REFERENCE_CASE.B0,
     "ka": PF_REFERENCE_CASE.ka,
-    "c0a": PF_REFERENCE_CASE.c0a,
-    "c1a": PF_REFERENCE_CASE.c1a,
-    "s1a": PF_REFERENCE_CASE.s1a,
-    "s2a": PF_REFERENCE_CASE.s2a,
+    "c_offsets": PF_REFERENCE_CASE.c_offsets.copy(),
+    "s_offsets": PF_REFERENCE_CASE.s_offsets.copy(),
 }
 PF_REFERENCE_IP = PF_REFERENCE_CASE.Ip
 PF_REFERENCE_PROFILE_COEFF_COUNTS = {
@@ -329,12 +327,14 @@ def format_share(share: float) -> str:
 
 
 def _extract_shape_x(coeffs_by_name: dict[str, list[float] | None], x: np.ndarray) -> np.ndarray:
-    _, coeff_index, _ = build_profile_layout(coeffs_by_name)
+    profile_names = build_profile_names(PF_REFERENCE_GRID.K_max)
+    profile_index = build_profile_index(profile_names)
+    _, coeff_index, _ = build_profile_layout(coeffs_by_name, profile_names=profile_names)
     shape_values: list[float] = []
     shape_names = tuple(name for name in PF_REFERENCE_PROFILE_COEFF_COUNTS)
     for k in range(coeff_index.shape[1]):
         for name in shape_names:
-            idx = int(coeff_index[PROFILE_INDEX[name], k])
+            idx = int(coeff_index[profile_index[name], k])
             if idx >= 0:
                 shape_values.append(float(x[idx]))
     return np.asarray(shape_values, dtype=np.float64)

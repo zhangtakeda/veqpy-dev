@@ -308,17 +308,18 @@ class Geqdsk(Serial):
 
     def boundary_shape_params(self, *, R0=None, Z0=None, a=None):
         """
-        从 LCFS 边界点估计边界形状参数 (ka, c0a, c1a, s1a, s2a).
+        从 LCFS 边界点估计边界形状参数.
 
         Notes
         -----
         模型采用
         R = R0 + a * cos(theta_bar),
         Z = Z0 - a * ka * sin(theta),
-        theta_bar = theta + c0a + c1a*cos(theta) + s1a*sin(theta) + s2a*sin(2*theta).
+        theta_bar = theta + c0 + c1*cos(theta) + s1*sin(theta) + s2*sin(2*theta).
 
         该实现使用几何初值 + 最小二乘拟合, 适合从 GEQDSK 边界直接反推
-        operator case 所需的 edge 参数。
+        operator case 所需的 edge 参数。返回值里的 Fourier 边界项使用
+        `c_offsets/s_offsets` 作为 canonical 表达。
         """
 
         if self.boundary.size == 0:
@@ -407,10 +408,10 @@ class Geqdsk(Serial):
             "Z0": initial_Z0,
             "a": initial_a,
             "ka": ka0,
-            "c0a": 0.0,
-            "c1a": 0.0,
-            "s1a": 0.0,
-            "s2a": 0.0,
+            "c0": 0.0,
+            "c1": 0.0,
+            "s1": 0.0,
+            "s2": 0.0,
         }
 
         free_names = []
@@ -420,27 +421,27 @@ class Geqdsk(Serial):
             free_names.append("Z0")
         if a is None:
             free_names.append("a")
-        free_names.extend(["ka", "c0a", "c1a", "s1a", "s2a"])
+        free_names.extend(["ka", "c0", "c1", "s1", "s2"])
 
         lower_bounds_by_name = {
             "R0": r_min - 0.25 * span_r,
             "Z0": z_min - 0.25 * span_z,
             "a": max(1e-6, 0.25 * initial_a),
             "ka": 1e-6,
-            "c0a": -10.0,
-            "c1a": -10.0,
-            "s1a": -10.0,
-            "s2a": -10.0,
+            "c0": -10.0,
+            "c1": -10.0,
+            "s1": -10.0,
+            "s2": -10.0,
         }
         upper_bounds_by_name = {
             "R0": r_max + 0.25 * span_r,
             "Z0": z_max + 0.25 * span_z,
             "a": max(4.0 * initial_a, span_z, 1.0),
             "ka": 10.0,
-            "c0a": 10.0,
-            "c1a": 10.0,
-            "s1a": 10.0,
-            "s2a": 10.0,
+            "c0": 10.0,
+            "c1": 10.0,
+            "s1": 10.0,
+            "s2": 10.0,
         }
 
         def pack_params(params):
@@ -462,80 +463,80 @@ class Geqdsk(Serial):
                     "Z0": initial_Z0,
                     "a": initial_a,
                     "ka": ka0,
-                    "c0a": c0_init,
-                    "c1a": c1_init,
-                    "s1a": s1_init,
-                    "s2a": s2_init,
+                    "c0": c0_init,
+                    "c1": c1_init,
+                    "s1": s1_init,
+                    "s2": s2_init,
                 },
                 {
                     "R0": r_mid,
                     "Z0": z_mid,
                     "a": 0.5 * span_r,
                     "ka": max(0.5 * span_z / max(0.5 * span_r, 1e-6), 1e-6),
-                    "c0a": 0.0,
-                    "c1a": 0.0,
-                    "s1a": 0.0,
-                    "s2a": 0.0,
+                    "c0": 0.0,
+                    "c1": 0.0,
+                    "s1": 0.0,
+                    "s2": 0.0,
                 },
                 {
                     "R0": initial_R0,
                     "Z0": initial_Z0,
                     "a": initial_a * 0.9,
                     "ka": ka0,
-                    "c0a": 0.0,
-                    "c1a": 0.0,
-                    "s1a": 0.0,
-                    "s2a": 0.0,
+                    "c0": 0.0,
+                    "c1": 0.0,
+                    "s1": 0.0,
+                    "s2": 0.0,
                 },
                 {
                     "R0": initial_R0,
                     "Z0": initial_Z0,
                     "a": initial_a * 1.1,
                     "ka": ka0,
-                    "c0a": 0.0,
-                    "c1a": 0.0,
-                    "s1a": 0.0,
-                    "s2a": 0.0,
+                    "c0": 0.0,
+                    "c1": 0.0,
+                    "s1": 0.0,
+                    "s2": 0.0,
                 },
                 {
                     "R0": initial_R0,
                     "Z0": initial_Z0,
                     "a": initial_a,
                     "ka": ka0 * 0.9,
-                    "c0a": 0.0,
-                    "c1a": 0.2,
-                    "s1a": 0.0,
-                    "s2a": 0.0,
+                    "c0": 0.0,
+                    "c1": 0.2,
+                    "s1": 0.0,
+                    "s2": 0.0,
                 },
                 {
                     "R0": initial_R0,
                     "Z0": initial_Z0,
                     "a": initial_a,
                     "ka": ka0 * 1.1,
-                    "c0a": 0.0,
-                    "c1a": -0.2,
-                    "s1a": 0.0,
-                    "s2a": 0.0,
+                    "c0": 0.0,
+                    "c1": -0.2,
+                    "s1": 0.0,
+                    "s2": 0.0,
                 },
                 {
                     "R0": r_mid,
                     "Z0": z_mid,
                     "a": initial_a * 0.85,
                     "ka": ka0 * 1.1,
-                    "c0a": 0.1,
-                    "c1a": 0.2,
-                    "s1a": 0.0,
-                    "s2a": 0.0,
+                    "c0": 0.1,
+                    "c1": 0.2,
+                    "s1": 0.0,
+                    "s2": 0.0,
                 },
                 {
                     "R0": r_mid,
                     "Z0": z_mid,
                     "a": initial_a * 1.15,
                     "ka": ka0 * 0.9,
-                    "c0a": -0.1,
-                    "c1a": -0.2,
-                    "s1a": 0.0,
-                    "s2a": 0.0,
+                    "c0": -0.1,
+                    "c1": -0.2,
+                    "s1": 0.0,
+                    "s2": 0.0,
                 },
             ]
 
@@ -544,10 +545,10 @@ class Geqdsk(Serial):
                 theta = infer_theta(z_points, params["Z0"], params["a"], params["ka"])
                 tb = (
                     theta
-                    + params["c0a"]
-                    + params["c1a"] * np.cos(theta)
-                    + params["s1a"] * np.sin(theta)
-                    + params["s2a"] * np.sin(2.0 * theta)
+                    + params["c0"]
+                    + params["c1"] * np.cos(theta)
+                    + params["s1"] * np.sin(theta)
+                    + params["s2"] * np.sin(2.0 * theta)
                 )
                 r_res = r_points - (params["R0"] + params["a"] * np.cos(tb))
                 z_res = z_points - (params["Z0"] - params["a"] * params["ka"] * np.sin(theta))
@@ -577,21 +578,17 @@ class Geqdsk(Serial):
         Z0 = fitted["Z0"]
         a = fitted["a"]
         ka = fitted["ka"]
-        c0a = fitted["c0a"]
-        c1a = fitted["c1a"]
-        s1a = fitted["s1a"]
-        s2a = fitted["s2a"]
-        c0a = float((c0a + np.pi) % (2.0 * np.pi) - np.pi)
+        c_offsets = np.array([fitted["c0"], fitted["c1"]], dtype=float)
+        s_offsets = np.array([0.0, fitted["s1"], fitted["s2"]], dtype=float)
+        c_offsets[0] = float((c_offsets[0] + np.pi) % (2.0 * np.pi) - np.pi)
 
         return {
             "R0": float(R0),
             "Z0": float(Z0),
             "a": float(a),
             "ka": float(ka),
-            "c0a": c0a,
-            "c1a": float(c1a),
-            "s1a": float(s1a),
-            "s2a": float(s2a),
+            "c_offsets": c_offsets,
+            "s_offsets": s_offsets,
             "rms": best_fit["rms"],
         }
 
