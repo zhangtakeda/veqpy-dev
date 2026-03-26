@@ -13,8 +13,8 @@
 
 默认前提:
 
-- 所有脚本, `pytest`, `tests/demo.py`, `tests/benchmark.py`, `compileall` 都在项目虚拟环境里运行.
-- 如果 shell 没激活虚拟环境, 显式使用 `.\.venv\Scripts\python.exe ...`.
+- 所有脚本, `pytest`, `tests/demo.py`, `tests/benchmark.py`, `compileall` 都在项目 `uv` 管理的虚拟环境里运行.
+- 如果 shell 没激活虚拟环境, 优先使用 `uv run ...`, 或显式使用 `.\.venv\Scripts\python.exe ...`.
 
 ## Repository Reality
 
@@ -119,6 +119,11 @@
 - history
 - `SolverResult`
 - 从结果重建 coeff / `Equilibrium`
+
+这里的语义是:
+
+- `x0` 是下一次 solve 的初值.
+- warmstart 路径若主方法异常, solver 只复核 `x0` residual, 不引入新的 packed state owner.
 
 它不应该重新拥有:
 
@@ -393,7 +398,7 @@ source route 通过 bound runner 绑定.
 
 ## Safe Working Rules For Agents
 
-- 始终先激活项目虚拟环境.
+- 始终在项目 `uv` 虚拟环境中运行仓库命令.
 - 优先跑最贴近改动边界的核心回归.
 - 不要在没有证据前删除看似多余的 state 或 compatibility logic.
 - 不要把测试脚本变成生产逻辑 owner.
@@ -403,25 +408,31 @@ source route 通过 bound runner 绑定.
 
 ## Suggested Commands
 
-先激活虚拟环境:
+推荐先同步环境:
+
+```powershell
+uv sync --group dev
+```
+
+直接运行:
+
+```powershell
+uv run python -m pytest tests\test_model_core_regression.py -q
+```
+
+如果更喜欢激活 shell, 再执行:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
 ```
 
-或显式使用:
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest tests\test_model_core_regression.py -q
-```
-
 日常最常用命令:
 
 ```powershell
-python -m compileall veqpy tests
-python -m pytest tests\test_model_core_regression.py tests\test_operator_core_regression.py tests\test_engine_core_regression.py tests\test_solver_core_regression.py -q
-python tests/demo.py
-python tests/benchmark.py
+uv run python -m compileall veqpy tests
+uv run python -m pytest tests\test_model_core_regression.py tests\test_operator_core_regression.py tests\test_engine_core_regression.py tests\test_solver_core_regression.py -q
+uv run python tests/demo.py
+uv run python tests/benchmark.py
 ```
 
 ## Quick File Map

@@ -146,6 +146,8 @@ def update_geometry(
     np.sin(tb, out=sin_tb)
 
     R[:] = R0 + a * (h[:, None] + rho_2d * cos_tb)
+    np.maximum(R, 1e-15, out=R)
+
     R_r[:] = a * (h_r[:, None] + cos_tb - rho_2d * sin_tb * tb_r)
     R_t[:] = -a * rho_2d * sin_tb * tb_t
     R_rr[:] = a * (h_rr[:, None] - 2.0 * sin_tb * tb_r - rho_2d * (cos_tb * tb_r**2 + sin_tb * tb_rr))
@@ -161,6 +163,7 @@ def update_geometry(
 
     J[:] = R_t * Z_r - R_r * Z_t
     np.maximum(J, 1e-15, out=J)
+
     J_r[:] = -(R_rr * Z_t - R_rt * Z_r + R_r * Z_rt - R_t * Z_rr)
     J_t[:] = -(R_rt * Z_t - R_tt * Z_r + R_r * Z_tt - R_t * Z_rt)
     JR[:] = J * R

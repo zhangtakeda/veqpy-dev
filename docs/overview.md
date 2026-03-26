@@ -42,19 +42,22 @@
 
 ## Environment
 
-运行仓库脚本时默认前提是: 已进入项目虚拟环境.
+运行仓库脚本时默认前提是: 已进入项目 `uv` 管理的虚拟环境, 或通过 `uv run ...` 调用.
 
 推荐 PowerShell 工作流:
 
 ```powershell
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -U pip
-python -m pip install -e .
-python -m pip install pytest
+uv sync --group dev
 ```
 
 后续统一优先使用:
+
+- `uv run python -m pytest ...`
+- `uv run python tests/demo.py`
+- `uv run python tests/benchmark.py`
+- `uv run python -m compileall veqpy tests`
+
+如果当前 shell 已激活 `.venv`, 也可以使用:
 
 - `python -m pytest ...`
 - `python tests/demo.py`
@@ -62,7 +65,7 @@ python -m pip install pytest
 - `python -m compileall veqpy tests`
 
 不要默认依赖系统 Python 或全局 `pytest`.  
-如果当前 shell 没激活虚拟环境, 请显式使用 `.\.venv\Scripts\python.exe ...`.
+如果当前 shell 没激活虚拟环境, 请显式使用 `uv run ...` 或 `.\.venv\Scripts\python.exe ...`.
 
 ## Runtime Path
 
@@ -195,6 +198,11 @@ backend control surface 只有 [`veqpy/engine/__init__.py`](../veqpy/engine/__in
 - history 记录
 - 从结果重建 coeff 和 `Equilibrium`
 
+其中:
+
+- `x0` 是 solver 持久化的下一次初值.
+- warmstart 路径若主方法异常, solver 可以复核 `x0` residual 并在满足阈值时接受该初值.
+
 它不负责:
 
 - packed `layout/codec`
@@ -291,24 +299,24 @@ backend control surface 只有 [`veqpy/engine/__init__.py`](../veqpy/engine/__in
 只改文档:
 
 - 至少核对路径, 命令, 环境变量, 入口文件仍存在.
-- 命令示例默认以已激活的项目虚拟环境为前提.
+- 命令示例默认以项目 `uv` 虚拟环境为前提, 优先写成 `uv run ...`, 或明确说明 shell 已激活 `.venv`.
 
 改任意 Python 源码:
 
-- `python -m compileall veqpy tests`
+- `uv run python -m compileall veqpy tests`
 
 改 runtime 主链:
 
-- `python -m compileall veqpy tests`
-- `python tests/demo.py`
-- `python -m pytest tests/test_model_core_regression.py tests/test_operator_core_regression.py tests/test_engine_core_regression.py tests/test_solver_core_regression.py -q`
+- `uv run python -m compileall veqpy tests`
+- `uv run python tests/demo.py`
+- `uv run python -m pytest tests/test_model_core_regression.py tests/test_operator_core_regression.py tests/test_engine_core_regression.py tests/test_solver_core_regression.py -q`
 
 改 solver 策略, benchmark 口径, source route, residual runner:
 
-- `python -m compileall veqpy tests`
-- `python tests/demo.py`
-- `python tests/benchmark.py`
-- `python -m pytest tests/test_model_core_regression.py tests/test_operator_core_regression.py tests/test_engine_core_regression.py tests/test_solver_core_regression.py -q`
+- `uv run python -m compileall veqpy tests`
+- `uv run python tests/demo.py`
+- `uv run python tests/benchmark.py`
+- `uv run python -m pytest tests/test_model_core_regression.py tests/test_operator_core_regression.py tests/test_engine_core_regression.py tests/test_solver_core_regression.py -q`
 
 ## High-Risk Files
 

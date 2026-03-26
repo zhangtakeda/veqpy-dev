@@ -124,6 +124,9 @@ def update_geometry(
             sin_tb_ij = np.sin(tb_ij)
 
             R_ij = R0 + a * (h_i + rho_i * cos_tb_ij)
+            if R_ij < 1e-15:
+                R_ij = 1e-15
+
             R_r_ij = a * (h_r_i + cos_tb_ij - rho_i * sin_tb_ij * tb_r_ij)
             R_t_ij = -a * rho_i * sin_tb_ij * tb_t_ij
             R_rr_ij = a * (

@@ -7,11 +7,11 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
-
-from demo import CASE_1 as PF_REFERENCE_CASE
 from demo import COEFFS as PF_REFERENCE_COEFFS
 from demo import CONFIG as PF_REFERENCE_SOLVER_CONFIG
+from demo import LOWER_CASE as PF_REFERENCE_CASE
 from demo import pf_reference_profiles
+
 from veqpy.model import Boundary, Equilibrium, Grid
 from veqpy.operator import Operator, OperatorCase, build_profile_index, build_profile_layout, build_profile_names
 from veqpy.solver import Solver, SolverConfig

@@ -6,21 +6,20 @@ Role:
 
 Public API:
 - SolverConfig
-- SUPPORTED_ROOT_METHODS
-- SUPPORTED_LEAST_SQUARES_METHODS
-- SUPPORTED_SOLVER_METHODS
+- ROOT_METHODS
+- LEAST_SQUARES_METHODS
 
 Notes:
 - `SolverConfig` 只保存配置, 不执行求解.
 - 不负责 history 存储, 或 residual 评估.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from rich.console import Console
 from rich.tree import Tree
 
-SUPPORTED_ROOT_METHODS = (
+ROOT_METHODS = (
     "hybr",
     "krylov",
     "root-lm",
@@ -28,13 +27,13 @@ SUPPORTED_ROOT_METHODS = (
     "broyden2",
 )
 
-SUPPORTED_LEAST_SQUARES_METHODS = (
+LEAST_SQUARES_METHODS = (
     "trf",
     "dogbox",
     "lm",
 )
 
-SUPPORTED_SOLVER_METHODS = SUPPORTED_ROOT_METHODS + SUPPORTED_LEAST_SQUARES_METHODS
+SUPPORTED_METHODS = ROOT_METHODS + LEAST_SQUARES_METHODS
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,29 +46,52 @@ class SolverConfig:
     root_maxiter: int = 100
     root_maxfev: int = 1000
     enable_warmstart: bool = True
+    enable_fallback: bool = True
+    fallback_methods: tuple[str, ...] = field(default_factory=lambda: ("root-lm", "trf"))
     enable_homotopy: bool = False
     enable_verbose: bool = False
     enable_history: bool = True
     homotopy_truncation_tol: float = 1e-3
-    homotopy_truncation_patience: int = 1
+    homotopy_truncation_patience: int = 2
 
     def __post_init__(self) -> None:
         """校验方法名与 homotopy 相关参数是否合法."""
 
         method = str(self.method)
+        fallback_methods = tuple(str(method_name) for method_name in self.fallback_methods)
+        deduped_fallback_methods: list[str] = []
+        seen: set[str] = set()
+        for method_name in fallback_methods:
+            if method_name in seen:
+                continue
+            seen.add(method_name)
+            deduped_fallback_methods.append(method_name)
 
-        if method not in SUPPORTED_SOLVER_METHODS:
-            supported = ", ".join(SUPPORTED_SOLVER_METHODS)
+        if method not in SUPPORTED_METHODS:
+            supported = ", ".join(SUPPORTED_METHODS)
             raise ValueError(
                 f"Unsupported solver method {method!r}. "
                 f"Supported methods are: {supported}. "
                 f"Use a root method such as 'hybr', 'krylov', or 'root-lm', "
                 f"or use 'lm'/'trf'/'dogbox' to call scipy.optimize.least_squares directly."
             )
+        unsupported_fallbacks = [
+            method_name for method_name in deduped_fallback_methods if method_name not in SUPPORTED_METHODS
+        ]
+        if unsupported_fallbacks:
+            supported = ", ".join(SUPPORTED_METHODS)
+            unsupported = ", ".join(repr(method_name) for method_name in unsupported_fallbacks)
+            raise ValueError(
+                f"Unsupported fallback solver method(s): {unsupported}. Supported methods are: {supported}."
+            )
         if float(self.homotopy_truncation_tol) < 0.0:
             raise ValueError("homotopy_truncation_tol must be >= 0")
         if int(self.homotopy_truncation_patience) < 1:
             raise ValueError("homotopy_truncation_patience must be >= 1")
+
+        object.__setattr__(self, "method", method)
+        object.__setattr__(self, "enable_fallback", bool(self.enable_fallback))
+        object.__setattr__(self, "fallback_methods", tuple(deduped_fallback_methods))
 
     def __rich__(self):
         tree = Tree("[bold blue]SolverConfig[/]")
@@ -79,6 +101,9 @@ class SolverConfig:
         tree.add(f"root_maxiter: {self.root_maxiter}")
         tree.add(f"root_maxfev: {self.root_maxfev}")
         tree.add(f"enable_warmstart: {self.enable_warmstart}")
+        tree.add(f"enable_fallback: {self.enable_fallback}")
+        if self.enable_fallback:
+            tree.add(f"fallback_methods: {list(self.fallback_methods)}")
         tree.add(f"enable_homotopy: {self.enable_homotopy}")
         tree.add(f"enable_verbose: {self.enable_verbose}")
         tree.add(f"enable_history: {self.enable_history}")

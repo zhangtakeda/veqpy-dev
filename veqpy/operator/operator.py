@@ -154,9 +154,9 @@ class Operator:
         self.residual_stage_runner = lambda *args, **kwargs: np.zeros(self.x_size, dtype=np.float64)
         self._refresh_runtime_state()
 
-    def __call__(self, x: np.ndarray) -> np.ndarray:
+    def __call__(self, x: np.ndarray, *args, **kwargs) -> np.ndarray:
         """调用 residual 求值主入口."""
-        return self.residual(x)
+        return self.residual(x, *args, **kwargs)
 
     def _validate_runtime_profile_support(self) -> None:
         """geometry/residual runtime 已支持动态 Fourier family；保留接口以承接阶段性校验."""
@@ -177,7 +177,10 @@ class Operator:
             profile_names=self.profile_names,
         )
 
-    def residual(self, x: np.ndarray) -> np.ndarray:
+    def residual(
+        self,
+        x: np.ndarray,
+    ) -> np.ndarray:
         """完整执行 profile, geometry, source, residual 四阶段求值."""
         x_eval = self.coerce_x(x)
         self.stage_a_profile(x_eval)

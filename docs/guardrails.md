@@ -85,6 +85,11 @@
   - `history`
 - 通过 `Operator` 调 residual.
 
+其中:
+
+- `x0` 是下次 solve 的初值.
+- warmstart 路径若主方法异常, solver 可以复核 `x0` 的 residual 并在满足阈值时接受该初值.
+
 不得:
 
 - 不持有 packed layout/codec owner.
@@ -101,8 +106,11 @@
 必须:
 
 - packed state 和 packed residual 都只用 `coeff_index` / `coeff_indices` 表示位置语义.
-- profile 权威顺序固定为:
-  - `psin`, `F`, `h`, `v`, `k`, `c0`, `c1`, `s1`, `s2`
+- profile 权威顺序由 `Grid.K_max` 动态生成:
+  - `psin`, `F`
+  - `h`, `v`, `k`
+  - `c0 .. cK`
+  - `s1 .. sK`
 
 不得:
 
@@ -259,7 +267,7 @@ backend control surface 只有 [`veqpy/engine/__init__.py`](../veqpy/engine/__in
 
 同时必须核对:
 
-- 命令示例是否仍然要求在项目虚拟环境中执行
+- 命令示例是否仍然要求在项目 `uv` 虚拟环境中执行
 - `tests/demo.py` / `tests/benchmark.py` / 核心回归测试入口路径是否仍然正确
 
 ## Minimum Validation
@@ -267,21 +275,21 @@ backend control surface 只有 [`veqpy/engine/__init__.py`](../veqpy/engine/__in
 只改文档:
 
 - 至少核对路径, 文件名, 入口命名仍然存在.
-- 命令示例默认必须以已激活的项目虚拟环境为前提.
+- 命令示例默认必须以项目 `uv` 虚拟环境为前提, 优先使用 `uv run ...`, 或明确说明 shell 已激活 `.venv`.
 
 改任意源码:
 
-- `python -m compileall veqpy tests`
+- `uv run python -m compileall veqpy tests`
 
 改 runtime 主链或 solver:
 
-- `python -m compileall veqpy tests`
-- `python tests/demo.py`
-- `python -m pytest tests/test_model_core_regression.py tests/test_operator_core_regression.py tests/test_engine_core_regression.py tests/test_solver_core_regression.py -q`
+- `uv run python -m compileall veqpy tests`
+- `uv run python tests/demo.py`
+- `uv run python -m pytest tests/test_model_core_regression.py tests/test_operator_core_regression.py tests/test_engine_core_regression.py tests/test_solver_core_regression.py -q`
 
 改 benchmark 口径, source route, residual runner:
 
-- `python -m compileall veqpy tests`
-- `python tests/demo.py`
-- `python tests/benchmark.py`
-- `python -m pytest tests/test_model_core_regression.py tests/test_operator_core_regression.py tests/test_engine_core_regression.py tests/test_solver_core_regression.py -q`
+- `uv run python -m compileall veqpy tests`
+- `uv run python tests/demo.py`
+- `uv run python tests/benchmark.py`
+- `uv run python -m pytest tests/test_model_core_regression.py tests/test_operator_core_regression.py tests/test_engine_core_regression.py tests/test_solver_core_regression.py -q`
