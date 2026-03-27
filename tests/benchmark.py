@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import warnings
 from collections.abc import Mapping, Sequence
@@ -9,7 +10,12 @@ from pathlib import Path
 import numpy as np
 from demo import CONFIG as PF_REFERENCE_SOLVER_CONFIG
 from demo import LOWER_CASE as PF_REFERENCE_CASE
-from demo import pf_reference_profiles
+from demo import (
+    SOURCE_SAMPLE_COUNT,
+    _build_uniform_psin_inputs,
+    _build_uniform_rho_inputs,
+    _normalize_psin_coordinate_samples,
+)
 
 from veqpy.model import Boundary, Equilibrium, Grid
 from veqpy.operator import Operator, OperatorCase, build_profile_index, build_profile_layout, build_profile_names
@@ -87,16 +93,18 @@ def _solve_with_config(solver: Solver, *, x0: np.ndarray | None = None, config: 
 @dataclass(frozen=True)
 class BenchmarkCaseSpec:
     mode: str
-    derivative: str
+    coordinate: str
     constraint: str
 
     @property
     def case_name(self) -> str:
-        return f"{self.mode}-{self.derivative}-{self.constraint}"
+        return f"{self.mode}-{self.coordinate}-{self.constraint}"
 
 
 @dataclass(frozen=True)
 class PFReferenceBundle:
+    coordinate: str
+    source_axis: np.ndarray
     solver: Solver
     result: object
     equilibrium: Equilibrium
@@ -131,10 +139,41 @@ class BenchmarkCaseResult:
         return ", ".join(self.notes) if self.notes else "ok"
 
 
+@dataclass(frozen=True)
+class ReferenceResultSummary:
+    success: bool
+    nfev: int
+    elapsed: float
+    residual_norm_initial: float
+    residual_norm_final: float
+
+
 def _artifact_root() -> Path:
     root = Path(__file__).resolve().parent.parent / "tests" / "benchmark"
     root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+def _reference_dir() -> Path:
+    directory = _artifact_root() / "references"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _reference_stem(coordinate: str) -> str:
+    label = "rho" if coordinate == "rho" else "psin"
+    return f"pf_{label}_reference"
+
+
+def _reference_paths(coordinate: str) -> dict[str, Path]:
+    stem = _reference_stem(coordinate)
+    directory = _reference_dir()
+    return {
+        "equilibrium": directory / f"{stem}.json",
+        "source_axis": directory / f"{stem}_source_axis.npy",
+        "shape_x": directory / f"{stem}_shape_x.npy",
+        "meta": directory / f"{stem}_meta.json",
+    }
 
 
 def _artifact_dir() -> Path:
@@ -160,28 +199,38 @@ def make_zero_reference_coeffs() -> dict[str, list[float] | None]:
 def make_pf_reference_solver(
     grid: Grid | None = None,
     *,
+    coordinate: str = "rho",
     config: SolverConfig | None = None,
 ) -> Solver:
     grid = grid or PF_REFERENCE_GRID
-    current_input, heat_input = pf_reference_profiles(grid.rho)
+    if coordinate == "rho":
+        current_input, heat_input = _build_uniform_rho_inputs(SOURCE_SAMPLE_COUNT)
+    elif coordinate == "psin":
+        current_input, heat_input = _build_uniform_psin_inputs(SOURCE_SAMPLE_COUNT)
+    else:
+        raise ValueError(f"Unsupported coordinate {coordinate!r}")
     case = OperatorCase(
+        name="PF",
         profile_coeffs=make_zero_reference_coeffs(),
         boundary=PF_REFERENCE_BOUNDARY,
         heat_input=heat_input,
         current_input=current_input,
+        coordinate=coordinate,
+        nodes="uniform",
         Ip=PF_REFERENCE_IP,
     )
-    operator = Operator(grid=grid, case=case, name="PF", derivative="rho")
+    operator = Operator(grid=grid, case=case)
     return Solver(operator=operator, config=config or CONFIG)
 
 
 def solve_pf_reference(
     grid: Grid | None = None,
     *,
+    coordinate: str = "rho",
     config: SolverConfig | None = None,
 ) -> tuple[Solver, object, Equilibrium]:
     solve_config = CONFIG if config is None else config
-    solver = make_pf_reference_solver(grid, config=solve_config)
+    solver = make_pf_reference_solver(grid, coordinate=coordinate, config=solve_config)
     _solve_with_config(solver, config=solve_config)
     return solver, solver.result, solver.build_equilibrium()
 
@@ -208,8 +257,8 @@ def build_pf_reference_profiles(equilibrium: Equilibrium) -> dict[str, np.ndarra
         "psi_r": psi_r,
         "FFn_r": FFn_r,
         "Pn_r": Pn_r,
-        "FFn_psi": FFn_r / psin_r_safe,
-        "Pn_psi": Pn_r / psin_r_safe,
+        "FFn_psin": FFn_r / psin_r_safe,
+        "Pn_psin": Pn_r / psin_r_safe,
         "FF_r": FF_r,
         "P_r": P_r,
         "FF_psi": FF_r / psi_r_safe,
@@ -334,28 +383,92 @@ def _extract_shape_x(profile_coeffs: dict[str, list[float] | None], x: np.ndarra
     return np.asarray(shape_values, dtype=np.float64)
 
 
-def _pf_reference_profiles() -> PFReferenceBundle:
-    solver, result, equilibrium = solve_pf_reference(PF_REFERENCE_GRID, config=CONFIG)
+def _build_pf_reference_bundle(coordinate: str) -> PFReferenceBundle:
+    solver, result, equilibrium = solve_pf_reference(PF_REFERENCE_GRID, coordinate=coordinate, config=CONFIG)
     equilibrium_on_grid = equilibrium.resample(target_grid=GRID)
+    if coordinate == "rho":
+        source_axis = np.asarray(equilibrium.rho, dtype=np.float64).copy()
+    else:
+        source_axis, _ = _normalize_psin_coordinate_samples(
+            np.asarray(solver.operator.psin_profile.u, dtype=np.float64)
+        )
     reference_shape_x = _extract_shape_x(
         solver.operator.case.profile_coeffs,
         np.asarray(result.x, dtype=np.float64),
     )
     return PFReferenceBundle(
+        coordinate=coordinate,
+        source_axis=source_axis,
         solver=solver,
         result=result,
         equilibrium=equilibrium,
         equilibrium_on_grid=equilibrium_on_grid,
-        ref_profiles=build_pf_reference_profiles(equilibrium_on_grid),
+        ref_profiles=build_pf_reference_profiles(equilibrium),
         reference_shape_x=reference_shape_x,
     )
 
 
+def _write_reference_cache(bundle: PFReferenceBundle) -> None:
+    paths = _reference_paths(bundle.coordinate)
+    bundle.equilibrium.write(str(paths["equilibrium"]))
+    np.save(paths["source_axis"], np.asarray(bundle.source_axis, dtype=np.float64))
+    np.save(paths["shape_x"], np.asarray(bundle.reference_shape_x, dtype=np.float64))
+    summary = {
+        "success": bool(bundle.result.success),
+        "nfev": int(bundle.result.nfev),
+        "elapsed": float(bundle.result.elapsed),
+        "residual_norm_initial": float(bundle.result.residual_norm_initial),
+        "residual_norm_final": float(bundle.result.residual_norm_final),
+    }
+    paths["meta"].write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+
+
+def _load_reference_cache(coordinate: str) -> PFReferenceBundle | None:
+    paths = _reference_paths(coordinate)
+    if not all(path.exists() for path in paths.values()):
+        return None
+
+    equilibrium = Equilibrium.load(str(paths["equilibrium"]))
+    equilibrium_on_grid = equilibrium.resample(target_grid=GRID)
+    source_axis = np.asarray(np.load(paths["source_axis"]), dtype=np.float64)
+    reference_shape_x = np.asarray(np.load(paths["shape_x"]), dtype=np.float64)
+    meta = json.loads(paths["meta"].read_text(encoding="utf-8"))
+    result = ReferenceResultSummary(
+        success=bool(meta["success"]),
+        nfev=int(meta["nfev"]),
+        elapsed=float(meta["elapsed"]),
+        residual_norm_initial=float(meta["residual_norm_initial"]),
+        residual_norm_final=float(meta["residual_norm_final"]),
+    )
+    return PFReferenceBundle(
+        coordinate=coordinate,
+        source_axis=source_axis,
+        solver=make_pf_reference_solver(PF_REFERENCE_GRID, coordinate=coordinate, config=CONFIG),
+        result=result,
+        equilibrium=equilibrium,
+        equilibrium_on_grid=equilibrium_on_grid,
+        ref_profiles=build_pf_reference_profiles(equilibrium),
+        reference_shape_x=reference_shape_x,
+    )
+
+
+def _pf_reference_profiles(coordinate: str) -> PFReferenceBundle:
+    rebuild = os.environ.get("VEQPY_BENCHMARK_REBUILD_REFERENCES", "").strip().lower() in {"1", "true", "yes"}
+    if not rebuild:
+        cached = _load_reference_cache(coordinate)
+        if cached is not None:
+            return cached
+
+    bundle = _build_pf_reference_bundle(coordinate)
+    _write_reference_cache(bundle)
+    return bundle
+
+
 def _iter_benchmark_specs():
     for mode in BENCHMARK_MODES:
-        for derivative in ("rho", "psi"):
+        for coordinate in ("rho", "psin"):
             for constraint in BENCHMARK_MODE_CONSTRAINTS[mode]:
-                yield BenchmarkCaseSpec(mode=mode, derivative=derivative, constraint=constraint)
+                yield BenchmarkCaseSpec(mode=mode, coordinate=coordinate, constraint=constraint)
 
 
 def _constraint_route_domains(constraint: str) -> tuple[str, str]:
@@ -368,10 +481,10 @@ def _constraint_route_domains(constraint: str) -> tuple[str, str]:
     return "physical", "physical"
 
 
-def _pressure_keys_for_derivative(derivative: str) -> tuple[str, str]:
-    if derivative == "rho":
+def _pressure_keys_for_coordinate(coordinate: str) -> tuple[str, str]:
+    if coordinate == "rho":
         return "Pn_r", "P_r"
-    return "Pn_psi", "P_psi"
+    return "Pn_psin", "P_psi"
 
 
 def _pick_ref_profile(
@@ -392,15 +505,15 @@ def _split_benchmark_inputs(init_kwargs: dict[str, np.ndarray]) -> tuple[np.ndar
 
 def _build_mode_init_kwargs(
     mode: str,
-    derivative: str,
+    coordinate: str,
     constraint: str,
     ref: dict[str, np.ndarray | float],
 ) -> dict[str, np.ndarray]:
-    pressure_keys = _pressure_keys_for_derivative(derivative)
+    pressure_keys = _pressure_keys_for_coordinate(coordinate)
 
     if mode == "PF":
         use_normalized = constraint in {"Ip", "beta"}
-        driver_keys = ("FFn_r", "FF_r") if derivative == "rho" else ("FFn_psi", "FF_psi")
+        driver_keys = ("FFn_r", "FF_r") if coordinate == "rho" else ("FFn_psin", "FF_psi")
         return {
             driver_keys[0] if use_normalized else driver_keys[1]: _pick_ref_profile(
                 ref, driver_keys[0], driver_keys[1], use_normalized
@@ -439,26 +552,42 @@ def _build_mode_init_kwargs(
     }
 
 
+def _resample_reference_input(values: np.ndarray, source_axis: np.ndarray) -> np.ndarray:
+    values = np.asarray(values, dtype=np.float64)
+    axis = np.asarray(source_axis, dtype=np.float64)
+    order = np.argsort(axis)
+    axis_sorted = axis[order]
+    values_sorted = values[order]
+    uniform_axis = np.linspace(0.0, 1.0, SOURCE_SAMPLE_COUNT)
+    return np.interp(uniform_axis, axis_sorted, values_sorted)
+
+
 def _make_benchmark_solver_case(
     mode: str,
-    derivative: str,
+    coordinate: str,
     constraint: str,
-    ref: dict[str, np.ndarray | float],
+    bundle: PFReferenceBundle,
 ) -> OperatorCase:
-    init_kwargs = _build_mode_init_kwargs(mode, derivative, constraint, ref)
-    heat_input, current_input = _split_benchmark_inputs(init_kwargs)
+    ref_profiles = bundle.ref_profiles
+    init_kwargs = _build_mode_init_kwargs(mode, coordinate, constraint, ref_profiles)
+    heat_profile, current_profile = _split_benchmark_inputs(init_kwargs)
+    heat_input = _resample_reference_input(heat_profile, bundle.source_axis)
+    current_input = _resample_reference_input(current_profile, bundle.source_axis)
     coeffs = make_zero_reference_coeffs()
     if mode in {"PJ2", "PQ"}:
         coeffs["F"] = [0.0] * F_ROBUST_COEFF_COUNT
 
     Ip = PF_REFERENCE_IP if constraint in {"Ip", "Ip_beta"} else None
-    beta = float(ref["beta_constraint"]) if constraint in {"beta", "Ip_beta"} else None
+    beta = float(ref_profiles["beta_constraint"]) if constraint in {"beta", "Ip_beta"} else None
 
     return OperatorCase(
+        name=mode,
         profile_coeffs=coeffs,
         boundary=PF_REFERENCE_BOUNDARY,
         heat_input=heat_input,
         current_input=current_input,
+        coordinate=coordinate,
+        nodes="uniform",
         Ip=Ip,
         beta=beta,
     )
@@ -555,10 +684,11 @@ def _build_warm_start_guess(rng: np.random.Generator, true_x: np.ndarray) -> np.
 
 def _benchmark_case_result(
     spec: BenchmarkCaseSpec,
-    bundle: PFReferenceBundle,
+    bundles: Mapping[str, PFReferenceBundle],
 ) -> BenchmarkCaseResult:
-    case = _make_benchmark_solver_case(spec.mode, spec.derivative, spec.constraint, bundle.ref_profiles)
-    operator = Operator(grid=GRID, case=case, name=spec.mode, derivative=spec.derivative)
+    bundle = bundles[spec.coordinate]
+    case = _make_benchmark_solver_case(spec.mode, spec.coordinate, spec.constraint, bundle)
+    operator = Operator(grid=GRID, case=case)
     solver = Solver(operator=operator, config=CONFIG)
     elapsed_ms_samples: list[float] = []
     result = None
@@ -614,13 +744,18 @@ def _summary_pairs(rows: list[BenchmarkCaseResult]) -> list[tuple[str, str]]:
     largest_shape = max(rows, key=lambda row: row.shape_error)
     largest_rel = max(rows, key=lambda row: row.rel_max)
     startup_name = "Warm-start" if WARMSTART else "Cold-start"
+    rho_count = sum(1 for row in rows if row.spec.coordinate == "rho")
+    psin_count = sum(1 for row in rows if row.spec.coordinate == "psin")
     pairs = [
         ("backend", BACKEND),
         ("startup", startup_name),
-        ("reference_case", "PF_ref@32x32"),
+        ("reference_rho", "PF-rho_ref@32x32"),
+        ("reference_psin", "PF-psin_ref@32x32"),
         ("benchmark_grid", f"{GRID.Nr}x{GRID.Nt} ({GRID.scheme})"),
         ("repeat_count", str(BENCHMARK_REPEAT_COUNT)),
         ("case_count", str(len(rows))),
+        ("rho_case_count", str(rho_count)),
+        ("psin_case_count", str(psin_count)),
         ("hard_failures", str(len(failures))),
         ("slowest_case", f"{slowest.case_name} ({slowest.avg_ms:.3f} ms)"),
         ("largest_shape", f"{largest_shape.case_name} ({largest_shape.shape_error:.3e})"),
@@ -666,35 +801,43 @@ def _delta_summary_rows(rows: list[BenchmarkCaseResult]) -> list[list[str]]:
     return table_rows
 
 
-def _write_reference_artifacts(bundle: PFReferenceBundle) -> None:
+def _rows_for_coordinate(rows: list[BenchmarkCaseResult], coordinate: str) -> list[BenchmarkCaseResult]:
+    return [row for row in rows if row.spec.coordinate == coordinate]
+
+
+def _write_reference_artifacts(bundles: Mapping[str, PFReferenceBundle]) -> None:
     artifact_dir = _artifact_dir()
-    bundle.equilibrium.plot(outpath=artifact_dir / "pf_reference_summary.png")
-    lines = ["PF reference summary", ""]
-    lines.extend(render_key_values(summarize_pf_reference_run(bundle.result, bundle.equilibrium)))
-    (artifact_dir / "pf_reference_summary.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    for coordinate, bundle in bundles.items():
+        label = coordinate
+        bundle.equilibrium.plot(outpath=artifact_dir / f"pf_{label}_reference_summary.png")
+        lines = [f"PF {label} reference summary", ""]
+        lines.extend(render_key_values(summarize_pf_reference_run(bundle.result, bundle.equilibrium)))
+        (artifact_dir / f"pf_{label}_reference_summary.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _write_benchmark_report(rows: list[BenchmarkCaseResult]) -> None:
     artifact_dir = _artifact_dir()
     startup_name = "Warm-start" if WARMSTART else "Cold-start"
-    lines = [f"{startup_name} 46-case benchmark vs PF reference", ""]
+    lines = [f"{startup_name} 46-case benchmark vs PF route references", ""]
     lines.extend(render_key_values(_summary_pairs(rows)))
-    lines.extend(["", "Solve summary"])
-    lines.extend(
-        render_table(
-            ["case", "ok", "nfev", "avg_ms", "resid", "shape", "notes"],
-            _solve_summary_rows(rows),
-            aligns=("left", "left", "right", "right", "right", "right", "left"),
+    for coordinate, title in (("rho", "Rho-route cases"), ("psin", "Psin-route cases")):
+        derivative_rows = _rows_for_coordinate(rows, coordinate)
+        lines.extend(["", title, ""])
+        lines.extend(
+            render_table(
+                ["case", "ok", "nfev", "avg_ms", "resid", "shape", "notes"],
+                _solve_summary_rows(derivative_rows),
+                aligns=("left", "left", "right", "right", "right", "right", "left"),
+            )
         )
-    )
-    lines.extend(["", "Physics deltas"])
-    lines.extend(
-        render_table(
-            ["case", "rel_max", "rel_var", "q", "Itor", "jtor", "jpara"],
-            _delta_summary_rows(rows),
-            aligns=("left", "right", "right", "right", "right", "right", "right"),
+        lines.extend(["", f"{title} physics deltas", ""])
+        lines.extend(
+            render_table(
+                ["case", "rel_max", "rel_var", "q", "Itor", "jtor", "jpara"],
+                _delta_summary_rows(derivative_rows),
+                aligns=("left", "right", "right", "right", "right", "right", "right"),
+            )
         )
-    )
     lines.extend([""])
     lines.extend(
         render_ranked_mapping(
@@ -727,23 +870,26 @@ def _write_benchmark_notes(rows: list[BenchmarkCaseResult]) -> None:
     artifact_dir = _artifact_dir()
     startup_name = "Warm-start" if WARMSTART else "Cold-start"
     lines = [f"{startup_name} 46-case benchmark notes", ""]
-    for row in rows:
-        lines.append(f"[{row.case_name}]")
-        lines.extend(
-            render_key_values(
-                [
-                    ("status", "ok" if row.success else "failed"),
-                    ("notes", row.note_text),
-                    ("avg_ms", format_ms(row.avg_ms, row.std_ms)),
-                    ("residual_final", f"{float(row.result.residual_norm_final):.3e}"),
-                    ("shape_error", f"{row.shape_error:.3e}"),
-                    ("rel_max", f"{row.rel_max:.3e}"),
-                    ("rel_var", f"{row.rel_var:.3e}"),
-                ],
-                indent=2,
-            )
-        )
+    for coordinate, title in (("rho", "Rho-route cases"), ("psin", "Psin-route cases")):
+        lines.append(title)
         lines.append("")
+        for row in _rows_for_coordinate(rows, coordinate):
+            lines.append(f"[{row.case_name}]")
+            lines.extend(
+                render_key_values(
+                    [
+                        ("status", "ok" if row.success else "failed"),
+                        ("notes", row.note_text),
+                        ("avg_ms", format_ms(row.avg_ms, row.std_ms)),
+                        ("residual_final", f"{float(row.result.residual_norm_final):.3e}"),
+                        ("shape_error", f"{row.shape_error:.3e}"),
+                        ("rel_max", f"{row.rel_max:.3e}"),
+                        ("rel_var", f"{row.rel_var:.3e}"),
+                    ],
+                    indent=2,
+                )
+            )
+            lines.append("")
     (artifact_dir / "benchmark_notes.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -759,8 +905,11 @@ def _assert_benchmark_expectations(rows: list[BenchmarkCaseResult]) -> None:
 
 
 def run_full_benchmark(*, show_progress: bool = SHOW_PROGRESS) -> list[BenchmarkCaseResult]:
-    bundle = _pf_reference_profiles()
-    _write_reference_artifacts(bundle)
+    bundles = {
+        "rho": _pf_reference_profiles("rho"),
+        "psin": _pf_reference_profiles("psin"),
+    }
+    _write_reference_artifacts(bundles)
 
     plot_dir = _plot_dir()
     rows: list[BenchmarkCaseResult] = []
@@ -768,7 +917,7 @@ def run_full_benchmark(*, show_progress: bool = SHOW_PROGRESS) -> list[Benchmark
     total_cases = len(specs)
 
     for index, spec in enumerate(specs, start=1):
-        row = _benchmark_case_result(spec, bundle)
+        row = _benchmark_case_result(spec, bundles)
         rows.append(row)
         if show_progress:
             startup_key = "warm" if WARMSTART else "cold"
@@ -778,13 +927,14 @@ def run_full_benchmark(*, show_progress: bool = SHOW_PROGRESS) -> list[Benchmark
                 f"rel_max={row.rel_max:.3e} | shape={row.shape_error:.3e}"
             )
         if PLOT:
+            bundle = bundles[spec.coordinate]
             bundle.equilibrium.compare(
                 row.equilibrium,
                 outpath=plot_dir / f"{row.case_name}.png",
-                label_ref="PF_ref",
+                label_ref=f"PF_{spec.coordinate}_ref",
                 label_other=row.case_name,
             )
-            bundle.equilibrium.plot(
+            row.equilibrium.plot(
                 outpath=plot_dir / f"{row.case_name}_summary.png",
             )
 

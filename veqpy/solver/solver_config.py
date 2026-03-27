@@ -47,7 +47,7 @@ class SolverConfig:
     root_maxfev: int = 1000
     enable_warmstart: bool = True
     enable_fallback: bool = True
-    fallback_methods: tuple[str, ...] = field(default_factory=lambda: ("root-lm", "trf"))
+    fallback_methods: tuple[str, ...] = field(default_factory=lambda: ("lm", "trf"))
     enable_verbose: bool = False
     enable_history: bool = True
 

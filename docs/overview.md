@@ -240,7 +240,8 @@ backend control surface 只有 [`veqpy/engine/__init__.py`](../veqpy/engine/__in
   - `Geometry.update(...)`
   - `update_geometry(...)`
 - Stage-C `source`
-  - `Operator.source_stage_runner(...)`
+  - `Operator.stage_c_source(...)`
+  - `resolve_source_inputs(...)`
 - Stage-D `residual`
   - `Operator._build_G_inplace()`
   - `Operator.residual_stage_runner(...)`

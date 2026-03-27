@@ -13,6 +13,7 @@ from veqpy.operator.layout import build_profile_names
 from veqpy.operator.operator_case import OperatorCase
 
 GEQDSK_PATH = Path("tests/fitting/geqdsk.txt")
+TEST_SOURCE_SAMPLE_COUNT = 21
 
 
 def _build_boundary(*, R0, Z0, a, ka, c_offsets, s_offsets, n=721):
@@ -46,6 +47,9 @@ def _build_high_order_equilibrium() -> tuple[Equilibrium, Operator]:
         }
     )
     case = OperatorCase(
+        name="PF",
+        coordinate="rho",
+        nodes="uniform",
         profile_coeffs=profile_coeffs,
         boundary=Boundary(
             a=1.1,
@@ -55,10 +59,10 @@ def _build_high_order_equilibrium() -> tuple[Equilibrium, Operator]:
             c_offsets=np.zeros(grid.K_max + 1),
             s_offsets=np.zeros(grid.K_max + 1),
         ),
-        heat_input=np.zeros(grid.Nr),
-        current_input=np.zeros(grid.Nr),
+        heat_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
+        current_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
     )
-    operator = Operator(name="PF", derivative="rho", grid=grid, case=case)
+    operator = Operator(grid=grid, case=case)
     equilibrium = operator.build_equilibrium(operator.encode_initial_state())
     return equilibrium, operator
 
@@ -285,6 +289,9 @@ def test_equilibrium_compare_reports_only_primary_shape_errors():
         }
     )
     case_ref = OperatorCase(
+        name="PF",
+        coordinate="rho",
+        nodes="uniform",
         profile_coeffs=profile_coeffs,
         boundary=Boundary(
             a=1.1,
@@ -294,15 +301,15 @@ def test_equilibrium_compare_reports_only_primary_shape_errors():
             c_offsets=np.zeros(grid.K_max + 1),
             s_offsets=np.zeros(grid.K_max + 1),
         ),
-        heat_input=np.zeros(grid.Nr),
-        current_input=np.zeros(grid.Nr),
+        heat_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
+        current_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
     )
     case_cur = case_ref.copy()
     case_cur.profile_coeffs["v"] = [0.03]
     case_cur.profile_coeffs["s1"] = [0.08]
 
-    ref_operator = Operator(name="PF", derivative="rho", grid=grid, case=case_ref)
-    cur_operator = Operator(name="PF", derivative="rho", grid=grid, case=case_cur)
+    ref_operator = Operator(grid=grid, case=case_ref)
+    cur_operator = Operator(grid=grid, case=case_cur)
 
     errors = ref_operator.build_equilibrium(ref_operator.encode_initial_state()).compare(
         cur_operator.build_equilibrium(cur_operator.encode_initial_state())

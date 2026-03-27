@@ -155,10 +155,10 @@ def update_residual(
     out_psin_Z = out_fields[1]
     out_G = out_fields[2]
 
-    psin_r = root_fields[0]
-    psin_rr = root_fields[1]
-    FFn_r = root_fields[2]
-    Pn_r = root_fields[3]
+    psin_r = root_fields[1]
+    psin_rr = root_fields[2]
+    FFn_psin = root_fields[3]
+    Pn_psin = root_fields[4]
 
     R = R_fields[0]
     R_t = R_fields[2]
@@ -176,9 +176,7 @@ def update_residual(
     np.divide(R_t, J, out=out_psin_Z)
     out_psin_Z *= psin_r[:, None]
 
-    psin_r_safe = np.maximum(psin_r, 1e-10)
-
-    G1n = JdivR * (FFn_r[:, None] + R**2 * Pn_r[:, None]) / psin_r_safe[:, None]
+    G1n = JdivR * (FFn_psin[:, None] + R**2 * Pn_psin[:, None])
     G2n = gttdivJR * psin_rr[:, None] + (gttdivJR_r - grtdivJR_t) * psin_r[:, None]
 
     out_G[:] = alpha1 * G1n + alpha2 * G2n

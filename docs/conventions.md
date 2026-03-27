@@ -195,7 +195,8 @@ public 接口规则:
 典型必须说清的内容:
 
 - `u / u_r / u_rr` 是 profile 值和导数
-- `psin_r / psin_rr / FFn_r / Pn_r` 是当前 grid 上的 root fields
+- `psin / psin_r / psin_rr / FFn_psin / Pn_psin` 是当前 grid 上的 root fields
+- `FFn_r / Pn_r` 是由 `FFn_psin * psin_r` 和 `Pn_psin * psin_r` 派生出的 `rho` 导数归一化量
 - `G / psin_R / psin_Z` 是 residual 相关场
 - `replace_case(...)` 要求 packed layout 不变
 - `Equilibrium.resample(...)` 是 snapshot 插值, 不是严格参数化重建

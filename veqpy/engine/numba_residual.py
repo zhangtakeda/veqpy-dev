@@ -142,10 +142,10 @@ def update_residual(
     out_psin_Z = out_fields[1]
     out_G = out_fields[2]
 
-    psin_r = root_fields[0]
-    psin_rr = root_fields[1]
-    FFn_r = root_fields[2]
-    Pn_r = root_fields[3]
+    psin_r = root_fields[1]
+    psin_rr = root_fields[2]
+    FFn_psin = root_fields[3]
+    Pn_psin = root_fields[4]
 
     R = R_fields[0]
     R_t = R_fields[2]
@@ -158,9 +158,6 @@ def update_residual(
 
     nr, nt = out_G.shape
     for i in range(nr):
-        psin_r_safe = psin_r[i]
-        if psin_r_safe < 1e-10:
-            psin_r_safe = 1e-10
         for j in range(nt):
             inv_J = 1.0 / J[i, j]
             psin_R = -Z_t[i, j] * inv_J * psin_r[i]
@@ -168,7 +165,7 @@ def update_residual(
             out_psin_R[i, j] = psin_R
             out_psin_Z[i, j] = psin_Z
 
-            G1n = JdivR[i, j] * (FFn_r[i] + R[i, j] * R[i, j] * Pn_r[i]) / psin_r_safe
+            G1n = JdivR[i, j] * (FFn_psin[i] + R[i, j] * R[i, j] * Pn_psin[i])
             G2n = gttdivJR[i, j] * psin_rr[i] + (gttdivJR_r[i, j] - grtdivJR_t[i, j]) * psin_r[i]
             out_G[i, j] = alpha1 * G1n + alpha2 * G2n
 

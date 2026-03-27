@@ -12,11 +12,14 @@ Public API:
 - update_residual
 - bind_source_runner
 - bind_residual_runner
+- build_source_remap_cache
+- resolve_source_inputs
 - validate_operator
 
 Notes:
 - 这里只负责 backend dispatch.
 - operator layout 与 solver orchestration 保留在上层.
+- source 输入解析正式入口是 `resolve_source_inputs`.
 """
 
 import os
@@ -33,16 +36,18 @@ if BACKEND == "numpy":
         update_residual,
     )
     from veqpy.engine.numpy_source import (
-        DERIVATIVE_NAMES,
-        PSI_DERIVATIVE,
+        COORDINATE_NAMES,
+        PSIN_COORDINATE,
         RHO_AXIS,
-        RHO_DERIVATIVE,
+        RHO_COORDINATE,
         THETA_AXIS,
         bind_source_runner,
+        build_source_remap_cache,
         corrected_integration,
         full_differentiation,
         full_integration,
         quadrature,
+        resolve_source_inputs,
         theta_reduction,
         validate_operator,
     )
@@ -54,16 +59,18 @@ elif BACKEND == "numba":
         update_residual,
     )
     from veqpy.engine.numba_source import (
-        DERIVATIVE_NAMES,
-        PSI_DERIVATIVE,
+        COORDINATE_NAMES,
+        PSIN_COORDINATE,
         RHO_AXIS,
-        RHO_DERIVATIVE,
+        RHO_COORDINATE,
         THETA_AXIS,
         bind_source_runner,
+        build_source_remap_cache,
         corrected_integration,
         full_differentiation,
         full_integration,
         quadrature,
+        resolve_source_inputs,
         theta_reduction,
         validate_operator,
     )
@@ -77,11 +84,13 @@ __all__ = [
     "bind_residual_runner",
     "RHO_AXIS",
     "THETA_AXIS",
-    "DERIVATIVE_NAMES",
-    "PSI_DERIVATIVE",
-    "RHO_DERIVATIVE",
+    "COORDINATE_NAMES",
+    "PSIN_COORDINATE",
+    "RHO_COORDINATE",
     "bind_source_runner",
+    "build_source_remap_cache",
     "validate_operator",
+    "resolve_source_inputs",
     "full_differentiation",
     "theta_reduction",
     "quadrature",

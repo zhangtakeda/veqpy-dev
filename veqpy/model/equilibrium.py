@@ -95,8 +95,9 @@ class Equilibrium(Reactive, Serial):
         a: float,
         grid: Grid,
         active_profiles: dict[str, Profile],
-        FFn_r: np.ndarray,
-        Pn_r: np.ndarray,
+        FFn_psin: np.ndarray,
+        Pn_psin: np.ndarray,
+        psin: np.ndarray | None,
         psin_r: np.ndarray,
         psin_rr: np.ndarray | None,
         alpha1: float = 1.0,
@@ -123,11 +124,15 @@ class Equilibrium(Reactive, Serial):
         ):
             profile.update(grid=self.grid)
 
+        if psin is None:
+            psin = grid.integrate(psin_r, p=2)
+
         if psin_rr is None:
             psin_rr = grid.differentiate(psin_r)
 
-        self.FFn_r = FFn_r
-        self.Pn_r = Pn_r
+        self.psin = psin
+        self.FFn_psin = FFn_psin
+        self.Pn_psin = Pn_psin
         self.psin_r = psin_r
         self.psin_rr = psin_rr
         self.alpha1 = alpha1
@@ -165,8 +170,9 @@ class Equilibrium(Reactive, Serial):
             "a": float,
             "grid": Grid,
             "active_profiles": dict[str, Profile],
-            "FFn_r": np.ndarray,
-            "Pn_r": np.ndarray,
+            "psin": np.ndarray,
+            "FFn_psin": np.ndarray,
+            "Pn_psin": np.ndarray,
             "psin_r": np.ndarray,
             "psin_rr": np.ndarray,
             "alpha1": float,
@@ -280,6 +286,10 @@ class Equilibrium(Reactive, Serial):
         return self.alpha1 * self.alpha2 * self.FFn_r
 
     @property
+    def FFn_r(self) -> np.ndarray:
+        return self.FFn_psin * self.psin_r
+
+    @property
     def F2(self) -> np.ndarray:
         """物理 F^2 剖面."""
         return (self.R0 * self.B0) ** 2 + 2.0 * (self.grid.integrate(self.FF_r) - self.grid.quadrature(self.FF_r))
@@ -297,6 +307,10 @@ class Equilibrium(Reactive, Serial):
         return self.alpha1 * self.alpha2 * self.Pn_r / MU0
 
     @property
+    def Pn_r(self) -> np.ndarray:
+        return self.Pn_psin * self.psin_r
+
+    @property
     def P(self) -> np.ndarray:
         """物理压强剖面 P."""
         return self.grid.integrate(self.P_r) - self.grid.quadrature(self.P_r)
@@ -311,8 +325,7 @@ class Equilibrium(Reactive, Serial):
     def Ip(self) -> np.ndarray:
         """总等离子体电流 Ip (Amps)."""
         R, JdivR = self.geometry.R, self.geometry.JdivR
-        psin_r_safe = np.maximum(self.psin_r, 1e-10)
-        G1n = JdivR * (self.FFn_r[:, None] + R**2 * self.Pn_r[:, None]) / psin_r_safe[:, None]
+        G1n = JdivR * (self.FFn_psin[:, None] + R**2 * self.Pn_psin[:, None])
         return -self.alpha1 * self.grid.quadrature(G1n) / MU0
 
     @property
@@ -342,8 +355,8 @@ class Equilibrium(Reactive, Serial):
         with np.errstate(divide="ignore", invalid="ignore"):
             jtor = (
                 -self.alpha1
-                / (MU0 * self.psin_r * self.S_r)
-                * (2.0 * np.pi * self.FFn_r * self.Ln_r + self.V_r * self.Pn_r / (2.0 * np.pi))
+                / (MU0 * self.S_r)
+                * (2.0 * np.pi * self.FFn_psin * self.Ln_r + self.V_r * self.Pn_psin / (2.0 * np.pi))
             )
 
         _extrapolate_inplace(self.rho, jtor, p=2)
@@ -368,7 +381,7 @@ class Equilibrium(Reactive, Serial):
         """局部环向电流密度 j_phi(R, Z)."""
         R = self.geometry.R
         with np.errstate(divide="ignore", invalid="ignore"):
-            jphi = -self.alpha1 / (MU0 * self.psin_r[:, None] * R) * (self.FFn_r[:, None] + R**2 * self.Pn_r[:, None])
+            jphi = -self.alpha1 / (MU0 * R) * (self.FFn_psin[:, None] + R**2 * self.Pn_psin[:, None])
 
         _extrapolate_inplace(self.rho, jphi, p=2)
         return jphi
@@ -774,18 +787,27 @@ def _build_resampled_equilibrium(
         degree=degree,
         strict=True,
     )
-    FFn_r = _resample_profile(
+    psin = _resample_profile(
         source_grid.rho,
-        np.asarray(equilibrium.FFn_r, dtype=np.float64),
+        np.asarray(equilibrium.psin, dtype=np.float64),
+        plot_grid.rho,
+        left=0.0,
+        right=1.0,
+        degree=degree,
+        strict=True,
+    )
+    FFn_psin = _resample_profile(
+        source_grid.rho,
+        np.asarray(equilibrium.FFn_psin, dtype=np.float64),
         plot_grid.rho,
         left=0.0,
         right=0.0,
         degree=degree,
         strict=True,
     )
-    Pn_r = _resample_profile(
+    Pn_psin = _resample_profile(
         source_grid.rho,
-        np.asarray(equilibrium.Pn_r, dtype=np.float64),
+        np.asarray(equilibrium.Pn_psin, dtype=np.float64),
         plot_grid.rho,
         left=0.0,
         right=0.0,
@@ -802,8 +824,9 @@ def _build_resampled_equilibrium(
         **_shape_profile_payload(
             {name: _resample_profile_triplet(profile) for name, profile in _shape_profiles(equilibrium).items()}
         ),
-        FFn_r=FFn_r,
-        Pn_r=Pn_r,
+        psin=psin,
+        FFn_psin=FFn_psin,
+        Pn_psin=Pn_psin,
         psin_r=psin_r,
         psin_rr=plot_grid.differentiate(psin_r),
         alpha1=equilibrium.alpha1,

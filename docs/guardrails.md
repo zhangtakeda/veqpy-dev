@@ -170,7 +170,8 @@
 
 当前事实:
 
-- `Stage-C` 通过 `source_stage_runner` 绑定 source route.
+- `Stage-C` 由 `Operator.stage_c_source(...)` 组织, 并通过 `resolve_source_inputs(...)`
+  解析 `coordinate + nodes` 的 source 输入语义.
 
 ### Stage-D
 

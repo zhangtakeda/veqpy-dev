@@ -1,13 +1,20 @@
 import numpy as np
 
+from veqpy.engine import PSIN_COORDINATE, RHO_COORDINATE
 from veqpy.engine.numba_geometry import update_geometry as numba_update_geometry
+from veqpy.engine.numba_source import build_source_remap_cache as build_numba_source_remap_cache
 from veqpy.engine.numba_residual import bind_residual_runner as bind_numba_residual_runner
+from veqpy.engine.numba_source import resolve_source_inputs as numba_resolve_source_inputs
 from veqpy.engine.numpy_geometry import update_geometry as numpy_update_geometry
+from veqpy.engine.numpy_source import build_source_remap_cache as build_numpy_source_remap_cache
 from veqpy.engine.numpy_residual import bind_residual_runner as bind_numpy_residual_runner
+from veqpy.engine.numpy_source import resolve_source_inputs as numpy_resolve_source_inputs
 from veqpy.model import Boundary, Geometry, Grid
 from veqpy.operator import Operator
 from veqpy.operator.layout import build_profile_names
 from veqpy.operator.operator_case import OperatorCase
+
+TEST_SOURCE_SAMPLE_COUNT = 21
 
 
 def _poly_fields(grid: Grid, c0: float, c1: float = 0.0, c2: float = 0.0) -> np.ndarray:
@@ -84,6 +91,9 @@ def _build_operator_with_high_order_profiles() -> Operator:
         }
     )
     case = OperatorCase(
+        name="PF",
+        coordinate="rho",
+        nodes="uniform",
         profile_coeffs=profile_coeffs,
         boundary=Boundary(
             a=1.1,
@@ -93,10 +103,10 @@ def _build_operator_with_high_order_profiles() -> Operator:
             c_offsets=np.zeros(grid.K_max + 1),
             s_offsets=np.zeros(grid.K_max + 1),
         ),
-        heat_input=np.zeros(grid.Nr),
-        current_input=np.zeros(grid.Nr),
+        heat_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
+        current_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
     )
-    return Operator(name="PF", derivative="rho", grid=grid, case=case)
+    return Operator(grid=grid, case=case)
 
 
 def test_geometry_update_uses_high_order_fourier_family_terms():
@@ -244,6 +254,9 @@ def test_operator_runtime_propagates_high_order_geometry_and_residual():
     profile_coeffs = {name: None for name in build_profile_names(grid.K_max)}
     profile_coeffs["psin"] = [0.0]
     case = OperatorCase(
+        name="PF",
+        coordinate="rho",
+        nodes="uniform",
         profile_coeffs=profile_coeffs,
         boundary=Boundary(
             a=1.1,
@@ -253,10 +266,10 @@ def test_operator_runtime_propagates_high_order_geometry_and_residual():
             c_offsets=np.array([0.03, 0.0, -0.02, 0.05, 0.0]),
             s_offsets=np.array([0.0, 0.01, 0.0, 0.0, -0.04]),
         ),
-        heat_input=np.zeros(grid.Nr),
-        current_input=np.zeros(grid.Nr),
+        heat_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
+        current_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
     )
-    operator = Operator(name="PF", derivative="rho", grid=grid, case=case)
+    operator = Operator(grid=grid, case=case)
 
     operator.stage_b_geometry()
     expected_tb, _, _ = _expected_tb(grid, operator.c_family_fields, operator.s_family_fields)
@@ -276,3 +289,85 @@ def test_operator_runtime_propagates_high_order_geometry_and_residual():
 
     assert residual.shape == (residual_operator.x_size,)
     assert np.all(np.isfinite(residual))
+
+
+def test_numpy_and_numba_source_resolution_match_for_rho_and_psin_coordinates():
+    grid = Grid(Nr=8, Nt=8, scheme="uniform")
+    heat_input = np.linspace(-1.0, 2.0, TEST_SOURCE_SAMPLE_COUNT)
+    current_input = np.linspace(0.5, -0.25, TEST_SOURCE_SAMPLE_COUNT)
+    psin_query = np.clip(grid.rho * grid.rho + 0.02, 0.0, 1.0)
+    numpy_rho_plan = build_numpy_source_remap_cache("rho", TEST_SOURCE_SAMPLE_COUNT, rho=grid.rho)
+    numba_rho_plan = build_numba_source_remap_cache("rho", TEST_SOURCE_SAMPLE_COUNT, rho=grid.rho)
+    numpy_psin_plan = build_numpy_source_remap_cache("psin", TEST_SOURCE_SAMPLE_COUNT)
+    numba_psin_plan = build_numba_source_remap_cache("psin", TEST_SOURCE_SAMPLE_COUNT)
+    numpy_rho_stencil, numpy_rho_weights, numpy_rho_matrix = numpy_rho_plan
+    numba_rho_stencil, numba_rho_weights, numba_rho_matrix = numba_rho_plan
+    numpy_psin_stencil, numpy_psin_weights, numpy_psin_matrix = numpy_psin_plan
+    numba_psin_stencil, numba_psin_weights, numba_psin_matrix = numba_psin_plan
+
+    numpy_heat_rho = np.empty(grid.Nr, dtype=np.float64)
+    numpy_current_rho = np.empty(grid.Nr, dtype=np.float64)
+    numba_heat_rho = np.empty(grid.Nr, dtype=np.float64)
+    numba_current_rho = np.empty(grid.Nr, dtype=np.float64)
+    numpy_heat_psin = np.empty(grid.Nr, dtype=np.float64)
+    numpy_current_psin = np.empty(grid.Nr, dtype=np.float64)
+    numba_heat_psin = np.empty(grid.Nr, dtype=np.float64)
+    numba_current_psin = np.empty(grid.Nr, dtype=np.float64)
+
+    numpy_resolve_source_inputs(
+        numpy_heat_rho,
+        numpy_current_rho,
+        heat_input,
+        current_input,
+        RHO_COORDINATE,
+        TEST_SOURCE_SAMPLE_COUNT,
+        numpy_rho_weights,
+        numpy_rho_matrix,
+        psin_query,
+    )
+    numba_resolve_source_inputs(
+        numba_heat_rho,
+        numba_current_rho,
+        heat_input,
+        current_input,
+        RHO_COORDINATE,
+        TEST_SOURCE_SAMPLE_COUNT,
+        numba_rho_weights,
+        numba_rho_matrix,
+        psin_query,
+    )
+    numpy_resolve_source_inputs(
+        numpy_heat_psin,
+        numpy_current_psin,
+        heat_input,
+        current_input,
+        PSIN_COORDINATE,
+        TEST_SOURCE_SAMPLE_COUNT,
+        numpy_psin_weights,
+        numpy_psin_matrix,
+        psin_query,
+    )
+    numba_resolve_source_inputs(
+        numba_heat_psin,
+        numba_current_psin,
+        heat_input,
+        current_input,
+        PSIN_COORDINATE,
+        TEST_SOURCE_SAMPLE_COUNT,
+        numba_psin_weights,
+        numba_psin_matrix,
+        psin_query,
+    )
+
+    assert numpy_rho_stencil > 0
+    assert numba_rho_stencil > 0
+    assert numpy_rho_matrix.shape == (grid.Nr, TEST_SOURCE_SAMPLE_COUNT)
+    assert numba_rho_matrix.shape == (grid.Nr, TEST_SOURCE_SAMPLE_COUNT)
+    assert numpy_psin_stencil > 0
+    assert numba_psin_stencil > 0
+    assert numpy_psin_matrix.shape == (0, 0)
+    assert numba_psin_matrix.shape == (0, 0)
+    assert np.allclose(numpy_heat_rho, numba_heat_rho, atol=1e-12, rtol=1e-12)
+    assert np.allclose(numpy_current_rho, numba_current_rho, atol=1e-12, rtol=1e-12)
+    assert np.allclose(numpy_heat_psin, numba_heat_psin, atol=1e-12, rtol=1e-12)
+    assert np.allclose(numpy_current_psin, numba_current_psin, atol=1e-12, rtol=1e-12)

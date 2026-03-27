@@ -15,10 +15,12 @@ $$
 $$
 \color{red}
 \begin{aligned}
-FF_\psi  &= \alpha_1   \hat{FF_\psi} = \alpha_1\frac{\hat{FF_\rho}}{\hat{\psi}_\rho} \\
-P_\psi &=\frac{\alpha_1}{\mu_0} \hat{P}_\psi = \frac{\alpha_1}{\mu_0}\frac{\hat{P_\rho}}{\hat{\psi}_\rho}\\
+FF_\psi  &= \alpha_1   \hat{FF}_{\mathrm{psin}} = \alpha_1\frac{\hat{FF_\rho}}{\hat{\psi}_\rho} \\
+P_\psi &=\frac{\alpha_1}{\mu_0} \hat{P}_{\mathrm{psin}} = \frac{\alpha_1}{\mu_0}\frac{\hat{P_\rho}}{\hat{\psi}_\rho}\\
 \end{aligned}
 $$
+
+其中红色的归一化导数 route 统一记为 `psin`; 物理量 `FF_\psi / P_\psi` 仍表示对实际磁通 $\psi$ 的导数.
 
 - **环向/极向磁通**
 
@@ -65,15 +67,15 @@ $$
   \begin{aligned}
   j_{\phi}(\rho,\theta)&=- \left(\frac{F F_\psi}{\mu_0 R}+R P_\psi\right) \\
   &=- \frac{\alpha_1}{\mu_0\hat{\psi}_\rho}\left(\frac{\hat{F F_\rho}}{R}+R \hat{P}_\rho\right)\\
-  &=\color{red}- \frac{\alpha_1}{\mu_0}\left(\frac{\hat{F F_\psi}}{R}+R \hat{P}_\psi\right)\\
+  &=\color{red}- \frac{\alpha_1}{\mu_0}\left(\frac{\hat{F F}_{\mathrm{psin}}}{R}+R \hat{P}_{\mathrm{psin}}\right)\\
   \end{aligned}
-  $$
+$$
 
 $$
 \begin{aligned}
 j_{\rm tor} \equiv \langle j_{\phi} \rangle_S=  \frac{1}{S_\rho} \frac{\mathrm{d} I_{\text {tor }}}{\mathrm{d} \rho}=-\frac{1}{S_\rho}\left(\frac{2\pi}{\mu_0^2}\ {F F_\psi } L_\rho +\frac{V_\rho P_\psi}{2\pi}\right)\\
   =-\frac{\alpha_1}{\mu_0\hat{\psi}_\rho S_\rho}\left( 2\pi \hat{F F_\rho } \hat{L}_\rho +\frac{V_\rho \hat{P}_\rho}{2\pi}\right) \\
-  =\color{red}-\frac{\alpha_1}{\mu_0S_\rho}\left( 2\pi \hat{F F_\psi } \hat{L}_\rho +\frac{V_\rho \hat{P}_\psi}{2\pi}\right) \\
+  =\color{red}-\frac{\alpha_1}{\mu_0S_\rho}\left( 2\pi \hat{F F}_{\mathrm{psin}} \hat{L}_\rho +\frac{V_\rho \hat{P}_{\mathrm{psin}}}{2\pi}\right) \\
 \end{aligned}
 $$
 

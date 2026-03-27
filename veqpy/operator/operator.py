@@ -21,8 +21,12 @@ from typing import Callable
 import numpy as np
 
 from veqpy.engine import (
+    PSIN_COORDINATE,
+    RHO_COORDINATE,
     bind_residual_runner,
     bind_source_runner,
+    build_source_remap_cache,
+    resolve_source_inputs,
     update_profiles_packed_bulk,
     update_residual,
     validate_operator,
@@ -57,10 +61,8 @@ _PROFILE_SCALE_SPECS: dict[str, tuple[str, ...]] = {"F": ("R0", "B0")}
 
 @dataclass(slots=True)
 class Operator:
-    """封装固定算子名, 导数变量域, grid 与 case 的 residual 求值器."""
+    """封装固定 case, grid 与 runtime 的 residual 求值器."""
 
-    name: str
-    derivative: str
     grid: Grid = field(repr=False)
     case: OperatorCase = field(repr=False)
     geometry: Geometry = field(init=False)
@@ -75,10 +77,11 @@ class Operator:
     psin_R: np.ndarray = field(init=False)
     psin_Z: np.ndarray = field(init=False)
     G: np.ndarray = field(init=False)
+    psin: np.ndarray = field(init=False)
     psin_r: np.ndarray = field(init=False)
     psin_rr: np.ndarray = field(init=False)
-    FFn_r: np.ndarray = field(init=False)
-    Pn_r: np.ndarray = field(init=False)
+    FFn_psin: np.ndarray = field(init=False)
+    Pn_psin: np.ndarray = field(init=False)
     residual_fields: np.ndarray = field(init=False, repr=False)
     root_fields: np.ndarray = field(init=False, repr=False)
     alpha1: float = field(init=False)
@@ -109,13 +112,21 @@ class Operator:
     c_effective_order: int = field(init=False, repr=False)
     s_effective_order: int = field(init=False, repr=False)
     residual_stage_runner: Callable = field(init=False, repr=False)
-    source_stage_runner: Callable = field(init=False, repr=False)
+    source_stage_runners: dict[str, Callable] = field(init=False, repr=False)
+    source_coordinate: str = field(init=False, repr=False)
+    source_coordinate_code: int = field(init=False, repr=False)
+    source_n_src: int = field(init=False, repr=False)
+    source_stencil_size: int = field(init=False, repr=False)
+    source_barycentric_weights: np.ndarray = field(init=False, repr=False)
+    source_fixed_remap_matrix: np.ndarray = field(init=False, repr=False)
+    source_input_fields: np.ndarray = field(init=False, repr=False)
+    source_psin_query: np.ndarray = field(init=False, repr=False)
+    materialized_heat_input: np.ndarray = field(init=False, repr=False)
+    materialized_current_input: np.ndarray = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         """完成 layout 构造, 运行时缓冲区分配和 case 绑定."""
-        spec = validate_operator(self.name, self.derivative)
-
-        self.name = spec.name
+        self._refresh_operator_identity()
         self.geometry = Geometry(grid=self.grid)
         self.prefix_profile_names = PREFIX_PROFILE_NAMES
         self.shape_profile_names = build_shape_profile_names(self.grid.K_max)
@@ -138,7 +149,6 @@ class Operator:
         self._validate_runtime_profile_support()
 
         self._setup_runtime_state()
-        self.source_stage_runner = bind_source_runner(spec.name, self.derivative)
         self.residual_stage_runner = lambda *args, **kwargs: np.zeros(self.x_size, dtype=np.float64)
         self._refresh_runtime_state()
 
@@ -238,30 +248,35 @@ class Operator:
 
     def stage_c_source(self) -> None:
         """执行 source 阶段并刷新 root fields 与缩放系数."""
-        alpha1, alpha2 = self.source_stage_runner(
-            self.psin_r,
-            self.psin_rr,
-            self.FFn_r,
-            self.Pn_r,
-            self.case.heat_input,
-            self.case.current_input,
-            float(self.case.R0),
-            float(self.case.B0),
-            self.grid.weights,
-            self.grid.differentiation_matrix,
-            self.grid.integration_matrix,
-            self.grid.rho,
-            self.geometry.V_r,
-            self.geometry.Kn,
-            self.geometry.Kn_r,
-            self.geometry.Ln_r,
-            self.geometry.S_r,
-            self.geometry.R,
-            self.geometry.JdivR,
-            self.F_profile.u,
-            float(self.case.Ip),
-            float(self.case.beta),
-        )
+        if self.source_coordinate_code == PSIN_COORDINATE:
+            _normalize_psin_query_inplace(self.source_psin_query, self.psin_profile.u)
+            alpha1, alpha2 = self._run_psin_source_fixed_point()
+        else:
+            alpha1, alpha2 = self.source_stage_runners[self.case.coordinate](
+                self.psin,
+                self.psin_r,
+                self.psin_rr,
+                self.FFn_psin,
+                self.Pn_psin,
+                self.materialized_heat_input,
+                self.materialized_current_input,
+                float(self.case.R0),
+                float(self.case.B0),
+                self.grid.weights,
+                self.grid.differentiation_matrix,
+                self.grid.integration_matrix,
+                self.grid.rho,
+                self.geometry.V_r,
+                self.geometry.Kn,
+                self.geometry.Kn_r,
+                self.geometry.Ln_r,
+                self.geometry.S_r,
+                self.geometry.R,
+                self.geometry.JdivR,
+                self.F_profile.u,
+                float(self.case.Ip),
+                float(self.case.beta),
+            )
         self.alpha1 = float(alpha1)
         self.alpha2 = float(alpha2)
 
@@ -353,11 +368,22 @@ class Operator:
         self.psin_R = self.residual_fields[0]
         self.psin_Z = self.residual_fields[1]
         self.G = self.residual_fields[2]
-        self.root_fields = np.empty((4, nr), dtype=np.float64)
-        self.psin_r = self.root_fields[0]
-        self.psin_rr = self.root_fields[1]
-        self.FFn_r = self.root_fields[2]
-        self.Pn_r = self.root_fields[3]
+        self.root_fields = np.empty((5, nr), dtype=np.float64)
+        self.psin = self.root_fields[0]
+        self.psin_r = self.root_fields[1]
+        self.psin_rr = self.root_fields[2]
+        self.FFn_psin = self.root_fields[3]
+        self.Pn_psin = self.root_fields[4]
+        self.source_coordinate = ""
+        self.source_coordinate_code = -1
+        self.source_n_src = 0
+        self.source_stencil_size = 0
+        self.source_barycentric_weights = np.empty(0, dtype=np.float64)
+        self.source_fixed_remap_matrix = np.empty((0, 0), dtype=np.float64)
+        self.source_input_fields = np.empty((2, nr), dtype=np.float64)
+        self.source_psin_query = np.empty(nr, dtype=np.float64)
+        self.materialized_heat_input = self.source_input_fields[0]
+        self.materialized_current_input = self.source_input_fields[1]
         self.alpha1 = 0.0
         self.alpha2 = 0.0
         self.active_u_fields = np.empty((n_active, 3, nr), dtype=np.float64)
@@ -371,10 +397,16 @@ class Operator:
         self.s_family_fields = np.zeros((self.grid.K_max + 1, 3, nr), dtype=np.float64)
 
     def _refresh_runtime_state(self) -> None:
+        self._refresh_operator_identity()
         self._refresh_profile_runtime()
         self._refresh_fourier_family_metadata()
+        self._refresh_source_runtime()
         self._refresh_stage_a_runtime()
         self._refresh_runtime_bindings()
+
+    def _refresh_operator_identity(self) -> None:
+        spec = validate_operator(self.case.name, self.case.coordinate)
+        self.source_stage_runners = {coord: bind_source_runner(spec.name, coord) for coord in ("rho", "psin")}
 
     def _refresh_profile_runtime(self) -> None:
         for name in self.profile_names:
@@ -437,6 +469,7 @@ class Operator:
         return float(offsets[order])
 
     def _validate_case_compatibility(self, case: OperatorCase) -> None:
+        validate_operator(case.name, case.coordinate)
         profile_L, coeff_index, order_offsets = build_profile_layout(
             case.profile_coeffs,
             profile_names=self.profile_names,
@@ -448,14 +481,52 @@ class Operator:
             raise ValueError("Replacement case changes the packed coefficient layout")
         if not np.array_equal(order_offsets, self.order_offsets):
             raise ValueError("Replacement case changes the degree ordering layout")
-        if case.heat_input.shape != (self.grid.Nr,) or case.current_input.shape != (self.grid.Nr,):
-            raise ValueError(f"Expected heat_input/current_input to have shape ({self.grid.Nr},)")
+        self._validate_source_inputs(case)
 
     def _refresh_runtime_bindings(self) -> None:
         self.residual_stage_runner = self._build_residual_stage_runner()
         fixed_profile_ids = np.flatnonzero(~self.active_profile_mask).astype(np.int64, copy=False)
         for p in fixed_profile_ids:
             self._profile_by_name(self.profile_names[int(p)]).update()
+
+    def _refresh_source_runtime(self) -> None:
+        self._validate_source_inputs(self.case)
+        if not self._source_plan_matches_case(self.case):
+            self.source_coordinate = self.case.coordinate
+            self.source_coordinate_code = PSIN_COORDINATE if self.case.coordinate == "psin" else RHO_COORDINATE
+            self.source_n_src = int(self.case.heat_input.shape[0])
+            (
+                self.source_stencil_size,
+                self.source_barycentric_weights,
+                self.source_fixed_remap_matrix,
+            ) = build_source_remap_cache(
+                self.source_coordinate,
+                self.source_n_src,
+                rho=self.grid.rho,
+            )
+        if self.source_coordinate_code != PSIN_COORDINATE:
+            resolve_source_inputs(
+                self.materialized_heat_input,
+                self.materialized_current_input,
+                self.case.heat_input,
+                self.case.current_input,
+                self.source_coordinate_code,
+                self.source_n_src,
+                self.source_barycentric_weights,
+                self.source_fixed_remap_matrix,
+                self.psin,
+            )
+
+    def _validate_source_inputs(self, case: OperatorCase) -> None:
+        if case.heat_input.shape != case.current_input.shape:
+            raise ValueError(
+                f"Expected heat_input/current_input to share a shape, got {case.heat_input.shape} and {case.current_input.shape}"
+            )
+        if case.heat_input.shape[0] < 1:
+            raise ValueError(f"Expected {case.coordinate}-coordinate inputs to contain at least one sample")
+
+    def _source_plan_matches_case(self, case: OperatorCase) -> bool:
+        return self.source_coordinate == case.coordinate and self.source_n_src == int(case.heat_input.shape[0])
 
     def _refresh_stage_a_runtime(self) -> None:
         if self.active_profile_ids.size == 0:
@@ -557,6 +628,51 @@ class Operator:
             self.geometry.g_fields,
         )
 
+    def _run_psin_source_fixed_point(self) -> tuple[float, float]:
+        alpha1 = float("nan")
+        alpha2 = float("nan")
+        for _ in range(8):
+            resolve_source_inputs(
+                self.materialized_heat_input,
+                self.materialized_current_input,
+                self.case.heat_input,
+                self.case.current_input,
+                self.source_coordinate_code,
+                self.source_n_src,
+                self.source_barycentric_weights,
+                self.source_fixed_remap_matrix,
+                self.source_psin_query,
+            )
+            alpha1, alpha2 = self.source_stage_runners[self.case.coordinate](
+                self.psin,
+                self.psin_r,
+                self.psin_rr,
+                self.FFn_psin,
+                self.Pn_psin,
+                self.materialized_heat_input,
+                self.materialized_current_input,
+                float(self.case.R0),
+                float(self.case.B0),
+                self.grid.weights,
+                self.grid.differentiation_matrix,
+                self.grid.integration_matrix,
+                self.grid.rho,
+                self.geometry.V_r,
+                self.geometry.Kn,
+                self.geometry.Kn_r,
+                self.geometry.Ln_r,
+                self.geometry.S_r,
+                self.geometry.R,
+                self.geometry.JdivR,
+                self.F_profile.u,
+                float(self.case.Ip),
+                float(self.case.beta),
+            )
+            if np.max(np.abs(self.psin - self.source_psin_query)) <= 1e-10:
+                break
+            np.copyto(self.source_psin_query, self.psin)
+        return alpha1, alpha2
+
     def _assemble_residual(self) -> np.ndarray:
         return self.residual_stage_runner(
             self.G,
@@ -585,8 +701,9 @@ class Operator:
             a=case.a,
             grid=self.grid,
             active_profiles=snapshot_profiles,
-            FFn_r=self.FFn_r.copy(),
-            Pn_r=self.Pn_r.copy(),
+            psin=self.psin.copy(),
+            FFn_psin=self.FFn_psin.copy(),
+            Pn_psin=self.Pn_psin.copy(),
             psin_r=self.psin_r.copy(),
             psin_rr=self.psin_rr.copy(),
             alpha1=float(self.alpha1),
@@ -606,3 +723,23 @@ class Operator:
             name: self._snapshot_profile(name, coeff_blocks[self.profile_index[name]])
             for name in self.shape_profile_names
         }
+
+
+def _normalize_psin_query_inplace(out: np.ndarray, source: np.ndarray | None) -> np.ndarray:
+    if source is None:
+        raise RuntimeError("psin_profile.u is not initialized")
+
+    np.copyto(out, np.asarray(source, dtype=np.float64))
+    if out.ndim != 1 or out.size < 2:
+        raise ValueError(f"Expected psin query to be 1D with at least two points, got {out.shape}")
+
+    offset = float(out[0])
+    scale = float(out[-1] - offset)
+    if abs(scale) < 1e-12:
+        raise ValueError("psin query does not span a valid normalized flux interval")
+
+    out -= offset
+    out /= scale
+    out[0] = 0.0
+    out[-1] = 1.0
+    return out

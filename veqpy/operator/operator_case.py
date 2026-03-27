@@ -27,6 +27,9 @@ from veqpy.model import Boundary
 class OperatorCase:
     """描述一次 operator 求值所需的静态 case 输入."""
 
+    name: str
+    coordinate: str
+    nodes: str
     profile_coeffs: dict[str, list[float] | None]
     boundary: Boundary
     heat_input: np.ndarray
@@ -36,12 +39,20 @@ class OperatorCase:
 
     def __post_init__(self) -> None:
         """在构造后把各字段规整为稳定运行时表示."""
+        object.__setattr__(self, "name", _normalize_case_value("name", self.name))
+        object.__setattr__(self, "coordinate", _normalize_case_value("coordinate", self.coordinate))
+        object.__setattr__(self, "nodes", _normalize_case_value("nodes", self.nodes))
         object.__setattr__(self, "profile_coeffs", _normalize_case_value("profile_coeffs", self.profile_coeffs))
         object.__setattr__(self, "boundary", _normalize_case_value("boundary", self.boundary))
         for name in _ORDERED_OPTIONAL_FLOAT_FIELD_NAMES:
             object.__setattr__(self, name, _normalize_case_value(name, getattr(self, name)))
         for name in _ORDERED_ARRAY_FIELD_NAMES:
             object.__setattr__(self, name, _normalize_case_value(name, getattr(self, name)))
+        if self.heat_input.shape != self.current_input.shape:
+            raise ValueError(
+                f"heat_input and current_input must share the same shape, "
+                f"got {self.heat_input.shape} and {self.current_input.shape}"
+            )
 
     def __setattr__(self, name: str, value) -> None:
         if name in _CASE_FIELD_NAMES:
@@ -50,7 +61,10 @@ class OperatorCase:
 
     def __rich__(self):
         tree = Tree("[bold blue]OperatorCase[/]")
+        tree.add(f"name: {self.name}")
         tree.add(self.boundary)
+        tree.add(f"coordinate: {self.coordinate}")
+        tree.add(f"nodes: {self.nodes}")
         tree.add(
             f"heat_input: shape={self.heat_input.shape}, "
             f"min={float(np.min(self.heat_input)):.3f}, max={float(np.max(self.heat_input)):.3f}"
@@ -77,6 +91,7 @@ class OperatorCase:
     def copy(self) -> OperatorCase:
         """创建一个与当前 case 独立的副本."""
         return OperatorCase(
+            name=self.name,
             profile_coeffs=_copy_coeffs(self.profile_coeffs),
             boundary=Boundary(
                 a=self.a,
@@ -89,6 +104,8 @@ class OperatorCase:
             ),
             heat_input=self.heat_input.copy(),
             current_input=self.current_input.copy(),
+            coordinate=self.coordinate,
+            nodes=self.nodes,
             Ip=self.Ip,
             beta=self.beta,
         )
@@ -156,6 +173,8 @@ def _as_1d_coeff_list(value: list[float], *, name: str) -> list[float]:
 
 
 def _normalize_case_value(name: str, value):
+    if name == "name":
+        return str(value).upper()
     if name == "profile_coeffs":
         return _normalize_coeffs(value)
     if name == "boundary":
@@ -164,6 +183,16 @@ def _normalize_case_value(name: str, value):
         if isinstance(value, dict):
             return Boundary(**value)
         raise TypeError(f"boundary must be Boundary or dict, got {type(value).__name__}")
+    if name == "coordinate":
+        coord = str(value).lower()
+        if coord not in _COORDINATE_FIELD_VALUES:
+            raise ValueError(f"coordinate must be one of {_COORDINATE_FIELD_VALUES}, got {value!r}")
+        return coord
+    if name == "nodes":
+        nodes = str(value).lower()
+        if nodes not in _NODE_FIELD_VALUES:
+            raise ValueError(f"nodes must be one of {_NODE_FIELD_VALUES}, got {value!r}")
+        return nodes
     if name in _OPTIONAL_FLOAT_FIELD_NAMES:
         return np.nan if value is None else float(value)
     if name in _ARRAY_FIELD_NAMES:
@@ -173,11 +202,16 @@ def _normalize_case_value(name: str, value):
 
 _OPTIONAL_FLOAT_FIELD_NAMES = {"Ip", "beta"}
 _ARRAY_FIELD_NAMES = {"heat_input", "current_input"}
+_COORDINATE_FIELD_VALUES = ("rho", "psin")
+_NODE_FIELD_VALUES = ("uniform",)
 _ORDERED_OPTIONAL_FLOAT_FIELD_NAMES = ("Ip", "beta")
 _ORDERED_ARRAY_FIELD_NAMES = ("heat_input", "current_input")
 _CASE_FIELD_NAMES = {
     "profile_coeffs",
+    "name",
     "boundary",
+    "coordinate",
+    "nodes",
     *_OPTIONAL_FLOAT_FIELD_NAMES,
     *_ARRAY_FIELD_NAMES,
 }
