@@ -853,7 +853,7 @@ def _render_equilibrium_summary(*, surface_equilibrium: Equilibrium, profile_equ
     panel_a = _build_surface_panel_data(surface_equilibrium)
     panel_b = _build_shape_panel_data(profile_equilibrium)
     panel_c = _build_source_panel_data(profile_equilibrium)
-    panel_d = _build_jphi_panel_data(surface_equilibrium)
+    panel_d = _build_jphi_panel_data(surface_equilibrium, profile_equilibrium)
     panel_e = _build_current_panel_data(profile_equilibrium)
     panel_f = _build_safety_panel_data(profile_equilibrium)
 
@@ -931,11 +931,19 @@ def _build_source_panel_data(equilibrium: Equilibrium) -> dict:
     }
 
 
-def _build_jphi_panel_data(equilibrium: Equilibrium) -> dict:
+def _build_jphi_panel_data(
+    surface_equilibrium: Equilibrium,
+    profile_equilibrium: Equilibrium | None = None,
+) -> dict:
+    jphi = (
+        _resampled_jphi_for_plot(surface_equilibrium, profile_equilibrium)
+        if profile_equilibrium is not None
+        else surface_equilibrium.jphi
+    )
     return {
-        "R": np.hstack([equilibrium.geometry.R, equilibrium.geometry.R[:, :1]]),
-        "Z": np.hstack([equilibrium.geometry.Z, equilibrium.geometry.Z[:, :1]]),
-        "jphi": np.hstack([equilibrium.jphi, equilibrium.jphi[:, :1]]) / 1e6,
+        "R": np.hstack([surface_equilibrium.geometry.R, surface_equilibrium.geometry.R[:, :1]]),
+        "Z": np.hstack([surface_equilibrium.geometry.Z, surface_equilibrium.geometry.Z[:, :1]]),
+        "jphi": np.hstack([jphi, jphi[:, :1]]) / 1e6,
     }
 
 
@@ -967,6 +975,51 @@ def _comparison_profile_values(equilibrium: Equilibrium, key: str) -> np.ndarray
     if key == "jpara":
         return equilibrium.jpara.copy()
     raise KeyError(f"Unsupported comparison profile {key!r}")
+
+
+def _resample_profile_linear(
+    rho_src: np.ndarray,
+    y_src: np.ndarray,
+    rho_eval: np.ndarray,
+    *,
+    left: float | None = None,
+    right: float | None = None,
+) -> np.ndarray:
+    rho_src = np.asarray(rho_src, dtype=np.float64)
+    y_src = np.asarray(y_src, dtype=np.float64)
+    rho_eval = np.asarray(rho_eval, dtype=np.float64)
+    if rho_src.ndim != 1 or y_src.ndim != 1 or rho_eval.ndim != 1 or rho_src.shape != y_src.shape:
+        raise ValueError("rho_src, y_src, rho_eval must be 1D arrays and source arrays must share shape")
+    left_val = float(y_src[0]) if left is None else float(left)
+    right_val = float(y_src[-1]) if right is None else float(right)
+    return np.interp(rho_eval, rho_src, y_src, left=left_val, right=right_val)
+
+
+def _resampled_jphi_for_plot(surface_equilibrium: Equilibrium, profile_equilibrium: Equilibrium) -> np.ndarray:
+    if surface_equilibrium.grid == profile_equilibrium.grid and np.allclose(surface_equilibrium.rho, profile_equilibrium.rho):
+        return surface_equilibrium.jphi
+
+    rho_src = np.asarray(profile_equilibrium.rho, dtype=np.float64)
+    rho_eval = np.asarray(surface_equilibrium.rho, dtype=np.float64)
+    FFn_psin = _resample_profile_linear(
+        rho_src,
+        np.asarray(profile_equilibrium.FFn_psin, dtype=np.float64),
+        rho_eval,
+        left=0.0,
+        right=0.0,
+    )
+    Pn_psin = _resample_profile_linear(
+        rho_src,
+        np.asarray(profile_equilibrium.Pn_psin, dtype=np.float64),
+        rho_eval,
+        left=0.0,
+        right=0.0,
+    )
+    R = surface_equilibrium.geometry.R
+    with np.errstate(divide="ignore", invalid="ignore"):
+        jphi = -profile_equilibrium.alpha1 / (MU0 * R) * (FFn_psin[:, None] + R**2 * Pn_psin[:, None])
+    _extrapolate_inplace(surface_equilibrium.rho, jphi, p=2)
+    return jphi
 
 
 def _active_shape_keys(reference: Equilibrium, other: Equilibrium) -> list[str]:

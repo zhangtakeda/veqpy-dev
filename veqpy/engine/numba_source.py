@@ -3,12 +3,11 @@ Module: engine.numba_source
 
 Role:
 - 负责在 numba backend 下注册 source operators.
-- 负责校验 operator/coordinate 组合并执行 source kernels.
+- 负责校验 operator/coordinate/nodes 组合并执行 source kernels.
 
 Public API:
 - register_operator
 - validate_operator
-- bind_source_runner
 - build_source_remap_cache
 - resolve_source_inputs
 
@@ -45,19 +44,35 @@ COORDINATE_CODES = {
 
 @dataclass(frozen=True, slots=True)
 class _SourceSpec:
-    name: str
-    family: str
     supported_coordinates: tuple[int, ...]
     implementation: Callable
 
 
 OPERATOR_REGISTRY: dict[str, _SourceSpec] = {}
 
+UNIFORM_NODES = "uniform"
+GRID_NODES = "grid"
+NODE_NAMES = (UNIFORM_NODES, GRID_NODES)
+
+SOURCE_STRATEGY_SINGLE_PASS = "single_pass"
+SOURCE_STRATEGY_PROFILE_OWNED_PSIN = "profile_owned_psin"
+SOURCE_STRATEGY_FIXED_POINT_PSIN = "fixed_point_psin"
+
+
+@dataclass(frozen=True, slots=True)
+class _SourceRouteSpec:
+    coordinate_code: int
+    nodes: str
+    implementation: Callable
+    source_strategy: str
+
+
+ROUTE_REGISTRY: dict[tuple[str, int, str], _SourceRouteSpec] = {}
+
 
 def register_operator(
     name: str,
     *,
-    family: str,
     supported_coordinates: tuple[int, ...] = (RHO_COORDINATE, PSIN_COORDINATE),
 ) -> Callable:
     """注册一个 source operator kernel."""
@@ -68,8 +83,6 @@ def register_operator(
             raise ValueError(f"_SourceSpec {name!r} is already registered")
 
         OPERATOR_REGISTRY[name] = _SourceSpec(
-            name=name,
-            family=family,
             supported_coordinates=supported_coordinates,
             implementation=func,
         )
@@ -78,89 +91,58 @@ def register_operator(
     return decorator
 
 
-def validate_operator(name: str, coordinate: str) -> _SourceSpec:
-    """校验 operator/coordinate 组合并返回注册规格."""
-
+def register_route(
+    name: str,
+    coordinate: str,
+    nodes: str,
+    *,
+    implementation_name: str,
+    source_strategy: str,
+) -> None:
     coordinate_code = _normalize_coordinate(coordinate)
+    normalized_nodes = _normalize_nodes(nodes)
     try:
-        spec = OPERATOR_REGISTRY[name]
+        implementation_spec = OPERATOR_REGISTRY[implementation_name]
     except KeyError as exc:
-        supported = ", ".join(OPERATOR_REGISTRY)
-        raise KeyError(f"Unknown operator {name!r}. Supported operators: {supported}") from exc
+        raise KeyError(
+            f"Unknown implementation {implementation_name!r} for route {(name, coordinate, nodes)!r}"
+        ) from exc
 
-    if coordinate_code not in spec.supported_coordinates:
-        raise ValueError(
-            f"_SourceSpec {name!r} does not support coordinate={coordinate!r}. Supported: {spec.supported_coordinates}"
-        )
+    if coordinate_code not in implementation_spec.supported_coordinates:
+        raise ValueError(f"Implementation {implementation_name!r} does not support coordinate={coordinate!r}")
 
-    return spec
+    key = (str(name).upper(), coordinate_code, normalized_nodes)
+    if key in ROUTE_REGISTRY:
+        raise ValueError(f"Source route {key!r} is already registered")
+
+    ROUTE_REGISTRY[key] = _SourceRouteSpec(
+        coordinate_code=coordinate_code,
+        nodes=normalized_nodes,
+        implementation=implementation_spec.implementation,
+        source_strategy=source_strategy,
+    )
 
 
-def bind_source_runner(name: str, coordinate: str) -> Callable:
-    """绑定 Stage-C source runner."""
+def validate_operator(name: str, coordinate: str, nodes: str = UNIFORM_NODES) -> _SourceRouteSpec:
+    """校验 operator/coordinate/nodes 组合并返回 route 规格."""
 
     coordinate_code = _normalize_coordinate(coordinate)
-    spec = validate_operator(name, coordinate)
-    operator_kernel = spec.implementation
-
-    def runner(
-        out_psin: np.ndarray,
-        out_psin_r: np.ndarray,
-        out_psin_rr: np.ndarray,
-        out_FFn_psin: np.ndarray,
-        out_Pn_psin: np.ndarray,
-        heat_input: np.ndarray,
-        current_input: np.ndarray,
-        R0: float,
-        B0: float,
-        weights: np.ndarray,
-        differentiation_matrix: np.ndarray,
-        integration_matrix: np.ndarray,
-        rho: np.ndarray,
-        V_r: np.ndarray,
-        Kn: np.ndarray,
-        Kn_r: np.ndarray,
-        Ln_r: np.ndarray,
-        S_r: np.ndarray,
-        R: np.ndarray,
-        JdivR: np.ndarray,
-        F: np.ndarray,
-        Ip: float,
-        beta: float,
-    ) -> tuple[float, float]:
-        return operator_kernel(
-            out_psin,
-            out_psin_r,
-            out_psin_rr,
-            out_FFn_psin,
-            out_Pn_psin,
-            heat_input,
-            current_input,
-            coordinate_code,
-            R0,
-            B0,
-            weights,
-            differentiation_matrix,
-            integration_matrix,
-            rho,
-            V_r,
-            Kn,
-            Kn_r,
-            Ln_r,
-            S_r,
-            R,
-            JdivR,
-            F,
-            Ip,
-            beta,
-        )
-
-    return runner
+    normalized_nodes = _normalize_nodes(nodes)
+    key = (str(name).upper(), coordinate_code, normalized_nodes)
+    try:
+        return ROUTE_REGISTRY[key]
+    except KeyError as exc:
+        supported_names = sorted({route_name for route_name, _, _ in ROUTE_REGISTRY})
+        supported = ", ".join(supported_names)
+        raise KeyError(
+            f"Unknown source route name={name!r}, coordinate={coordinate!r}, nodes={nodes!r}. "
+            f"Supported operator names: {supported}"
+        ) from exc
 
 
-@register_operator("PF", family="strict")
+@register_operator("PF_RHO", supported_coordinates=(RHO_COORDINATE,))
 @njit(cache=True, nogil=True)
-def update_PF(
+def update_PF_rho(
     out_psin: np.ndarray,
     out_psin_r: np.ndarray,
     out_psin_rr: np.ndarray,
@@ -186,37 +168,68 @@ def update_PF(
     Ip: float,
     beta: float,
 ) -> tuple[float, float]:
-    """根据 PF 约束更新 source root fields."""
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
     pressure_scale = MU0 if not has_Ip and not has_beta else 1.0
-    if coordinate_code == RHO_COORDINATE:
-        return _update_pf_from_rho_inputs(
-            out_psin,
-            out_psin_r,
-            out_psin_rr,
-            out_FFn_psin,
-            out_Pn_psin,
-            heat_input,
-            current_input,
-            R0,
-            B0,
-            weights,
-            differentiation_matrix,
-            integration_matrix,
-            rho,
-            V_r,
-            Kn,
-            Kn_r,
-            Ln_r,
-            S_r,
-            R,
-            JdivR,
-            F,
-            Ip,
-            beta,
-            pressure_scale,
-        )
+    return _update_pf_from_rho_inputs(
+        out_psin,
+        out_psin_r,
+        out_psin_rr,
+        out_FFn_psin,
+        out_Pn_psin,
+        heat_input,
+        current_input,
+        R0,
+        B0,
+        weights,
+        differentiation_matrix,
+        integration_matrix,
+        rho,
+        V_r,
+        Kn,
+        Kn_r,
+        Ln_r,
+        S_r,
+        R,
+        JdivR,
+        F,
+        Ip,
+        beta,
+        pressure_scale,
+    )
+
+
+@register_operator("PF_PSIN", supported_coordinates=(PSIN_COORDINATE,))
+@njit(cache=True, nogil=True)
+def update_PF_psin(
+    out_psin: np.ndarray,
+    out_psin_r: np.ndarray,
+    out_psin_rr: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    V_r: np.ndarray,
+    Kn: np.ndarray,
+    Kn_r: np.ndarray,
+    Ln_r: np.ndarray,
+    S_r: np.ndarray,
+    R: np.ndarray,
+    JdivR: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+) -> tuple[float, float]:
+    has_Ip = not np.isnan(Ip)
+    has_beta = not np.isnan(beta)
+    pressure_scale = MU0 if not has_Ip and not has_beta else 1.0
     return _update_pf_from_psin_inputs(
         out_psin,
         out_psin_r,
@@ -428,9 +441,8 @@ def _update_pf_from_psin_inputs(
     return alpha1, alpha2
 
 
-@register_operator("PP", family="strict")
 @njit(cache=True, nogil=True)
-def update_PP(
+def _update_pp_from_rho_inputs(
     out_psin: np.ndarray,
     out_psin_r: np.ndarray,
     out_psin_rr: np.ndarray,
@@ -456,7 +468,6 @@ def update_PP(
     Ip: float,
     beta: float,
 ) -> tuple[float, float]:
-    """根据 PP 约束更新 source root fields."""
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
 
@@ -472,20 +483,14 @@ def update_PP(
     psin_r_safe = _maximum_floor(out_psin_r, 1e-10)
 
     if has_beta:
-        if coordinate_code == RHO_COORDINATE:
-            _fill_scaled_ratio(out_Pn_psin, heat_input, psin_r_safe, 1.0)
-        else:
-            _copy_vector(out_Pn_psin, heat_input)
+        _fill_scaled_ratio(out_Pn_psin, heat_input, psin_r_safe, 1.0)
         Pn_r = np.empty_like(out_psin_r)
         _fill_pointwise_product(Pn_r, out_Pn_psin, out_psin_r)
         Pn = _compute_Pn(Pn_r, integration_matrix, weights)
         alpha1 = 0.5 * beta * B0**2 / alpha2 * quadrature(V_r, weights) / quadrature(Pn * V_r, weights)
     else:
         P_r = np.empty_like(out_psin_r)
-        if coordinate_code == RHO_COORDINATE:
-            _copy_vector(P_r, heat_input)
-        else:
-            _fill_scaled_product(P_r, heat_input, out_psin_r, alpha2)
+        _copy_vector(P_r, heat_input)
         alpha1 = -MU0 / alpha2 * quadrature(P_r, weights)
         _fill_scaled_ratio(out_Pn_psin, P_r, psin_r_safe, MU0 / (alpha1 * alpha2))
 
@@ -493,9 +498,8 @@ def update_PP(
     return alpha1, alpha2
 
 
-@register_operator("PI", family="strict")
 @njit(cache=True, nogil=True)
-def update_PI(
+def _update_pp_from_psin_inputs(
     out_psin: np.ndarray,
     out_psin_r: np.ndarray,
     out_psin_rr: np.ndarray,
@@ -521,7 +525,175 @@ def update_PI(
     Ip: float,
     beta: float,
 ) -> tuple[float, float]:
-    """根据 PI 约束更新 source root fields."""
+    has_Ip = not np.isnan(Ip)
+    has_beta = not np.isnan(beta)
+
+    if has_Ip:
+        _copy_vector(out_psin_r, current_input)
+        alpha2 = MU0 * Ip / (2.0 * np.pi * Kn[-1] * out_psin_r[-1])
+    else:
+        alpha2 = quadrature(current_input, weights)
+        _fill_scaled_vector(out_psin_r, current_input, 1.0 / alpha2)
+
+    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
+    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    psin_r_safe = _maximum_floor(out_psin_r, 1e-10)
+
+    if has_beta:
+        _copy_vector(out_Pn_psin, heat_input)
+        Pn_r = np.empty_like(out_psin_r)
+        _fill_pointwise_product(Pn_r, out_Pn_psin, out_psin_r)
+        Pn = _compute_Pn(Pn_r, integration_matrix, weights)
+        alpha1 = 0.5 * beta * B0**2 / alpha2 * quadrature(V_r, weights) / quadrature(Pn * V_r, weights)
+    else:
+        P_r = np.empty_like(out_psin_r)
+        _fill_scaled_product(P_r, heat_input, out_psin_r, alpha2)
+        alpha1 = -MU0 / alpha2 * quadrature(P_r, weights)
+        _fill_scaled_ratio(out_Pn_psin, P_r, psin_r_safe, MU0 / (alpha1 * alpha2))
+
+    _fill_pp_ffn_psin(out_FFn_psin, out_psin_r, Kn_r, Kn, out_psin_rr, V_r, out_Pn_psin, Ln_r, alpha2 / alpha1)
+    return alpha1, alpha2
+
+
+@register_operator("PP_RHO", supported_coordinates=(RHO_COORDINATE,))
+@njit(cache=True, nogil=True)
+def update_PP_RHO(
+    out_psin: np.ndarray,
+    out_psin_r: np.ndarray,
+    out_psin_rr: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    V_r: np.ndarray,
+    Kn: np.ndarray,
+    Kn_r: np.ndarray,
+    Ln_r: np.ndarray,
+    S_r: np.ndarray,
+    R: np.ndarray,
+    JdivR: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+) -> tuple[float, float]:
+    return _update_pp_from_rho_inputs(
+        out_psin,
+        out_psin_r,
+        out_psin_rr,
+        out_FFn_psin,
+        out_Pn_psin,
+        heat_input,
+        current_input,
+        coordinate_code,
+        R0,
+        B0,
+        weights,
+        differentiation_matrix,
+        integration_matrix,
+        rho,
+        V_r,
+        Kn,
+        Kn_r,
+        Ln_r,
+        S_r,
+        R,
+        JdivR,
+        F,
+        Ip,
+        beta,
+    )
+
+
+@register_operator("PP_PSIN", supported_coordinates=(PSIN_COORDINATE,))
+@njit(cache=True, nogil=True)
+def update_PP_PSIN(
+    out_psin: np.ndarray,
+    out_psin_r: np.ndarray,
+    out_psin_rr: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    V_r: np.ndarray,
+    Kn: np.ndarray,
+    Kn_r: np.ndarray,
+    Ln_r: np.ndarray,
+    S_r: np.ndarray,
+    R: np.ndarray,
+    JdivR: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+) -> tuple[float, float]:
+    return _update_pp_from_psin_inputs(
+        out_psin,
+        out_psin_r,
+        out_psin_rr,
+        out_FFn_psin,
+        out_Pn_psin,
+        heat_input,
+        current_input,
+        coordinate_code,
+        R0,
+        B0,
+        weights,
+        differentiation_matrix,
+        integration_matrix,
+        rho,
+        V_r,
+        Kn,
+        Kn_r,
+        Ln_r,
+        S_r,
+        R,
+        JdivR,
+        F,
+        Ip,
+        beta,
+    )
+
+
+@njit(cache=True, nogil=True)
+def _update_pi_from_rho_inputs(
+    out_psin: np.ndarray,
+    out_psin_r: np.ndarray,
+    out_psin_rr: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    V_r: np.ndarray,
+    Kn: np.ndarray,
+    Kn_r: np.ndarray,
+    Ln_r: np.ndarray,
+    S_r: np.ndarray,
+    R: np.ndarray,
+    JdivR: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+) -> tuple[float, float]:
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
     Itor = np.empty_like(current_input)
@@ -545,20 +717,14 @@ def update_PI(
     full_differentiation(Itor_r, Itor, differentiation_matrix)
 
     if has_beta:
-        if coordinate_code == RHO_COORDINATE:
-            _fill_scaled_ratio(out_Pn_psin, heat_input, psin_r_safe, 1.0)
-        else:
-            _copy_vector(out_Pn_psin, heat_input)
+        _fill_scaled_ratio(out_Pn_psin, heat_input, psin_r_safe, 1.0)
         Pn_r = np.empty_like(out_psin_r)
         _fill_pointwise_product(Pn_r, out_Pn_psin, out_psin_r)
         Pn = _compute_Pn(Pn_r, integration_matrix, weights)
         alpha1 = 0.5 * beta * B0**2 / alpha2 * quadrature(V_r, weights) / quadrature(Pn * V_r, weights)
     else:
         P_r = np.empty_like(out_psin_r)
-        if coordinate_code == RHO_COORDINATE:
-            _copy_vector(P_r, heat_input)
-        else:
-            _fill_scaled_product(P_r, heat_input, out_psin_r, alpha2)
+        _copy_vector(P_r, heat_input)
         alpha1 = -MU0 / alpha2 * quadrature(P_r, weights)
         _fill_scaled_ratio(out_Pn_psin, P_r, psin_r_safe, MU0 / (alpha1 * alpha2))
 
@@ -566,9 +732,8 @@ def update_PI(
     return alpha1, alpha2
 
 
-@register_operator("PJ1", family="strict")
 @njit(cache=True, nogil=True)
-def update_PJ(
+def _update_pi_from_psin_inputs(
     out_psin: np.ndarray,
     out_psin_r: np.ndarray,
     out_psin_rr: np.ndarray,
@@ -594,7 +759,183 @@ def update_PJ(
     Ip: float,
     beta: float,
 ) -> tuple[float, float]:
-    """根据 PJ1 约束更新 source root fields."""
+    has_Ip = not np.isnan(Ip)
+    has_beta = not np.isnan(beta)
+    Itor = np.empty_like(current_input)
+
+    if has_Ip:
+        _fill_scaled_vector(Itor, current_input, Ip / current_input[-1])
+    else:
+        _copy_vector(Itor, current_input)
+    itor_floor = max(Itor[-1], 1.0) * 1e-12
+    Itor[:] = _maximum_floor(Itor, itor_floor)
+
+    itor_over_kn = np.empty_like(current_input)
+    _fill_scaled_ratio(itor_over_kn, Itor, Kn, MU0 / (2.0 * np.pi))
+    alpha2 = quadrature(itor_over_kn, weights)
+
+    _fill_scaled_ratio(out_psin_r, Itor, Kn, MU0 / (2.0 * np.pi * alpha2))
+    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
+    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    psin_r_safe = _maximum_floor(out_psin_r, 1e-10)
+    Itor_r = np.empty_like(Itor)
+    full_differentiation(Itor_r, Itor, differentiation_matrix)
+
+    if has_beta:
+        _copy_vector(out_Pn_psin, heat_input)
+        Pn_r = np.empty_like(out_psin_r)
+        _fill_pointwise_product(Pn_r, out_Pn_psin, out_psin_r)
+        Pn = _compute_Pn(Pn_r, integration_matrix, weights)
+        alpha1 = 0.5 * beta * B0**2 / alpha2 * quadrature(V_r, weights) / quadrature(Pn * V_r, weights)
+    else:
+        P_r = np.empty_like(out_psin_r)
+        _fill_scaled_product(P_r, heat_input, out_psin_r, alpha2)
+        alpha1 = -MU0 / alpha2 * quadrature(P_r, weights)
+        _fill_scaled_ratio(out_Pn_psin, P_r, psin_r_safe, MU0 / (alpha1 * alpha2))
+
+    _fill_pi_ffn_psin(out_FFn_psin, Itor_r, V_r, out_Pn_psin, Ln_r, MU0 / (2.0 * np.pi * alpha1))
+    return alpha1, alpha2
+
+
+@register_operator("PI_RHO", supported_coordinates=(RHO_COORDINATE,))
+@njit(cache=True, nogil=True)
+def update_PI_RHO(
+    out_psin: np.ndarray,
+    out_psin_r: np.ndarray,
+    out_psin_rr: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    V_r: np.ndarray,
+    Kn: np.ndarray,
+    Kn_r: np.ndarray,
+    Ln_r: np.ndarray,
+    S_r: np.ndarray,
+    R: np.ndarray,
+    JdivR: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+) -> tuple[float, float]:
+    return _update_pi_from_rho_inputs(
+        out_psin,
+        out_psin_r,
+        out_psin_rr,
+        out_FFn_psin,
+        out_Pn_psin,
+        heat_input,
+        current_input,
+        coordinate_code,
+        R0,
+        B0,
+        weights,
+        differentiation_matrix,
+        integration_matrix,
+        rho,
+        V_r,
+        Kn,
+        Kn_r,
+        Ln_r,
+        S_r,
+        R,
+        JdivR,
+        F,
+        Ip,
+        beta,
+    )
+
+
+@register_operator("PI_PSIN", supported_coordinates=(PSIN_COORDINATE,))
+@njit(cache=True, nogil=True)
+def update_PI_PSIN(
+    out_psin: np.ndarray,
+    out_psin_r: np.ndarray,
+    out_psin_rr: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    V_r: np.ndarray,
+    Kn: np.ndarray,
+    Kn_r: np.ndarray,
+    Ln_r: np.ndarray,
+    S_r: np.ndarray,
+    R: np.ndarray,
+    JdivR: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+) -> tuple[float, float]:
+    return _update_pi_from_psin_inputs(
+        out_psin,
+        out_psin_r,
+        out_psin_rr,
+        out_FFn_psin,
+        out_Pn_psin,
+        heat_input,
+        current_input,
+        coordinate_code,
+        R0,
+        B0,
+        weights,
+        differentiation_matrix,
+        integration_matrix,
+        rho,
+        V_r,
+        Kn,
+        Kn_r,
+        Ln_r,
+        S_r,
+        R,
+        JdivR,
+        F,
+        Ip,
+        beta,
+    )
+
+
+@njit(cache=True, nogil=True)
+def _update_pj1_from_rho_inputs(
+    out_psin: np.ndarray,
+    out_psin_r: np.ndarray,
+    out_psin_rr: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    V_r: np.ndarray,
+    Kn: np.ndarray,
+    Kn_r: np.ndarray,
+    Ln_r: np.ndarray,
+    S_r: np.ndarray,
+    R: np.ndarray,
+    JdivR: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+) -> tuple[float, float]:
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
 
@@ -622,20 +963,14 @@ def update_PJ(
     psin_r_safe = _maximum_floor(out_psin_r, 1e-10)
 
     if has_beta:
-        if coordinate_code == RHO_COORDINATE:
-            _fill_scaled_ratio(out_Pn_psin, heat_input, psin_r_safe, 1.0)
-        else:
-            _copy_vector(out_Pn_psin, heat_input)
+        _fill_scaled_ratio(out_Pn_psin, heat_input, psin_r_safe, 1.0)
         Pn_r = np.empty_like(out_psin_r)
         _fill_pointwise_product(Pn_r, out_Pn_psin, out_psin_r)
         Pn = _compute_Pn(Pn_r, integration_matrix, weights)
         alpha1 = 0.5 * beta * B0**2 / alpha2 * quadrature(V_r, weights) / quadrature(Pn * V_r, weights)
     else:
         P_r = np.empty_like(out_psin_r)
-        if coordinate_code == RHO_COORDINATE:
-            _copy_vector(P_r, heat_input)
-        else:
-            _fill_scaled_product(P_r, heat_input, out_psin_r, alpha2)
+        _copy_vector(P_r, heat_input)
         alpha1 = -MU0 / alpha2 * quadrature(P_r, weights)
         _fill_scaled_ratio(out_Pn_psin, P_r, psin_r_safe, MU0 / (alpha1 * alpha2))
 
@@ -643,9 +978,8 @@ def update_PJ(
     return alpha1, alpha2
 
 
-@register_operator("PJ2", family="robust")
 @njit(cache=True, nogil=True)
-def update_PJ2(
+def _update_pj1_from_psin_inputs(
     out_psin: np.ndarray,
     out_psin_r: np.ndarray,
     out_psin_rr: np.ndarray,
@@ -671,7 +1005,187 @@ def update_PJ2(
     Ip: float,
     beta: float,
 ) -> tuple[float, float]:
-    """根据 PJ2 约束更新 source root fields."""
+    has_Ip = not np.isnan(Ip)
+    has_beta = not np.isnan(beta)
+
+    integrand_j = np.empty_like(current_input)
+    _fill_pointwise_product(integrand_j, current_input, S_r)
+    corrected_integration(out_psin_r, integrand_j, integration_matrix, 2, rho, differentiation_matrix)
+    I_tor_prof = np.empty_like(out_psin_r)
+    _copy_vector(I_tor_prof, out_psin_r)
+    I_tor = np.empty_like(current_input)
+    jtor = np.empty_like(current_input)
+
+    if has_Ip:
+        _fill_scaled_vector(I_tor, I_tor_prof, Ip / I_tor_prof[-1])
+        _fill_scaled_vector(jtor, current_input, Ip / I_tor_prof[-1])
+    else:
+        _copy_vector(I_tor, I_tor_prof)
+        _copy_vector(jtor, current_input)
+
+    itor_over_kn = np.empty_like(current_input)
+    _fill_scaled_ratio(itor_over_kn, I_tor, Kn, MU0 / (2.0 * np.pi))
+    alpha2 = quadrature(itor_over_kn, weights)
+    _fill_scaled_ratio(out_psin_r, I_tor, Kn, MU0 / (2.0 * np.pi * alpha2))
+    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
+    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    psin_r_safe = _maximum_floor(out_psin_r, 1e-10)
+
+    if has_beta:
+        _copy_vector(out_Pn_psin, heat_input)
+        Pn_r = np.empty_like(out_psin_r)
+        _fill_pointwise_product(Pn_r, out_Pn_psin, out_psin_r)
+        Pn = _compute_Pn(Pn_r, integration_matrix, weights)
+        alpha1 = 0.5 * beta * B0**2 / alpha2 * quadrature(V_r, weights) / quadrature(Pn * V_r, weights)
+    else:
+        P_r = np.empty_like(out_psin_r)
+        _fill_scaled_product(P_r, heat_input, out_psin_r, alpha2)
+        alpha1 = -MU0 / alpha2 * quadrature(P_r, weights)
+        _fill_scaled_ratio(out_Pn_psin, P_r, psin_r_safe, MU0 / (alpha1 * alpha2))
+
+    _fill_pj_ffn_psin(out_FFn_psin, jtor, S_r, V_r, out_Pn_psin, Ln_r, MU0 / (2.0 * np.pi * alpha1))
+    return alpha1, alpha2
+
+
+@register_operator("PJ1_RHO", supported_coordinates=(RHO_COORDINATE,))
+@njit(cache=True, nogil=True)
+def update_PJ1_RHO(
+    out_psin: np.ndarray,
+    out_psin_r: np.ndarray,
+    out_psin_rr: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    V_r: np.ndarray,
+    Kn: np.ndarray,
+    Kn_r: np.ndarray,
+    Ln_r: np.ndarray,
+    S_r: np.ndarray,
+    R: np.ndarray,
+    JdivR: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+) -> tuple[float, float]:
+    return _update_pj1_from_rho_inputs(
+        out_psin,
+        out_psin_r,
+        out_psin_rr,
+        out_FFn_psin,
+        out_Pn_psin,
+        heat_input,
+        current_input,
+        coordinate_code,
+        R0,
+        B0,
+        weights,
+        differentiation_matrix,
+        integration_matrix,
+        rho,
+        V_r,
+        Kn,
+        Kn_r,
+        Ln_r,
+        S_r,
+        R,
+        JdivR,
+        F,
+        Ip,
+        beta,
+    )
+
+
+@register_operator("PJ1_PSIN", supported_coordinates=(PSIN_COORDINATE,))
+@njit(cache=True, nogil=True)
+def update_PJ1_PSIN(
+    out_psin: np.ndarray,
+    out_psin_r: np.ndarray,
+    out_psin_rr: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    V_r: np.ndarray,
+    Kn: np.ndarray,
+    Kn_r: np.ndarray,
+    Ln_r: np.ndarray,
+    S_r: np.ndarray,
+    R: np.ndarray,
+    JdivR: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+) -> tuple[float, float]:
+    return _update_pj1_from_psin_inputs(
+        out_psin,
+        out_psin_r,
+        out_psin_rr,
+        out_FFn_psin,
+        out_Pn_psin,
+        heat_input,
+        current_input,
+        coordinate_code,
+        R0,
+        B0,
+        weights,
+        differentiation_matrix,
+        integration_matrix,
+        rho,
+        V_r,
+        Kn,
+        Kn_r,
+        Ln_r,
+        S_r,
+        R,
+        JdivR,
+        F,
+        Ip,
+        beta,
+    )
+
+
+@njit(cache=True, nogil=True)
+def _update_pj2_from_rho_inputs(
+    out_psin: np.ndarray,
+    out_psin_r: np.ndarray,
+    out_psin_rr: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    V_r: np.ndarray,
+    Kn: np.ndarray,
+    Kn_r: np.ndarray,
+    Ln_r: np.ndarray,
+    S_r: np.ndarray,
+    R: np.ndarray,
+    JdivR: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+) -> tuple[float, float]:
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
 
@@ -696,20 +1210,14 @@ def update_PJ2(
     psin_r_safe = _maximum_floor(out_psin_r, 1e-10)
 
     if has_beta:
-        if coordinate_code == RHO_COORDINATE:
-            _fill_scaled_ratio(out_Pn_psin, heat_input, psin_r_safe, 1.0)
-        else:
-            _copy_vector(out_Pn_psin, heat_input)
+        _fill_scaled_ratio(out_Pn_psin, heat_input, psin_r_safe, 1.0)
         Pn_r = np.empty_like(out_psin_r)
         _fill_pointwise_product(Pn_r, out_Pn_psin, out_psin_r)
         Pn = _compute_Pn(Pn_r, integration_matrix, weights)
         alpha1 = 0.5 * beta * B0**2 / alpha2 * quadrature(V_r, weights) / quadrature(Pn * V_r, weights)
     else:
         P_r = np.empty_like(out_psin_r)
-        if coordinate_code == RHO_COORDINATE:
-            _copy_vector(P_r, heat_input)
-        else:
-            _fill_scaled_product(P_r, heat_input, out_psin_r, alpha2)
+        _copy_vector(P_r, heat_input)
         alpha1 = -MU0 / alpha2 * quadrature(P_r, weights)
         _fill_scaled_ratio(out_Pn_psin, P_r, psin_r_safe, MU0 / (alpha1 * alpha2))
 
@@ -720,9 +1228,8 @@ def update_PJ2(
     return alpha1, alpha2
 
 
-@register_operator("PQ", family="robust")
 @njit(cache=True, nogil=True)
-def update_PQ(
+def _update_pj2_from_psin_inputs(
     out_psin: np.ndarray,
     out_psin_r: np.ndarray,
     out_psin_rr: np.ndarray,
@@ -748,7 +1255,187 @@ def update_PQ(
     Ip: float,
     beta: float,
 ) -> tuple[float, float]:
-    """根据 PQ 约束更新 source root fields."""
+    has_Ip = not np.isnan(Ip)
+    has_beta = not np.isnan(beta)
+
+    integrand = np.empty_like(out_psin_r)
+    _fill_product_ratio(integrand, Ln_r, current_input, F, 1.0)
+    corrected_integration(out_psin_r, integrand, integration_matrix, 1, rho, differentiation_matrix)
+    integral_val = np.empty_like(out_psin_r)
+    _copy_vector(integral_val, out_psin_r)
+    I_tor = np.empty_like(current_input)
+
+    if has_Ip:
+        _fill_scaled_product(I_tor, F, integral_val, Ip / (R0 * B0 * integral_val[-1]))
+    else:
+        _fill_scaled_product(I_tor, F, integral_val, 2.0 * np.pi)
+
+    itor_over_kn = np.empty_like(current_input)
+    _fill_scaled_ratio(itor_over_kn, I_tor, Kn, MU0 / (2.0 * np.pi))
+    alpha2 = quadrature(itor_over_kn, weights)
+    _fill_scaled_ratio(out_psin_r, I_tor, Kn, MU0 / (2.0 * np.pi * alpha2))
+    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
+    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    psin_r_safe = _maximum_floor(out_psin_r, 1e-10)
+
+    if has_beta:
+        _copy_vector(out_Pn_psin, heat_input)
+        Pn_r = np.empty_like(out_psin_r)
+        _fill_pointwise_product(Pn_r, out_Pn_psin, out_psin_r)
+        Pn = _compute_Pn(Pn_r, integration_matrix, weights)
+        alpha1 = 0.5 * beta * B0**2 / alpha2 * quadrature(V_r, weights) / quadrature(Pn * V_r, weights)
+    else:
+        P_r = np.empty_like(out_psin_r)
+        _fill_scaled_product(P_r, heat_input, out_psin_r, alpha2)
+        alpha1 = -MU0 / alpha2 * quadrature(P_r, weights)
+        _fill_scaled_ratio(out_Pn_psin, P_r, psin_r_safe, MU0 / (alpha1 * alpha2))
+
+    F_r = np.empty_like(F)
+    full_differentiation(F_r, F, differentiation_matrix)
+    _fill_scaled_product(out_FFn_psin, F, F_r, 1.0 / (alpha1 * alpha2))
+    _fill_scaled_ratio(out_FFn_psin, out_FFn_psin, psin_r_safe, 1.0)
+    return alpha1, alpha2
+
+
+@register_operator("PJ2_RHO", supported_coordinates=(RHO_COORDINATE,))
+@njit(cache=True, nogil=True)
+def update_PJ2_RHO(
+    out_psin: np.ndarray,
+    out_psin_r: np.ndarray,
+    out_psin_rr: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    V_r: np.ndarray,
+    Kn: np.ndarray,
+    Kn_r: np.ndarray,
+    Ln_r: np.ndarray,
+    S_r: np.ndarray,
+    R: np.ndarray,
+    JdivR: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+) -> tuple[float, float]:
+    return _update_pj2_from_rho_inputs(
+        out_psin,
+        out_psin_r,
+        out_psin_rr,
+        out_FFn_psin,
+        out_Pn_psin,
+        heat_input,
+        current_input,
+        coordinate_code,
+        R0,
+        B0,
+        weights,
+        differentiation_matrix,
+        integration_matrix,
+        rho,
+        V_r,
+        Kn,
+        Kn_r,
+        Ln_r,
+        S_r,
+        R,
+        JdivR,
+        F,
+        Ip,
+        beta,
+    )
+
+
+@register_operator("PJ2_PSIN", supported_coordinates=(PSIN_COORDINATE,))
+@njit(cache=True, nogil=True)
+def update_PJ2_PSIN(
+    out_psin: np.ndarray,
+    out_psin_r: np.ndarray,
+    out_psin_rr: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    V_r: np.ndarray,
+    Kn: np.ndarray,
+    Kn_r: np.ndarray,
+    Ln_r: np.ndarray,
+    S_r: np.ndarray,
+    R: np.ndarray,
+    JdivR: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+) -> tuple[float, float]:
+    return _update_pj2_from_psin_inputs(
+        out_psin,
+        out_psin_r,
+        out_psin_rr,
+        out_FFn_psin,
+        out_Pn_psin,
+        heat_input,
+        current_input,
+        coordinate_code,
+        R0,
+        B0,
+        weights,
+        differentiation_matrix,
+        integration_matrix,
+        rho,
+        V_r,
+        Kn,
+        Kn_r,
+        Ln_r,
+        S_r,
+        R,
+        JdivR,
+        F,
+        Ip,
+        beta,
+    )
+
+
+@njit(cache=True, nogil=True)
+def _update_pq_from_rho_inputs(
+    out_psin: np.ndarray,
+    out_psin_r: np.ndarray,
+    out_psin_rr: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    V_r: np.ndarray,
+    Kn: np.ndarray,
+    Kn_r: np.ndarray,
+    Ln_r: np.ndarray,
+    S_r: np.ndarray,
+    R: np.ndarray,
+    JdivR: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+) -> tuple[float, float]:
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
     q_prof = np.empty_like(current_input)
@@ -769,20 +1456,14 @@ def update_PQ(
     psin_r_safe = _maximum_floor(out_psin_r, 1e-10)
 
     if has_beta:
-        if coordinate_code == RHO_COORDINATE:
-            _fill_scaled_ratio(out_Pn_psin, heat_input, psin_r_safe, 1.0)
-        else:
-            _copy_vector(out_Pn_psin, heat_input)
+        _fill_scaled_ratio(out_Pn_psin, heat_input, psin_r_safe, 1.0)
         Pn_r = np.empty_like(out_psin_r)
         _fill_pointwise_product(Pn_r, out_Pn_psin, out_psin_r)
         Pn = _compute_Pn(Pn_r, integration_matrix, weights)
         alpha1 = 0.5 * beta * B0**2 / alpha2 * quadrature(V_r, weights) / quadrature(Pn * V_r, weights)
     else:
         P_r = np.empty_like(out_psin_r)
-        if coordinate_code == RHO_COORDINATE:
-            _copy_vector(P_r, heat_input)
-        else:
-            _fill_scaled_product(P_r, heat_input, out_psin_r, alpha2)
+        _copy_vector(P_r, heat_input)
         alpha1 = -MU0 / alpha2 * quadrature(P_r, weights)
         _fill_scaled_ratio(out_Pn_psin, P_r, psin_r_safe, MU0 / (alpha1 * alpha2))
 
@@ -791,6 +1472,259 @@ def update_PQ(
     _fill_scaled_product(out_FFn_psin, F, F_r, 1.0 / (alpha1 * alpha2))
     _fill_scaled_ratio(out_FFn_psin, out_FFn_psin, psin_r_safe, 1.0)
     return alpha1, alpha2
+
+
+@njit(cache=True, nogil=True)
+def _update_pq_from_psin_inputs(
+    out_psin: np.ndarray,
+    out_psin_r: np.ndarray,
+    out_psin_rr: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    V_r: np.ndarray,
+    Kn: np.ndarray,
+    Kn_r: np.ndarray,
+    Ln_r: np.ndarray,
+    S_r: np.ndarray,
+    R: np.ndarray,
+    JdivR: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+) -> tuple[float, float]:
+    has_Ip = not np.isnan(Ip)
+    has_beta = not np.isnan(beta)
+    q_prof = np.empty_like(current_input)
+
+    if has_Ip:
+        q_scale = (2.0 * np.pi * R0 * B0) / (MU0 * Ip)
+        _fill_scaled_vector(q_prof, current_input, q_scale * (Kn[-1] * Ln_r[-1] / current_input[-1]))
+    else:
+        _copy_vector(q_prof, current_input)
+
+    integrand_alpha2 = np.empty_like(out_psin_r)
+    _fill_product_ratio(integrand_alpha2, F, Ln_r, q_prof, 1.0)
+    alpha2 = quadrature(integrand_alpha2, weights)
+
+    _fill_product_ratio(out_psin_r, F, Ln_r, q_prof, 1.0 / alpha2)
+    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
+    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    psin_r_safe = _maximum_floor(out_psin_r, 1e-10)
+
+    if has_beta:
+        _copy_vector(out_Pn_psin, heat_input)
+        Pn_r = np.empty_like(out_psin_r)
+        _fill_pointwise_product(Pn_r, out_Pn_psin, out_psin_r)
+        Pn = _compute_Pn(Pn_r, integration_matrix, weights)
+        alpha1 = 0.5 * beta * B0**2 / alpha2 * quadrature(V_r, weights) / quadrature(Pn * V_r, weights)
+    else:
+        P_r = np.empty_like(out_psin_r)
+        _fill_scaled_product(P_r, heat_input, out_psin_r, alpha2)
+        alpha1 = -MU0 / alpha2 * quadrature(P_r, weights)
+        _fill_scaled_ratio(out_Pn_psin, P_r, psin_r_safe, MU0 / (alpha1 * alpha2))
+
+    F_r = np.empty_like(F)
+    full_differentiation(F_r, F, differentiation_matrix)
+    _fill_scaled_product(out_FFn_psin, F, F_r, 1.0 / (alpha1 * alpha2))
+    _fill_scaled_ratio(out_FFn_psin, out_FFn_psin, psin_r_safe, 1.0)
+    return alpha1, alpha2
+
+
+@register_operator("PQ_RHO", supported_coordinates=(RHO_COORDINATE,))
+@njit(cache=True, nogil=True)
+def update_PQ_RHO(
+    out_psin: np.ndarray,
+    out_psin_r: np.ndarray,
+    out_psin_rr: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    V_r: np.ndarray,
+    Kn: np.ndarray,
+    Kn_r: np.ndarray,
+    Ln_r: np.ndarray,
+    S_r: np.ndarray,
+    R: np.ndarray,
+    JdivR: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+) -> tuple[float, float]:
+    return _update_pq_from_rho_inputs(
+        out_psin,
+        out_psin_r,
+        out_psin_rr,
+        out_FFn_psin,
+        out_Pn_psin,
+        heat_input,
+        current_input,
+        coordinate_code,
+        R0,
+        B0,
+        weights,
+        differentiation_matrix,
+        integration_matrix,
+        rho,
+        V_r,
+        Kn,
+        Kn_r,
+        Ln_r,
+        S_r,
+        R,
+        JdivR,
+        F,
+        Ip,
+        beta,
+    )
+
+
+@register_operator("PQ_PSIN", supported_coordinates=(PSIN_COORDINATE,))
+@njit(cache=True, nogil=True)
+def update_PQ_PSIN(
+    out_psin: np.ndarray,
+    out_psin_r: np.ndarray,
+    out_psin_rr: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    V_r: np.ndarray,
+    Kn: np.ndarray,
+    Kn_r: np.ndarray,
+    Ln_r: np.ndarray,
+    S_r: np.ndarray,
+    R: np.ndarray,
+    JdivR: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+) -> tuple[float, float]:
+    return _update_pq_from_psin_inputs(
+        out_psin,
+        out_psin_r,
+        out_psin_rr,
+        out_FFn_psin,
+        out_Pn_psin,
+        heat_input,
+        current_input,
+        coordinate_code,
+        R0,
+        B0,
+        weights,
+        differentiation_matrix,
+        integration_matrix,
+        rho,
+        V_r,
+        Kn,
+        Kn_r,
+        Ln_r,
+        S_r,
+        R,
+        JdivR,
+        F,
+        Ip,
+        beta,
+    )
+
+
+def _register_standard_routes(
+    base_name: str,
+    *,
+    rho_implementation: str,
+    psin_implementation: str,
+    psin_uniform_strategy: str,
+) -> None:
+    register_route(
+        base_name,
+        "rho",
+        UNIFORM_NODES,
+        implementation_name=rho_implementation,
+        source_strategy=SOURCE_STRATEGY_SINGLE_PASS,
+    )
+    register_route(
+        base_name,
+        "rho",
+        GRID_NODES,
+        implementation_name=rho_implementation,
+        source_strategy=SOURCE_STRATEGY_SINGLE_PASS,
+    )
+    register_route(
+        base_name,
+        "psin",
+        UNIFORM_NODES,
+        implementation_name=psin_implementation,
+        source_strategy=psin_uniform_strategy,
+    )
+    register_route(
+        base_name,
+        "psin",
+        GRID_NODES,
+        implementation_name=psin_implementation,
+        source_strategy=SOURCE_STRATEGY_SINGLE_PASS,
+    )
+
+
+def _register_default_source_routes() -> None:
+    _register_standard_routes(
+        "PF",
+        rho_implementation="PF_RHO",
+        psin_implementation="PF_PSIN",
+        psin_uniform_strategy=SOURCE_STRATEGY_PROFILE_OWNED_PSIN,
+    )
+    _register_standard_routes(
+        "PP",
+        rho_implementation="PP_RHO",
+        psin_implementation="PP_PSIN",
+        psin_uniform_strategy=SOURCE_STRATEGY_PROFILE_OWNED_PSIN,
+    )
+    _register_standard_routes(
+        "PI",
+        rho_implementation="PI_RHO",
+        psin_implementation="PI_PSIN",
+        psin_uniform_strategy=SOURCE_STRATEGY_PROFILE_OWNED_PSIN,
+    )
+    _register_standard_routes(
+        "PJ1",
+        rho_implementation="PJ1_RHO",
+        psin_implementation="PJ1_PSIN",
+        psin_uniform_strategy=SOURCE_STRATEGY_PROFILE_OWNED_PSIN,
+    )
+    _register_standard_routes(
+        "PJ2",
+        rho_implementation="PJ2_RHO",
+        psin_implementation="PJ2_PSIN",
+        psin_uniform_strategy=SOURCE_STRATEGY_FIXED_POINT_PSIN,
+    )
+    _register_standard_routes(
+        "PQ",
+        rho_implementation="PQ_RHO",
+        psin_implementation="PQ_PSIN",
+        psin_uniform_strategy=SOURCE_STRATEGY_FIXED_POINT_PSIN,
+    )
 
 
 @njit(cache=True, nogil=True)
@@ -1153,6 +2087,7 @@ def build_source_remap_cache(
 
     return local_size, weights, fixed_remap_matrix
 
+
 def resolve_source_inputs(
     out_heat_input: np.ndarray,
     out_current_input: np.ndarray,
@@ -1193,6 +2128,7 @@ def resolve_source_inputs(
     _barycentric_uniform_interpolate(out_heat_input, heat, psin_query, barycentric_weights)
     _barycentric_uniform_interpolate(out_current_input, current, psin_query, barycentric_weights)
     return out_heat_input, out_current_input
+
 
 @njit(cache=True, fastmath=True, nogil=True)
 def _barycentric_uniform_interpolate(
@@ -1298,3 +2234,13 @@ def _normalize_coordinate(value: str) -> int:
         return COORDINATE_CODES[value]
     except KeyError as exc:
         raise ValueError(f"Unsupported coordinate {value!r}") from exc
+
+
+def _normalize_nodes(value: str) -> str:
+    nodes = str(value).lower()
+    if nodes not in NODE_NAMES:
+        raise ValueError(f"Unsupported nodes {value!r}")
+    return nodes
+
+
+_register_default_source_routes()

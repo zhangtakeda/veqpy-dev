@@ -10,7 +10,6 @@ Public API:
 - update_profiles_packed_bulk
 - update_geometry
 - update_residual
-- bind_source_runner
 - bind_residual_runner
 - build_source_remap_cache
 - resolve_source_inputs
@@ -41,7 +40,6 @@ if BACKEND == "numpy":
         RHO_AXIS,
         RHO_COORDINATE,
         THETA_AXIS,
-        bind_source_runner,
         build_source_remap_cache,
         corrected_integration,
         full_differentiation,
@@ -64,7 +62,6 @@ elif BACKEND == "numba":
         RHO_AXIS,
         RHO_COORDINATE,
         THETA_AXIS,
-        bind_source_runner,
         build_source_remap_cache,
         corrected_integration,
         full_differentiation,
@@ -87,7 +84,6 @@ __all__ = [
     "COORDINATE_NAMES",
     "PSIN_COORDINATE",
     "RHO_COORDINATE",
-    "bind_source_runner",
     "build_source_remap_cache",
     "validate_operator",
     "resolve_source_inputs",

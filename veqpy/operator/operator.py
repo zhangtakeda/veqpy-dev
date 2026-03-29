@@ -21,10 +21,7 @@ from typing import Callable
 import numpy as np
 
 from veqpy.engine import (
-    PSIN_COORDINATE,
-    RHO_COORDINATE,
     bind_residual_runner,
-    bind_source_runner,
     build_source_remap_cache,
     resolve_source_inputs,
     update_profiles_packed_bulk,
@@ -111,18 +108,16 @@ class Operator:
     s_family_fields: np.ndarray = field(init=False, repr=False)
     c_effective_order: int = field(init=False, repr=False)
     s_effective_order: int = field(init=False, repr=False)
+    _source_route_spec: object = field(init=False, repr=False)
+    _source_cache_key: tuple[str, str, int] | None = field(init=False, repr=False)
+    _source_runner: Callable = field(init=False, repr=False)
     residual_stage_runner: Callable = field(init=False, repr=False)
-    source_stage_runners: dict[str, Callable] = field(init=False, repr=False)
-    source_coordinate: str = field(init=False, repr=False)
-    source_coordinate_code: int = field(init=False, repr=False)
-    source_n_src: int = field(init=False, repr=False)
-    source_stencil_size: int = field(init=False, repr=False)
     source_barycentric_weights: np.ndarray = field(init=False, repr=False)
     source_fixed_remap_matrix: np.ndarray = field(init=False, repr=False)
-    source_input_fields: np.ndarray = field(init=False, repr=False)
     source_psin_query: np.ndarray = field(init=False, repr=False)
     materialized_heat_input: np.ndarray = field(init=False, repr=False)
     materialized_current_input: np.ndarray = field(init=False, repr=False)
+    source_target_root_fields: np.ndarray = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         """完成 layout 构造, 运行时缓冲区分配和 case 绑定."""
@@ -156,8 +151,29 @@ class Operator:
         """调用 residual 求值主入口."""
         return self.residual(x, *args, **kwargs)
 
+    @property
+    def source_strategy(self) -> str:
+        return self._source_route_spec.source_strategy
+
+    @property
+    def source_coordinate(self) -> str:
+        return self.case.coordinate
+
+    @property
+    def source_nodes(self) -> str:
+        return self.case.nodes
+
+    @property
+    def source_n_src(self) -> int:
+        return int(self.case.heat_input.shape[0])
+
     def _validate_runtime_profile_support(self) -> None:
-        """geometry/residual runtime 已支持动态 Fourier family；保留接口以承接阶段性校验."""
+        """校验当前 source route 对 psin profile ownership 的要求."""
+        has_active_psin = int(self.profile_L[self.profile_index["psin"]]) >= 0
+        if self.source_strategy == "profile_owned_psin" and not has_active_psin:
+            raise ValueError(f"{self.case.name} requires an active psin profile because psin is optimized externally")
+        if self.case.coordinate == "psin" and self.source_strategy != "profile_owned_psin" and has_active_psin:
+            raise ValueError(f"{self.case.name} does not accept an active psin profile because psin is source-owned")
         return None
 
     def replace_case(self, case: OperatorCase) -> None:
@@ -248,11 +264,13 @@ class Operator:
 
     def stage_c_source(self) -> None:
         """执行 source 阶段并刷新 root fields 与缩放系数."""
-        if self.source_coordinate_code == PSIN_COORDINATE:
+        if self.source_strategy == "profile_owned_psin":
+            alpha1, alpha2 = self._run_profile_owned_psin_source()
+        elif self.source_strategy == "fixed_point_psin":
             _normalize_psin_query_inplace(self.source_psin_query, self.psin_profile.u)
             alpha1, alpha2 = self._run_psin_source_fixed_point()
         else:
-            alpha1, alpha2 = self.source_stage_runners[self.case.coordinate](
+            alpha1, alpha2 = self._source_runner(
                 self.psin,
                 self.psin_r,
                 self.psin_rr,
@@ -374,16 +392,13 @@ class Operator:
         self.psin_rr = self.root_fields[2]
         self.FFn_psin = self.root_fields[3]
         self.Pn_psin = self.root_fields[4]
-        self.source_coordinate = ""
-        self.source_coordinate_code = -1
-        self.source_n_src = 0
-        self.source_stencil_size = 0
+        self._source_cache_key = None
         self.source_barycentric_weights = np.empty(0, dtype=np.float64)
         self.source_fixed_remap_matrix = np.empty((0, 0), dtype=np.float64)
-        self.source_input_fields = np.empty((2, nr), dtype=np.float64)
+        self.materialized_heat_input = np.empty(nr, dtype=np.float64)
+        self.materialized_current_input = np.empty(nr, dtype=np.float64)
         self.source_psin_query = np.empty(nr, dtype=np.float64)
-        self.materialized_heat_input = self.source_input_fields[0]
-        self.materialized_current_input = self.source_input_fields[1]
+        self.source_target_root_fields = np.empty((3, nr), dtype=np.float64)
         self.alpha1 = 0.0
         self.alpha2 = 0.0
         self.active_u_fields = np.empty((n_active, 3, nr), dtype=np.float64)
@@ -398,6 +413,7 @@ class Operator:
 
     def _refresh_runtime_state(self) -> None:
         self._refresh_operator_identity()
+        self._validate_runtime_profile_support()
         self._refresh_profile_runtime()
         self._refresh_fourier_family_metadata()
         self._refresh_source_runtime()
@@ -405,8 +421,9 @@ class Operator:
         self._refresh_runtime_bindings()
 
     def _refresh_operator_identity(self) -> None:
-        spec = validate_operator(self.case.name, self.case.coordinate)
-        self.source_stage_runners = {coord: bind_source_runner(spec.name, coord) for coord in ("rho", "psin")}
+        spec = validate_operator(self.case.name, self.case.coordinate, self.case.nodes)
+        self._source_route_spec = spec
+        self._source_runner = _build_source_stage_runner(spec)
 
     def _refresh_profile_runtime(self) -> None:
         for name in self.profile_names:
@@ -469,7 +486,7 @@ class Operator:
         return float(offsets[order])
 
     def _validate_case_compatibility(self, case: OperatorCase) -> None:
-        validate_operator(case.name, case.coordinate)
+        validate_operator(case.name, case.coordinate, case.nodes)
         profile_L, coeff_index, order_offsets = build_profile_layout(
             case.profile_coeffs,
             profile_names=self.profile_names,
@@ -491,42 +508,51 @@ class Operator:
 
     def _refresh_source_runtime(self) -> None:
         self._validate_source_inputs(self.case)
-        if not self._source_plan_matches_case(self.case):
-            self.source_coordinate = self.case.coordinate
-            self.source_coordinate_code = PSIN_COORDINATE if self.case.coordinate == "psin" else RHO_COORDINATE
-            self.source_n_src = int(self.case.heat_input.shape[0])
-            (
-                self.source_stencil_size,
-                self.source_barycentric_weights,
-                self.source_fixed_remap_matrix,
-            ) = build_source_remap_cache(
-                self.source_coordinate,
-                self.source_n_src,
-                rho=self.grid.rho,
-            )
-        if self.source_coordinate_code != PSIN_COORDINATE:
-            resolve_source_inputs(
-                self.materialized_heat_input,
-                self.materialized_current_input,
-                self.case.heat_input,
-                self.case.current_input,
-                self.source_coordinate_code,
-                self.source_n_src,
-                self.source_barycentric_weights,
-                self.source_fixed_remap_matrix,
-                self.psin,
-            )
+        case_key = (self.case.coordinate, self.case.nodes, int(self.case.heat_input.shape[0]))
+        if self._source_cache_key != case_key:
+            if self.case.nodes == "grid":
+                self.source_barycentric_weights = np.empty(0, dtype=np.float64)
+                self.source_fixed_remap_matrix = np.empty((0, 0), dtype=np.float64)
+            else:
+                (
+                    _,
+                    self.source_barycentric_weights,
+                    self.source_fixed_remap_matrix,
+                ) = build_source_remap_cache(
+                    self.case.coordinate,
+                    self.source_n_src,
+                    rho=self.grid.rho,
+                )
+            self._source_cache_key = case_key
+        if self.case.nodes == "grid" or self.case.coordinate != "psin":
+            self._materialize_source_inputs(self.psin)
 
     def _validate_source_inputs(self, case: OperatorCase) -> None:
         if case.heat_input.shape != case.current_input.shape:
             raise ValueError(
                 f"Expected heat_input/current_input to share a shape, got {case.heat_input.shape} and {case.current_input.shape}"
             )
+        if case.nodes == "grid" and case.heat_input.shape[0] != self.grid.Nr:
+            raise ValueError(f"Expected grid inputs to have shape ({self.grid.Nr},), got {case.heat_input.shape}")
         if case.heat_input.shape[0] < 1:
             raise ValueError(f"Expected {case.coordinate}-coordinate inputs to contain at least one sample")
 
-    def _source_plan_matches_case(self, case: OperatorCase) -> bool:
-        return self.source_coordinate == case.coordinate and self.source_n_src == int(case.heat_input.shape[0])
+    def _materialize_source_inputs(self, psin_query: np.ndarray) -> None:
+        if self.case.nodes == "grid":
+            np.copyto(self.materialized_heat_input, self.case.heat_input)
+            np.copyto(self.materialized_current_input, self.case.current_input)
+            return
+        resolve_source_inputs(
+            self.materialized_heat_input,
+            self.materialized_current_input,
+            self.case.heat_input,
+            self.case.current_input,
+            route_coordinate_code(self.case.coordinate),
+            self.source_n_src,
+            self.source_barycentric_weights,
+            self.source_fixed_remap_matrix,
+            psin_query,
+        )
 
     def _refresh_stage_a_runtime(self) -> None:
         if self.active_profile_ids.size == 0:
@@ -628,22 +654,49 @@ class Operator:
             self.geometry.g_fields,
         )
 
+    def _copy_psin_profile_to_root_fields(self) -> None:
+        if self.psin_profile.u_fields is None:
+            raise RuntimeError("psin_profile runtime fields are not initialized")
+        np.copyto(self.psin, self.psin_profile.u)
+        np.copyto(self.psin_r, self.psin_profile.u_r)
+        np.copyto(self.psin_rr, self.psin_profile.u_rr)
+
+    def _run_profile_owned_psin_source(self) -> tuple[float, float]:
+        self._copy_psin_profile_to_root_fields()
+        np.copyto(self.source_psin_query, self.psin)
+        self._materialize_source_inputs(self.source_psin_query)
+        return self._source_runner(
+            self.source_target_root_fields[0],
+            self.source_target_root_fields[1],
+            self.source_target_root_fields[2],
+            self.FFn_psin,
+            self.Pn_psin,
+            self.materialized_heat_input,
+            self.materialized_current_input,
+            float(self.case.R0),
+            float(self.case.B0),
+            self.grid.weights,
+            self.grid.differentiation_matrix,
+            self.grid.integration_matrix,
+            self.grid.rho,
+            self.geometry.V_r,
+            self.geometry.Kn,
+            self.geometry.Kn_r,
+            self.geometry.Ln_r,
+            self.geometry.S_r,
+            self.geometry.R,
+            self.geometry.JdivR,
+            self.F_profile.u,
+            float(self.case.Ip),
+            float(self.case.beta),
+        )
+
     def _run_psin_source_fixed_point(self) -> tuple[float, float]:
         alpha1 = float("nan")
         alpha2 = float("nan")
         for _ in range(8):
-            resolve_source_inputs(
-                self.materialized_heat_input,
-                self.materialized_current_input,
-                self.case.heat_input,
-                self.case.current_input,
-                self.source_coordinate_code,
-                self.source_n_src,
-                self.source_barycentric_weights,
-                self.source_fixed_remap_matrix,
-                self.source_psin_query,
-            )
-            alpha1, alpha2 = self.source_stage_runners[self.case.coordinate](
+            self._materialize_source_inputs(self.source_psin_query)
+            alpha1, alpha2 = self._source_runner(
                 self.psin,
                 self.psin_r,
                 self.psin_rr,
@@ -743,3 +796,66 @@ def _normalize_psin_query_inplace(out: np.ndarray, source: np.ndarray | None) ->
     out[0] = 0.0
     out[-1] = 1.0
     return out
+
+
+def _build_source_stage_runner(route_spec) -> Callable:
+    coordinate_code = int(route_spec.coordinate_code)
+    operator_kernel = route_spec.implementation
+
+    def runner(
+        out_psin: np.ndarray,
+        out_psin_r: np.ndarray,
+        out_psin_rr: np.ndarray,
+        out_FFn_psin: np.ndarray,
+        out_Pn_psin: np.ndarray,
+        heat_input: np.ndarray,
+        current_input: np.ndarray,
+        R0: float,
+        B0: float,
+        weights: np.ndarray,
+        differentiation_matrix: np.ndarray,
+        integration_matrix: np.ndarray,
+        rho: np.ndarray,
+        V_r: np.ndarray,
+        Kn: np.ndarray,
+        Kn_r: np.ndarray,
+        Ln_r: np.ndarray,
+        S_r: np.ndarray,
+        R: np.ndarray,
+        JdivR: np.ndarray,
+        F: np.ndarray,
+        Ip: float,
+        beta: float,
+    ) -> tuple[float, float]:
+        return operator_kernel(
+            out_psin,
+            out_psin_r,
+            out_psin_rr,
+            out_FFn_psin,
+            out_Pn_psin,
+            heat_input,
+            current_input,
+            coordinate_code,
+            R0,
+            B0,
+            weights,
+            differentiation_matrix,
+            integration_matrix,
+            rho,
+            V_r,
+            Kn,
+            Kn_r,
+            Ln_r,
+            S_r,
+            R,
+            JdivR,
+            F,
+            Ip,
+            beta,
+        )
+
+    return runner
+
+
+def route_coordinate_code(coordinate: str) -> int:
+    return 1 if coordinate == "psin" else 0

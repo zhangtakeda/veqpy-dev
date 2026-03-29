@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from veqpy.model import Boundary, Equilibrium
+from veqpy.engine import validate_operator
 from veqpy.model.grid import Grid
 from veqpy.operator import Operator
 from veqpy.operator.layout import (
@@ -131,6 +132,114 @@ def test_operator_case_rejects_non_uniform_nodes():
             coordinate="psin",
             nodes="operator",
         )
+
+
+def test_operator_case_accepts_grid_nodes():
+    case = OperatorCase(
+        name="PF",
+        coordinate="rho",
+        nodes="grid",
+        profile_coeffs={},
+        boundary=Boundary(a=1.0, R0=1.7, Z0=0.1, B0=3.0),
+        heat_input=np.zeros(8),
+        current_input=np.zeros(8),
+    )
+
+    assert case.nodes == "grid"
+
+
+@pytest.mark.parametrize("name", ["PF", "PP", "PI", "PJ1"])
+def test_profile_owned_psin_routes_require_active_psin_profile(name: str):
+    case = OperatorCase(
+        name=name,
+        profile_coeffs={"h": [0.0, 0.0, 0.0], "k": [0.0, 0.0, 0.0]},
+        boundary=Boundary(a=1.0, R0=1.7, Z0=0.1, B0=3.0),
+        heat_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
+        current_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
+        coordinate="psin",
+        nodes="uniform",
+        Ip=3.0e6,
+    )
+
+    with pytest.raises(ValueError, match=f"{name.upper()} requires an active psin profile"):
+        Operator(Grid(Nr=8, Nt=8, scheme="uniform"), case)
+
+
+@pytest.mark.parametrize("name", ["PJ2", "PQ"])
+def test_source_owned_psin_routes_reject_active_psin_profile(name: str):
+    case = OperatorCase(
+        name=name,
+        profile_coeffs={"h": [0.0, 0.0, 0.0], "k": [0.0, 0.0, 0.0], "psin": [0.0] * 5},
+        boundary=Boundary(a=1.0, R0=1.7, Z0=0.1, B0=3.0),
+        heat_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
+        current_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
+        coordinate="psin",
+        nodes="uniform",
+        Ip=3.0e6,
+    )
+
+    with pytest.raises(ValueError, match=f"{name.upper()} does not accept an active psin profile"):
+        Operator(Grid(Nr=8, Nt=8, scheme="uniform"), case)
+
+
+@pytest.mark.parametrize("name", ["PF", "PP", "PI", "PJ1"])
+def test_grid_psin_routes_do_not_require_active_psin_profile(name: str):
+    case = OperatorCase(
+        name=name,
+        profile_coeffs={"h": [0.0, 0.0, 0.0], "k": [0.0, 0.0, 0.0]},
+        boundary=Boundary(a=1.0, R0=1.7, Z0=0.1, B0=3.0),
+        heat_input=np.zeros(8),
+        current_input=np.zeros(8),
+        coordinate="psin",
+        nodes="grid",
+        Ip=3.0e6,
+    )
+
+    Operator(Grid(Nr=8, Nt=8, scheme="uniform"), case)
+
+
+@pytest.mark.parametrize(
+    ("name", "coordinate", "nodes", "implementation_func_name", "source_strategy"),
+    [
+        ("PF", "rho", "uniform", "update_PF_rho", "single_pass"),
+        ("PF", "psin", "uniform", "update_PF_psin", "profile_owned_psin"),
+        ("PF", "psin", "grid", "update_PF_psin", "single_pass"),
+        ("PP", "psin", "uniform", "update_PP_psin", "profile_owned_psin"),
+        ("PI", "psin", "uniform", "update_PI_psin", "profile_owned_psin"),
+        ("PJ1", "psin", "uniform", "update_PJ1_psin", "profile_owned_psin"),
+        ("PJ2", "psin", "uniform", "update_PJ2_psin", "fixed_point_psin"),
+        ("PQ", "psin", "uniform", "update_PQ_psin", "fixed_point_psin"),
+        ("PQ", "psin", "grid", "update_PQ_psin", "single_pass"),
+    ],
+)
+def test_operator_route_registry_selects_expected_plan(
+    name: str, coordinate: str, nodes: str, implementation_func_name: str, source_strategy: str
+):
+    spec = validate_operator(name, coordinate, nodes)
+    assert spec.implementation.__name__.upper() == implementation_func_name.upper()
+    assert spec.source_strategy == source_strategy
+
+
+@pytest.mark.parametrize(
+    ("name", "coordinate", "nodes"),
+    [
+        ("PF", "rho", "grid"),
+        ("PF", "psin", "grid"),
+        ("PP", "rho", "grid"),
+        ("PP", "psin", "grid"),
+        ("PI", "rho", "grid"),
+        ("PI", "psin", "grid"),
+        ("PJ1", "rho", "grid"),
+        ("PJ1", "psin", "grid"),
+        ("PJ2", "rho", "grid"),
+        ("PJ2", "psin", "grid"),
+        ("PQ", "rho", "grid"),
+        ("PQ", "psin", "grid"),
+    ],
+)
+def test_grid_route_specific_operators_validate(name: str, coordinate: str, nodes: str):
+    spec = validate_operator(name, coordinate, nodes)
+    assert spec.nodes == nodes
 
 
 def test_operator_caches_source_remap_cache_by_coordinate_and_input_length():

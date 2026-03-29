@@ -11,6 +11,11 @@ coeffs = {
     "s1": [0.0] * 3,
 }
 
+psin_coeffs = {
+    **coeffs,
+    "psin": [0.0] * 5,
+}
+
 
 bdry = Boundary(
     a=1.05 / 1.85,
@@ -87,7 +92,6 @@ eq_1.plot("tests/regression/1.png")
 print(res_1)
 print(eq_1)
 
-
 psin_src_grid = eq_1.psin
 psin_uni = np.linspace(0.0, 1.0, 21)
 rho_from_psin = interp1d(psin_src_grid, eq_1.rho, kind="cubic")(psin_uni)
@@ -101,14 +105,14 @@ case_2 = OperatorCase(
     name="PF",
     coordinate="psin",
     nodes="uniform",
-    profile_coeffs=coeffs,
+    profile_coeffs=psin_coeffs,
     boundary=bdry,
     heat_input=Pn_psin_uni,
     current_input=FFn_psin_uni,
     Ip=3.0e6,
 )
 
-solver.replace_case(case_2)
+solver = Solver(operator=Operator(grid, case_2), config=config)
 warmup_solver(solver)
 solver.solve()
 

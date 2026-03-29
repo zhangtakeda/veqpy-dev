@@ -36,7 +36,7 @@ $$
 
 $$
 \begin{aligned}
-\langle P\rangle_V = \dfrac{\alpha_1\alpha_2}{\mu_0}\dfrac{\displaystyle \int_0^1 \hat{P} V_\rho ~ \mathrm{d} \rho  }{\displaystyle \int_0^1   V_\rho ~ \mathrm{d} \rho},\quad \hat{P} =\int_1^\rho \hat{P}_\rho \mathrm{d} \rho = \int_1^\rho \hat{P}_{\mathrm{psin}} \hat{\psi}_\rho \mathrm{d} \rho
+\langle P\rangle_V = \dfrac{\alpha_1\alpha_2}{\mu_0}\dfrac{\displaystyle \int_0^1 \hat{P} V_\rho ~ \mathrm{d} \rho  }{\displaystyle \int_0^1   V_\rho ~ \mathrm{d} \rho},\quad \hat{P} =\int_1^\rho \hat{P}_\rho \mathrm{d} \rho = \int_1^\rho \hat{P}_{\mathrm{\psi}} \hat{\psi}_\rho \mathrm{d} \rho
 \end{aligned}
 $$
 
@@ -73,7 +73,7 @@ $$
    $$
    \begin{aligned}
    F^2 &= R_0^2B_0^2+ 2\alpha_1\alpha_2\int_1^\rho \hat{FF_\rho} ~\mathrm{d}\rho > 0\\
-F^2 &= R_0^2B_0^2+ 2\alpha_1\alpha_2\int_1^\rho \hat{FF}_{\mathrm{psin}} \cdot \hat{\psi}_\rho ~\mathrm{d}\rho   > 0
+   F^2 &= R_0^2B_0^2+ 2\alpha_1\alpha_2\int_1^\rho \hat{FF}_{\mathrm{\psi}} \cdot \hat{\psi}_\rho ~\mathrm{d}\rho   > 0
    \end{aligned}
    $$
 
@@ -95,23 +95,23 @@ $$
 $$
 
 $$
-\left(\hat{K} \hat{\psi}_\rho\right)_{\rho}+\frac{\alpha_1}{\alpha_2} \left(\hat{F F}_{\mathrm{psin}} \hat{L}_\rho+\frac{V_\rho \hat{P}_{\mathrm{psin}}}{4 \pi^2}\right)=0
+\left(\hat{K} \hat{\psi}_\rho\right)_{\rho}+\frac{\alpha_1}{\alpha_2} \left(\hat{F F}_{\mathrm{\psi}} \hat{L}_\rho+\frac{V_\rho \hat{P}_{\mathrm{\psi}}}{4 \pi^2}\right)=0
 $$
 
 **Robust 模式**用于不方便计算出 $\hat{\psi}_\rho$ 或者与 $F$ 强耦合无法分离的情况.
 
 **Strict 模式**的计算基础是显式定义出 $\hat{\psi}_\rho$ 以及 $\hat{FF_\rho}, \hat{P}_\rho$
 
-以下红色 route 统一表示实现中的 `psin` 输入语义, 不再沿用旧的归一化 `psi` 记号.
+以下红色 route 统一表示实现中的 `\psi` 输入语义, 不再沿用旧的归一化 `psi` 记号.
 
-- 所有模式都支持和 $\rho$ 导数同构的 $\color{red} {\rm psin}$ 导数输入组合;
+- 所有模式都支持和 $\rho$ 导数同构的 $\color{red} {\rm \psi}$ 导数输入组合;
 - 如果无特殊说明, 使用如下公式获得归一化剖面:
 
   $$
   \begin{aligned}
   \hat{\psi}_\rho &= \dfrac{\psi_\rho}{\alpha_2}  \\
-  \hat{FF_\rho} & =\dfrac{F F_\rho}{\alpha_1 \alpha_2}= \color{red}\frac{FF_{\mathrm{psin}}\hat{\psi}_\rho}{\alpha_1}  \\
-  \hat{P}_\rho & =\frac{\mu_0P_\rho }{\alpha_1 \alpha_2} = \color{red}\frac{\mu_0 P_{\mathrm{psin}}\hat{\psi}_\rho}{\alpha_1}  \\
+  \hat{FF_\rho} & =\dfrac{F F_\rho}{\alpha_1 \alpha_2}= \color{red}\frac{FF_{\mathrm{\psi}}\hat{\psi}_\rho}{\alpha_1}  \\
+  \hat{P}_\rho & =\frac{\mu_0P_\rho }{\alpha_1 \alpha_2} = \color{red}\frac{\mu_0 P_{\mathrm{\psi}}\hat{\psi}_\rho}{\alpha_1}  \\
   \end{aligned}
   $$
 
@@ -134,7 +134,7 @@ $$
 $$
 \begin{aligned}
 \alpha_1 &= \dfrac{\beta_t B_0^2}{2\alpha_2}\dfrac{\displaystyle \int_0^1  V_\rho ~ \mathrm{d} \rho  }{\displaystyle \int_0^1 \hat{P}  V_\rho ~ \mathrm{d} \rho},\quad \hat{P} = \int_1^\rho \hat{P}_\rho \mathrm{d} \rho=
-\color{red}\int_1^\rho \hat{P}_{\mathrm{psin}} \hat{\psi}_\rho \mathrm{d} \rho\\
+\color{red}\int_1^\rho \hat{P}_{\mathrm{\psi}} \hat{\psi}_\rho \mathrm{d} \rho\\
 \end{aligned}
 $$
 
@@ -144,7 +144,7 @@ $$
 \begin{aligned}
 \alpha_2 &= \alpha_1 \left(\int_0^1 \hat{X}(\rho) \mathrm{d}\rho\right)^2,\quad
 \hat{X}(\rho) = \frac{1}{\hat{K}} \sqrt{ -2 \int_0^\rho \left[ \hat{K}  \left( \hat{FF_\rho} \hat{L}_\rho+ \frac{V_\rho \hat{P_\rho}}{4 \pi^2}  \right) \right] \mathrm{d}\rho }\\
-\color{red}\alpha_2 &\color{red}= \alpha_1\int_0^1 \hat{Y}(\rho) \mathrm{d}\rho,\quad \color{red}\hat{Y}(\rho)  \color{red}=-\frac{1}{\hat{K}} \int_0^\rho\left({ \hat{FF}_{\mathrm{psin}}}  \hat{L}_\rho+\frac{V_\rho {\hat{P}_{\mathrm{psin}}}}{4 \pi^2}\right) \mathrm{d} \rho\\
+\color{red}\alpha_2 &\color{red}= \alpha_1\int_0^1 \hat{Y}(\rho) \mathrm{d}\rho,\quad \color{red}\hat{Y}(\rho)  \color{red}=-\frac{1}{\hat{K}} \int_0^\rho\left({ \hat{FF}_{\mathrm{\psi}}}  \hat{L}_\rho+\frac{V_\rho {\hat{P}_{\mathrm{\psi}}}}{4 \pi^2}\right) \mathrm{d} \rho\\
 \hat{\psi}_\rho  &=\sqrt{\frac{\alpha_1}{\alpha_2}} \hat{X}(\rho)\\
 \color{red}\hat{\psi}_\rho &\color{red}={\frac{\alpha_1}{\alpha_2}} \hat{Y}(\rho)
 \end{aligned}
@@ -155,9 +155,9 @@ $$
 $$
 \begin{aligned}
 &  \psi_\rho= \frac{1}{\hat{K}} \sqrt{ -2 \int_0^\rho \left[ \hat{K}  \left(  {FF_\rho} \hat{L}_\rho+ \frac{V_\rho  {P_\rho}}{4 \pi^2}  \right) \right] \mathrm{d}\rho }\\
-& \color{red} \psi_\rho  \color{red}=-\frac{1}{\hat{K}} \int_0^\rho\left({  {FF}_{\mathrm{psin}}}  \hat{L}_\rho+\frac{V_\rho { {P}_{\mathrm{psin}}}}{4 \pi^2}\right) \mathrm{d} \rho\\
+& \color{red} \psi_\rho  \color{red}=-\frac{1}{\hat{K}} \int_0^\rho\left({  {FF}_{\mathrm{\psi}}}  \hat{L}_\rho+\frac{V_\rho { {P}_{\mathrm{\psi}}}}{4 \pi^2}\right) \mathrm{d} \rho\\
 & \alpha_2=\int_0^1 \psi_\rho \mathrm{d} \rho\\
-& \alpha_1=-\frac{\mu_0}{\alpha_2} \int_0^1 P_\rho \mathrm{d} \rho=\color{red}-\frac{\mu_0}{\alpha_2} \int_0^1 P_{\mathrm{psin}}  {\psi}_\rho \mathrm{d} \rho\\
+& \alpha_1=-\frac{\mu_0}{\alpha_2} \int_0^1 P_\rho \mathrm{d} \rho=\color{red}-\frac{\mu_0}{\alpha_2} \int_0^1 P_{\mathrm{\psi}}  {\psi}_\rho \mathrm{d} \rho\\
 \end{aligned}
 $$
 
@@ -174,7 +174,7 @@ $$
 \begin{aligned}
 \alpha_2&=\frac{\mu_0 I_p}{2\pi \hat{K}(1)\hat{\psi}_\rho(1)}\\
 \alpha_1 &= \dfrac{\beta_t B_0^2}{2\alpha_2}\dfrac{\displaystyle \int_0^1  V_\rho ~ \mathrm{d} \rho  }{\displaystyle \int_0^1 \hat{P}  V_\rho ~ \mathrm{d} \rho},\quad \hat{P} = \int_1^\rho \hat{P}_\rho \mathrm{d} \rho=
-\color{red}\int_1^\rho \hat{P}_{\mathrm{psin}} \hat{\psi}_\rho \mathrm{d} \rho\\
+\color{red}\int_1^\rho \hat{P}_{\mathrm{\psi}} \hat{\psi}_\rho \mathrm{d} \rho\\
 \end{aligned}
 $$
 
@@ -184,7 +184,7 @@ $$
 \begin{aligned}
 \alpha_2&=\int_0^1\psi_\rho~\mathrm{d}\rho\\
 \alpha_1 &= -\dfrac{\mu_0 }{\alpha_2}{ \int_0^1P_\rho ~\mathrm{d}\rho}=
-\color{red}-\mu_0 \int_0^1 P_{\mathrm{psin}} \hat{\psi}_\rho \mathrm{d} \rho\\
+\color{red}-\mu_0 \int_0^1 P_{\mathrm{\psi}} \hat{\psi}_\rho \mathrm{d} \rho\\
 \end{aligned}
 $$
 
@@ -193,7 +193,7 @@ $$
 $$
 \begin{aligned}
 \hat{F F_\rho}&=-\frac{1}{\hat{L}_\rho}\left[\frac{\alpha_2}{\alpha_1} \hat{\psi}_\rho\left(\hat{K}_\rho \hat{\psi}_\rho+\hat{K} \hat{\psi}_{\rho \rho}\right)+\frac{V_\rho \hat{P}_\rho}{4 \pi^2}\right]\\
-\color{red}{\hat{F F}_{\mathrm{psin}}}&\color{red}=-\frac{1}{\hat{L}_\rho}\left[\frac{\alpha_2}{\alpha_1}\left(\hat{K}_\rho \hat{\psi}_\rho+\hat{K} \hat{\psi}_{\rho \rho}\right)+\frac{V_\rho {\hat{P}_{\mathrm{psin}}}}{4 \pi^2}\right]
+\color{red}{\hat{F F}_{\mathrm{\psi}}}&\color{red}=-\frac{1}{\hat{L}_\rho}\left[\frac{\alpha_2}{\alpha_1}\left(\hat{K}_\rho \hat{\psi}_\rho+\hat{K} \hat{\psi}_{\rho \rho}\right)+\frac{V_\rho {\hat{P}_{\mathrm{\psi}}}}{4 \pi^2}\right]
 \end{aligned}
 $$
 
@@ -211,7 +211,7 @@ $$
 \alpha_2 &= \int_0^1 \frac{\mu_0 I_{\rm tor}}{2\pi \hat{K}} \mathrm{d}\rho,\quad
 I_{\rm tor}=\frac{I_p}{\hat{I}_{\rm tor}(1)}\hat{I}_{\rm tor}\\
 \alpha_1 &= \dfrac{\beta_t B_0^2}{2\alpha_2}\dfrac{\displaystyle \int_0^1  V_\rho ~ \mathrm{d} \rho  }{\displaystyle \int_0^1 \hat{P}  V_\rho ~ \mathrm{d} \rho},\quad \hat{P} = \int_1^\rho \hat{P}_\rho \mathrm{d} \rho=
-\color{red}\int_1^\rho \hat{P}_{\mathrm{psin}} \hat{\psi}_\rho \mathrm{d} \rho\\
+\color{red}\int_1^\rho \hat{P}_{\mathrm{\psi}} \hat{\psi}_\rho \mathrm{d} \rho\\
 \end{aligned}
 $$
 
@@ -221,7 +221,7 @@ $$
 \begin{aligned}
 \alpha_2 &= \int_0^1 \frac{\mu_0 I_{\rm tor}}{2\pi \hat{K}} \mathrm{d}\rho\\
 \alpha_1 &= -\dfrac{\mu_0 }{\alpha_2}{ \int_0^1P_\rho ~\mathrm{d}\rho}=
-\color{red}-\mu_0 \int_0^1 P_{\mathrm{psin}} \hat{\psi}_\rho \mathrm{d} \rho\\
+\color{red}-\mu_0 \int_0^1 P_{\mathrm{\psi}} \hat{\psi}_\rho \mathrm{d} \rho\\
 \end{aligned}
 $$
 
@@ -231,7 +231,7 @@ $$
 \begin{aligned}
 \hat{\psi}_\rho &=\frac{\mu_0 I_{\rm tor}}{2\pi \alpha_2\hat{K}}\\[8pt]
 \hat{F F_\rho}&=-\frac{1}{\hat{L}_\rho}\left[\frac{\mu_0}{2 \pi \alpha_1} (I_{\text {tor }})_\rho\hat{\psi}_\rho+\frac{V_\rho \hat{P}_\rho}{4 \pi^2}\right]\\
-\color{red}{\hat{F F}_{\mathrm{psin}}}&\color{red}=-\frac{1}{\hat{L}_\rho}\left[\frac{\mu_0}{2 \pi \alpha_1} (I_{\text {tor }})_\rho+\frac{V_\rho {\hat{P}_{\mathrm{psin}}}}{4 \pi^2}\right]
+\color{red}{\hat{F F}_{\mathrm{\psi}}}&\color{red}=-\frac{1}{\hat{L}_\rho}\left[\frac{\mu_0}{2 \pi \alpha_1} (I_{\text {tor }})_\rho+\frac{V_\rho {\hat{P}_{\mathrm{\psi}}}}{4 \pi^2}\right]
 \end{aligned}
 $$
 
@@ -249,7 +249,7 @@ $$
 \alpha_2 &= \int_0^1 \frac{\mu_0 I_{\rm tor}}{2\pi \hat{K}} \mathrm{d}\rho, \quad
 I_{\rm tor} = I_p\frac{\displaystyle\int_0^\rho \hat{j}_{\rm tor} S_\rho~\mathrm{d}\rho}{\displaystyle\int_0^1 \hat{j}_{\rm tor} S_\rho ~\mathrm{d}\rho}\\
 \alpha_1 &= \dfrac{\beta_t B_0^2}{2\alpha_2}\dfrac{\displaystyle \int_0^1  V_\rho ~ \mathrm{d} \rho  }{\displaystyle \int_0^1 \hat{P}  V_\rho ~ \mathrm{d} \rho},\quad \hat{P} = \int_1^\rho \hat{P}_\rho \mathrm{d} \rho=
-\color{red}\int_1^\rho \hat{P}_{\mathrm{psin}} \hat{\psi}_\rho \mathrm{d} \rho\\
+\color{red}\int_1^\rho \hat{P}_{\mathrm{\psi}} \hat{\psi}_\rho \mathrm{d} \rho\\
 \end{aligned}
 $$
 
@@ -260,7 +260,7 @@ $$
 \alpha_2 &= \int_0^1 \frac{\mu_0 I_{\rm tor}}{2\pi \hat{K}} \mathrm{d}\rho, \quad
 I_{\rm tor} = \int_0^\rho  {j}_{\rm tor} S_\rho~\mathrm{d}\rho\\
 \alpha_1 &= -\dfrac{\mu_0 }{\alpha_2}{ \int_0^1P_\rho ~\mathrm{d}\rho}=
-\color{red}-\mu_0 \int_0^1 P_{\mathrm{psin}} \hat{\psi}_\rho \mathrm{d} \rho\\
+\color{red}-\mu_0 \int_0^1 P_{\mathrm{\psi}} \hat{\psi}_\rho \mathrm{d} \rho\\
 \end{aligned}
 $$
 
@@ -270,7 +270,7 @@ $$
 \begin{aligned}
 \hat{\psi}_\rho &=\frac{\mu_0 I_{\rm tor}}{2\pi \alpha_2\hat{K}}\\
 \hat{F F_\rho}&=-\frac{1}{\hat{L}_\rho}\left[\frac{\mu_0}{2 \pi \alpha_1} j_{\text {tor }}S_\rho\hat{\psi}_\rho+\frac{V_\rho \hat{P}_\rho}{4 \pi^2}\right]\\
-\color{red}{\hat{F F}_{\mathrm{psin}}}&\color{red}=-\frac{1}{\hat{L}_\rho}\left[\frac{\mu_0}{2 \pi \alpha_1} j_{\text {tor }}S_\rho+\frac{V_\rho {\hat{P}_{\mathrm{psin}}}}{4 \pi^2}\right]
+\color{red}{\hat{F F}_{\mathrm{\psi}}}&\color{red}=-\frac{1}{\hat{L}_\rho}\left[\frac{\mu_0}{2 \pi \alpha_1} j_{\text {tor }}S_\rho+\frac{V_\rho {\hat{P}_{\mathrm{\psi}}}}{4 \pi^2}\right]
 \end{aligned}
 $$
 
@@ -288,7 +288,7 @@ $$
 \alpha_2 &= \int_0^1 \frac{\mu_0 I_{\rm tor}}{2\pi \hat{K}} \mathrm{d}\rho, \quad
 I_{\rm tor} = I_p \frac{F(\rho) \displaystyle\int_0^\rho \frac{\hat{L}_\rho \hat{j}_{\|}}{F} \mathrm{d}\rho}{F(1) \displaystyle\int_0^1 \frac{\hat{L}_\rho \hat{j}_{\|}}{F} \mathrm{d}\rho}\\
 \alpha_1 &= \dfrac{\beta_t B_0^2}{2\alpha_2}\dfrac{\displaystyle \int_0^1  V_\rho ~ \mathrm{d} \rho  }{\displaystyle \int_0^1 \hat{P}  V_\rho ~ \mathrm{d} \rho},\quad \hat{P} = \int_1^\rho \hat{P}_\rho \mathrm{d} \rho=
-\color{red}\int_1^\rho \hat{P}_{\mathrm{psin}} \hat{\psi}_\rho \mathrm{d} \rho\\
+\color{red}\int_1^\rho \hat{P}_{\mathrm{\psi}} \hat{\psi}_\rho \mathrm{d} \rho\\
 \end{aligned}
 $$
 
@@ -299,7 +299,7 @@ $$
 \alpha_2 &= \int_0^1 \frac{\mu_0 I_{\rm tor}}{2\pi \hat{K}} \mathrm{d}\rho, \quad
 I_{\rm tor} = 2\pi F(\rho) \int_0^\rho \frac{\hat{L}_\rho j_{\|}}{F} \mathrm{d}\rho\\
 \alpha_1 &= -\dfrac{\mu_0 }{\alpha_2}{ \int_0^1P_\rho ~\mathrm{d}\rho}=
-\color{red}-\mu_0 \int_0^1 P_{\mathrm{psin}} \hat{\psi}_\rho \mathrm{d} \rho\\
+\color{red}-\mu_0 \int_0^1 P_{\mathrm{\psi}} \hat{\psi}_\rho \mathrm{d} \rho\\
 \end{aligned}
 $$
 
@@ -324,7 +324,7 @@ $$
 $$
 \begin{aligned}
 \alpha_2&=\int_0^1 \frac{F \hat{L}_\rho}{q} \mathrm{~d} \rho,\quad q =\hat{q} \frac{2 \pi R_0B_0 }{\mu_0 I_p }\frac{ \hat{K}(1) \hat{L}_\rho(1)}{ \hat{q}(1)} \\
-\alpha_1 & =\frac{\beta_t B_0^2}{2 \alpha_2} \frac{\displaystyle\int_0^1 V_\rho \mathrm{d} \rho}{\displaystyle\int_0^1 \hat{P} V_\rho \mathrm{d} \rho}, \quad \hat{P}=\int_1^\rho \hat{P}_\rho \mathrm{d} \rho=\color{red}\int_1^\rho \hat{P}_{\mathrm{psin}} \hat{\psi}_\rho \mathrm{d} \rho
+\alpha_1 & =\frac{\beta_t B_0^2}{2 \alpha_2} \frac{\displaystyle\int_0^1 V_\rho \mathrm{d} \rho}{\displaystyle\int_0^1 \hat{P} V_\rho \mathrm{d} \rho}, \quad \hat{P}=\int_1^\rho \hat{P}_\rho \mathrm{d} \rho=\color{red}\int_1^\rho \hat{P}_{\mathrm{\psi}} \hat{\psi}_\rho \mathrm{d} \rho
 \end{aligned}
 $$
 
@@ -333,7 +333,7 @@ $$
 $$
 \begin{aligned}
 \alpha_2 & =\int_0^1 \frac{F \hat{L}_\rho}{q} \mathrm{~d} \rho \\
-\alpha_1 & =-\frac{\mu_0}{\alpha_2} \int_0^1 P_\rho \mathrm{d} \rho=\color{red}-\mu_0 \int_0^1 P_{\mathrm{psin}} \hat{\psi}_\rho \mathrm{d} \rho
+\alpha_1 & =-\frac{\mu_0}{\alpha_2} \int_0^1 P_\rho \mathrm{d} \rho=\color{red}-\mu_0 \int_0^1 P_{\mathrm{\psi}} \hat{\psi}_\rho \mathrm{d} \rho
 \end{aligned}
 $$
 

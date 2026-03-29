@@ -203,7 +203,7 @@ def _normalize_case_value(name: str, value):
 _OPTIONAL_FLOAT_FIELD_NAMES = {"Ip", "beta"}
 _ARRAY_FIELD_NAMES = {"heat_input", "current_input"}
 _COORDINATE_FIELD_VALUES = ("rho", "psin")
-_NODE_FIELD_VALUES = ("uniform",)
+_NODE_FIELD_VALUES = ("uniform", "grid")
 _ORDERED_OPTIONAL_FLOAT_FIELD_NAMES = ("Ip", "beta")
 _ORDERED_ARRAY_FIELD_NAMES = ("heat_input", "current_input")
 _CASE_FIELD_NAMES = {

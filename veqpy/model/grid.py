@@ -95,7 +95,7 @@ class Grid(Serial):
         if self.L_max < 0:
             raise ValueError("L_max must be non-negative")
         if self.K_max < 2:
-            raise ValueError("K_max must be at least 2 during the compatibility transition")
+            raise ValueError("K_max must be at least 2")
 
         rho, weights = _build_rho_and_weights(self.Nr, scheme)
         theta = np.linspace(0.0, 2.0 * np.pi, self.Nt, endpoint=False)
