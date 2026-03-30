@@ -13,7 +13,7 @@ from veqpy.operator import Operator, OperatorCase, build_profile_index, build_pr
 from veqpy.operator.layout import build_shape_profile_names
 from veqpy.solver import Solver, SolverConfig
 
-PLOT = True
+PLOT = False
 SHOW_PROGRESS = True
 BACKEND = os.environ.get("VEQPY_BACKEND", "numba")
 os.environ["VEQPY_BACKEND"] = BACKEND
@@ -21,7 +21,7 @@ os.environ["VEQPY_BACKEND"] = BACKEND
 REFERENCE_SOURCE_SAMPLE_COUNT = 51
 TEST_SOURCE_SAMPLE_COUNT = 51
 BENCHMARK_REPEAT_COUNT = 20
-SHAPE_MATCH_TOL = 1e-1
+SHAPE_MATCH_TOL = 1e-2
 
 REFERENCE_GRID = Grid(Nr=32, Nt=32, scheme="legendre")
 TEST_GRID = Grid(Nr=12, Nt=12, scheme="legendre", L_max=REFERENCE_GRID.L_max)
@@ -468,7 +468,7 @@ def _write_report(
 
     lines.extend(["", "Case results", ""])
     lines.append(
-        "case".ljust(20)
+        "case".ljust(24)
         + " | "
         + "shape_error".rjust(12)
         + " | "
@@ -482,7 +482,7 @@ def _write_report(
     for row in rows:
         ok = "yes" if row.shape_error <= SHAPE_MATCH_TOL else "no"
         lines.append(
-            f"{row.case_name:<20} | {row.shape_error:>12.6e} | {row.avg_ms:>12.3f} | {row.std_ms:>12.3f} | {ok:>4}"
+            f"{row.case_name:<24} | {row.shape_error:>12.6e} | {row.avg_ms:>12.3f} | {row.std_ms:>12.3f} | {ok:>4}"
         )
 
     if plot_failures:

@@ -1697,41 +1697,61 @@ def resolve_source_inputs(
     if psin_query.shape != out_heat_input.shape:
         raise ValueError(f"Expected psin_query to have shape {out_heat_input.shape}, got {psin_query.shape}")
 
-    _barycentric_uniform_interpolate(out_heat_input, heat, psin_query, barycentric_weights)
-    _barycentric_uniform_interpolate(out_current_input, current, psin_query, barycentric_weights)
+    _barycentric_uniform_interpolate_pair(
+        out_heat_input,
+        out_current_input,
+        heat,
+        current,
+        psin_query,
+        barycentric_weights,
+    )
     return out_heat_input, out_current_input
 
-def _barycentric_uniform_interpolate(
-    out: np.ndarray,
-    values: np.ndarray,
+
+def _barycentric_uniform_interpolate_pair(
+    out0: np.ndarray,
+    out1: np.ndarray,
+    values0: np.ndarray,
+    values1: np.ndarray,
     query: np.ndarray,
     weights: np.ndarray,
-) -> np.ndarray:
-    n_src = values.shape[0]
+) -> tuple[np.ndarray, np.ndarray]:
+    n_src = values0.shape[0]
     stencil_size = weights.shape[0]
     if n_src == 1:
-        out.fill(float(values[0]))
-        return out
+        out0.fill(float(values0[0]))
+        out1.fill(float(values1[0]))
+        return out0, out1
 
     for i, q in enumerate(query):
         start = _local_uniform_stencil_start(q, n_src, stencil_size)
-        numerator = 0.0
+        numerator0 = 0.0
+        numerator1 = 0.0
         denominator = 0.0
         hit = False
-        hit_value = 0.0
+        hit_value0 = 0.0
+        hit_value1 = 0.0
         for local_j in range(stencil_size):
             j = start + local_j
             node = j / (n_src - 1.0)
             diff = q - node
             if abs(diff) <= 1e-14:
                 hit = True
-                hit_value = values[j]
+                hit_value0 = values0[j]
+                hit_value1 = values1[j]
                 break
             term = weights[local_j] / diff
-            numerator += term * values[j]
+            numerator0 += term * values0[j]
+            numerator1 += term * values1[j]
             denominator += term
-        out[i] = hit_value if hit else numerator / denominator
-    return out
+        if hit:
+            out0[i] = hit_value0
+            out1[i] = hit_value1
+        else:
+            inv_denominator = 1.0 / denominator
+            out0[i] = numerator0 * inv_denominator
+            out1[i] = numerator1 * inv_denominator
+    return out0, out1
 
 
 def _uniform_barycentric_weights(n_src: int) -> np.ndarray:
