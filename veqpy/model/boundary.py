@@ -158,8 +158,8 @@ def _fit_minimal_order_boundary(
     a: float | None,
     ka: float | None,
 ) -> dict[str, float | np.ndarray]:
-    min_M = 2
-    min_N = 3
+    min_M = 0
+    min_N = 1
     max_order = MAX_FOURIER_ORDER
     best = None
 

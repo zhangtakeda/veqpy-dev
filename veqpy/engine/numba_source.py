@@ -57,6 +57,8 @@ NODE_NAMES = (UNIFORM_NODES, GRID_NODES)
 SOURCE_STRATEGY_SINGLE_PASS = "single_pass"
 SOURCE_STRATEGY_PROFILE_OWNED_PSIN = "profile_owned_psin"
 SOURCE_STRATEGY_FIXED_POINT_PSIN = "fixed_point_psin"
+SOURCE_PARAMETERIZATION_IDENTITY = "identity"
+SOURCE_PARAMETERIZATION_SQRT_PSIN = "sqrt_psin"
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +67,7 @@ class _SourceRouteSpec:
     nodes: str
     implementation: Callable
     source_strategy: str
+    source_parameterization: str
 
 
 ROUTE_REGISTRY: dict[tuple[str, int, str], _SourceRouteSpec] = {}
@@ -98,6 +101,7 @@ def register_route(
     *,
     implementation_name: str,
     source_strategy: str,
+    source_parameterization: str = SOURCE_PARAMETERIZATION_IDENTITY,
 ) -> None:
     coordinate_code = _normalize_coordinate(coordinate)
     normalized_nodes = _normalize_nodes(nodes)
@@ -120,6 +124,7 @@ def register_route(
         nodes=normalized_nodes,
         implementation=implementation_spec.implementation,
         source_strategy=source_strategy,
+        source_parameterization=source_parameterization,
     )
 
 
@@ -1657,6 +1662,7 @@ def _register_standard_routes(
     rho_implementation: str,
     psin_implementation: str,
     psin_uniform_strategy: str,
+    psin_uniform_parameterization: str = SOURCE_PARAMETERIZATION_IDENTITY,
 ) -> None:
     register_route(
         base_name,
@@ -1678,6 +1684,7 @@ def _register_standard_routes(
         UNIFORM_NODES,
         implementation_name=psin_implementation,
         source_strategy=psin_uniform_strategy,
+        source_parameterization=psin_uniform_parameterization,
     )
     register_route(
         base_name,
@@ -1700,6 +1707,7 @@ def _register_default_source_routes() -> None:
         rho_implementation="PP_RHO",
         psin_implementation="PP_PSIN",
         psin_uniform_strategy=SOURCE_STRATEGY_PROFILE_OWNED_PSIN,
+        psin_uniform_parameterization=SOURCE_PARAMETERIZATION_SQRT_PSIN,
     )
     _register_standard_routes(
         "PI",

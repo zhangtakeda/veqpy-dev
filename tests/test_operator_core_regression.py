@@ -7,6 +7,7 @@ from veqpy.model import Boundary, Equilibrium
 from veqpy.engine import validate_operator
 from veqpy.model.grid import Grid
 from veqpy.operator import Operator
+from veqpy.operator.operator import _parameterize_psin_query_inplace
 from veqpy.operator.layout import (
     build_active_profile_metadata,
     build_fourier_profile_names,
@@ -220,6 +221,13 @@ def test_operator_route_registry_selects_expected_plan(
     assert spec.source_strategy == source_strategy
 
 
+def test_pp_psin_uniform_route_uses_sqrt_psin_parameterization():
+    spec = validate_operator("PP", "psin", "uniform")
+    assert spec.source_parameterization == "sqrt_psin"
+    assert validate_operator("PF", "psin", "uniform").source_parameterization == "identity"
+    assert validate_operator("PQ", "psin", "uniform").source_parameterization == "identity"
+
+
 @pytest.mark.parametrize(
     ("name", "coordinate", "nodes"),
     [
@@ -276,6 +284,38 @@ def test_operator_caches_source_remap_cache_by_coordinate_and_input_length():
     assert operator.source_n_src == TEST_SOURCE_SAMPLE_COUNT
     assert operator.source_fixed_remap_matrix.shape == (0, 0)
     assert rho_matrix.shape == (grid.Nr, TEST_SOURCE_SAMPLE_COUNT)
+
+
+def test_pp_psin_uniform_materializes_against_sqrt_psin_query():
+    grid = Grid(Nr=8, Nt=8, scheme="uniform")
+    sqrt_nodes = np.linspace(0.0, 1.0, TEST_SOURCE_SAMPLE_COUNT)
+    case = OperatorCase(
+        name="PP",
+        profile_coeffs={"psin": [0.0] * 5, "h": [0.0], "k": [0.0]},
+        boundary=Boundary(a=1.0, R0=1.7, Z0=0.1, B0=3.0),
+        heat_input=sqrt_nodes,
+        current_input=1.0 + sqrt_nodes,
+        coordinate="psin",
+        nodes="uniform",
+    )
+    operator = Operator(grid=grid, case=case)
+    query = np.linspace(0.0, 1.0, grid.Nr) ** 2
+    operator._materialize_source_inputs(query)
+    expected_heat = np.sqrt(query)
+    expected_current = 1.0 + np.sqrt(query)
+
+    assert np.allclose(operator.materialized_heat_input, expected_heat, atol=1e-10, rtol=1e-10)
+    assert np.allclose(operator.materialized_current_input, expected_current, atol=1e-10, rtol=1e-10)
+
+
+def test_sqrt_psin_query_parameterization_preserves_nonendpoint_queries():
+    query = np.array([1.0e-4, 0.25, 0.81, 0.9868], dtype=np.float64)
+    out = np.empty_like(query)
+
+    result = _parameterize_psin_query_inplace(out, query, "sqrt_psin")
+
+    assert result is out
+    assert np.allclose(out, np.sqrt(query), atol=1e-12, rtol=1e-12)
 
 
 def test_operator_accepts_fixed_external_rho_source_sample_count():

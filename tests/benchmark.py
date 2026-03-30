@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from scipy.interpolate import interp1d
+from scipy.interpolate import PchipInterpolator, interp1d
 
 from veqpy.engine import validate_operator
 from veqpy.model import Boundary, Grid
@@ -25,6 +26,7 @@ SHAPE_MATCH_TOL = 1e-2
 
 REFERENCE_GRID = Grid(Nr=32, Nt=32, scheme="legendre")
 TEST_GRID = Grid(Nr=12, Nt=12, scheme="legendre", L_max=REFERENCE_GRID.L_max)
+REFERENCE_SUMMARY_GRID = Grid(Nr=64, Nt=128, scheme="uniform", L_max=REFERENCE_GRID.L_max, K_max=REFERENCE_GRID.K_max)
 CONFIG = SolverConfig(
     method="hybr",
     enable_verbose=False,
@@ -112,6 +114,10 @@ def _plot_dir() -> Path:
     return outdir
 
 
+def _reference_summary_json_path() -> Path:
+    return _artifact_dir() / "reference_summary.json"
+
+
 def _render_pairs(pairs: list[tuple[str, str]]) -> list[str]:
     if not pairs:
         return []
@@ -143,6 +149,22 @@ def _unique_interp(axis: np.ndarray, values: np.ndarray, x_new: np.ndarray, *, k
     interp_kind = kind if unique_axis.size >= 4 else "linear"
     fn = interp1d(unique_axis, unique_values, kind=interp_kind, fill_value="extrapolate", assume_sorted=True)
     return np.asarray(fn(x_new), dtype=np.float64)
+
+
+def _profile_interp(axis: np.ndarray, values: np.ndarray, x_new: np.ndarray) -> np.ndarray:
+    axis = np.asarray(axis, dtype=np.float64)
+    values = np.asarray(values, dtype=np.float64)
+    x_new = np.asarray(x_new, dtype=np.float64)
+    order = np.argsort(axis)
+    axis_sorted = axis[order]
+    values_sorted = values[order]
+    unique_axis, unique_index = np.unique(axis_sorted, return_index=True)
+    unique_values = values_sorted[unique_index]
+    if unique_axis.size < 2:
+        return np.full_like(x_new, float(unique_values[0] if unique_values.size else 0.0), dtype=np.float64)
+    if unique_axis.size < 3:
+        return np.interp(x_new, unique_axis, unique_values).astype(np.float64, copy=False)
+    return np.asarray(PchipInterpolator(unique_axis, unique_values, extrapolate=True)(x_new), dtype=np.float64)
 
 
 def pf_reference_profiles(psin: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -325,8 +347,16 @@ def _reference_axis(reference: ReferenceBundle, coordinate: str) -> np.ndarray:
     return np.asarray(reference.equilibrium.psin, dtype=np.float64)
 
 
-def _resample_reference_input(values: np.ndarray, source_axis: np.ndarray) -> np.ndarray:
+def _uniform_source_axis(spec: BenchmarkCaseSpec) -> np.ndarray:
     uniform_axis = np.linspace(0.0, 1.0, TEST_SOURCE_SAMPLE_COUNT)
+    route_spec = validate_operator(spec.mode, spec.coordinate, spec.input_kind)
+    if route_spec.source_parameterization == "sqrt_psin":
+        return uniform_axis**2
+    return uniform_axis
+
+
+def _resample_reference_input(values: np.ndarray, source_axis: np.ndarray, spec: BenchmarkCaseSpec) -> np.ndarray:
+    uniform_axis = _uniform_source_axis(spec)
     return _unique_interp(source_axis, values, uniform_axis)
 
 
@@ -355,8 +385,8 @@ def _make_benchmark_case(spec: BenchmarkCaseSpec, reference: ReferenceBundle) ->
         nodes = "grid"
     else:
         source_axis = _reference_axis(reference, spec.coordinate)
-        heat_input = _resample_reference_input(heat_profile, source_axis)
-        current_input = _resample_reference_input(current_profile, source_axis)
+        heat_input = _resample_reference_input(heat_profile, source_axis, spec)
+        current_input = _resample_reference_input(current_profile, source_axis, spec)
         nodes = "uniform"
     Ip = REFERENCE_IP if spec.constraint in {"Ip", "Ip_beta"} else None
     beta = float(reference.ref_profiles["beta_constraint"]) if spec.constraint in {"beta", "Ip_beta"} else None
@@ -492,6 +522,79 @@ def _write_report(
     (_artifact_dir() / "benchmark_compare.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _write_reference_summary_json(reference: ReferenceBundle) -> None:
+    native_eq = reference.equilibrium
+    summary_eq = native_eq.resample(target_grid=REFERENCE_SUMMARY_GRID)
+
+    boundary_R = np.asarray(summary_eq.geometry.R[-1], dtype=np.float64)
+    boundary_Z = np.asarray(summary_eq.geometry.Z[-1], dtype=np.float64)
+    boundary_R_closed = np.concatenate([boundary_R, boundary_R[:1]])
+    boundary_Z_closed = np.concatenate([boundary_Z, boundary_Z[:1]])
+    R_in = float(np.min(boundary_R))
+    R_out = float(np.max(boundary_R))
+    Z_top = float(np.max(boundary_Z))
+    Z_bottom = float(np.min(boundary_Z))
+    a_lcfs = 0.5 * (R_out - R_in)
+    if a_lcfs <= 1.0e-14:
+        raise ValueError("LCFS minor radius is too small to compute delta/elongation")
+    R_top = float(boundary_R[int(np.argmax(boundary_Z))])
+    R_bottom = float(boundary_R[int(np.argmin(boundary_Z))])
+    elongation = 0.5 * (Z_top - Z_bottom) / a_lcfs
+    delta_top = (float(native_eq.R0) - R_top) / a_lcfs
+    delta_bottom = (float(native_eq.R0) - R_bottom) / a_lcfs
+    delta_average = 0.5 * (delta_top + delta_bottom)
+
+    rho = np.asarray(REFERENCE_SUMMARY_GRID.rho, dtype=np.float64)
+    native_rho = np.asarray(native_eq.rho, dtype=np.float64)
+    psin = _profile_interp(native_rho, np.asarray(native_eq.psin, dtype=np.float64), rho)
+    np.maximum(psin, 0.0, out=psin)
+    if psin.size:
+        psin[0] = 0.0
+        psin[-1] = 1.0
+
+    mu0 = 4.0e-7 * np.pi
+    native_P_psi = np.asarray(native_eq.alpha1 * native_eq.Pn_psin / mu0, dtype=np.float64)
+    P_psi = _profile_interp(native_rho, native_P_psi, rho)
+    q = _profile_interp(native_rho, np.asarray(native_eq.q, dtype=np.float64), rho)
+
+    payload = {
+        "sampling": {
+            "Nr": int(REFERENCE_SUMMARY_GRID.Nr),
+            "Nt": int(REFERENCE_SUMMARY_GRID.Nt),
+            "scheme": REFERENCE_SUMMARY_GRID.scheme,
+        },
+        "geometry": {
+            "R0": float(native_eq.R0),
+            "Z0": float(native_eq.Z0),
+            "a": float(native_eq.a),
+            "B0": float(native_eq.B0),
+            "aspect_ratio": float(native_eq.R0 / native_eq.a),
+            "Ip": float(native_eq.Ip),
+        },
+        "outer_closed_surface": {
+            "R": boundary_R_closed.tolist(),
+            "Z": boundary_Z_closed.tolist(),
+            "R_in": R_in,
+            "R_out": R_out,
+            "Z_top": Z_top,
+            "Z_bottom": Z_bottom,
+            "a_from_lcfs": a_lcfs,
+            "elongation": float(elongation),
+            "delta_top": float(delta_top),
+            "delta_bottom": float(delta_bottom),
+            "delta_average": float(delta_average),
+        },
+        "profiles": {
+            "rho": rho.tolist(),
+            "psin": psin.tolist(),
+            "P_psi": P_psi.tolist(),
+            "q": q.tolist(),
+        },
+    }
+
+    _reference_summary_json_path().write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
 def run_full_benchmark(*, show_progress: bool = SHOW_PROGRESS) -> tuple[ReferenceBundle, list[BenchmarkCaseResult]]:
     reference = _solve_reference()
     rows: list[BenchmarkCaseResult] = []
@@ -524,6 +627,7 @@ def run_full_benchmark(*, show_progress: bool = SHOW_PROGRESS) -> tuple[Referenc
                     print(f"[{BACKEND}] plot warning: {message}")
 
     _write_report(reference, rows, plot_failures)
+    _write_reference_summary_json(reference)
 
     if plot_dir is not None:
         try:

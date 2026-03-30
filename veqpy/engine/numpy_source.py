@@ -56,6 +56,8 @@ NODE_NAMES = (UNIFORM_NODES, GRID_NODES)
 SOURCE_STRATEGY_SINGLE_PASS = "single_pass"
 SOURCE_STRATEGY_PROFILE_OWNED_PSIN = "profile_owned_psin"
 SOURCE_STRATEGY_FIXED_POINT_PSIN = "fixed_point_psin"
+SOURCE_PARAMETERIZATION_IDENTITY = "identity"
+SOURCE_PARAMETERIZATION_SQRT_PSIN = "sqrt_psin"
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +66,7 @@ class _SourceRouteSpec:
     nodes: str
     implementation: Callable
     source_strategy: str
+    source_parameterization: str
 
 
 ROUTE_REGISTRY: dict[tuple[str, int, str], _SourceRouteSpec] = {}
@@ -97,18 +100,19 @@ def register_route(
     *,
     implementation_name: str,
     source_strategy: str,
+    source_parameterization: str = SOURCE_PARAMETERIZATION_IDENTITY,
 ) -> None:
     coordinate_code = _normalize_coordinate(coordinate)
     normalized_nodes = _normalize_nodes(nodes)
     try:
         implementation_spec = OPERATOR_REGISTRY[implementation_name]
     except KeyError as exc:
-        raise KeyError(f"Unknown implementation {implementation_name!r} for route {(name, coordinate, nodes)!r}") from exc
+        raise KeyError(
+            f"Unknown implementation {implementation_name!r} for route {(name, coordinate, nodes)!r}"
+        ) from exc
 
     if coordinate_code not in implementation_spec.supported_coordinates:
-        raise ValueError(
-            f"Implementation {implementation_name!r} does not support coordinate={coordinate!r}"
-        )
+        raise ValueError(f"Implementation {implementation_name!r} does not support coordinate={coordinate!r}")
 
     key = (str(name).upper(), coordinate_code, normalized_nodes)
     if key in ROUTE_REGISTRY:
@@ -119,6 +123,7 @@ def register_route(
         nodes=normalized_nodes,
         implementation=implementation_spec.implementation,
         source_strategy=source_strategy,
+        source_parameterization=source_parameterization,
     )
 
 
@@ -171,6 +176,7 @@ def build_source_remap_cache(
         fixed_remap_matrix = _build_uniform_barycentric_matrix(query, count, local_size, weights)
 
     return local_size, weights, fixed_remap_matrix
+
 
 def _normalize_coordinate(value: str) -> int:
     try:
@@ -332,12 +338,7 @@ def _update_pf_from_rho_inputs(
 ) -> tuple[float, float]:
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
-    if (
-        not has_Ip
-        and not has_beta
-        and np.max(np.abs(heat_input)) <= 1e-14
-        and np.max(np.abs(current_input)) <= 1e-14
-    ):
+    if not has_Ip and not has_beta and np.max(np.abs(heat_input)) <= 1e-14 and np.max(np.abs(current_input)) <= 1e-14:
         out_psin[:] = rho
         out_psin_r.fill(1.0)
         out_psin_rr.fill(0.0)
@@ -422,12 +423,7 @@ def _update_pf_from_psin_inputs(
     del R0, Kn_r, S_r, F
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
-    if (
-        not has_Ip
-        and not has_beta
-        and np.max(np.abs(heat_input)) <= 1e-14
-        and np.max(np.abs(current_input)) <= 1e-14
-    ):
+    if not has_Ip and not has_beta and np.max(np.abs(heat_input)) <= 1e-14 and np.max(np.abs(current_input)) <= 1e-14:
         out_psin[:] = rho
         out_psin_r.fill(1.0)
         out_psin_rr.fill(0.0)
@@ -530,9 +526,9 @@ def _update_pp_from_rho_inputs(
         alpha1 = -MU0 / alpha2 * quadrature(P_r, weights)
         out_Pn_psin[:] = MU0 * P_r / (alpha1 * alpha2 * psin_r_safe)
 
-    out_FFn_psin[:] = -(
-        (alpha2 / alpha1) * (Kn_r * out_psin_r + Kn * out_psin_rr) + V_r * out_Pn_psin / (4.0 * np.pi**2)
-    ) / Ln_r
+    out_FFn_psin[:] = (
+        -((alpha2 / alpha1) * (Kn_r * out_psin_r + Kn * out_psin_rr) + V_r * out_Pn_psin / (4.0 * np.pi**2)) / Ln_r
+    )
     return alpha1, alpha2
 
 
@@ -585,9 +581,9 @@ def _update_pp_from_psin_inputs(
         alpha1 = -MU0 / alpha2 * quadrature(P_r, weights)
         out_Pn_psin[:] = MU0 * P_r / (alpha1 * alpha2 * psin_r_safe)
 
-    out_FFn_psin[:] = -(
-        (alpha2 / alpha1) * (Kn_r * out_psin_r + Kn * out_psin_rr) + V_r * out_Pn_psin / (4.0 * np.pi**2)
-    ) / Ln_r
+    out_FFn_psin[:] = (
+        -((alpha2 / alpha1) * (Kn_r * out_psin_r + Kn * out_psin_rr) + V_r * out_Pn_psin / (4.0 * np.pi**2)) / Ln_r
+    )
     return alpha1, alpha2
 
 
@@ -619,8 +615,30 @@ def update_PP_RHO(
     beta: float,
 ) -> tuple[float, float]:
     return _update_pp_from_rho_inputs(
-        out_psin, out_psin_r, out_psin_rr, out_FFn_psin, out_Pn_psin, heat_input, current_input, coordinate_code,
-        R0, B0, weights, differentiation_matrix, integration_matrix, rho, V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR, F, Ip, beta,
+        out_psin,
+        out_psin_r,
+        out_psin_rr,
+        out_FFn_psin,
+        out_Pn_psin,
+        heat_input,
+        current_input,
+        coordinate_code,
+        R0,
+        B0,
+        weights,
+        differentiation_matrix,
+        integration_matrix,
+        rho,
+        V_r,
+        Kn,
+        Kn_r,
+        Ln_r,
+        S_r,
+        R,
+        JdivR,
+        F,
+        Ip,
+        beta,
     )
 
 
@@ -652,8 +670,30 @@ def update_PP_PSIN(
     beta: float,
 ) -> tuple[float, float]:
     return _update_pp_from_psin_inputs(
-        out_psin, out_psin_r, out_psin_rr, out_FFn_psin, out_Pn_psin, heat_input, current_input, coordinate_code,
-        R0, B0, weights, differentiation_matrix, integration_matrix, rho, V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR, F, Ip, beta,
+        out_psin,
+        out_psin_r,
+        out_psin_rr,
+        out_FFn_psin,
+        out_Pn_psin,
+        heat_input,
+        current_input,
+        coordinate_code,
+        R0,
+        B0,
+        weights,
+        differentiation_matrix,
+        integration_matrix,
+        rho,
+        V_r,
+        Kn,
+        Kn_r,
+        Ln_r,
+        S_r,
+        R,
+        JdivR,
+        F,
+        Ip,
+        beta,
     )
 
 
@@ -803,8 +843,30 @@ def update_PI_RHO(
     beta: float,
 ) -> tuple[float, float]:
     return _update_pi_from_rho_inputs(
-        out_psin, out_psin_r, out_psin_rr, out_FFn_psin, out_Pn_psin, heat_input, current_input, coordinate_code,
-        R0, B0, weights, differentiation_matrix, integration_matrix, rho, V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR, F, Ip, beta,
+        out_psin,
+        out_psin_r,
+        out_psin_rr,
+        out_FFn_psin,
+        out_Pn_psin,
+        heat_input,
+        current_input,
+        coordinate_code,
+        R0,
+        B0,
+        weights,
+        differentiation_matrix,
+        integration_matrix,
+        rho,
+        V_r,
+        Kn,
+        Kn_r,
+        Ln_r,
+        S_r,
+        R,
+        JdivR,
+        F,
+        Ip,
+        beta,
     )
 
 
@@ -836,8 +898,30 @@ def update_PI_PSIN(
     beta: float,
 ) -> tuple[float, float]:
     return _update_pi_from_psin_inputs(
-        out_psin, out_psin_r, out_psin_rr, out_FFn_psin, out_Pn_psin, heat_input, current_input, coordinate_code,
-        R0, B0, weights, differentiation_matrix, integration_matrix, rho, V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR, F, Ip, beta,
+        out_psin,
+        out_psin_r,
+        out_psin_rr,
+        out_FFn_psin,
+        out_Pn_psin,
+        heat_input,
+        current_input,
+        coordinate_code,
+        R0,
+        B0,
+        weights,
+        differentiation_matrix,
+        integration_matrix,
+        rho,
+        V_r,
+        Kn,
+        Kn_r,
+        Ln_r,
+        S_r,
+        R,
+        JdivR,
+        F,
+        Ip,
+        beta,
     )
 
 
@@ -937,7 +1021,9 @@ def _update_pj1_from_psin_inputs(
     has_beta = not np.isnan(beta)
 
     integrand_j = current_input * S_r
-    corrected_integration(out_psin_r, integrand_j, integration_matrix, p=2, rho=rho, differentiation_matrix=differentiation_matrix)
+    corrected_integration(
+        out_psin_r, integrand_j, integration_matrix, p=2, rho=rho, differentiation_matrix=differentiation_matrix
+    )
     I_tor_prof = out_psin_r
 
     if has_Ip:
@@ -994,8 +1080,30 @@ def update_PJ1_RHO(
     beta: float,
 ) -> tuple[float, float]:
     return _update_pj1_from_rho_inputs(
-        out_psin, out_psin_r, out_psin_rr, out_FFn_psin, out_Pn_psin, heat_input, current_input, coordinate_code,
-        R0, B0, weights, differentiation_matrix, integration_matrix, rho, V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR, F, Ip, beta,
+        out_psin,
+        out_psin_r,
+        out_psin_rr,
+        out_FFn_psin,
+        out_Pn_psin,
+        heat_input,
+        current_input,
+        coordinate_code,
+        R0,
+        B0,
+        weights,
+        differentiation_matrix,
+        integration_matrix,
+        rho,
+        V_r,
+        Kn,
+        Kn_r,
+        Ln_r,
+        S_r,
+        R,
+        JdivR,
+        F,
+        Ip,
+        beta,
     )
 
 
@@ -1027,8 +1135,30 @@ def update_PJ1_PSIN(
     beta: float,
 ) -> tuple[float, float]:
     return _update_pj1_from_psin_inputs(
-        out_psin, out_psin_r, out_psin_rr, out_FFn_psin, out_Pn_psin, heat_input, current_input, coordinate_code,
-        R0, B0, weights, differentiation_matrix, integration_matrix, rho, V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR, F, Ip, beta,
+        out_psin,
+        out_psin_r,
+        out_psin_rr,
+        out_FFn_psin,
+        out_Pn_psin,
+        heat_input,
+        current_input,
+        coordinate_code,
+        R0,
+        B0,
+        weights,
+        differentiation_matrix,
+        integration_matrix,
+        rho,
+        V_r,
+        Kn,
+        Kn_r,
+        Ln_r,
+        S_r,
+        R,
+        JdivR,
+        F,
+        Ip,
+        beta,
     )
 
 
@@ -1129,7 +1259,9 @@ def _update_pj2_from_psin_inputs(
     has_beta = not np.isnan(beta)
 
     integrand = (Ln_r * current_input) / F
-    corrected_integration(out_psin_r, integrand, integration_matrix, p=1, rho=rho, differentiation_matrix=differentiation_matrix)
+    corrected_integration(
+        out_psin_r, integrand, integration_matrix, p=1, rho=rho, differentiation_matrix=differentiation_matrix
+    )
     integral_val = out_psin_r
 
     if has_Ip:
@@ -1187,8 +1319,30 @@ def update_PJ2_RHO(
     beta: float,
 ) -> tuple[float, float]:
     return _update_pj2_from_rho_inputs(
-        out_psin, out_psin_r, out_psin_rr, out_FFn_psin, out_Pn_psin, heat_input, current_input, coordinate_code,
-        R0, B0, weights, differentiation_matrix, integration_matrix, rho, V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR, F, Ip, beta,
+        out_psin,
+        out_psin_r,
+        out_psin_rr,
+        out_FFn_psin,
+        out_Pn_psin,
+        heat_input,
+        current_input,
+        coordinate_code,
+        R0,
+        B0,
+        weights,
+        differentiation_matrix,
+        integration_matrix,
+        rho,
+        V_r,
+        Kn,
+        Kn_r,
+        Ln_r,
+        S_r,
+        R,
+        JdivR,
+        F,
+        Ip,
+        beta,
     )
 
 
@@ -1220,8 +1374,30 @@ def update_PJ2_PSIN(
     beta: float,
 ) -> tuple[float, float]:
     return _update_pj2_from_psin_inputs(
-        out_psin, out_psin_r, out_psin_rr, out_FFn_psin, out_Pn_psin, heat_input, current_input, coordinate_code,
-        R0, B0, weights, differentiation_matrix, integration_matrix, rho, V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR, F, Ip, beta,
+        out_psin,
+        out_psin_r,
+        out_psin_rr,
+        out_FFn_psin,
+        out_Pn_psin,
+        heat_input,
+        current_input,
+        coordinate_code,
+        R0,
+        B0,
+        weights,
+        differentiation_matrix,
+        integration_matrix,
+        rho,
+        V_r,
+        Kn,
+        Kn_r,
+        Ln_r,
+        S_r,
+        R,
+        JdivR,
+        F,
+        Ip,
+        beta,
     )
 
 
@@ -1371,8 +1547,30 @@ def update_PQ_RHO(
     beta: float,
 ) -> tuple[float, float]:
     return _update_pq_from_rho_inputs(
-        out_psin, out_psin_r, out_psin_rr, out_FFn_psin, out_Pn_psin, heat_input, current_input, coordinate_code,
-        R0, B0, weights, differentiation_matrix, integration_matrix, rho, V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR, F, Ip, beta,
+        out_psin,
+        out_psin_r,
+        out_psin_rr,
+        out_FFn_psin,
+        out_Pn_psin,
+        heat_input,
+        current_input,
+        coordinate_code,
+        R0,
+        B0,
+        weights,
+        differentiation_matrix,
+        integration_matrix,
+        rho,
+        V_r,
+        Kn,
+        Kn_r,
+        Ln_r,
+        S_r,
+        R,
+        JdivR,
+        F,
+        Ip,
+        beta,
     )
 
 
@@ -1404,8 +1602,30 @@ def update_PQ_PSIN(
     beta: float,
 ) -> tuple[float, float]:
     return _update_pq_from_psin_inputs(
-        out_psin, out_psin_r, out_psin_rr, out_FFn_psin, out_Pn_psin, heat_input, current_input, coordinate_code,
-        R0, B0, weights, differentiation_matrix, integration_matrix, rho, V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR, F, Ip, beta,
+        out_psin,
+        out_psin_r,
+        out_psin_rr,
+        out_FFn_psin,
+        out_Pn_psin,
+        heat_input,
+        current_input,
+        coordinate_code,
+        R0,
+        B0,
+        weights,
+        differentiation_matrix,
+        integration_matrix,
+        rho,
+        V_r,
+        Kn,
+        Kn_r,
+        Ln_r,
+        S_r,
+        R,
+        JdivR,
+        F,
+        Ip,
+        beta,
     )
 
 
@@ -1415,6 +1635,7 @@ def _register_standard_routes(
     rho_implementation: str,
     psin_implementation: str,
     psin_uniform_strategy: str,
+    psin_uniform_parameterization: str = SOURCE_PARAMETERIZATION_IDENTITY,
 ) -> None:
     register_route(
         base_name,
@@ -1436,6 +1657,7 @@ def _register_standard_routes(
         UNIFORM_NODES,
         implementation_name=psin_implementation,
         source_strategy=psin_uniform_strategy,
+        source_parameterization=psin_uniform_parameterization,
     )
     register_route(
         base_name,
@@ -1458,6 +1680,7 @@ def _register_default_source_routes() -> None:
         rho_implementation="PP_RHO",
         psin_implementation="PP_PSIN",
         psin_uniform_strategy=SOURCE_STRATEGY_PROFILE_OWNED_PSIN,
+        psin_uniform_parameterization=SOURCE_PARAMETERIZATION_SQRT_PSIN,
     )
     _register_standard_routes(
         "PI",

@@ -115,6 +115,7 @@ class Operator:
     source_barycentric_weights: np.ndarray = field(init=False, repr=False)
     source_fixed_remap_matrix: np.ndarray = field(init=False, repr=False)
     source_psin_query: np.ndarray = field(init=False, repr=False)
+    source_parameter_query: np.ndarray = field(init=False, repr=False)
     materialized_heat_input: np.ndarray = field(init=False, repr=False)
     materialized_current_input: np.ndarray = field(init=False, repr=False)
     source_target_root_fields: np.ndarray = field(init=False, repr=False)
@@ -162,6 +163,10 @@ class Operator:
     @property
     def source_nodes(self) -> str:
         return self.case.nodes
+
+    @property
+    def source_parameterization(self) -> str:
+        return self._source_route_spec.source_parameterization
 
     @property
     def source_n_src(self) -> int:
@@ -398,6 +403,7 @@ class Operator:
         self.materialized_heat_input = np.empty(nr, dtype=np.float64)
         self.materialized_current_input = np.empty(nr, dtype=np.float64)
         self.source_psin_query = np.empty(nr, dtype=np.float64)
+        self.source_parameter_query = np.empty(nr, dtype=np.float64)
         self.source_target_root_fields = np.empty((3, nr), dtype=np.float64)
         self.alpha1 = 0.0
         self.alpha2 = 0.0
@@ -542,6 +548,10 @@ class Operator:
             np.copyto(self.materialized_heat_input, self.case.heat_input)
             np.copyto(self.materialized_current_input, self.case.current_input)
             return
+        query = psin_query
+        if self.case.coordinate == "psin":
+            _parameterize_psin_query_inplace(self.source_parameter_query, psin_query, self.source_parameterization)
+            query = self.source_parameter_query
         resolve_source_inputs(
             self.materialized_heat_input,
             self.materialized_current_input,
@@ -551,7 +561,7 @@ class Operator:
             self.source_n_src,
             self.source_barycentric_weights,
             self.source_fixed_remap_matrix,
-            psin_query,
+            query,
         )
 
     def _refresh_stage_a_runtime(self) -> None:
@@ -796,6 +806,17 @@ def _normalize_psin_query_inplace(out: np.ndarray, source: np.ndarray | None) ->
     out[0] = 0.0
     out[-1] = 1.0
     return out
+
+
+def _parameterize_psin_query_inplace(out: np.ndarray, source: np.ndarray, parameterization: str) -> np.ndarray:
+    np.copyto(out, np.asarray(source, dtype=np.float64))
+    if parameterization == "identity":
+        return out
+    if parameterization == "sqrt_psin":
+        np.maximum(out, 0.0, out=out)
+        np.sqrt(out, out=out)
+        return out
+    raise ValueError(f"Unsupported source parameterization {parameterization!r}")
 
 
 def _build_source_stage_runner(route_spec) -> Callable:
