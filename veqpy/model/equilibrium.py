@@ -15,6 +15,7 @@ Notes:
 """
 
 from __future__ import annotations
+
 from pathlib import Path
 
 import matplotlib
@@ -56,6 +57,7 @@ plt.rcParams.update(
         "legend.columnspacing": 0.6,
     }
 )
+SUBPLOT_TITLE_FONTSIZE = plt.rcParams["axes.titlesize"] + 2
 
 SHAPE_PROFILE_PLOT_META = {
     "h": {"color": "#1f77b4", "label": r"$h$", "linestyle": "-", "marker": None},
@@ -600,13 +602,13 @@ def plot_comparison(
     ref_plot = reference
     other_plot = other
 
-    shape_keys = [key for key in ("h", "v", "k") if key in _shape_profiles(reference) or key in _shape_profiles(other)]
+    shape_keys = ["h", "k", "s1"]
     groups = [(key, _shape_profile_plot_meta(key)["label"], None) for key in shape_keys]
     groups.extend(
         [
             ("psi_r", r"$\psi_\rho$", None),
             ("FF_r", r"$FF_\rho$", None),
-            ("P_r", r"$P_\rho$", None),
+            ("mu0_P_r", r"$\mu_0 P_\rho$", None),
             ("Itor", r"$I_{\rm tor}$ [MA]", 1e6),
             ("jtor", r"$j_{\rm tor}$ [MA/m²]", 1e6),
             ("jpara", r"$j_{\|}$ [MA/m²]", 1e6),
@@ -620,7 +622,7 @@ def plot_comparison(
             "rho": np.asarray(eq.rho, dtype=np.float64),
             "psi_r": np.asarray(eq.alpha2 * eq.psin_r, dtype=np.float64),
             "FF_r": np.asarray(eq.FF_r, dtype=np.float64),
-            "P_r": np.asarray(eq.P_r, dtype=np.float64),
+            "mu0_P_r": MU0 * np.asarray(eq.P_r, dtype=np.float64),
             "Itor": np.asarray(eq.Itor, dtype=np.float64),
             "jtor": np.asarray(eq.jtor, dtype=np.float64),
             "jpara": np.asarray(eq.jpara, dtype=np.float64),
@@ -646,17 +648,17 @@ def plot_comparison(
         return np.interp(rho2, rho1, y1), y2
 
     errors: dict[str, float] = {}
-    fig = plt.figure(figsize=(15, 7.5))
+    fig = plt.figure(figsize=(18, 8))
     gs = GridSpec(
         3,
         4,
         figure=fig,
-        width_ratios=[1.05, 1.0, 1.0, 1.0],
-        hspace=0.42,
-        wspace=0.35,
-        top=0.9,
-        bottom=0.08,
-        left=0.06,
+        width_ratios=[1.1, 1.0, 1.0, 1.0],
+        hspace=0.25,
+        wspace=0.3,
+        top=0.95,
+        bottom=0.1,
+        left=0.05,
         right=0.98,
     )
 
@@ -680,14 +682,14 @@ def plot_comparison(
     ref_surface_data = _build_surface_panel_data(ref_surface)
     other_surface_data = _build_surface_panel_data(other_surface)
     shared_boundary = _merge_surface_boundaries(ref_surface_data["boundary"], other_surface_data["boundary"])
+    surface_ax = fig.add_subplot(gs[:, 0])
     _render_comparison_surface_overlay_panel(
-        fig.add_subplot(gs[:, 0]),
+        surface_ax,
         ref_surface_data,
         other_surface_data,
         shared_boundary,
         label_ref=label_ref,
         label_other=label_other,
-        title="(a) Flux Surfaces",
     )
 
     metric_axes = [fig.add_subplot(gs[row, col]) for row in range(3) for col in range(1, 4)]
@@ -714,21 +716,40 @@ def plot_comparison(
             zorder=5,
             label=label_other,
         )
-        ax.set_title(f"err = {errors[f'rel_{key}_max']:.1e}", fontsize=10)
-        ax.set_ylabel(ylabel, fontsize=11)
-        ax.tick_params(direction="in", top=True, right=True, labelsize=10)
+        ax.set_ylabel(ylabel)
+        # ax.tick_params(direction="in", top=True, right=True, labelsize=10)
         ax.grid(True, linestyle=":", alpha=0.5)
+        _add_top_headroom(ax, 0.15)
+        ax.text(
+            0.03,
+            0.97,
+            f"err = {errors[f'rel_{key}_max']:.1e}",
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+        )
 
         if i == 0:
-            ax.legend(loc="best", frameon=False, fontsize=9)
+            ax.legend(loc="best", frameon=False)
         if i >= 6:
-            ax.set_xlabel(r"$\rho$", fontsize=11)
+            ax.set_xlabel(r"$\rho$")
+        else:
+            ax.set_xticklabels([])
 
-    fig.suptitle(
-        rf"Comparison: $\alpha_1={other.alpha1:.4e}$, $\alpha_2={other.alpha2:.4e}$  [{label_ref} vs {label_other}]",
-        fontsize=12,
-        fontweight="bold",
-    )
+    visible_metric_axes = [ax for ax in metric_axes if ax.get_visible()]
+    if visible_metric_axes:
+        metric_boxes = [ax.get_position() for ax in visible_metric_axes]
+        metrics_x0 = min(box.x0 for box in metric_boxes)
+        metrics_y1 = max(box.y1 for box in metric_boxes)
+        fig.text(
+            metrics_x0,
+            metrics_y1 + 0.01,
+            "(b) Profiles",
+            fontsize=SUBPLOT_TITLE_FONTSIZE,
+            ha="left",
+            va="bottom",
+        )
+
     if outpath is not None:
         fig.savefig(Path(outpath), dpi=300, facecolor="white")
     if show:
@@ -996,7 +1017,9 @@ def _resample_profile_linear(
 
 
 def _resampled_jphi_for_plot(surface_equilibrium: Equilibrium, profile_equilibrium: Equilibrium) -> np.ndarray:
-    if surface_equilibrium.grid == profile_equilibrium.grid and np.allclose(surface_equilibrium.rho, profile_equilibrium.rho):
+    if surface_equilibrium.grid == profile_equilibrium.grid and np.allclose(
+        surface_equilibrium.rho, profile_equilibrium.rho
+    ):
         return surface_equilibrium.jphi
 
     rho_src = np.asarray(profile_equilibrium.rho, dtype=np.float64)
@@ -1053,7 +1076,7 @@ def _add_top_headroom(ax: plt.Axes, ratio: float) -> None:
 
 
 def _render_panel_a_surfaces(ax: plt.Axes, fig: plt.Figure, data: dict):
-    ax.set_title("(a) Flux Surfaces")
+    ax.set_title("(a) Flux Surfaces", fontsize=SUBPLOT_TITLE_FONTSIZE)
     for ray in data.get("rays", []):
         ax.plot(ray["R"], ray["Z"], color="#9aa0a6", linewidth=0.8, alpha=0.55, zorder=1)
 
@@ -1086,9 +1109,8 @@ def _render_comparison_surface_overlay_panel(
     *,
     label_ref: str,
     label_other: str,
-    title: str,
 ) -> None:
-    ax.set_title(title)
+    ax.set_title("(a) Flux Surfaces", fontsize=SUBPLOT_TITLE_FONTSIZE)
     for ray in reference_data.get("rays", []):
         ax.plot(ray["R"], ray["Z"], color="#c5c8ce", linewidth=0.6, alpha=0.35, zorder=1)
     for ray in other_data.get("rays", []):
@@ -1135,11 +1157,11 @@ def _render_comparison_surface_overlay_panel(
     )
     _apply_rz_limits(ax, boundary)
     ax.grid(True, linestyle=":", alpha=0.35)
-    ax.legend(loc="upper right", frameon=False, fontsize=9)
+    ax.legend(loc="upper right", frameon=False)
 
 
 def _render_panel_b_shapes(ax: plt.Axes, data: dict):
-    ax.set_title("(b) Shape Profiles")
+    ax.set_title("(b) Shape Profiles", fontsize=SUBPLOT_TITLE_FONTSIZE)
     shape = data["shape"]
     for key, vals in shape["values"].items():
         meta = _shape_profile_plot_meta(key)
@@ -1156,13 +1178,15 @@ def _render_panel_b_shapes(ax: plt.Axes, data: dict):
     if shape["values"]:
         if len(shape["values"]) < 5:
             ax.legend(loc="center left")
+        elif len(shape["values"]) > 8:
+            ax.legend(loc="center left", ncols=3)
         else:
             ax.legend(loc="center left", ncols=2)
     ax.grid(True)
 
 
 def _render_panel_c_sources(ax: plt.Axes, data: dict):
-    ax.set_title("(c) Source Profiles")
+    ax.set_title("(c) Source Profiles", fontsize=SUBPLOT_TITLE_FONTSIZE)
     rho = data["rho"]
     if len(rho) < 32:
         ax.plot(rho, data["psi_r"], "--o", color=BLACK, label=r"$\psi_\rho$")
@@ -1180,7 +1204,7 @@ def _render_panel_c_sources(ax: plt.Axes, data: dict):
 
 
 def _render_panel_d_jphi(ax: plt.Axes, fig: plt.Figure, data: dict, boundary: dict):
-    ax.set_title("(d) Current Density")
+    ax.set_title("(d) Current Density", fontsize=SUBPLOT_TITLE_FONTSIZE)
     R_plot, Z_plot, j_plot = data["R"], data["Z"], data["jphi"]
     cmap = _get_trunc_inferno()
     vmin = min(float(np.nanmin(j_plot)), 0.0)
@@ -1197,7 +1221,7 @@ def _render_panel_d_jphi(ax: plt.Axes, fig: plt.Figure, data: dict, boundary: di
 
 
 def _render_panel_e_current_1d(ax: plt.Axes, data: dict):
-    ax.set_title("(e) Current Profiles")
+    ax.set_title("(e) Current Profiles", fontsize=SUBPLOT_TITLE_FONTSIZE)
     rho = data["rho"]
     ax.axhline(data["Ip"], xmin=0.75, xmax=1.0, color=BLACK, linestyle="--", label=r"$I_p$")
     if len(rho) < 32:
@@ -1216,7 +1240,7 @@ def _render_panel_e_current_1d(ax: plt.Axes, data: dict):
 
 
 def _render_panel_f_safety(ax: plt.Axes, data: dict):
-    ax.set_title("(f) Safety Factor")
+    ax.set_title("(f) Safety Factor", fontsize=SUBPLOT_TITLE_FONTSIZE)
     rho = data["rho"]
     if len(rho) < 32:
         ax.plot(data["rho"], data["q"], "-o", color=BLUE, label=r"$q$")

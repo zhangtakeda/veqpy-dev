@@ -11,7 +11,10 @@ Public API:
 - update_geometry
 - update_residual
 - bind_residual_runner
+- bind_residual_stage_runner
 - build_source_remap_cache
+- materialize_profile_owned_psin_source
+- update_fourier_family_fields
 - resolve_source_inputs
 - validate_operator
 
@@ -32,6 +35,7 @@ if BACKEND == "numpy":
     from veqpy.engine.numpy_profile import update_profile, update_profiles_packed_bulk
     from veqpy.engine.numpy_residual import (
         bind_residual_runner,
+        bind_residual_stage_runner,
         update_residual,
     )
     from veqpy.engine.numpy_source import (
@@ -44,9 +48,13 @@ if BACKEND == "numpy":
         corrected_integration,
         full_differentiation,
         full_integration,
+        materialize_profile_owned_psin_source,
         quadrature,
+        materialize_projected_source_inputs,
         resolve_source_inputs,
         theta_reduction,
+        update_fourier_family_fields,
+        update_fixed_point_psin_query,
         validate_operator,
     )
 elif BACKEND == "numba":
@@ -54,6 +62,7 @@ elif BACKEND == "numba":
     from veqpy.engine.numba_profile import update_profile, update_profiles_packed_bulk
     from veqpy.engine.numba_residual import (
         bind_residual_runner,
+        bind_residual_stage_runner,
         update_residual,
     )
     from veqpy.engine.numba_source import (
@@ -66,9 +75,13 @@ elif BACKEND == "numba":
         corrected_integration,
         full_differentiation,
         full_integration,
+        materialize_profile_owned_psin_source,
         quadrature,
+        materialize_projected_source_inputs,
         resolve_source_inputs,
         theta_reduction,
+        update_fourier_family_fields,
+        update_fixed_point_psin_query,
         validate_operator,
     )
 
@@ -79,6 +92,7 @@ __all__ = [
     "update_geometry",
     "update_residual",
     "bind_residual_runner",
+    "bind_residual_stage_runner",
     "RHO_AXIS",
     "THETA_AXIS",
     "COORDINATE_NAMES",
@@ -86,10 +100,14 @@ __all__ = [
     "RHO_COORDINATE",
     "build_source_remap_cache",
     "validate_operator",
+    "materialize_profile_owned_psin_source",
+    "update_fourier_family_fields",
     "resolve_source_inputs",
     "full_differentiation",
     "theta_reduction",
     "quadrature",
+    "materialize_projected_source_inputs",
+    "update_fixed_point_psin_query",
     "full_integration",
     "corrected_integration",
 ]

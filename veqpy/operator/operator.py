@@ -16,14 +16,20 @@ Notes:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from numpy.polynomial.chebyshev import chebval, chebvander
 from typing import Callable
 
 import numpy as np
 
 from veqpy.engine import (
     bind_residual_runner,
+    bind_residual_stage_runner,
     build_source_remap_cache,
+    materialize_profile_owned_psin_source,
+    materialize_projected_source_inputs,
     resolve_source_inputs,
+    update_fourier_family_fields,
+    update_fixed_point_psin_query,
     update_profiles_packed_bulk,
     update_residual,
     validate_operator,
@@ -54,6 +60,43 @@ _PROFILE_OFFSET_SPECS: dict[str, float | str] = {
     "F": 1.0,
 }
 _PROFILE_SCALE_SPECS: dict[str, tuple[str, ...]] = {"F": ("R0", "B0")}
+
+
+@dataclass(frozen=True, slots=True)
+class _SourceProjectionPolicy:
+    domain: str
+    heat_degree: int
+    current_degree: int
+    current_ip_endpoint_policy: str = "none"
+    current_other_endpoint_policy: str = "none"
+
+
+_SOURCE_PROJECTION_POLICIES: dict[tuple[str, str, str], _SourceProjectionPolicy] = {
+    ("PQ", "psin", "uniform"): _SourceProjectionPolicy(
+        domain="sqrt_psin",
+        heat_degree=5,
+        current_degree=6,
+        current_ip_endpoint_policy="affine_both",
+        current_other_endpoint_policy="none",
+    )
+}
+
+_PROJECTION_DOMAIN_CODES = {
+    "psin": 0,
+    "sqrt_psin": 1,
+}
+
+_ENDPOINT_POLICY_CODES = {
+    "none": 0,
+    "right": 1,
+    "both": 2,
+    "affine_both": 3,
+}
+
+_SOURCE_PARAMETERIZATION_CODES = {
+    "identity": 0,
+    "sqrt_psin": 1,
+}
 
 
 @dataclass(slots=True)
@@ -106,19 +149,33 @@ class Operator:
     active_coeff_index_rows: np.ndarray = field(init=False, repr=False)
     c_family_fields: np.ndarray = field(init=False, repr=False)
     s_family_fields: np.ndarray = field(init=False, repr=False)
+    c_family_base_fields: np.ndarray = field(init=False, repr=False)
+    s_family_base_fields: np.ndarray = field(init=False, repr=False)
+    active_slot_by_profile_id: np.ndarray = field(init=False, repr=False)
+    c_family_source_slots: np.ndarray = field(init=False, repr=False)
+    s_family_source_slots: np.ndarray = field(init=False, repr=False)
     c_effective_order: int = field(init=False, repr=False)
     s_effective_order: int = field(init=False, repr=False)
     _source_route_spec: object = field(init=False, repr=False)
     _source_cache_key: tuple[str, str, int] | None = field(init=False, repr=False)
     _source_runner: Callable = field(init=False, repr=False)
+    residual_pack_runner: Callable = field(init=False, repr=False)
     residual_stage_runner: Callable = field(init=False, repr=False)
+    packed_residual: np.ndarray = field(init=False, repr=False)
     source_barycentric_weights: np.ndarray = field(init=False, repr=False)
     source_fixed_remap_matrix: np.ndarray = field(init=False, repr=False)
     source_psin_query: np.ndarray = field(init=False, repr=False)
     source_parameter_query: np.ndarray = field(init=False, repr=False)
+    source_heat_projection_fit_matrix: np.ndarray = field(init=False, repr=False)
+    source_current_projection_fit_matrix: np.ndarray = field(init=False, repr=False)
+    source_heat_projection_coeff: np.ndarray = field(init=False, repr=False)
+    source_current_projection_coeff: np.ndarray = field(init=False, repr=False)
+    source_projection_query: np.ndarray = field(init=False, repr=False)
+    source_endpoint_blend: np.ndarray = field(init=False, repr=False)
     materialized_heat_input: np.ndarray = field(init=False, repr=False)
     materialized_current_input: np.ndarray = field(init=False, repr=False)
     source_target_root_fields: np.ndarray = field(init=False, repr=False)
+    _source_projection_policy: _SourceProjectionPolicy | None = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         """完成 layout 构造, 运行时缓冲区分配和 case 绑定."""
@@ -145,6 +202,7 @@ class Operator:
         self._validate_runtime_profile_support()
 
         self._setup_runtime_state()
+        self.residual_pack_runner = lambda *args, **kwargs: np.zeros(self.x_size, dtype=np.float64)
         self.residual_stage_runner = lambda *args, **kwargs: np.zeros(self.x_size, dtype=np.float64)
         self._refresh_runtime_state()
 
@@ -305,8 +363,28 @@ class Operator:
 
     def stage_d_residual(self) -> np.ndarray:
         """执行 residual 阶段并返回 packed 残差."""
-        self._build_G_inplace()
-        return self._assemble_residual()
+        packed = self.residual_stage_runner(
+            self.packed_residual,
+            self.residual_fields,
+            self.alpha1,
+            self.alpha2,
+            self.root_fields,
+            self.geometry.R_fields,
+            self.geometry.Z_fields,
+            self.geometry.J_fields,
+            self.geometry.g_fields,
+            self.geometry.sin_tb,
+            self.grid.sin_ktheta,
+            self.grid.cos_ktheta,
+            self.grid.rho_powers,
+            self.grid.y,
+            self.grid.T_fields[0],
+            self.grid.weights,
+            float(self.case.a),
+            float(self.case.R0),
+            float(self.case.B0),
+        )
+        return packed.copy()
 
     def coerce_x(self, x: np.ndarray) -> np.ndarray:
         """校验完整 packed 状态向量形状."""
@@ -404,9 +482,16 @@ class Operator:
         self.materialized_current_input = np.empty(nr, dtype=np.float64)
         self.source_psin_query = np.empty(nr, dtype=np.float64)
         self.source_parameter_query = np.empty(nr, dtype=np.float64)
+        self.source_projection_query = np.empty(nr, dtype=np.float64)
+        self.source_heat_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
+        self.source_current_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
+        self.source_heat_projection_coeff = np.empty(0, dtype=np.float64)
+        self.source_current_projection_coeff = np.empty(0, dtype=np.float64)
+        self.source_endpoint_blend = np.linspace(0.0, 1.0, nr, dtype=np.float64)
         self.source_target_root_fields = np.empty((3, nr), dtype=np.float64)
         self.alpha1 = 0.0
         self.alpha2 = 0.0
+        self.packed_residual = np.empty(self.x_size, dtype=np.float64)
         self.active_u_fields = np.empty((n_active, 3, nr), dtype=np.float64)
         self.active_rp_fields = np.empty((n_active, 3, nr), dtype=np.float64)
         self.active_env_fields = np.empty((n_active, 3, nr), dtype=np.float64)
@@ -416,6 +501,22 @@ class Operator:
         self.active_coeff_index_rows = np.full((n_active, max_active_len), -1, dtype=np.int64)
         self.c_family_fields = np.empty((self.grid.K_max + 1, 3, nr), dtype=np.float64)
         self.s_family_fields = np.zeros((self.grid.K_max + 1, 3, nr), dtype=np.float64)
+        self.c_family_base_fields = np.zeros((self.grid.K_max + 1, 3, nr), dtype=np.float64)
+        self.s_family_base_fields = np.zeros((self.grid.K_max + 1, 3, nr), dtype=np.float64)
+        self.active_slot_by_profile_id = np.full(len(self.profile_names), -1, dtype=np.int64)
+        for slot, p in enumerate(self.active_profile_ids):
+            self.active_slot_by_profile_id[int(p)] = int(slot)
+        self.c_family_source_slots = np.full(self.grid.K_max + 1, -1, dtype=np.int64)
+        self.s_family_source_slots = np.full(self.grid.K_max + 1, -1, dtype=np.int64)
+        for order in range(self.grid.K_max + 1):
+            c_name = f"c{order}"
+            if c_name in self.profile_index:
+                self.c_family_source_slots[order] = self.active_slot_by_profile_id[self.profile_index[c_name]]
+            if order == 0:
+                continue
+            s_name = f"s{order}"
+            if s_name in self.profile_index:
+                self.s_family_source_slots[order] = self.active_slot_by_profile_id[self.profile_index[s_name]]
 
     def _refresh_runtime_state(self) -> None:
         self._refresh_operator_identity()
@@ -430,6 +531,9 @@ class Operator:
         spec = validate_operator(self.case.name, self.case.coordinate, self.case.nodes)
         self._source_route_spec = spec
         self._source_runner = _build_source_stage_runner(spec)
+        self._source_projection_policy = _SOURCE_PROJECTION_POLICIES.get(
+            (self.case.name, self.case.coordinate, self.case.nodes)
+        )
 
     def _refresh_profile_runtime(self) -> None:
         for name in self.profile_names:
@@ -438,6 +542,8 @@ class Operator:
             profile.scale = self._profile_scale_from_case(name)
             profile.coeff = self._profile_coeff_from_case(self.profile_index[name])
             profile._prepare_runtime_cache(self.grid)
+            profile.update()
+        self._refresh_fourier_family_base_fields()
 
     def _make_profile(self, name: str) -> Profile:
         kwargs: dict[str, float | int | np.ndarray | None] = dict(self._profile_static_kwargs(name))
@@ -507,6 +613,7 @@ class Operator:
         self._validate_source_inputs(case)
 
     def _refresh_runtime_bindings(self) -> None:
+        self.residual_pack_runner = self._build_residual_pack_runner()
         self.residual_stage_runner = self._build_residual_stage_runner()
         fixed_profile_ids = np.flatnonzero(~self.active_profile_mask).astype(np.int64, copy=False)
         for p in fixed_profile_ids:
@@ -519,6 +626,10 @@ class Operator:
             if self.case.nodes == "grid":
                 self.source_barycentric_weights = np.empty(0, dtype=np.float64)
                 self.source_fixed_remap_matrix = np.empty((0, 0), dtype=np.float64)
+                self.source_heat_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
+                self.source_current_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
+                self.source_heat_projection_coeff = np.empty(0, dtype=np.float64)
+                self.source_current_projection_coeff = np.empty(0, dtype=np.float64)
             else:
                 (
                     _,
@@ -529,7 +640,33 @@ class Operator:
                     self.source_n_src,
                     rho=self.grid.rho,
                 )
+                if self._source_projection_policy is None:
+                    self.source_heat_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
+                    self.source_current_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
+                else:
+                    self.source_heat_projection_fit_matrix = _build_source_projection_fit_matrix(
+                        self.source_n_src,
+                        degree=self._source_projection_policy.heat_degree,
+                        domain=self._source_projection_policy.domain,
+                    )
+                    self.source_current_projection_fit_matrix = _build_source_projection_fit_matrix(
+                        self.source_n_src,
+                        degree=self._source_projection_policy.current_degree,
+                        domain=self._source_projection_policy.domain,
+                    )
             self._source_cache_key = case_key
+        if self.case.nodes == "grid" or self._source_projection_policy is None:
+            self.source_heat_projection_coeff = np.empty(0, dtype=np.float64)
+            self.source_current_projection_coeff = np.empty(0, dtype=np.float64)
+        else:
+            self.source_heat_projection_coeff = self.source_heat_projection_fit_matrix @ np.asarray(
+                self.case.heat_input,
+                dtype=np.float64,
+            )
+            self.source_current_projection_coeff = self.source_current_projection_fit_matrix @ np.asarray(
+                self.case.current_input,
+                dtype=np.float64,
+            )
         if self.case.nodes == "grid" or self.case.coordinate != "psin":
             self._materialize_source_inputs(self.psin)
 
@@ -543,10 +680,13 @@ class Operator:
         if case.heat_input.shape[0] < 1:
             raise ValueError(f"Expected {case.coordinate}-coordinate inputs to contain at least one sample")
 
-    def _materialize_source_inputs(self, psin_query: np.ndarray) -> None:
+    def _materialize_source_inputs(self, psin_query: np.ndarray, *, enable_projection: bool = True) -> None:
         if self.case.nodes == "grid":
             np.copyto(self.materialized_heat_input, self.case.heat_input)
             np.copyto(self.materialized_current_input, self.case.current_input)
+            return
+        if enable_projection and self.case.coordinate == "psin" and self._source_projection_policy is not None:
+            self._materialize_projected_psin_source_inputs(psin_query)
             return
         query = psin_query
         if self.case.coordinate == "psin":
@@ -562,6 +702,26 @@ class Operator:
             self.source_barycentric_weights,
             self.source_fixed_remap_matrix,
             query,
+        )
+
+    def _materialize_projected_psin_source_inputs(self, psin_query: np.ndarray) -> None:
+        policy = self._source_projection_policy
+        if policy is None:
+            raise RuntimeError("Projected psin source materialization requested without a projection policy")
+
+        current_endpoint_policy = (
+            policy.current_ip_endpoint_policy if np.isfinite(self.case.Ip) else policy.current_other_endpoint_policy
+        )
+        materialize_projected_source_inputs(
+            self.materialized_heat_input,
+            self.materialized_current_input,
+            self.source_heat_projection_coeff,
+            self.source_current_projection_coeff,
+            self.case.current_input,
+            psin_query,
+            _PROJECTION_DOMAIN_CODES[policy.domain],
+            _ENDPOINT_POLICY_CODES[current_endpoint_policy],
+            self.source_endpoint_blend,
         )
 
     def _refresh_stage_a_runtime(self) -> None:
@@ -585,10 +745,22 @@ class Operator:
                 self.active_coeff_index_rows[slot].fill(-1)
                 self.active_coeff_index_rows[slot, : coeff_indices.size] = coeff_indices
 
-    def _build_residual_stage_runner(self) -> Callable:
+    def _build_residual_pack_runner(self) -> Callable:
         profile_names = tuple(self.profile_names[int(p)] for p in self.active_profile_ids)
         try:
             return bind_residual_runner(
+                profile_names,
+                self.active_coeff_index_rows,
+                self.active_lengths,
+                self.x_size,
+            )
+        except KeyError as exc:
+            raise ValueError(f"Unsupported active residual block set {profile_names!r}") from exc
+
+    def _build_residual_stage_runner(self) -> Callable:
+        profile_names = tuple(self.profile_names[int(p)] for p in self.active_profile_ids)
+        try:
+            return bind_residual_stage_runner(
                 profile_names,
                 self.active_coeff_index_rows,
                 self.active_lengths,
@@ -613,14 +785,30 @@ class Operator:
         )
 
     def _refresh_fourier_family_fields(self) -> None:
-        for name in self.c_profile_names[: self.c_effective_order + 1]:
-            order = int(name[1:])
-            self.c_family_fields[order] = self._profile_by_name(name).u_fields
+        update_fourier_family_fields(
+            self.c_family_fields,
+            self.s_family_fields,
+            self.c_family_base_fields,
+            self.s_family_base_fields,
+            self.active_u_fields,
+            self.c_family_source_slots,
+            self.s_family_source_slots,
+            self.c_effective_order,
+            self.s_effective_order,
+        )
 
-        self.s_family_fields[0].fill(0.0)
-        for name in self.s_profile_names[: self.s_effective_order]:
-            order = int(name[1:])
-            self.s_family_fields[order] = self._profile_by_name(name).u_fields
+    def _refresh_fourier_family_base_fields(self) -> None:
+        self.c_family_base_fields.fill(0.0)
+        self.s_family_base_fields.fill(0.0)
+        for order in range(self.grid.K_max + 1):
+            c_name = f"c{order}"
+            if c_name in self.profile_index:
+                np.copyto(self.c_family_base_fields[order], self._profile_by_name(c_name).u_fields)
+            if order == 0:
+                continue
+            s_name = f"s{order}"
+            if s_name in self.profile_index:
+                np.copyto(self.s_family_base_fields[order], self._profile_by_name(s_name).u_fields)
 
     def _refresh_fourier_family_metadata(self) -> None:
         self.c_effective_order = self._effective_family_order(
@@ -672,9 +860,26 @@ class Operator:
         np.copyto(self.psin_rr, self.psin_profile.u_rr)
 
     def _run_profile_owned_psin_source(self) -> tuple[float, float]:
-        self._copy_psin_profile_to_root_fields()
-        np.copyto(self.source_psin_query, self.psin)
-        self._materialize_source_inputs(self.source_psin_query)
+        if self.case.coordinate == "psin" and self.case.nodes != "grid":
+            if self.psin_profile.u_fields is None:
+                raise RuntimeError("psin_profile runtime fields are not initialized")
+            materialize_profile_owned_psin_source(
+                self.psin,
+                self.psin_r,
+                self.psin_rr,
+                self.source_psin_query,
+                self.source_parameter_query,
+                self.materialized_heat_input,
+                self.materialized_current_input,
+                self.psin_profile.u_fields,
+                self.case.heat_input,
+                self.case.current_input,
+                _SOURCE_PARAMETERIZATION_CODES[self.source_parameterization],
+            )
+        else:
+            self._copy_psin_profile_to_root_fields()
+            np.copyto(self.source_psin_query, self.psin)
+            self._materialize_source_inputs(self.source_psin_query)
         return self._source_runner(
             self.source_target_root_fields[0],
             self.source_target_root_fields[1],
@@ -704,8 +909,9 @@ class Operator:
     def _run_psin_source_fixed_point(self) -> tuple[float, float]:
         alpha1 = float("nan")
         alpha2 = float("nan")
+        use_projected_finalize = self.case.coordinate == "psin" and self._source_projection_policy is not None
         for _ in range(8):
-            self._materialize_source_inputs(self.source_psin_query)
+            self._materialize_source_inputs(self.source_psin_query, enable_projection=not use_projected_finalize)
             alpha1, alpha2 = self._source_runner(
                 self.psin,
                 self.psin_r,
@@ -731,13 +937,40 @@ class Operator:
                 float(self.case.Ip),
                 float(self.case.beta),
             )
-            if np.max(np.abs(self.psin - self.source_psin_query)) <= 1e-10:
+            if update_fixed_point_psin_query(self.source_psin_query, self.psin, 1e-10):
                 break
+        if use_projected_finalize:
             np.copyto(self.source_psin_query, self.psin)
+            self._materialize_source_inputs(self.source_psin_query, enable_projection=True)
+            alpha1, alpha2 = self._source_runner(
+                self.psin,
+                self.psin_r,
+                self.psin_rr,
+                self.FFn_psin,
+                self.Pn_psin,
+                self.materialized_heat_input,
+                self.materialized_current_input,
+                float(self.case.R0),
+                float(self.case.B0),
+                self.grid.weights,
+                self.grid.differentiation_matrix,
+                self.grid.integration_matrix,
+                self.grid.rho,
+                self.geometry.V_r,
+                self.geometry.Kn,
+                self.geometry.Kn_r,
+                self.geometry.Ln_r,
+                self.geometry.S_r,
+                self.geometry.R,
+                self.geometry.JdivR,
+                self.F_profile.u,
+                float(self.case.Ip),
+                float(self.case.beta),
+            )
         return alpha1, alpha2
 
     def _assemble_residual(self) -> np.ndarray:
-        return self.residual_stage_runner(
+        return self.residual_pack_runner(
             self.G,
             self.psin_R,
             self.psin_Z,
@@ -817,6 +1050,75 @@ def _parameterize_psin_query_inplace(out: np.ndarray, source: np.ndarray, parame
         np.sqrt(out, out=out)
         return out
     raise ValueError(f"Unsupported source parameterization {parameterization!r}")
+
+
+def _parameterize_projection_query_inplace(out: np.ndarray, source: np.ndarray, domain: str) -> np.ndarray:
+    np.copyto(out, np.asarray(source, dtype=np.float64))
+    np.clip(out, 0.0, 1.0, out=out)
+    if domain == "psin":
+        out *= 2.0
+        out -= 1.0
+        return out
+    if domain == "sqrt_psin":
+        np.sqrt(out, out=out)
+        out *= 2.0
+        out -= 1.0
+        return out
+    raise ValueError(f"Unsupported source projection domain {domain!r}")
+
+
+def _build_source_projection_fit_matrix(n_src: int, *, degree: int, domain: str) -> np.ndarray:
+    if degree < 0:
+        raise ValueError(f"Projection degree must be non-negative, got {degree}")
+    source_axis = np.linspace(0.0, 1.0, int(n_src), dtype=np.float64)
+    source_query = np.empty_like(source_axis)
+    _parameterize_projection_query_inplace(source_query, source_axis, domain)
+    vandermonde = chebvander(source_query, degree)
+    return np.linalg.pinv(vandermonde)
+
+
+def _evaluate_source_projection_inplace(
+    out: np.ndarray,
+    source_values: np.ndarray,
+    fit_matrix: np.ndarray,
+    projected_query: np.ndarray,
+) -> np.ndarray:
+    coeff = fit_matrix @ np.asarray(source_values, dtype=np.float64)
+    out[:] = chebval(projected_query, coeff)
+    return out
+
+
+def _evaluate_projection_coeff_inplace(
+    out: np.ndarray,
+    coeff: np.ndarray,
+    projected_query: np.ndarray,
+) -> np.ndarray:
+    out[:] = chebval(projected_query, coeff)
+    return out
+
+
+def _apply_endpoint_policy_inplace(
+    out: np.ndarray,
+    source_values: np.ndarray,
+    *,
+    policy: str,
+    blend: np.ndarray,
+) -> np.ndarray:
+    if policy == "none":
+        return out
+    if policy == "right":
+        out[-1] = float(source_values[-1])
+        return out
+    if policy == "both":
+        out[0] = float(source_values[0])
+        out[-1] = float(source_values[-1])
+        return out
+    if policy == "affine_both":
+        delta_left = float(source_values[0]) - float(out[0])
+        delta_right = float(source_values[-1]) - float(out[-1])
+        out += (1.0 - blend) * delta_left + blend * delta_right
+        return out
+    raise ValueError(f"Unsupported endpoint policy {policy!r}")
 
 
 def _build_source_stage_runner(route_spec) -> Callable:

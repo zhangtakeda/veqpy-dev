@@ -10,6 +10,7 @@ import numpy as np
 from matplotlib.colors import LogNorm
 from rich import print
 
+from veqpy.engine import validate_operator
 from veqpy.model import Boundary, Grid
 from veqpy.operator import Operator, OperatorCase
 from veqpy.operator.codec import decode_packed_blocks
@@ -213,12 +214,31 @@ CASE_SPECS = (
 )
 
 
+def _prepare_profile_coeffs(
+    *,
+    name: str,
+    coordinate: str,
+    nodes: str,
+    profile_coeffs: dict[str, list[float] | None],
+) -> dict[str, list[float] | None]:
+    coeffs = copy.deepcopy(profile_coeffs)
+    route_spec = validate_operator(name, coordinate, nodes)
+    if route_spec.source_strategy == "profile_owned_psin" and coeffs.get("psin") is None:
+        coeffs["psin"] = [0.0] * 5
+    return coeffs
+
+
 def _build_case(grid: Grid, profile_coeffs: dict[str, list[float] | None]) -> OperatorCase:
     del grid
     current_input, heat_input = _build_uniform_rho_inputs()
     return OperatorCase(
         name="PF",
-        profile_coeffs=copy.deepcopy(profile_coeffs),
+        profile_coeffs=_prepare_profile_coeffs(
+            name="PF",
+            coordinate="rho",
+            nodes="uniform",
+            profile_coeffs=profile_coeffs,
+        ),
         boundary=BOUNDARY,
         heat_input=heat_input,
         current_input=current_input,
@@ -232,7 +252,12 @@ def _build_psin_case(profile_coeffs: dict[str, list[float] | None]) -> OperatorC
     current_input, heat_input = _build_uniform_psin_inputs()
     return OperatorCase(
         name="PF",
-        profile_coeffs=copy.deepcopy(profile_coeffs),
+        profile_coeffs=_prepare_profile_coeffs(
+            name="PF",
+            coordinate="psin",
+            nodes="uniform",
+            profile_coeffs=profile_coeffs,
+        ),
         boundary=BOUNDARY,
         heat_input=heat_input,
         current_input=current_input,
@@ -263,7 +288,12 @@ def _build_rho_case_from_psin_solution(
     current_rho, heat_rho = _enforce_rho_endpoint_constraints(current_rho, heat_rho)
     return OperatorCase(
         name="PF",
-        profile_coeffs=copy.deepcopy(profile_coeffs),
+        profile_coeffs=_prepare_profile_coeffs(
+            name="PF",
+            coordinate="rho",
+            nodes="uniform",
+            profile_coeffs=profile_coeffs,
+        ),
         boundary=BOUNDARY,
         heat_input=heat_rho,
         current_input=current_rho,
@@ -459,36 +489,3 @@ if __name__ == "__main__":
         label_other="Lower",
     )
     print(eq2)
-
-    print("\n\n=== PF-psin Low Precision Grid ===")
-    psin_case_1 = _build_psin_case(LOWER_COEFFS)
-    psin_operator_1 = Operator(grid=LOWER_GRID, case=psin_case_1)
-    psin_solver_1 = Solver(operator=psin_operator_1, config=CONFIG)
-    warmup_solver(psin_solver_1)
-    psin_solver_1.solve()
-    eq1_psin = psin_solver_1.build_equilibrium()
-    eq1_psin.write("tests/demo/demo-psin-1.json")
-    eq1_psin.plot("tests/demo/demo-psin-1.png")
-    print(eq1_psin)
-
-    print("\n\n=== PF-psin High Precision Grid ===")
-    psin_case_2 = _build_psin_case(HIGHER_COEFFS)
-    psin_operator_2 = Operator(grid=HIGHER_GRID, case=psin_case_2)
-    psin_solver_2 = Solver(operator=psin_operator_2, config=CONFIG)
-    warmup_solver(psin_solver_2)
-    psin_solver_2.solve()
-    eq2_psin = psin_solver_2.build_equilibrium()
-    eq2_psin.write("tests/demo/demo-psin-2.json")
-    eq2_psin.plot("tests/demo/demo-psin-2.png")
-    print(eq2_psin)
-    eq2_psin.compare(
-        eq1_psin,
-        "tests/demo/demo-psin-comparison.png",
-        label_ref="PF-psin high",
-        label_other="PF-psin low",
-    )
-    _print_equilibrium_delta("PF-psin high vs low", eq2_psin, eq1_psin)
-
-    report_path = generate_grid_shape_error_report()
-    print("\n\n=== Grid Shape Error Report ===")
-    print(report_path)

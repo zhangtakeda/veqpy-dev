@@ -315,7 +315,7 @@ def test_equilibrium_compare_reports_only_primary_shape_errors():
         cur_operator.build_equilibrium(cur_operator.encode_initial_state())
     )
 
-    assert "rel_v_max" in errors
+    assert "rel_h_max" in errors
     assert "rel_k_max" in errors
-    assert "rel_h_max" not in errors
-    assert "rel_s1_max" not in errors
+    assert "rel_s1_max" in errors
+    assert "rel_v_max" not in errors

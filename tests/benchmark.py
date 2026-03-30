@@ -102,6 +102,38 @@ class BenchmarkCaseResult:
         return self.spec.case_name
 
 
+def _sort_rows_desc(rows: list[BenchmarkCaseResult], key_fn) -> list[BenchmarkCaseResult]:
+    return sorted(rows, key=lambda row: (-float(key_fn(row)), row.case_name))
+
+
+def _render_ranking_section(
+    title: str,
+    rows: list[BenchmarkCaseResult],
+    *,
+    columns,
+) -> list[str]:
+    lines = ["", title, ""]
+    header_parts = []
+    for align, label, width, _ in columns:
+        if align == "left":
+            header_parts.append(label.ljust(width))
+        else:
+            header_parts.append(label.rjust(width))
+    header = " | ".join(header_parts)
+    lines.append(header)
+    lines.append("-" * len(header))
+    for index, row in enumerate(rows, start=1):
+        value_parts = []
+        for align, _, width, formatter in columns:
+            value = str(formatter(index, row))
+            if align == "left":
+                value_parts.append(value.ljust(width))
+            else:
+                value_parts.append(value.rjust(width))
+        lines.append(" | ".join(value_parts))
+    return lines
+
+
 def _artifact_dir() -> Path:
     outdir = Path(__file__).resolve().parent / "benchmark" / f"full46-{BACKEND}"
     outdir.mkdir(parents=True, exist_ok=True)
@@ -478,6 +510,12 @@ def _write_report(
     plot_failures: list[str] | None = None,
 ) -> None:
     worst_shape = max(rows, key=lambda row: row.shape_error)
+    slowest_case = max(rows, key=lambda row: row.avg_ms)
+    largest_nfev_case = max(rows, key=lambda row: int(row.result.nfev))
+    failing_rows = [row for row in rows if row.shape_error > SHAPE_MATCH_TOL]
+    rows_by_error = _sort_rows_desc(rows, lambda row: row.shape_error)
+    rows_by_time = _sort_rows_desc(rows, lambda row: row.avg_ms)
+    rows_by_nfev = _sort_rows_desc(rows, lambda row: int(row.result.nfev))
 
     lines = [f"PF-rho-Ip reference vs {len(rows)} low-resolution route-specific cases", ""]
     lines.extend(
@@ -491,7 +529,10 @@ def _write_report(
                 ("test_source_samples", str(TEST_SOURCE_SAMPLE_COUNT)),
                 ("repeat_count", str(BENCHMARK_REPEAT_COUNT)),
                 ("shape_tol", f"{SHAPE_MATCH_TOL:.3e}"),
+                ("failure_count", f"{len(failing_rows)}/{len(rows)}"),
                 ("worst_shape_case", f"{worst_shape.case_name} ({worst_shape.shape_error:.6e})"),
+                ("slowest_case", f"{slowest_case.case_name} ({slowest_case.avg_ms:.3f} ms)"),
+                ("largest_nfev_case", f"{largest_nfev_case.case_name} ({int(largest_nfev_case.result.nfev)})"),
             ]
         )
     )
@@ -506,14 +547,70 @@ def _write_report(
         + " | "
         + "std_ms".rjust(12)
         + " | "
+        + "nfev".rjust(6)
+        + " | "
+        + "nit".rjust(6)
+        + " | "
+        + "residual".rjust(12)
+        + " | "
         + "ok".rjust(4)
     )
-    lines.append("-" * 70)
+    lines.append("-" * 114)
     for row in rows:
         ok = "yes" if row.shape_error <= SHAPE_MATCH_TOL else "no"
         lines.append(
-            f"{row.case_name:<24} | {row.shape_error:>12.6e} | {row.avg_ms:>12.3f} | {row.std_ms:>12.3f} | {ok:>4}"
+            f"{row.case_name:<24} | "
+            f"{row.shape_error:>12.6e} | "
+            f"{row.avg_ms:>12.3f} | "
+            f"{row.std_ms:>12.3f} | "
+            f"{int(row.result.nfev):>6d} | "
+            f"{int(row.result.nit):>6d} | "
+            f"{float(row.result.residual_norm_final):>12.6e} | "
+            f"{ok:>4}"
         )
+
+    lines.extend(
+        _render_ranking_section(
+            "Largest shape_error ranking",
+            rows_by_error,
+            columns=[
+                ("right", "rank", 4, lambda index, row: index),
+                ("left", "case", 24, lambda index, row: row.case_name),
+                ("right", "shape_error", 12, lambda index, row: f"{row.shape_error:.6e}"),
+                ("right", "avg_ms", 12, lambda index, row: f"{row.avg_ms:.3f}"),
+                ("right", "std_ms", 12, lambda index, row: f"{row.std_ms:.3f}"),
+                ("right", "nfev", 6, lambda index, row: int(row.result.nfev)),
+            ],
+        )
+    )
+    lines.extend(
+        _render_ranking_section(
+            "Slowest avg_ms ranking",
+            rows_by_time,
+            columns=[
+                ("right", "rank", 4, lambda index, row: index),
+                ("left", "case", 24, lambda index, row: row.case_name),
+                ("right", "avg_ms", 12, lambda index, row: f"{row.avg_ms:.3f}"),
+                ("right", "std_ms", 12, lambda index, row: f"{row.std_ms:.3f}"),
+                ("right", "shape_error", 12, lambda index, row: f"{row.shape_error:.6e}"),
+                ("right", "nfev", 6, lambda index, row: int(row.result.nfev)),
+            ],
+        )
+    )
+    lines.extend(
+        _render_ranking_section(
+            "Largest nfev ranking",
+            rows_by_nfev,
+            columns=[
+                ("right", "rank", 4, lambda index, row: index),
+                ("left", "case", 24, lambda index, row: row.case_name),
+                ("right", "nfev", 6, lambda index, row: int(row.result.nfev)),
+                ("right", "avg_ms", 12, lambda index, row: f"{row.avg_ms:.3f}"),
+                ("right", "std_ms", 12, lambda index, row: f"{row.std_ms:.3f}"),
+                ("right", "shape_error", 12, lambda index, row: f"{row.shape_error:.6e}"),
+            ],
+        )
+    )
 
     if plot_failures:
         lines.extend(["", "Plot failures", ""])

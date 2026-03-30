@@ -8,6 +8,7 @@ Role:
 Public API:
 - update_residual
 - bind_residual_runner
+- bind_residual_stage_runner
 
 Notes:
 - residual block registration 保留在本模块内.
@@ -122,6 +123,67 @@ def bind_residual_runner(
             B0,
         )
         return out
+
+    return runner
+
+
+def bind_residual_stage_runner(
+    profile_names: tuple[str, ...],
+    coeff_index_rows: np.ndarray,
+    lengths: np.ndarray,
+    residual_size: int,
+) -> Callable:
+    block_codes = np.empty(len(profile_names), dtype=np.int64)
+    block_orders = np.zeros(len(profile_names), dtype=np.int64)
+    for i, name in enumerate(profile_names):
+        block_codes[i], block_orders[i] = _decode_residual_block_code(name)
+
+    def runner(
+        out_packed: np.ndarray,
+        out_fields: np.ndarray,
+        alpha1: float,
+        alpha2: float,
+        root_fields: np.ndarray,
+        R_fields: np.ndarray,
+        Z_fields: np.ndarray,
+        J_fields: np.ndarray,
+        g_fields: np.ndarray,
+        sin_tb: np.ndarray,
+        sin_ktheta: np.ndarray,
+        cos_ktheta: np.ndarray,
+        rho_powers: np.ndarray,
+        y: np.ndarray,
+        T: np.ndarray,
+        weights: np.ndarray,
+        a: float,
+        R0: float,
+        B0: float,
+    ) -> np.ndarray:
+        if out_packed.ndim != 1 or out_packed.shape[0] != residual_size:
+            raise ValueError(f"Expected out_packed to have shape ({residual_size},), got {out_packed.shape}")
+        update_residual(out_fields, alpha1, alpha2, root_fields, R_fields, Z_fields, J_fields, g_fields)
+        out_packed.fill(0.0)
+        _run_residual_blocks_packed(
+            out_packed,
+            block_codes,
+            block_orders,
+            coeff_index_rows,
+            lengths,
+            out_fields[2],
+            out_fields[0],
+            out_fields[1],
+            sin_tb,
+            sin_ktheta,
+            cos_ktheta,
+            rho_powers,
+            y,
+            T,
+            weights,
+            a,
+            R0,
+            B0,
+        )
+        return out_packed
 
     return runner
 

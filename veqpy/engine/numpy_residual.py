@@ -8,6 +8,7 @@ Role:
 Public API:
 - update_residual
 - bind_residual_runner
+- bind_residual_stage_runner
 
 Notes:
 - 这个文件同时作为 residual field update 与 packed residual assembly 的 vectorized reference.
@@ -136,6 +137,101 @@ def bind_residual_runner(
                     a,
                 )
         return out
+
+    return runner
+
+
+def bind_residual_stage_runner(
+    profile_names: tuple[str, ...],
+    coeff_index_rows: np.ndarray,
+    lengths: np.ndarray,
+    residual_size: int,
+) -> Callable:
+    specs: list[tuple[str, int, Callable | None]] = []
+    for name in profile_names:
+        specs.append(_decode_residual_block(name))
+    bound_specs = tuple(specs)
+
+    def runner(
+        out_packed: np.ndarray,
+        out_fields: np.ndarray,
+        alpha1: float,
+        alpha2: float,
+        root_fields: np.ndarray,
+        R_fields: np.ndarray,
+        Z_fields: np.ndarray,
+        J_fields: np.ndarray,
+        g_fields: np.ndarray,
+        sin_tb: np.ndarray,
+        sin_ktheta: np.ndarray,
+        cos_ktheta: np.ndarray,
+        rho_powers: np.ndarray,
+        y: np.ndarray,
+        T: np.ndarray,
+        weights: np.ndarray,
+        a: float,
+        R0: float,
+        B0: float,
+    ) -> np.ndarray:
+        if out_packed.ndim != 1 or out_packed.shape[0] != residual_size:
+            raise ValueError(f"Expected out_packed to have shape ({residual_size},), got {out_packed.shape}")
+        update_residual(out_fields, alpha1, alpha2, root_fields, R_fields, Z_fields, J_fields, g_fields)
+        out_packed.fill(0.0)
+        G = out_fields[2]
+        psin_R = out_fields[0]
+        psin_Z = out_fields[1]
+        for slot, (kind, order, kernel) in enumerate(bound_specs):
+            coeff_size = int(lengths[slot])
+            coeff_indices = coeff_index_rows[slot, :coeff_size]
+            if kind == "fixed":
+                kernel(
+                    out_packed,
+                    coeff_indices,
+                    G,
+                    psin_R,
+                    psin_Z,
+                    sin_tb,
+                    sin_ktheta,
+                    cos_ktheta,
+                    rho_powers,
+                    y,
+                    T,
+                    weights,
+                    a,
+                    R0,
+                    B0,
+                )
+            elif kind == "c_family":
+                assemble_c_family_residual_block(
+                    out_packed,
+                    coeff_indices,
+                    order,
+                    G,
+                    psin_R,
+                    sin_tb,
+                    cos_ktheta,
+                    rho_powers,
+                    y,
+                    T,
+                    weights,
+                    a,
+                )
+            else:
+                assemble_s_family_residual_block(
+                    out_packed,
+                    coeff_indices,
+                    order,
+                    G,
+                    psin_R,
+                    sin_tb,
+                    sin_ktheta,
+                    rho_powers,
+                    y,
+                    T,
+                    weights,
+                    a,
+                )
+        return out_packed
 
     return runner
 

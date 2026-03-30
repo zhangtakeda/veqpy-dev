@@ -59,6 +59,14 @@ SOURCE_STRATEGY_PROFILE_OWNED_PSIN = "profile_owned_psin"
 SOURCE_STRATEGY_FIXED_POINT_PSIN = "fixed_point_psin"
 SOURCE_PARAMETERIZATION_IDENTITY = "identity"
 SOURCE_PARAMETERIZATION_SQRT_PSIN = "sqrt_psin"
+SOURCE_PARAMETERIZATION_CODE_IDENTITY = 0
+SOURCE_PARAMETERIZATION_CODE_SQRT_PSIN = 1
+PROJECTION_DOMAIN_PSIN = 0
+PROJECTION_DOMAIN_SQRT_PSIN = 1
+ENDPOINT_POLICY_NONE = 0
+ENDPOINT_POLICY_RIGHT = 1
+ENDPOINT_POLICY_BOTH = 2
+ENDPOINT_POLICY_AFFINE_BOTH = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -2133,28 +2141,325 @@ def resolve_source_inputs(
     if psin_query.shape != out_heat_input.shape:
         raise ValueError(f"Expected psin_query to have shape {out_heat_input.shape}, got {psin_query.shape}")
 
-    _barycentric_uniform_interpolate_pair(
+    _linear_uniform_interpolate_pair(
         out_heat_input,
         out_current_input,
         heat,
         current,
         psin_query,
-        barycentric_weights,
     )
     return out_heat_input, out_current_input
 
 
+def materialize_profile_owned_psin_source(
+    out_psin: np.ndarray,
+    out_psin_r: np.ndarray,
+    out_psin_rr: np.ndarray,
+    out_source_psin_query: np.ndarray,
+    out_parameter_query: np.ndarray,
+    out_heat_input: np.ndarray,
+    out_current_input: np.ndarray,
+    psin_fields: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    parameterization_code: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    if psin_fields.ndim != 2 or psin_fields.shape[0] != 3:
+        raise ValueError(f"Expected psin_fields to have shape (3, Nr), got {psin_fields.shape}")
+    nr = psin_fields.shape[1]
+    expected = (nr,)
+    arrays = {
+        "out_psin": out_psin,
+        "out_psin_r": out_psin_r,
+        "out_psin_rr": out_psin_rr,
+        "out_source_psin_query": out_source_psin_query,
+        "out_parameter_query": out_parameter_query,
+        "out_heat_input": out_heat_input,
+        "out_current_input": out_current_input,
+    }
+    for name, arr in arrays.items():
+        if arr.ndim != 1 or arr.shape != expected:
+            raise ValueError(f"Expected {name} to have shape {expected}, got {arr.shape}")
+
+    heat = np.asarray(heat_input, dtype=np.float64)
+    current = np.asarray(current_input, dtype=np.float64)
+    if heat.ndim != 1 or current.ndim != 1 or heat.shape != current.shape:
+        raise ValueError(f"Expected 1D heat/current inputs with matching shapes, got {heat.shape} and {current.shape}")
+
+    _materialize_profile_owned_psin_source_impl(
+        np.asarray(out_psin, dtype=np.float64),
+        np.asarray(out_psin_r, dtype=np.float64),
+        np.asarray(out_psin_rr, dtype=np.float64),
+        np.asarray(out_source_psin_query, dtype=np.float64),
+        np.asarray(out_parameter_query, dtype=np.float64),
+        np.asarray(out_heat_input, dtype=np.float64),
+        np.asarray(out_current_input, dtype=np.float64),
+        np.asarray(psin_fields, dtype=np.float64),
+        heat,
+        current,
+        int(parameterization_code),
+    )
+    return out_heat_input, out_current_input
+
+
+def update_fourier_family_fields(
+    out_c_fields: np.ndarray,
+    out_s_fields: np.ndarray,
+    base_c_fields: np.ndarray,
+    base_s_fields: np.ndarray,
+    active_u_fields: np.ndarray,
+    c_source_slots: np.ndarray,
+    s_source_slots: np.ndarray,
+    c_active_order: int,
+    s_active_order: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    if out_c_fields.ndim != 3 or out_s_fields.ndim != 3:
+        raise ValueError(f"Expected out_c_fields/out_s_fields to be 3D, got {out_c_fields.shape} and {out_s_fields.shape}")
+    if base_c_fields.shape != out_c_fields.shape or base_s_fields.shape != out_s_fields.shape:
+        raise ValueError(
+            f"Expected base_c_fields/base_s_fields to match output shapes, got {base_c_fields.shape} and {base_s_fields.shape}"
+        )
+    if active_u_fields.ndim != 3:
+        raise ValueError(f"Expected active_u_fields to be 3D, got {active_u_fields.shape}")
+    if c_source_slots.ndim != 1 or s_source_slots.ndim != 1:
+        raise ValueError(f"Expected c_source_slots/s_source_slots to be 1D, got {c_source_slots.shape} and {s_source_slots.shape}")
+
+    _update_fourier_family_fields_impl(
+        np.asarray(out_c_fields, dtype=np.float64),
+        np.asarray(out_s_fields, dtype=np.float64),
+        np.asarray(base_c_fields, dtype=np.float64),
+        np.asarray(base_s_fields, dtype=np.float64),
+        np.asarray(active_u_fields, dtype=np.float64),
+        np.asarray(c_source_slots, dtype=np.int64),
+        np.asarray(s_source_slots, dtype=np.int64),
+        int(c_active_order),
+        int(s_active_order),
+    )
+    return out_c_fields, out_s_fields
+
+
+def materialize_projected_source_inputs(
+    out_heat_input: np.ndarray,
+    out_current_input: np.ndarray,
+    heat_coeff: np.ndarray,
+    current_coeff: np.ndarray,
+    current_source_values: np.ndarray,
+    psin_query: np.ndarray,
+    projection_domain_code: int,
+    endpoint_policy_code: int,
+    blend: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    if out_heat_input.ndim != 1 or out_current_input.ndim != 1 or out_heat_input.shape != out_current_input.shape:
+        raise ValueError(
+            "Expected out_heat_input/out_current_input to be 1D arrays with matching shapes, "
+            f"got {out_heat_input.shape} and {out_current_input.shape}"
+        )
+    if psin_query.ndim != 1 or psin_query.shape != out_heat_input.shape:
+        raise ValueError(f"Expected psin_query to have shape {out_heat_input.shape}, got {psin_query.shape}")
+    if blend.ndim != 1 or blend.shape != out_heat_input.shape:
+        raise ValueError(f"Expected blend to have shape {out_heat_input.shape}, got {blend.shape}")
+
+    _materialize_projected_source_inputs_impl(
+        out_heat_input,
+        out_current_input,
+        np.asarray(heat_coeff, dtype=np.float64),
+        np.asarray(current_coeff, dtype=np.float64),
+        np.asarray(current_source_values, dtype=np.float64),
+        np.asarray(psin_query, dtype=np.float64),
+        int(projection_domain_code),
+        int(endpoint_policy_code),
+        np.asarray(blend, dtype=np.float64),
+    )
+    return out_heat_input, out_current_input
+
+
+def update_fixed_point_psin_query(
+    query: np.ndarray,
+    psin: np.ndarray,
+    tolerance: float,
+) -> bool:
+    if query.ndim != 1 or psin.ndim != 1 or query.shape != psin.shape:
+        raise ValueError(f"Expected query/psin to share a 1D shape, got {query.shape} and {psin.shape}")
+    return bool(
+        _update_fixed_point_psin_query_impl(
+            np.asarray(query, dtype=np.float64),
+            np.asarray(psin, dtype=np.float64),
+            float(tolerance),
+        )
+    )
+
+
 @njit(cache=True, fastmath=True, nogil=True)
-def _barycentric_uniform_interpolate_pair(
+def _materialize_projected_source_inputs_impl(
+    out_heat_input: np.ndarray,
+    out_current_input: np.ndarray,
+    heat_coeff: np.ndarray,
+    current_coeff: np.ndarray,
+    current_source_values: np.ndarray,
+    psin_query: np.ndarray,
+    projection_domain_code: int,
+    endpoint_policy_code: int,
+    blend: np.ndarray,
+) -> None:
+    for i in range(out_heat_input.shape[0]):
+        q = psin_query[i]
+        if q < 0.0:
+            q = 0.0
+        elif q > 1.0:
+            q = 1.0
+        if projection_domain_code == PROJECTION_DOMAIN_SQRT_PSIN:
+            q = np.sqrt(q)
+        elif projection_domain_code != PROJECTION_DOMAIN_PSIN:
+            raise ValueError("Unsupported projection domain code")
+        x = 2.0 * q - 1.0
+        out_heat_input[i] = _evaluate_chebyshev_scalar(heat_coeff, x)
+        out_current_input[i] = _evaluate_chebyshev_scalar(current_coeff, x)
+
+    if endpoint_policy_code == ENDPOINT_POLICY_NONE:
+        return
+    if endpoint_policy_code == ENDPOINT_POLICY_RIGHT:
+        out_current_input[-1] = current_source_values[-1]
+        return
+    if endpoint_policy_code == ENDPOINT_POLICY_BOTH:
+        out_current_input[0] = current_source_values[0]
+        out_current_input[-1] = current_source_values[-1]
+        return
+    if endpoint_policy_code == ENDPOINT_POLICY_AFFINE_BOTH:
+        delta_left = current_source_values[0] - out_current_input[0]
+        delta_right = current_source_values[-1] - out_current_input[-1]
+        for i in range(out_current_input.shape[0]):
+            out_current_input[i] += (1.0 - blend[i]) * delta_left + blend[i] * delta_right
+        return
+    raise ValueError("Unsupported endpoint policy code")
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def _update_fixed_point_psin_query_impl(
+    query: np.ndarray,
+    psin: np.ndarray,
+    tolerance: float,
+) -> bool:
+    max_abs_diff = 0.0
+    for i in range(query.shape[0]):
+        diff = abs(psin[i] - query[i])
+        if diff > max_abs_diff:
+            max_abs_diff = diff
+        query[i] = psin[i]
+    return max_abs_diff <= tolerance
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def _materialize_profile_owned_psin_source_impl(
+    out_psin: np.ndarray,
+    out_psin_r: np.ndarray,
+    out_psin_rr: np.ndarray,
+    out_source_psin_query: np.ndarray,
+    out_parameter_query: np.ndarray,
+    out_heat_input: np.ndarray,
+    out_current_input: np.ndarray,
+    psin_fields: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    parameterization_code: int,
+) -> None:
+    for i in range(out_psin.shape[0]):
+        psin_value = psin_fields[0, i]
+        out_psin[i] = psin_value
+        out_psin_r[i] = psin_fields[1, i]
+        out_psin_rr[i] = psin_fields[2, i]
+        out_source_psin_query[i] = psin_value
+        out_parameter_query[i] = psin_value
+
+    if parameterization_code == SOURCE_PARAMETERIZATION_CODE_SQRT_PSIN:
+        for i in range(out_parameter_query.shape[0]):
+            value = out_parameter_query[i]
+            if value < 0.0:
+                value = 0.0
+            out_parameter_query[i] = np.sqrt(value)
+    elif parameterization_code != SOURCE_PARAMETERIZATION_CODE_IDENTITY:
+        raise ValueError("Unsupported source parameterization code")
+
+    _linear_uniform_interpolate_pair(
+        out_heat_input,
+        out_current_input,
+        heat_input,
+        current_input,
+        out_parameter_query,
+    )
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def _update_fourier_family_fields_impl(
+    out_c_fields: np.ndarray,
+    out_s_fields: np.ndarray,
+    base_c_fields: np.ndarray,
+    base_s_fields: np.ndarray,
+    active_u_fields: np.ndarray,
+    c_source_slots: np.ndarray,
+    s_source_slots: np.ndarray,
+    c_active_order: int,
+    s_active_order: int,
+) -> None:
+    for order in range(out_c_fields.shape[0]):
+        if order <= c_active_order:
+            slot = c_source_slots[order]
+            if slot >= 0:
+                for d in range(out_c_fields.shape[1]):
+                    for i in range(out_c_fields.shape[2]):
+                        out_c_fields[order, d, i] = active_u_fields[slot, d, i]
+            else:
+                for d in range(out_c_fields.shape[1]):
+                    for i in range(out_c_fields.shape[2]):
+                        out_c_fields[order, d, i] = base_c_fields[order, d, i]
+        else:
+            for d in range(out_c_fields.shape[1]):
+                for i in range(out_c_fields.shape[2]):
+                    out_c_fields[order, d, i] = 0.0
+
+    for d in range(out_s_fields.shape[1]):
+        for i in range(out_s_fields.shape[2]):
+            out_s_fields[0, d, i] = base_s_fields[0, d, i]
+    for order in range(1, out_s_fields.shape[0]):
+        if order <= s_active_order:
+            slot = s_source_slots[order]
+            if slot >= 0:
+                for d in range(out_s_fields.shape[1]):
+                    for i in range(out_s_fields.shape[2]):
+                        out_s_fields[order, d, i] = active_u_fields[slot, d, i]
+            else:
+                for d in range(out_s_fields.shape[1]):
+                    for i in range(out_s_fields.shape[2]):
+                        out_s_fields[order, d, i] = base_s_fields[order, d, i]
+        else:
+            for d in range(out_s_fields.shape[1]):
+                for i in range(out_s_fields.shape[2]):
+                    out_s_fields[order, d, i] = 0.0
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def _evaluate_chebyshev_scalar(coeff: np.ndarray, x: float) -> float:
+    if coeff.size == 0:
+        return 0.0
+    if coeff.size == 1:
+        return coeff[0]
+    b_kplus1 = 0.0
+    b_kplus2 = 0.0
+    for idx in range(coeff.size - 1, 0, -1):
+        b_k = 2.0 * x * b_kplus1 - b_kplus2 + coeff[idx]
+        b_kplus2 = b_kplus1
+        b_kplus1 = b_k
+    return x * b_kplus1 - b_kplus2 + coeff[0]
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def _linear_uniform_interpolate_pair(
     out0: np.ndarray,
     out1: np.ndarray,
     values0: np.ndarray,
     values1: np.ndarray,
     query: np.ndarray,
-    weights: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     n_src = values0.shape[0]
-    stencil_size = weights.shape[0]
     if n_src == 1:
         value0 = values0[0]
         value1 = values1[0]
@@ -2163,35 +2468,25 @@ def _barycentric_uniform_interpolate_pair(
             out1[i] = value1
         return out0, out1
 
+    step = 1.0 / (n_src - 1.0)
     for i in range(out0.shape[0]):
         q = query[i]
-        start = _local_uniform_stencil_start(q, n_src, stencil_size)
-        numerator0 = 0.0
-        numerator1 = 0.0
-        denominator = 0.0
-        hit = False
-        hit_value0 = 0.0
-        hit_value1 = 0.0
-        for local_j in range(stencil_size):
-            j = start + local_j
-            node = j / (n_src - 1.0)
-            diff = q - node
-            if abs(diff) <= 1e-14:
-                hit = True
-                hit_value0 = values0[j]
-                hit_value1 = values1[j]
-                break
-            term = weights[local_j] / diff
-            numerator0 += term * values0[j]
-            numerator1 += term * values1[j]
-            denominator += term
-        if hit:
-            out0[i] = hit_value0
-            out1[i] = hit_value1
-        else:
-            inv_denominator = 1.0 / denominator
-            out0[i] = numerator0 * inv_denominator
-            out1[i] = numerator1 * inv_denominator
+        if q < 0.0:
+            q = 0.0
+        elif q > 1.0:
+            q = 1.0
+
+        if q >= 1.0:
+            out0[i] = values0[-1]
+            out1[i] = values1[-1]
+            continue
+
+        position = q / step
+        left = int(position)
+        right = left + 1
+        frac = position - left
+        out0[i] = (1.0 - frac) * values0[left] + frac * values0[right]
+        out1[i] = (1.0 - frac) * values1[left] + frac * values1[right]
     return out0, out1
 
 

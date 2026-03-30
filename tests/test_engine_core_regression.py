@@ -1,4 +1,7 @@
+import importlib.util
 import numpy as np
+from pathlib import Path
+import sys
 
 from veqpy.engine import PSIN_COORDINATE, RHO_COORDINATE
 from veqpy.engine.numba_geometry import update_geometry as numba_update_geometry
@@ -291,6 +294,19 @@ def test_operator_runtime_propagates_high_order_geometry_and_residual():
     assert np.all(np.isfinite(residual))
 
 
+def test_operator_residual_returns_independent_arrays_between_calls():
+    operator = _build_operator_with_high_order_profiles()
+    x = operator.encode_initial_state()
+
+    residual_first = operator.residual(x)
+    residual_first_snapshot = residual_first.copy()
+    residual_second = operator.residual(x)
+
+    assert residual_first.shape == residual_second.shape
+    assert not np.shares_memory(residual_first, residual_second)
+    assert np.allclose(residual_first, residual_first_snapshot)
+
+
 def test_numpy_and_numba_source_resolution_match_for_rho_and_psin_coordinates():
     grid = Grid(Nr=8, Nt=8, scheme="uniform")
     heat_input = np.linspace(-1.0, 2.0, TEST_SOURCE_SAMPLE_COUNT)
@@ -371,3 +387,75 @@ def test_numpy_and_numba_source_resolution_match_for_rho_and_psin_coordinates():
     assert np.allclose(numpy_current_rho, numba_current_rho, atol=1e-12, rtol=1e-12)
     assert np.allclose(numpy_heat_psin, numba_heat_psin, atol=1e-12, rtol=1e-12)
     assert np.allclose(numpy_current_psin, numba_current_psin, atol=1e-12, rtol=1e-12)
+
+
+def test_psin_source_resolution_uses_monotone_linear_remap_without_axis_overshoot():
+    n_src = 9
+    psin_query = np.array([0.0, 0.002, 0.01, 0.04, 0.16, 0.36, 0.64, 1.0], dtype=np.float64)
+    src_axis = np.linspace(0.0, 1.0, n_src, dtype=np.float64)
+    heat_input = np.linspace(1.0, 3.0, n_src, dtype=np.float64)
+    current_input = np.linspace(0.2, 2.0, n_src, dtype=np.float64)
+
+    numpy_plan = build_numpy_source_remap_cache("psin", n_src)
+    numba_plan = build_numba_source_remap_cache("psin", n_src)
+    _, numpy_weights, numpy_matrix = numpy_plan
+    _, numba_weights, numba_matrix = numba_plan
+
+    numpy_heat = np.empty(psin_query.shape[0], dtype=np.float64)
+    numpy_current = np.empty(psin_query.shape[0], dtype=np.float64)
+    numba_heat = np.empty(psin_query.shape[0], dtype=np.float64)
+    numba_current = np.empty(psin_query.shape[0], dtype=np.float64)
+
+    numpy_resolve_source_inputs(
+        numpy_heat,
+        numpy_current,
+        heat_input,
+        current_input,
+        PSIN_COORDINATE,
+        n_src,
+        numpy_weights,
+        numpy_matrix,
+        psin_query,
+    )
+    numba_resolve_source_inputs(
+        numba_heat,
+        numba_current,
+        heat_input,
+        current_input,
+        PSIN_COORDINATE,
+        n_src,
+        numba_weights,
+        numba_matrix,
+        psin_query,
+    )
+
+    expected_heat = np.interp(psin_query, src_axis, heat_input)
+    expected_current = np.interp(psin_query, src_axis, current_input)
+
+    assert np.allclose(numpy_heat, expected_heat, atol=1e-12, rtol=1e-12)
+    assert np.allclose(numpy_current, expected_current, atol=1e-12, rtol=1e-12)
+    assert np.allclose(numba_heat, expected_heat, atol=1e-12, rtol=1e-12)
+    assert np.allclose(numba_current, expected_current, atol=1e-12, rtol=1e-12)
+    assert np.all(numpy_current >= current_input[0])
+    assert np.all(numba_current >= current_input[0])
+
+
+def test_pq_psin_uniform_benchmark_cases_stay_within_shape_tolerance():
+    benchmark_path = Path(__file__).with_name("benchmark.py")
+    spec = importlib.util.spec_from_file_location("veqpy_tests_benchmark", benchmark_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load benchmark module from {benchmark_path}")
+    benchmark = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = benchmark
+    spec.loader.exec_module(benchmark)
+
+    original_repeat = benchmark.BENCHMARK_REPEAT_COUNT
+    try:
+        benchmark.BENCHMARK_REPEAT_COUNT = 1
+        reference = benchmark._solve_reference()
+        for constraint in ("Ip_beta", "Ip", "beta", "null"):
+            spec_case = benchmark.BenchmarkCaseSpec("PQ", "psin", constraint, "uniform")
+            row = benchmark._benchmark_case_result(spec_case, reference)
+            assert row.shape_error <= benchmark.SHAPE_MATCH_TOL, (spec_case.case_name, row.shape_error)
+    finally:
+        benchmark.BENCHMARK_REPEAT_COUNT = original_repeat
