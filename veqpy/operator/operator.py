@@ -28,6 +28,7 @@ from veqpy.engine import (
     materialize_profile_owned_psin_source,
     materialize_projected_source_inputs,
     resolve_source_inputs,
+    update_geometry,
     update_fourier_family_fields,
     update_fixed_point_psin_query,
     update_profiles_packed_bulk,
@@ -159,6 +160,11 @@ class Operator:
     _source_route_spec: object = field(init=False, repr=False)
     _source_cache_key: tuple[str, str, int] | None = field(init=False, repr=False)
     _source_runner: Callable = field(init=False, repr=False)
+    profile_stage_runner: Callable = field(init=False, repr=False)
+    geometry_stage_runner: Callable = field(init=False, repr=False)
+    source_stage_runner: Callable = field(init=False, repr=False)
+    residual_pack_stage_runner: Callable = field(init=False, repr=False)
+    residual_full_stage_runner: Callable = field(init=False, repr=False)
     residual_pack_runner: Callable = field(init=False, repr=False)
     residual_stage_runner: Callable = field(init=False, repr=False)
     packed_residual: np.ndarray = field(init=False, repr=False)
@@ -202,6 +208,11 @@ class Operator:
         self._validate_runtime_profile_support()
 
         self._setup_runtime_state()
+        self.profile_stage_runner = lambda x: None
+        self.geometry_stage_runner = lambda: None
+        self.source_stage_runner = lambda: (0.0, 0.0)
+        self.residual_pack_stage_runner = lambda: np.zeros(self.x_size, dtype=np.float64)
+        self.residual_full_stage_runner = lambda: np.zeros(self.x_size, dtype=np.float64)
         self.residual_pack_runner = lambda *args, **kwargs: np.zeros(self.x_size, dtype=np.float64)
         self.residual_stage_runner = lambda *args, **kwargs: np.zeros(self.x_size, dtype=np.float64)
         self._refresh_runtime_state()
@@ -260,6 +271,18 @@ class Operator:
     ) -> np.ndarray:
         """完整执行 profile, geometry, source, residual 四阶段求值."""
         x_eval = self.coerce_x(x)
+        return self._evaluate_residual(x_eval)
+
+    def residual_fast(
+        self,
+        x: np.ndarray,
+    ) -> np.ndarray:
+        """供 solver 热路径使用的免校验 residual 求值入口."""
+        if isinstance(x, np.ndarray) and x.dtype == np.float64 and x.ndim == 1 and x.shape[0] == self.x_size:
+            return self._evaluate_residual(x)
+        return self.residual(x)
+
+    def _evaluate_residual(self, x_eval: np.ndarray) -> np.ndarray:
         self.stage_a_profile(x_eval)
         self.stage_b_geometry()
         self.stage_c_source()
@@ -306,84 +329,21 @@ class Operator:
 
     def stage_a_profile(self, x: np.ndarray) -> None:
         """执行 profile 阶段并刷新 active profile fields."""
-        self._fill_active_profile_views_from_packed_bulk(x)
+        self.profile_stage_runner(x)
 
     def stage_b_geometry(self) -> None:
         """执行 geometry 阶段并刷新 geometry fields."""
-        self._refresh_fourier_family_fields()
-        self.geometry.update(
-            float(self.case.a),
-            float(self.case.R0),
-            float(self.case.Z0),
-            self.grid,
-            self.h_profile.u_fields,
-            self.v_profile.u_fields,
-            self.k_profile.u_fields,
-            self.c_family_fields,
-            self.s_family_fields,
-            c_active_order=self.c_effective_order,
-            s_active_order=self.s_effective_order,
-        )
+        self.geometry_stage_runner()
 
     def stage_c_source(self) -> None:
         """执行 source 阶段并刷新 root fields 与缩放系数."""
-        if self.source_strategy == "profile_owned_psin":
-            alpha1, alpha2 = self._run_profile_owned_psin_source()
-        elif self.source_strategy == "fixed_point_psin":
-            _normalize_psin_query_inplace(self.source_psin_query, self.psin_profile.u)
-            alpha1, alpha2 = self._run_psin_source_fixed_point()
-        else:
-            alpha1, alpha2 = self._source_runner(
-                self.psin,
-                self.psin_r,
-                self.psin_rr,
-                self.FFn_psin,
-                self.Pn_psin,
-                self.materialized_heat_input,
-                self.materialized_current_input,
-                float(self.case.R0),
-                float(self.case.B0),
-                self.grid.weights,
-                self.grid.differentiation_matrix,
-                self.grid.integration_matrix,
-                self.grid.rho,
-                self.geometry.V_r,
-                self.geometry.Kn,
-                self.geometry.Kn_r,
-                self.geometry.Ln_r,
-                self.geometry.S_r,
-                self.geometry.R,
-                self.geometry.JdivR,
-                self.F_profile.u,
-                float(self.case.Ip),
-                float(self.case.beta),
-            )
+        alpha1, alpha2 = self.source_stage_runner()
         self.alpha1 = float(alpha1)
         self.alpha2 = float(alpha2)
 
     def stage_d_residual(self) -> np.ndarray:
         """执行 residual 阶段并返回 packed 残差."""
-        packed = self.residual_stage_runner(
-            self.packed_residual,
-            self.residual_fields,
-            self.alpha1,
-            self.alpha2,
-            self.root_fields,
-            self.geometry.R_fields,
-            self.geometry.Z_fields,
-            self.geometry.J_fields,
-            self.geometry.g_fields,
-            self.geometry.sin_tb,
-            self.grid.sin_ktheta,
-            self.grid.cos_ktheta,
-            self.grid.rho_powers,
-            self.grid.y,
-            self.grid.T_fields[0],
-            self.grid.weights,
-            float(self.case.a),
-            float(self.case.R0),
-            float(self.case.B0),
-        )
+        packed = self.residual_full_stage_runner()
         return packed.copy()
 
     def coerce_x(self, x: np.ndarray) -> np.ndarray:
@@ -613,8 +573,13 @@ class Operator:
         self._validate_source_inputs(case)
 
     def _refresh_runtime_bindings(self) -> None:
+        self.profile_stage_runner = self._build_profile_stage_runner()
+        self.geometry_stage_runner = self._build_geometry_stage_runner()
+        self.source_stage_runner = self._build_bound_source_stage_runner()
         self.residual_pack_runner = self._build_residual_pack_runner()
         self.residual_stage_runner = self._build_residual_stage_runner()
+        self.residual_pack_stage_runner = self._build_bound_residual_pack_stage_runner()
+        self.residual_full_stage_runner = self._build_bound_residual_full_stage_runner()
         fixed_profile_ids = np.flatnonzero(~self.active_profile_mask).astype(np.int64, copy=False)
         for p in fixed_profile_ids:
             self._profile_by_name(self.profile_names[int(p)]).update()
@@ -745,6 +710,118 @@ class Operator:
                 self.active_coeff_index_rows[slot].fill(-1)
                 self.active_coeff_index_rows[slot, : coeff_indices.size] = coeff_indices
 
+    def _build_profile_stage_runner(self) -> Callable:
+        if self.active_profile_ids.size == 0:
+            return lambda x: None
+
+        active_u_fields = self.active_u_fields
+        T_fields = self.grid.T_fields
+        active_rp_fields = self.active_rp_fields
+        active_env_fields = self.active_env_fields
+        active_offsets = self.active_offsets
+        active_scales = self.active_scales
+        active_coeff_index_rows = self.active_coeff_index_rows
+        active_lengths = self.active_lengths
+
+        def runner(x: np.ndarray) -> None:
+            update_profiles_packed_bulk(
+                active_u_fields,
+                T_fields,
+                active_rp_fields,
+                active_env_fields,
+                active_offsets,
+                active_scales,
+                x,
+                active_coeff_index_rows,
+                active_lengths,
+            )
+
+        return runner
+
+    def _build_geometry_stage_runner(self) -> Callable:
+        grid = self.grid
+        c_family_fields = self.c_family_fields
+        s_family_fields = self.s_family_fields
+        c_family_base_fields = self.c_family_base_fields
+        s_family_base_fields = self.s_family_base_fields
+        active_u_fields = self.active_u_fields
+        c_family_source_slots = self.c_family_source_slots
+        s_family_source_slots = self.s_family_source_slots
+        c_effective_order = int(self.c_effective_order)
+        s_effective_order = int(self.s_effective_order)
+        h_fields = self.h_profile.u_fields
+        v_fields = self.v_profile.u_fields
+        k_fields = self.k_profile.u_fields
+        case_a = float(self.case.a)
+        case_R0 = float(self.case.R0)
+        case_Z0 = float(self.case.Z0)
+        geometry = self.geometry
+        tb_fields = geometry.tb_fields
+        R_fields = geometry.R_fields
+        Z_fields = geometry.Z_fields
+        J_fields = geometry.J_fields
+        g_fields = geometry.g_fields
+        S_r = geometry.S_r
+        V_r = geometry.V_r
+        Kn = geometry.Kn
+        Kn_r = geometry.Kn_r
+        Ln_r = geometry.Ln_r
+        rho = grid.rho
+        theta = grid.theta
+        cos_ktheta = grid.cos_ktheta
+        sin_ktheta = grid.sin_ktheta
+        k_cos_ktheta = grid.k_cos_ktheta
+        k_sin_ktheta = grid.k_sin_ktheta
+        k2_cos_ktheta = grid.k2_cos_ktheta
+        k2_sin_ktheta = grid.k2_sin_ktheta
+        weights = grid.weights
+
+        def runner() -> None:
+            update_fourier_family_fields(
+                c_family_fields,
+                s_family_fields,
+                c_family_base_fields,
+                s_family_base_fields,
+                active_u_fields,
+                c_family_source_slots,
+                s_family_source_slots,
+                c_effective_order,
+                s_effective_order,
+            )
+            update_geometry(
+                tb_fields,
+                R_fields,
+                Z_fields,
+                J_fields,
+                g_fields,
+                S_r,
+                V_r,
+                Kn,
+                Kn_r,
+                Ln_r,
+                case_a,
+                case_R0,
+                case_Z0,
+                rho,
+                theta,
+                cos_ktheta,
+                sin_ktheta,
+                k_cos_ktheta,
+                k_sin_ktheta,
+                k2_cos_ktheta,
+                k2_sin_ktheta,
+                weights,
+                h_fields,
+                v_fields,
+                k_fields,
+                c_family_fields,
+                s_family_fields,
+                c_effective_order,
+                s_effective_order,
+            )
+
+        return runner
+
     def _build_residual_pack_runner(self) -> Callable:
         profile_names = tuple(self.profile_names[int(p)] for p in self.active_profile_ids)
         try:
@@ -768,6 +845,218 @@ class Operator:
             )
         except KeyError as exc:
             raise ValueError(f"Unsupported active residual block set {profile_names!r}") from exc
+
+    def _build_bound_source_stage_runner(self) -> Callable:
+        psin = self.psin
+        psin_r = self.psin_r
+        psin_rr = self.psin_rr
+        FFn_psin = self.FFn_psin
+        Pn_psin = self.Pn_psin
+        materialized_heat_input = self.materialized_heat_input
+        materialized_current_input = self.materialized_current_input
+        source_target_root_fields = self.source_target_root_fields
+        grid = self.grid
+        geometry = self.geometry
+        F_profile_u = self.F_profile.u
+        case_R0 = float(self.case.R0)
+        case_B0 = float(self.case.B0)
+        case_Ip = float(self.case.Ip)
+        case_beta = float(self.case.beta)
+
+        if self.source_strategy == "profile_owned_psin":
+            if self.case.coordinate == "psin" and self.case.nodes != "grid":
+                source_psin_query = self.source_psin_query
+                source_parameter_query = self.source_parameter_query
+                psin_profile_fields = self.psin_profile.u_fields
+                heat_input = self.case.heat_input
+                current_input = self.case.current_input
+                parameterization_code = _SOURCE_PARAMETERIZATION_CODES[self.source_parameterization]
+
+                def runner() -> tuple[float, float]:
+                    if psin_profile_fields is None:
+                        raise RuntimeError("psin_profile runtime fields are not initialized")
+                    materialize_profile_owned_psin_source(
+                        psin,
+                        psin_r,
+                        psin_rr,
+                        source_psin_query,
+                        source_parameter_query,
+                        materialized_heat_input,
+                        materialized_current_input,
+                        psin_profile_fields,
+                        heat_input,
+                        current_input,
+                        parameterization_code,
+                    )
+                    return self._source_runner(
+                        source_target_root_fields[0],
+                        source_target_root_fields[1],
+                        source_target_root_fields[2],
+                        FFn_psin,
+                        Pn_psin,
+                        materialized_heat_input,
+                        materialized_current_input,
+                        case_R0,
+                        case_B0,
+                        grid.weights,
+                        grid.differentiation_matrix,
+                        grid.integration_matrix,
+                        grid.rho,
+                        geometry.V_r,
+                        geometry.Kn,
+                        geometry.Kn_r,
+                        geometry.Ln_r,
+                        geometry.S_r,
+                        geometry.R,
+                        geometry.JdivR,
+                        F_profile_u,
+                        case_Ip,
+                        case_beta,
+                    )
+
+                return runner
+
+            source_psin_query = self.source_psin_query
+
+            def runner() -> tuple[float, float]:
+                self._copy_psin_profile_to_root_fields()
+                np.copyto(source_psin_query, psin)
+                self._materialize_source_inputs(source_psin_query)
+                return self._source_runner(
+                    source_target_root_fields[0],
+                    source_target_root_fields[1],
+                    source_target_root_fields[2],
+                    FFn_psin,
+                    Pn_psin,
+                    materialized_heat_input,
+                    materialized_current_input,
+                    case_R0,
+                    case_B0,
+                    grid.weights,
+                    grid.differentiation_matrix,
+                    grid.integration_matrix,
+                    grid.rho,
+                    geometry.V_r,
+                    geometry.Kn,
+                    geometry.Kn_r,
+                    geometry.Ln_r,
+                    geometry.S_r,
+                    geometry.R,
+                    geometry.JdivR,
+                    F_profile_u,
+                    case_Ip,
+                    case_beta,
+                )
+
+            return runner
+
+        if self.source_strategy == "fixed_point_psin":
+            source_psin_query = self.source_psin_query
+            psin_profile_u = self.psin_profile.u
+
+            def runner() -> tuple[float, float]:
+                _normalize_psin_query_inplace(source_psin_query, psin_profile_u)
+                return self._run_psin_source_fixed_point()
+
+            return runner
+
+        def runner() -> tuple[float, float]:
+            return self._source_runner(
+                psin,
+                psin_r,
+                psin_rr,
+                FFn_psin,
+                Pn_psin,
+                materialized_heat_input,
+                materialized_current_input,
+                case_R0,
+                case_B0,
+                grid.weights,
+                grid.differentiation_matrix,
+                grid.integration_matrix,
+                grid.rho,
+                geometry.V_r,
+                geometry.Kn,
+                geometry.Kn_r,
+                geometry.Ln_r,
+                geometry.S_r,
+                geometry.R,
+                geometry.JdivR,
+                F_profile_u,
+                case_Ip,
+                case_beta,
+            )
+
+        return runner
+
+    def _build_bound_residual_pack_stage_runner(self) -> Callable:
+        G = self.G
+        psin_R = self.psin_R
+        psin_Z = self.psin_Z
+        sin_tb = self.geometry.sin_tb
+        sin_ktheta = self.grid.sin_ktheta
+        cos_ktheta = self.grid.cos_ktheta
+        rho_powers = self.grid.rho_powers
+        y = self.grid.y
+        T = self.grid.T_fields[0]
+        weights = self.grid.weights
+        case_a = float(self.case.a)
+        case_R0 = float(self.case.R0)
+        case_B0 = float(self.case.B0)
+
+        def runner() -> np.ndarray:
+            return self.residual_pack_runner(
+                G,
+                psin_R,
+                psin_Z,
+                sin_tb,
+                sin_ktheta,
+                cos_ktheta,
+                rho_powers,
+                y,
+                T,
+                weights,
+                case_a,
+                case_R0,
+                case_B0,
+            )
+
+        return runner
+
+    def _build_bound_residual_full_stage_runner(self) -> Callable:
+        packed_residual = self.packed_residual
+        residual_fields = self.residual_fields
+        root_fields = self.root_fields
+        geometry = self.geometry
+        grid = self.grid
+        case_a = float(self.case.a)
+        case_R0 = float(self.case.R0)
+        case_B0 = float(self.case.B0)
+
+        def runner() -> np.ndarray:
+            return self.residual_stage_runner(
+                packed_residual,
+                residual_fields,
+                self.alpha1,
+                self.alpha2,
+                root_fields,
+                geometry.R_fields,
+                geometry.Z_fields,
+                geometry.J_fields,
+                geometry.g_fields,
+                geometry.sin_tb,
+                grid.sin_ktheta,
+                grid.cos_ktheta,
+                grid.rho_powers,
+                grid.y,
+                grid.T_fields[0],
+                grid.weights,
+                case_a,
+                case_R0,
+                case_B0,
+            )
+
+        return runner
 
     def _fill_active_profile_views_from_packed_bulk(self, x: np.ndarray) -> None:
         if self.active_profile_ids.size == 0:
@@ -970,21 +1259,7 @@ class Operator:
         return alpha1, alpha2
 
     def _assemble_residual(self) -> np.ndarray:
-        return self.residual_pack_runner(
-            self.G,
-            self.psin_R,
-            self.psin_Z,
-            self.geometry.sin_tb,
-            self.grid.sin_ktheta,
-            self.grid.cos_ktheta,
-            self.grid.rho_powers,
-            self.grid.y,
-            self.grid.T_fields[0],
-            self.grid.weights,
-            float(self.case.a),
-            float(self.case.R0),
-            float(self.case.B0),
-        )
+        return self.residual_pack_stage_runner()
 
     def _snapshot_equilibrium_from_runtime(self, x: np.ndarray) -> Equilibrium:
         coeff_blocks = decode_packed_blocks(x, self.profile_L, self.coeff_index, profile_names=self.profile_names)

@@ -137,14 +137,19 @@ class OperatorHotspotProfiler:
         profiler = self
         original_residual = self._originals["residual"]
 
-        def residual_wrapper(this, *args, **kwargs):
-            if this is not profiler.operator:
-                return original_residual(this, *args, **kwargs)
-            started = perf_counter()
-            try:
-                return original_residual(this, *args, **kwargs)
-            finally:
-                profiler.residual_stat.add((perf_counter() - started) * 1e3)
+        def build_residual_wrapper(original):
+            def wrapper(this, *args, **kwargs):
+                if this is not profiler.operator:
+                    return original(this, *args, **kwargs)
+                started = perf_counter()
+                try:
+                    return original(this, *args, **kwargs)
+                finally:
+                    profiler.residual_stat.add((perf_counter() - started) * 1e3)
+
+            return wrapper
+
+        residual_wrapper = build_residual_wrapper(original_residual)
 
         def build_stage_wrapper(stage_name: str):
             original = self._originals[stage_name]
@@ -185,6 +190,7 @@ class OperatorHotspotProfiler:
     def _patch_engine_functions(self) -> None:
         self._originals["update_profiles_packed_bulk"] = operator_module.update_profiles_packed_bulk
         self._originals["update_fourier_family_fields"] = operator_module.update_fourier_family_fields
+        self._originals["update_geometry_operator"] = operator_module.update_geometry
         self._originals["materialize_profile_owned_psin_source"] = operator_module.materialize_profile_owned_psin_source
         self._originals["materialize_projected_source_inputs"] = operator_module.materialize_projected_source_inputs
         self._originals["resolve_source_inputs"] = operator_module.resolve_source_inputs
@@ -211,6 +217,10 @@ class OperatorHotspotProfiler:
             "stage_b.update_fourier_family_fields",
             self._originals["update_fourier_family_fields"],
         )
+        operator_module.update_geometry = wrap_global(
+            "stage_b.update_geometry",
+            self._originals["update_geometry_operator"],
+        )
         operator_module.materialize_profile_owned_psin_source = wrap_global(
             "stage_c.materialize_profile_owned_psin_source",
             self._originals["materialize_profile_owned_psin_source"],
@@ -235,6 +245,7 @@ class OperatorHotspotProfiler:
     def _restore_engine_functions(self) -> None:
         operator_module.update_profiles_packed_bulk = self._originals["update_profiles_packed_bulk"]
         operator_module.update_fourier_family_fields = self._originals["update_fourier_family_fields"]
+        operator_module.update_geometry = self._originals["update_geometry_operator"]
         operator_module.materialize_profile_owned_psin_source = self._originals["materialize_profile_owned_psin_source"]
         operator_module.materialize_projected_source_inputs = self._originals["materialize_projected_source_inputs"]
         operator_module.resolve_source_inputs = self._originals["resolve_source_inputs"]

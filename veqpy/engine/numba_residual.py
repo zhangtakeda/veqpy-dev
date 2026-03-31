@@ -85,6 +85,7 @@ def bind_residual_runner(
     block_orders = np.zeros(len(profile_names), dtype=np.int64)
     for i, name in enumerate(profile_names):
         block_codes[i], block_orders[i] = _decode_residual_block_code(name)
+    scratch_holder: list[np.ndarray | None] = [None]
 
     def runner(
         G: np.ndarray,
@@ -102,8 +103,13 @@ def bind_residual_runner(
         B0: float,
     ) -> np.ndarray:
         out = np.zeros(residual_size, dtype=np.float64)
+        scratch = scratch_holder[0]
+        if scratch is None or scratch.shape[0] != G.shape[0]:
+            scratch = np.empty(G.shape[0], dtype=np.float64)
+            scratch_holder[0] = scratch
         _run_residual_blocks_packed(
             out,
+            scratch,
             block_codes,
             block_orders,
             coeff_index_rows,
@@ -137,6 +143,7 @@ def bind_residual_stage_runner(
     block_orders = np.zeros(len(profile_names), dtype=np.int64)
     for i, name in enumerate(profile_names):
         block_codes[i], block_orders[i] = _decode_residual_block_code(name)
+    scratch_holder: list[np.ndarray | None] = [None]
 
     def runner(
         out_packed: np.ndarray,
@@ -163,8 +170,14 @@ def bind_residual_stage_runner(
             raise ValueError(f"Expected out_packed to have shape ({residual_size},), got {out_packed.shape}")
         update_residual(out_fields, alpha1, alpha2, root_fields, R_fields, Z_fields, J_fields, g_fields)
         out_packed.fill(0.0)
+        scratch = scratch_holder[0]
+        nr = out_fields.shape[1]
+        if scratch is None or scratch.shape[0] != nr:
+            scratch = np.empty(nr, dtype=np.float64)
+            scratch_holder[0] = scratch
         _run_residual_blocks_packed(
             out_packed,
+            scratch,
             block_codes,
             block_orders,
             coeff_index_rows,
@@ -252,12 +265,11 @@ def assemble_h_residual_block(
     a: float,
     R0: float,
     B0: float,
+    scratch: np.ndarray,
 ) -> None:
     """组装 h 通道 residual block."""
-    nr = G.shape[0]
-    collapsed = np.empty(nr, dtype=G.dtype)
-    _collapse_g_field(collapsed, G, psin_R)
-    _scale_and_project_rows_two(out_packed, coeff_indices, T, collapsed, y, weights, (2.0 * np.pi / G.shape[1]) * a)
+    _collapse_g_field(scratch, G, psin_R)
+    _scale_and_project_rows_two(out_packed, coeff_indices, T, scratch, y, weights, (2.0 * np.pi / G.shape[1]) * a)
 
 
 @register_residual_block("v")
@@ -280,12 +292,11 @@ def assemble_v_residual_block(
     a: float,
     R0: float,
     B0: float,
+    scratch: np.ndarray,
 ) -> None:
     """组装 v 通道 residual block."""
-    nr = G.shape[0]
-    collapsed = np.empty(nr, dtype=G.dtype)
-    _collapse_g_field(collapsed, G, psin_Z)
-    _scale_and_project_rows_two(out_packed, coeff_indices, T, collapsed, y, weights, (2.0 * np.pi / G.shape[1]) * a)
+    _collapse_g_field(scratch, G, psin_Z)
+    _scale_and_project_rows_two(out_packed, coeff_indices, T, scratch, y, weights, (2.0 * np.pi / G.shape[1]) * a)
 
 
 @register_residual_block("k")
@@ -308,12 +319,12 @@ def assemble_k_residual_block(
     a: float,
     R0: float,
     B0: float,
+    scratch: np.ndarray,
 ) -> None:
     """组装 k 通道 residual block."""
-    nr, nt = G.shape
-    collapsed = np.empty(nr, dtype=G.dtype)
-    _collapse_g_field_theta(collapsed, G, psin_Z, sin_theta)
-    _scale_and_project_rows_three(out_packed, coeff_indices, T, collapsed, rho, y, weights, (2.0 * np.pi / nt) * (-a))
+    nt = G.shape[1]
+    _collapse_g_field_theta(scratch, G, psin_Z, sin_theta)
+    _scale_and_project_rows_three(out_packed, coeff_indices, T, scratch, rho, y, weights, (2.0 * np.pi / nt) * (-a))
 
 
 @register_residual_block("c0")
@@ -336,12 +347,12 @@ def assemble_c0_residual_block(
     a: float,
     R0: float,
     B0: float,
+    scratch: np.ndarray,
 ) -> None:
     """组装 c0 通道 residual block."""
-    nr, nt = G.shape
-    collapsed = np.empty(nr, dtype=G.dtype)
-    _collapse_g_two_fields(collapsed, G, psin_R, sin_tb)
-    _scale_and_project_rows_three(out_packed, coeff_indices, T, collapsed, rho, y, weights, (2.0 * np.pi / nt) * (-a))
+    nt = G.shape[1]
+    _collapse_g_two_fields(scratch, G, psin_R, sin_tb)
+    _scale_and_project_rows_three(out_packed, coeff_indices, T, scratch, rho, y, weights, (2.0 * np.pi / nt) * (-a))
 
 
 @njit(cache=True, fastmath=True, nogil=True)
@@ -358,15 +369,15 @@ def assemble_c_family_residual_block(
     T: np.ndarray,
     weights: np.ndarray,
     a: float,
+    scratch: np.ndarray,
 ) -> None:
-    nr, nt = G.shape
-    collapsed = np.empty(nr, dtype=G.dtype)
-    _collapse_g_two_fields_theta(collapsed, G, psin_R, sin_tb, cos_ktheta[order])
+    nt = G.shape[1]
+    _collapse_g_two_fields_theta(scratch, G, psin_R, sin_tb, cos_ktheta[order])
     _scale_and_project_rows_three(
         out_packed,
         coeff_indices,
         T,
-        collapsed,
+        scratch,
         rho_powers[order + 1],
         y,
         weights,
@@ -388,15 +399,15 @@ def assemble_s_family_residual_block(
     T: np.ndarray,
     weights: np.ndarray,
     a: float,
+    scratch: np.ndarray,
 ) -> None:
-    nr, nt = G.shape
-    collapsed = np.empty(nr, dtype=G.dtype)
-    _collapse_g_two_fields_theta(collapsed, G, psin_R, sin_tb, sin_ktheta[order])
+    nt = G.shape[1]
+    _collapse_g_two_fields_theta(scratch, G, psin_R, sin_tb, sin_ktheta[order])
     _scale_and_project_rows_three(
         out_packed,
         coeff_indices,
         T,
-        collapsed,
+        scratch,
         rho_powers[order + 1],
         y,
         weights,
@@ -424,12 +435,12 @@ def assemble_c1_residual_block(
     a: float,
     R0: float,
     B0: float,
+    scratch: np.ndarray,
 ) -> None:
     """组装 c1 通道 residual block."""
-    nr, nt = G.shape
-    collapsed = np.empty(nr, dtype=G.dtype)
-    _collapse_g_two_fields_theta(collapsed, G, psin_R, sin_tb, cos_theta)
-    _scale_and_project_rows_three(out_packed, coeff_indices, T, collapsed, rho2, y, weights, (2.0 * np.pi / nt) * (-a))
+    nt = G.shape[1]
+    _collapse_g_two_fields_theta(scratch, G, psin_R, sin_tb, cos_theta)
+    _scale_and_project_rows_three(out_packed, coeff_indices, T, scratch, rho2, y, weights, (2.0 * np.pi / nt) * (-a))
 
 
 @register_residual_block("s1")
@@ -452,12 +463,12 @@ def assemble_s1_residual_block(
     a: float,
     R0: float,
     B0: float,
+    scratch: np.ndarray,
 ) -> None:
     """组装 s1 通道 residual block."""
-    nr, nt = G.shape
-    collapsed = np.empty(nr, dtype=G.dtype)
-    _collapse_g_two_fields_theta(collapsed, G, psin_R, sin_tb, sin_theta)
-    _scale_and_project_rows_three(out_packed, coeff_indices, T, collapsed, rho2, y, weights, (2.0 * np.pi / nt) * (-a))
+    nt = G.shape[1]
+    _collapse_g_two_fields_theta(scratch, G, psin_R, sin_tb, sin_theta)
+    _scale_and_project_rows_three(out_packed, coeff_indices, T, scratch, rho2, y, weights, (2.0 * np.pi / nt) * (-a))
 
 
 @register_residual_block("s2")
@@ -480,13 +491,13 @@ def assemble_s2_residual_block(
     a: float,
     R0: float,
     B0: float,
+    scratch: np.ndarray,
 ) -> None:
     """组装 s2 通道 residual block."""
-    nr, nt = G.shape
-    collapsed = np.empty(nr, dtype=G.dtype)
-    _collapse_g_two_fields_theta(collapsed, G, psin_R, sin_tb, sin_2theta)
+    nt = G.shape[1]
+    _collapse_g_two_fields_theta(scratch, G, psin_R, sin_tb, sin_2theta)
     _scale_and_project_rows_four(
-        out_packed, coeff_indices, T, collapsed, rho, rho2, y, weights, (2.0 * np.pi / nt) * (-a)
+        out_packed, coeff_indices, T, scratch, rho, rho2, y, weights, (2.0 * np.pi / nt) * (-a)
     )
 
 
@@ -510,12 +521,12 @@ def assemble_psin_residual_block(
     a: float,
     R0: float,
     B0: float,
+    scratch: np.ndarray,
 ) -> None:
     """组装 psin 通道 residual block."""
-    nr, nt = G.shape
-    collapsed = np.empty(nr, dtype=G.dtype)
-    _collapse_g(collapsed, G)
-    _scale_and_project_rows_three(out_packed, coeff_indices, T, collapsed, rho2, y, weights, 2.0 * np.pi / nt)
+    nt = G.shape[1]
+    _collapse_g(scratch, G)
+    _scale_and_project_rows_three(out_packed, coeff_indices, T, scratch, rho2, y, weights, 2.0 * np.pi / nt)
 
 
 @register_residual_block("F")
@@ -538,13 +549,13 @@ def assemble_F_residual_block(
     a: float,
     R0: float,
     B0: float,
+    scratch: np.ndarray,
 ) -> None:
     """组装 F 通道 residual block."""
-    nr, nt = G.shape
-    collapsed = np.empty(nr, dtype=G.dtype)
-    _collapse_g(collapsed, G)
+    nt = G.shape[1]
+    _collapse_g(scratch, G)
     _scale_and_project_rows_three(
-        out_packed, coeff_indices, T, collapsed, y, y, weights, (2.0 * np.pi / nt) * (R0 * B0)
+        out_packed, coeff_indices, T, scratch, y, y, weights, (2.0 * np.pi / nt) * (R0 * B0)
     )
 
 
@@ -671,6 +682,7 @@ def _scale_and_project_rows_four(
 @njit(cache=True, fastmath=True, nogil=True)
 def _run_residual_blocks_packed(
     out_packed: np.ndarray,
+    scratch: np.ndarray,
     block_codes: np.ndarray,
     block_orders: np.ndarray,
     coeff_index_rows: np.ndarray,
@@ -717,6 +729,7 @@ def _run_residual_blocks_packed(
                 a,
                 R0,
                 B0,
+                scratch,
             )
         elif code == 1:
             assemble_v_residual_block(
@@ -737,6 +750,7 @@ def _run_residual_blocks_packed(
                 a,
                 R0,
                 B0,
+                scratch,
             )
         elif code == 2:
             assemble_k_residual_block(
@@ -757,6 +771,7 @@ def _run_residual_blocks_packed(
                 a,
                 R0,
                 B0,
+                scratch,
             )
         elif code == 3:
             assemble_c0_residual_block(
@@ -777,6 +792,7 @@ def _run_residual_blocks_packed(
                 a,
                 R0,
                 B0,
+                scratch,
             )
         elif code == 4:
             assemble_c_family_residual_block(
@@ -792,6 +808,7 @@ def _run_residual_blocks_packed(
                 T,
                 weights,
                 a,
+                scratch,
             )
         elif code == 5:
             assemble_s_family_residual_block(
@@ -807,6 +824,7 @@ def _run_residual_blocks_packed(
                 T,
                 weights,
                 a,
+                scratch,
             )
         elif code == 6:
             assemble_psin_residual_block(
@@ -827,6 +845,7 @@ def _run_residual_blocks_packed(
                 a,
                 R0,
                 B0,
+                scratch,
             )
         else:
             assemble_F_residual_block(
@@ -847,4 +866,5 @@ def _run_residual_blocks_packed(
                 a,
                 R0,
                 B0,
+                scratch,
             )
