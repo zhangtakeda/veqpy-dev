@@ -102,4 +102,5 @@ def update_profiles_packed_bulk(
             )
         scale = float(scales[p])
         if scale != 1.0:
-            np.multiply(out_fields_all[p], scale, out=out_fields_all[p])
+            out_fields_all[p] *= scale
+

@@ -17,7 +17,7 @@ Notes:
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 
@@ -31,6 +31,9 @@ from veqpy.engine.numba_source import (
     _update_fixed_point_psin_query_impl,
     _update_fourier_family_fields_impl,
 )
+
+if TYPE_CHECKING:
+    from veqpy.operator.layouts import RuntimeLayout, SetupLayout, StaticLayout
 
 
 def _build_residual_block_metadata(profile_names: tuple[str, ...]) -> tuple[np.ndarray, np.ndarray]:
@@ -57,64 +60,68 @@ def bind_fused_single_pass_residual_runner(
     *,
     source_kernel: Callable,
     coordinate_code: int,
-    profile_names: tuple[str, ...],
-    coeff_index_rows: np.ndarray,
-    lengths: np.ndarray,
-    residual_size: int,
+    static_layout: StaticLayout,
+    setup_layout: SetupLayout,
+    runtime_layout: RuntimeLayout,
     alpha_state: np.ndarray,
-    active_u_fields: np.ndarray,
-    T_fields: np.ndarray,
-    active_rp_fields: np.ndarray,
-    active_env_fields: np.ndarray,
-    active_offsets: np.ndarray,
-    active_scales: np.ndarray,
-    c_family_fields: np.ndarray,
-    s_family_fields: np.ndarray,
-    c_family_base_fields: np.ndarray,
-    s_family_base_fields: np.ndarray,
-    c_source_slots: np.ndarray,
-    s_source_slots: np.ndarray,
     c_active_order: int,
     s_active_order: int,
-    h_fields: np.ndarray,
-    v_fields: np.ndarray,
-    k_fields: np.ndarray,
-    tb_fields: np.ndarray,
-    R_fields: np.ndarray,
-    Z_fields: np.ndarray,
-    J_fields: np.ndarray,
-    g_fields: np.ndarray,
-    S_r: np.ndarray,
-    V_r: np.ndarray,
-    Kn: np.ndarray,
-    Kn_r: np.ndarray,
-    Ln_r: np.ndarray,
     a: float,
     R0: float,
     Z0: float,
     B0: float,
-    rho: np.ndarray,
-    theta: np.ndarray,
-    cos_ktheta: np.ndarray,
-    sin_ktheta: np.ndarray,
-    k_cos_ktheta: np.ndarray,
-    k_sin_ktheta: np.ndarray,
-    k2_cos_ktheta: np.ndarray,
-    k2_sin_ktheta: np.ndarray,
-    weights: np.ndarray,
-    differentiation_matrix: np.ndarray,
-    integration_matrix: np.ndarray,
-    rho_powers: np.ndarray,
-    y: np.ndarray,
-    root_fields: np.ndarray,
-    residual_fields: np.ndarray,
-    packed_residual: np.ndarray,
-    materialized_heat_input: np.ndarray,
-    materialized_current_input: np.ndarray,
-    F_profile_u: np.ndarray,
     Ip: float,
     beta: float,
 ) -> Callable[[np.ndarray], np.ndarray]:
+    profile_names = tuple(setup_layout.profile_names[int(p)] for p in setup_layout.active_profile_ids)
+    coeff_index_rows = runtime_layout.active_coeff_index_rows
+    lengths = runtime_layout.active_lengths
+    active_u_fields = runtime_layout.active_u_fields
+    active_rp_fields = runtime_layout.active_rp_fields
+    active_env_fields = runtime_layout.active_env_fields
+    active_offsets = runtime_layout.active_offsets
+    active_scales = runtime_layout.active_scales
+    c_family_fields = runtime_layout.c_family_fields
+    s_family_fields = runtime_layout.s_family_fields
+    c_family_base_fields = runtime_layout.c_family_base_fields
+    s_family_base_fields = runtime_layout.s_family_base_fields
+    c_source_slots = runtime_layout.c_family_source_slots
+    s_source_slots = runtime_layout.s_family_source_slots
+    geometry = runtime_layout.geometry
+    tb_fields = geometry.tb_fields
+    R_fields = geometry.R_fields
+    Z_fields = geometry.Z_fields
+    J_fields = geometry.J_fields
+    g_fields = geometry.g_fields
+    S_r = geometry.S_r
+    V_r = geometry.V_r
+    Kn = geometry.Kn
+    Kn_r = geometry.Kn_r
+    Ln_r = geometry.Ln_r
+    T_fields = static_layout.T_fields
+    rho = static_layout.rho
+    theta = static_layout.theta
+    cos_ktheta = static_layout.cos_ktheta
+    sin_ktheta = static_layout.sin_ktheta
+    k_cos_ktheta = static_layout.k_cos_ktheta
+    k_sin_ktheta = static_layout.k_sin_ktheta
+    k2_cos_ktheta = static_layout.k2_cos_ktheta
+    k2_sin_ktheta = static_layout.k2_sin_ktheta
+    weights = static_layout.weights
+    differentiation_matrix = static_layout.differentiation_matrix
+    integration_matrix = static_layout.integration_matrix
+    rho_powers = static_layout.rho_powers
+    y = static_layout.y
+    root_fields = runtime_layout.root_fields
+    residual_fields = runtime_layout.residual_fields
+    packed_residual = runtime_layout.packed_residual
+    materialized_heat_input = runtime_layout.materialized_heat_input
+    materialized_current_input = runtime_layout.materialized_current_input
+    profiles_by_name = runtime_layout.profiles_by_name
+    h_fields = profiles_by_name["h"].u_fields
+    v_fields = profiles_by_name["v"].u_fields
+    k_fields = profiles_by_name["k"].u_fields
+    F_profile_u = profiles_by_name["F"].u
     block_codes, block_orders = _build_residual_block_metadata(profile_names)
     scratch_holder: list[np.ndarray | None] = [None]
     psin = root_fields[0]
@@ -252,70 +259,74 @@ def bind_fused_profile_owned_psin_residual_runner(
     source_kernel: Callable,
     coordinate_code: int,
     parameterization_code: int,
-    profile_names: tuple[str, ...],
-    coeff_index_rows: np.ndarray,
-    lengths: np.ndarray,
-    residual_size: int,
+    static_layout: StaticLayout,
+    setup_layout: SetupLayout,
+    runtime_layout: RuntimeLayout,
     alpha_state: np.ndarray,
-    active_u_fields: np.ndarray,
-    T_fields: np.ndarray,
-    active_rp_fields: np.ndarray,
-    active_env_fields: np.ndarray,
-    active_offsets: np.ndarray,
-    active_scales: np.ndarray,
-    c_family_fields: np.ndarray,
-    s_family_fields: np.ndarray,
-    c_family_base_fields: np.ndarray,
-    s_family_base_fields: np.ndarray,
-    c_source_slots: np.ndarray,
-    s_source_slots: np.ndarray,
     c_active_order: int,
     s_active_order: int,
-    h_fields: np.ndarray,
-    v_fields: np.ndarray,
-    k_fields: np.ndarray,
-    tb_fields: np.ndarray,
-    R_fields: np.ndarray,
-    Z_fields: np.ndarray,
-    J_fields: np.ndarray,
-    g_fields: np.ndarray,
-    S_r: np.ndarray,
-    V_r: np.ndarray,
-    Kn: np.ndarray,
-    Kn_r: np.ndarray,
-    Ln_r: np.ndarray,
     a: float,
     R0: float,
     Z0: float,
     B0: float,
-    rho: np.ndarray,
-    theta: np.ndarray,
-    cos_ktheta: np.ndarray,
-    sin_ktheta: np.ndarray,
-    k_cos_ktheta: np.ndarray,
-    k_sin_ktheta: np.ndarray,
-    k2_cos_ktheta: np.ndarray,
-    k2_sin_ktheta: np.ndarray,
-    weights: np.ndarray,
-    differentiation_matrix: np.ndarray,
-    integration_matrix: np.ndarray,
-    rho_powers: np.ndarray,
-    y: np.ndarray,
-    root_fields: np.ndarray,
-    source_target_root_fields: np.ndarray,
-    residual_fields: np.ndarray,
-    packed_residual: np.ndarray,
-    source_psin_query: np.ndarray,
-    source_parameter_query: np.ndarray,
-    materialized_heat_input: np.ndarray,
-    materialized_current_input: np.ndarray,
-    psin_profile_fields: np.ndarray,
     heat_input: np.ndarray,
     current_input: np.ndarray,
-    F_profile_u: np.ndarray,
     Ip: float,
     beta: float,
 ) -> Callable[[np.ndarray], np.ndarray]:
+    profile_names = tuple(setup_layout.profile_names[int(p)] for p in setup_layout.active_profile_ids)
+    coeff_index_rows = runtime_layout.active_coeff_index_rows
+    lengths = runtime_layout.active_lengths
+    active_u_fields = runtime_layout.active_u_fields
+    active_rp_fields = runtime_layout.active_rp_fields
+    active_env_fields = runtime_layout.active_env_fields
+    active_offsets = runtime_layout.active_offsets
+    active_scales = runtime_layout.active_scales
+    c_family_fields = runtime_layout.c_family_fields
+    s_family_fields = runtime_layout.s_family_fields
+    c_family_base_fields = runtime_layout.c_family_base_fields
+    s_family_base_fields = runtime_layout.s_family_base_fields
+    c_source_slots = runtime_layout.c_family_source_slots
+    s_source_slots = runtime_layout.s_family_source_slots
+    geometry = runtime_layout.geometry
+    tb_fields = geometry.tb_fields
+    R_fields = geometry.R_fields
+    Z_fields = geometry.Z_fields
+    J_fields = geometry.J_fields
+    g_fields = geometry.g_fields
+    S_r = geometry.S_r
+    V_r = geometry.V_r
+    Kn = geometry.Kn
+    Kn_r = geometry.Kn_r
+    Ln_r = geometry.Ln_r
+    T_fields = static_layout.T_fields
+    rho = static_layout.rho
+    theta = static_layout.theta
+    cos_ktheta = static_layout.cos_ktheta
+    sin_ktheta = static_layout.sin_ktheta
+    k_cos_ktheta = static_layout.k_cos_ktheta
+    k_sin_ktheta = static_layout.k_sin_ktheta
+    k2_cos_ktheta = static_layout.k2_cos_ktheta
+    k2_sin_ktheta = static_layout.k2_sin_ktheta
+    weights = static_layout.weights
+    differentiation_matrix = static_layout.differentiation_matrix
+    integration_matrix = static_layout.integration_matrix
+    rho_powers = static_layout.rho_powers
+    y = static_layout.y
+    root_fields = runtime_layout.root_fields
+    source_target_root_fields = runtime_layout.source_target_root_fields
+    residual_fields = runtime_layout.residual_fields
+    packed_residual = runtime_layout.packed_residual
+    source_psin_query = runtime_layout.source_psin_query
+    source_parameter_query = runtime_layout.source_parameter_query
+    materialized_heat_input = runtime_layout.materialized_heat_input
+    materialized_current_input = runtime_layout.materialized_current_input
+    profiles_by_name = runtime_layout.profiles_by_name
+    psin_profile_fields = profiles_by_name["psin"].u_fields
+    h_fields = profiles_by_name["h"].u_fields
+    v_fields = profiles_by_name["v"].u_fields
+    k_fields = profiles_by_name["k"].u_fields
+    F_profile_u = profiles_by_name["F"].u
     block_codes, block_orders = _build_residual_block_metadata(profile_names)
     scratch_holder: list[np.ndarray | None] = [None]
     psin = root_fields[0]
@@ -465,79 +476,83 @@ def bind_fused_fixed_point_psin_residual_runner(
     *,
     source_kernel: Callable,
     coordinate_code: int,
-    profile_names: tuple[str, ...],
-    coeff_index_rows: np.ndarray,
-    lengths: np.ndarray,
-    residual_size: int,
+    static_layout: StaticLayout,
+    setup_layout: SetupLayout,
+    runtime_layout: RuntimeLayout,
     alpha_state: np.ndarray,
-    active_u_fields: np.ndarray,
-    T_fields: np.ndarray,
-    active_rp_fields: np.ndarray,
-    active_env_fields: np.ndarray,
-    active_offsets: np.ndarray,
-    active_scales: np.ndarray,
-    c_family_fields: np.ndarray,
-    s_family_fields: np.ndarray,
-    c_family_base_fields: np.ndarray,
-    s_family_base_fields: np.ndarray,
-    c_source_slots: np.ndarray,
-    s_source_slots: np.ndarray,
     c_active_order: int,
     s_active_order: int,
-    h_fields: np.ndarray,
-    v_fields: np.ndarray,
-    k_fields: np.ndarray,
-    tb_fields: np.ndarray,
-    R_fields: np.ndarray,
-    Z_fields: np.ndarray,
-    J_fields: np.ndarray,
-    g_fields: np.ndarray,
-    S_r: np.ndarray,
-    V_r: np.ndarray,
-    Kn: np.ndarray,
-    Kn_r: np.ndarray,
-    Ln_r: np.ndarray,
     a: float,
     R0: float,
     Z0: float,
     B0: float,
-    rho: np.ndarray,
-    theta: np.ndarray,
-    cos_ktheta: np.ndarray,
-    sin_ktheta: np.ndarray,
-    k_cos_ktheta: np.ndarray,
-    k_sin_ktheta: np.ndarray,
-    k2_cos_ktheta: np.ndarray,
-    k2_sin_ktheta: np.ndarray,
-    weights: np.ndarray,
-    differentiation_matrix: np.ndarray,
-    integration_matrix: np.ndarray,
-    rho_powers: np.ndarray,
-    y: np.ndarray,
-    root_fields: np.ndarray,
-    residual_fields: np.ndarray,
-    packed_residual: np.ndarray,
-    source_psin_query: np.ndarray,
-    psin_seed: np.ndarray,
-    materialized_heat_input: np.ndarray,
-    materialized_current_input: np.ndarray,
     heat_input: np.ndarray,
     current_input: np.ndarray,
-    source_n_src: int,
-    source_barycentric_weights: np.ndarray,
-    source_fixed_remap_matrix: np.ndarray,
-    F_profile_u: np.ndarray,
     Ip: float,
     beta: float,
-    use_projected_finalize: bool,
-    heat_projection_coeff: np.ndarray,
-    current_projection_coeff: np.ndarray,
-    endpoint_blend: np.ndarray,
-    projection_domain_code: int,
-    endpoint_policy_code: int,
     max_iter: int = 8,
     tolerance: float = 1.0e-10,
 ) -> Callable[[np.ndarray], np.ndarray]:
+    profile_names = tuple(setup_layout.profile_names[int(p)] for p in setup_layout.active_profile_ids)
+    coeff_index_rows = runtime_layout.active_coeff_index_rows
+    lengths = runtime_layout.active_lengths
+    active_u_fields = runtime_layout.active_u_fields
+    active_rp_fields = runtime_layout.active_rp_fields
+    active_env_fields = runtime_layout.active_env_fields
+    active_offsets = runtime_layout.active_offsets
+    active_scales = runtime_layout.active_scales
+    c_family_fields = runtime_layout.c_family_fields
+    s_family_fields = runtime_layout.s_family_fields
+    c_family_base_fields = runtime_layout.c_family_base_fields
+    s_family_base_fields = runtime_layout.s_family_base_fields
+    c_source_slots = runtime_layout.c_family_source_slots
+    s_source_slots = runtime_layout.s_family_source_slots
+    geometry = runtime_layout.geometry
+    tb_fields = geometry.tb_fields
+    R_fields = geometry.R_fields
+    Z_fields = geometry.Z_fields
+    J_fields = geometry.J_fields
+    g_fields = geometry.g_fields
+    S_r = geometry.S_r
+    V_r = geometry.V_r
+    Kn = geometry.Kn
+    Kn_r = geometry.Kn_r
+    Ln_r = geometry.Ln_r
+    T_fields = static_layout.T_fields
+    rho = static_layout.rho
+    theta = static_layout.theta
+    cos_ktheta = static_layout.cos_ktheta
+    sin_ktheta = static_layout.sin_ktheta
+    k_cos_ktheta = static_layout.k_cos_ktheta
+    k_sin_ktheta = static_layout.k_sin_ktheta
+    k2_cos_ktheta = static_layout.k2_cos_ktheta
+    k2_sin_ktheta = static_layout.k2_sin_ktheta
+    weights = static_layout.weights
+    differentiation_matrix = static_layout.differentiation_matrix
+    integration_matrix = static_layout.integration_matrix
+    rho_powers = static_layout.rho_powers
+    y = static_layout.y
+    root_fields = runtime_layout.root_fields
+    residual_fields = runtime_layout.residual_fields
+    packed_residual = runtime_layout.packed_residual
+    source_psin_query = runtime_layout.source_psin_query
+    materialized_heat_input = runtime_layout.materialized_heat_input
+    materialized_current_input = runtime_layout.materialized_current_input
+    source_barycentric_weights = runtime_layout.source_barycentric_weights
+    source_fixed_remap_matrix = runtime_layout.source_fixed_remap_matrix
+    heat_projection_coeff = runtime_layout.source_heat_projection_coeff
+    current_projection_coeff = runtime_layout.source_current_projection_coeff
+    endpoint_blend = runtime_layout.source_endpoint_blend
+    profiles_by_name = runtime_layout.profiles_by_name
+    psin_seed = profiles_by_name["psin"].u
+    h_fields = profiles_by_name["h"].u_fields
+    v_fields = profiles_by_name["v"].u_fields
+    k_fields = profiles_by_name["k"].u_fields
+    F_profile_u = profiles_by_name["F"].u
+    source_n_src = int(setup_layout.source_n_src)
+    use_projected_finalize = bool(setup_layout.fixed_point_use_projected_finalize)
+    projection_domain_code = int(setup_layout.fixed_point_projection_domain_code)
+    endpoint_policy_code = int(setup_layout.fixed_point_endpoint_policy_code)
     block_codes, block_orders = _build_residual_block_metadata(profile_names)
     scratch_holder: list[np.ndarray | None] = [None]
     psin = root_fields[0]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import pickle
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,6 +24,7 @@ REFERENCE_SOURCE_SAMPLE_COUNT = 51
 TEST_SOURCE_SAMPLE_COUNT = 51
 BENCHMARK_REPEAT_COUNT = 100
 SHAPE_MATCH_TOL = 1e-2
+REFERENCE_CACHE_VERSION = 1
 
 REFERENCE_GRID = Grid(Nr=32, Nt=32, scheme="legendre")
 TEST_GRID = Grid(Nr=12, Nt=12, scheme="legendre", L_max=REFERENCE_GRID.L_max)
@@ -69,11 +71,22 @@ BENCHMARK_MODE_CONSTRAINTS = {
 
 
 @dataclass(frozen=True)
+class PreparedInterpAxis:
+    unique_axis: np.ndarray
+    order: np.ndarray
+    unique_index: np.ndarray
+
+
+@dataclass(frozen=True)
 class ReferenceBundle:
     result: object
     equilibrium: object
     ref_profiles: dict[str, np.ndarray | float]
     reference_shape_x: np.ndarray
+    rho_axis: np.ndarray
+    psin_axis: np.ndarray
+    rho_interp_axis: PreparedInterpAxis
+    psin_interp_axis: PreparedInterpAxis
 
 
 @dataclass(frozen=True)
@@ -100,6 +113,12 @@ class BenchmarkCaseResult:
     @property
     def case_name(self) -> str:
         return self.spec.case_name
+
+
+_UNIFORM_SOURCE_AXIS = np.linspace(0.0, 1.0, TEST_SOURCE_SAMPLE_COUNT, dtype=np.float64)
+_UNIFORM_SOURCE_AXIS_SQRT_PSIN = _UNIFORM_SOURCE_AXIS**2
+_TEST_GRID_RHO_AXIS = np.asarray(TEST_GRID.rho, dtype=np.float64)
+_REFERENCE_SUMMARY_RHO_AXIS = np.asarray(REFERENCE_SUMMARY_GRID.rho, dtype=np.float64)
 
 
 def _sort_rows_desc(rows: list[BenchmarkCaseResult], key_fn) -> list[BenchmarkCaseResult]:
@@ -150,11 +169,22 @@ def _reference_summary_json_path() -> Path:
     return _artifact_dir() / "reference_summary.json"
 
 
+def _reference_cache_path() -> Path:
+    return _artifact_dir() / "reference_bundle.pkl"
+
+
 def _render_pairs(pairs: list[tuple[str, str]]) -> list[str]:
     if not pairs:
         return []
     key_width = max(len(key) for key, _ in pairs)
     return [f"{key:<{key_width}} : {value}" for key, value in pairs]
+
+
+def _as_float64_array(values, *, copy: bool = False) -> np.ndarray:
+    arr = np.asarray(values, dtype=np.float64)
+    if copy:
+        return arr.copy()
+    return arr
 
 
 def _extract_shape_x(profile_coeffs: dict[str, list[float] | None], x: np.ndarray) -> np.ndarray:
@@ -170,33 +200,44 @@ def _extract_shape_x(profile_coeffs: dict[str, list[float] | None], x: np.ndarra
     return np.asarray(shape_values, dtype=np.float64)
 
 
-def _unique_interp(axis: np.ndarray, values: np.ndarray, x_new: np.ndarray, *, kind: str = "cubic") -> np.ndarray:
-    axis = np.asarray(axis, dtype=np.float64)
-    values = np.asarray(values, dtype=np.float64)
-    order = np.argsort(axis)
-    axis_sorted = axis[order]
-    values_sorted = values[order]
+def _prepare_interp_axis(axis: np.ndarray) -> PreparedInterpAxis:
+    axis_f64 = _as_float64_array(axis)
+    order = np.argsort(axis_f64)
+    axis_sorted = axis_f64[order]
     unique_axis, unique_index = np.unique(axis_sorted, return_index=True)
-    unique_values = values_sorted[unique_index]
+    return PreparedInterpAxis(unique_axis=unique_axis, order=order, unique_index=unique_index)
+
+
+def _prepare_interp_values(values: np.ndarray, prepared_axis: PreparedInterpAxis) -> np.ndarray:
+    values_f64 = _as_float64_array(values)
+    return values_f64[prepared_axis.order][prepared_axis.unique_index]
+
+
+def _unique_interp(
+    axis: np.ndarray | PreparedInterpAxis,
+    values: np.ndarray,
+    x_new: np.ndarray,
+    *,
+    kind: str = "cubic",
+) -> np.ndarray:
+    prepared_axis = axis if isinstance(axis, PreparedInterpAxis) else _prepare_interp_axis(axis)
+    unique_axis = prepared_axis.unique_axis
+    unique_values = _prepare_interp_values(values, prepared_axis)
     interp_kind = kind if unique_axis.size >= 4 else "linear"
     fn = interp1d(unique_axis, unique_values, kind=interp_kind, fill_value="extrapolate", assume_sorted=True)
-    return np.asarray(fn(x_new), dtype=np.float64)
+    return _as_float64_array(fn(_as_float64_array(x_new)))
 
 
-def _profile_interp(axis: np.ndarray, values: np.ndarray, x_new: np.ndarray) -> np.ndarray:
-    axis = np.asarray(axis, dtype=np.float64)
-    values = np.asarray(values, dtype=np.float64)
-    x_new = np.asarray(x_new, dtype=np.float64)
-    order = np.argsort(axis)
-    axis_sorted = axis[order]
-    values_sorted = values[order]
-    unique_axis, unique_index = np.unique(axis_sorted, return_index=True)
-    unique_values = values_sorted[unique_index]
+def _profile_interp(axis: np.ndarray | PreparedInterpAxis, values: np.ndarray, x_new: np.ndarray) -> np.ndarray:
+    prepared_axis = axis if isinstance(axis, PreparedInterpAxis) else _prepare_interp_axis(axis)
+    unique_axis = prepared_axis.unique_axis
+    unique_values = _prepare_interp_values(values, prepared_axis)
+    x_new = _as_float64_array(x_new)
     if unique_axis.size < 2:
         return np.full_like(x_new, float(unique_values[0] if unique_values.size else 0.0), dtype=np.float64)
     if unique_axis.size < 3:
         return np.interp(x_new, unique_axis, unique_values).astype(np.float64, copy=False)
-    return np.asarray(PchipInterpolator(unique_axis, unique_values, extrapolate=True)(x_new), dtype=np.float64)
+    return _as_float64_array(PchipInterpolator(unique_axis, unique_values, extrapolate=True)(x_new))
 
 
 def pf_reference_profiles(psin: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -212,20 +253,20 @@ def pf_reference_profiles(psin: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 
 def build_pf_reference_profiles(equilibrium) -> dict[str, np.ndarray | float]:
-    psin_r = np.asarray(equilibrium.psin_r, dtype=np.float64).copy()
+    psin_r = _as_float64_array(equilibrium.psin_r, copy=True)
     psin_r_safe = np.where(np.abs(psin_r) > 1e-14, psin_r, 1e-14)
 
-    psi_r = np.asarray(equilibrium.alpha2 * psin_r, dtype=np.float64)
+    psi_r = _as_float64_array(equilibrium.alpha2 * psin_r)
     psi_r_safe = np.where(np.abs(psi_r) > 1e-14, psi_r, 1e-14)
 
-    FFn_r = np.asarray(equilibrium.FFn_r, dtype=np.float64).copy()
-    Pn_r = np.asarray(equilibrium.Pn_r, dtype=np.float64).copy()
-    FF_r = np.asarray(equilibrium.FF_r, dtype=np.float64).copy()
-    P_r = np.asarray(equilibrium.P_r, dtype=np.float64).copy()
-    Itor = np.asarray(equilibrium.Itor, dtype=np.float64).copy()
-    jtor = np.asarray(equilibrium.jtor, dtype=np.float64).copy()
-    jpara = np.asarray(equilibrium.jpara, dtype=np.float64).copy()
-    q = np.asarray(equilibrium.q, dtype=np.float64).copy()
+    FFn_r = _as_float64_array(equilibrium.FFn_r, copy=True)
+    Pn_r = _as_float64_array(equilibrium.Pn_r, copy=True)
+    FF_r = _as_float64_array(equilibrium.FF_r, copy=True)
+    P_r = _as_float64_array(equilibrium.P_r, copy=True)
+    Itor = _as_float64_array(equilibrium.Itor, copy=True)
+    jtor = _as_float64_array(equilibrium.jtor, copy=True)
+    jpara = _as_float64_array(equilibrium.jpara, copy=True)
+    q = _as_float64_array(equilibrium.q, copy=True)
     mu0 = 4e-7 * np.pi
 
     return {
@@ -269,7 +310,94 @@ def _reference_pf_case() -> OperatorCase:
     )
 
 
-def _solve_reference() -> ReferenceBundle:
+def _reference_cache_signature() -> dict[str, object]:
+    return {
+        "version": REFERENCE_CACHE_VERSION,
+        "backend": BACKEND,
+        "reference_source_sample_count": int(REFERENCE_SOURCE_SAMPLE_COUNT),
+        "reference_ip": float(REFERENCE_IP),
+        "reference_grid": {
+            "Nr": int(REFERENCE_GRID.Nr),
+            "Nt": int(REFERENCE_GRID.Nt),
+            "scheme": REFERENCE_GRID.scheme,
+            "L_max": int(REFERENCE_GRID.L_max),
+            "K_max": int(REFERENCE_GRID.K_max),
+        },
+        "boundary": {
+            "a": float(BOUNDARY.a),
+            "R0": float(BOUNDARY.R0),
+            "Z0": float(BOUNDARY.Z0),
+            "B0": float(BOUNDARY.B0),
+            "ka": float(BOUNDARY.ka),
+            "s_offsets": _as_float64_array(BOUNDARY.s_offsets).tolist(),
+        },
+        "config": {
+            "method": CONFIG.method,
+            "rtol": float(CONFIG.rtol),
+            "atol": float(CONFIG.atol),
+            "root_maxiter": int(CONFIG.root_maxiter),
+            "root_maxfev": int(CONFIG.root_maxfev),
+        },
+    }
+
+
+def _load_reference_cache() -> ReferenceBundle | None:
+    path = _reference_cache_path()
+    if not path.exists():
+        return None
+    try:
+        with path.open("rb") as f:
+            payload = pickle.load(f)
+    except Exception:
+        return None
+
+    if not isinstance(payload, dict) or payload.get("signature") != _reference_cache_signature():
+        return None
+
+    bundle = payload.get("bundle")
+    if not isinstance(bundle, dict):
+        return None
+
+    rho_axis = _as_float64_array(bundle["rho_axis"])
+    psin_axis = _as_float64_array(bundle["psin_axis"])
+    return ReferenceBundle(
+        result=bundle["result"],
+        equilibrium=bundle["equilibrium"],
+        ref_profiles=bundle["ref_profiles"],
+        reference_shape_x=_as_float64_array(bundle["reference_shape_x"]),
+        rho_axis=rho_axis,
+        psin_axis=psin_axis,
+        rho_interp_axis=_prepare_interp_axis(rho_axis),
+        psin_interp_axis=_prepare_interp_axis(psin_axis),
+    )
+
+
+def _write_reference_cache(reference: ReferenceBundle) -> None:
+    path = _reference_cache_path()
+    payload = {
+        "signature": _reference_cache_signature(),
+        "bundle": {
+            "result": reference.result,
+            "equilibrium": reference.equilibrium,
+            "ref_profiles": reference.ref_profiles,
+            "reference_shape_x": reference.reference_shape_x,
+            "rho_axis": reference.rho_axis,
+            "psin_axis": reference.psin_axis,
+        },
+    }
+    tmp_path = path.with_suffix(f"{path.suffix}.tmp")
+    with tmp_path.open("wb") as f:
+        pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+    os.replace(tmp_path, path)
+
+
+def _solve_reference(*, show_progress: bool = False) -> ReferenceBundle:
+    cached = _load_reference_cache()
+    if cached is not None:
+        if show_progress:
+            print(f"[{BACKEND}] reference cache hit: {_reference_cache_path().name}")
+        return cached
+
     solver = Solver(operator=Operator(REFERENCE_GRID, _reference_pf_case()), config=CONFIG)
     solver.solve(
         method=CONFIG.method,
@@ -283,13 +411,22 @@ def _solve_reference() -> ReferenceBundle:
     )
     result = solver.result
     equilibrium = solver.build_equilibrium()
-    reference_shape_x = _extract_shape_x(solver.operator.case.profile_coeffs, np.asarray(result.x, dtype=np.float64))
-    return ReferenceBundle(
+    rho_axis = _as_float64_array(equilibrium.rho)
+    psin_axis = _as_float64_array(equilibrium.psin)
+    reference = ReferenceBundle(
         result=result,
         equilibrium=equilibrium,
         ref_profiles=build_pf_reference_profiles(equilibrium),
-        reference_shape_x=reference_shape_x,
+        reference_shape_x=_extract_shape_x(solver.operator.case.profile_coeffs, result.x),
+        rho_axis=rho_axis,
+        psin_axis=psin_axis,
+        rho_interp_axis=_prepare_interp_axis(rho_axis),
+        psin_interp_axis=_prepare_interp_axis(psin_axis),
     )
+    _write_reference_cache(reference)
+    if show_progress:
+        print(f"[{BACKEND}] reference cache saved: {_reference_cache_path().name}")
+    return reference
 
 
 def _constraint_route_domains(constraint: str) -> tuple[str, str]:
@@ -315,7 +452,7 @@ def _pick_ref_profile(
     normalized: bool,
 ) -> np.ndarray:
     key = normalized_key if normalized else physical_key
-    return np.asarray(ref[key], dtype=np.float64)
+    return ref[key]
 
 
 def _build_mode_init_kwargs(
@@ -370,30 +507,27 @@ def _build_mode_init_kwargs(
 def _split_benchmark_inputs(init_kwargs: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
     heat_key = next(name for name in init_kwargs if name.startswith("P"))
     current_key = next(name for name in init_kwargs if not name.startswith("P"))
-    return np.asarray(init_kwargs[heat_key], dtype=np.float64), np.asarray(init_kwargs[current_key], dtype=np.float64)
-
-
-def _reference_axis(reference: ReferenceBundle, coordinate: str) -> np.ndarray:
-    if coordinate == "rho":
-        return np.asarray(reference.equilibrium.rho, dtype=np.float64)
-    return np.asarray(reference.equilibrium.psin, dtype=np.float64)
+    return init_kwargs[heat_key], init_kwargs[current_key]
 
 
 def _uniform_source_axis(spec: BenchmarkCaseSpec) -> np.ndarray:
-    uniform_axis = np.linspace(0.0, 1.0, TEST_SOURCE_SAMPLE_COUNT)
     route_spec = validate_operator(spec.mode, spec.coordinate, spec.input_kind)
     if route_spec.source_parameterization == "sqrt_psin":
-        return uniform_axis**2
-    return uniform_axis
+        return _UNIFORM_SOURCE_AXIS_SQRT_PSIN
+    return _UNIFORM_SOURCE_AXIS
 
 
-def _resample_reference_input(values: np.ndarray, source_axis: np.ndarray, spec: BenchmarkCaseSpec) -> np.ndarray:
+def _resample_reference_input(
+    values: np.ndarray,
+    source_axis: np.ndarray | PreparedInterpAxis,
+    spec: BenchmarkCaseSpec,
+) -> np.ndarray:
     uniform_axis = _uniform_source_axis(spec)
     return _unique_interp(source_axis, values, uniform_axis)
 
 
-def _sample_reference_input_on_grid(values: np.ndarray, source_axis: np.ndarray) -> np.ndarray:
-    return _unique_interp(source_axis, values, np.asarray(TEST_GRID.rho, dtype=np.float64), kind="cubic")
+def _sample_reference_input_on_grid(values: np.ndarray, source_axis: np.ndarray | PreparedInterpAxis) -> np.ndarray:
+    return _unique_interp(source_axis, values, _TEST_GRID_RHO_AXIS, kind="cubic")
 
 
 def _profile_coeffs_for_case(mode: str, coordinate: str, input_kind: str) -> dict[str, list[float] | None]:
@@ -411,12 +545,11 @@ def _make_benchmark_case(spec: BenchmarkCaseSpec, reference: ReferenceBundle) ->
     init_kwargs = _build_mode_init_kwargs(spec.mode, spec.coordinate, spec.constraint, reference.ref_profiles)
     heat_profile, current_profile = _split_benchmark_inputs(init_kwargs)
     if spec.input_kind == "grid":
-        grid_axis = np.asarray(reference.equilibrium.rho, dtype=np.float64)
-        heat_input = _sample_reference_input_on_grid(heat_profile, grid_axis)
-        current_input = _sample_reference_input_on_grid(current_profile, grid_axis)
+        heat_input = _sample_reference_input_on_grid(heat_profile, reference.rho_interp_axis)
+        current_input = _sample_reference_input_on_grid(current_profile, reference.rho_interp_axis)
         nodes = "grid"
     else:
-        source_axis = _reference_axis(reference, spec.coordinate)
+        source_axis = reference.rho_interp_axis if spec.coordinate == "rho" else reference.psin_interp_axis
         heat_input = _resample_reference_input(heat_profile, source_axis, spec)
         current_input = _resample_reference_input(current_profile, source_axis, spec)
         nodes = "uniform"
@@ -458,9 +591,9 @@ def _solve_with_timing(case: OperatorCase) -> tuple[object, object, np.ndarray, 
         enable_warmstart=False,
     )
 
-    elapsed_samples: list[float] = []
+    elapsed_ms_samples = np.empty(BENCHMARK_REPEAT_COUNT, dtype=np.float64)
     result = None
-    for _ in range(BENCHMARK_REPEAT_COUNT):
+    for index in range(BENCHMARK_REPEAT_COUNT):
         solver.solve(
             method=CONFIG.method,
             rtol=CONFIG.rtol,
@@ -472,23 +605,21 @@ def _solve_with_timing(case: OperatorCase) -> tuple[object, object, np.ndarray, 
             enable_warmstart=False,
         )
         result = solver.result
-        elapsed_samples.append(float(result.elapsed) / 1000.0)
+        elapsed_ms_samples[index] = float(result.elapsed) / 1000.0
 
     if result is None:
         raise RuntimeError("benchmark solve produced no result")
 
     equilibrium = solver.build_equilibrium()
-    shape_x = _extract_shape_x(case.profile_coeffs, np.asarray(result.x, dtype=np.float64))
-    return result, equilibrium, shape_x, float(np.mean(elapsed_samples)), float(np.std(elapsed_samples))
+    shape_x = _extract_shape_x(case.profile_coeffs, result.x)
+    return result, equilibrium, shape_x, float(np.mean(elapsed_ms_samples)), float(np.std(elapsed_ms_samples))
 
 
 def _shape_error(reference_x: np.ndarray, current_x: np.ndarray) -> float:
     n = min(reference_x.shape[0], current_x.shape[0])
     if n == 0:
         return 0.0
-    return float(
-        np.max(np.abs(np.asarray(current_x[:n], dtype=np.float64) - np.asarray(reference_x[:n], dtype=np.float64)))
-    )
+    return float(np.max(np.abs(current_x[:n] - reference_x[:n])))
 
 
 def _benchmark_case_result(spec: BenchmarkCaseSpec, reference: ReferenceBundle) -> BenchmarkCaseResult:
@@ -623,8 +754,8 @@ def _write_reference_summary_json(reference: ReferenceBundle) -> None:
     native_eq = reference.equilibrium
     summary_eq = native_eq.resample(target_grid=REFERENCE_SUMMARY_GRID)
 
-    boundary_R = np.asarray(summary_eq.geometry.R[-1], dtype=np.float64)
-    boundary_Z = np.asarray(summary_eq.geometry.Z[-1], dtype=np.float64)
+    boundary_R = _as_float64_array(summary_eq.geometry.R[-1])
+    boundary_Z = _as_float64_array(summary_eq.geometry.Z[-1])
     boundary_R_closed = np.concatenate([boundary_R, boundary_R[:1]])
     boundary_Z_closed = np.concatenate([boundary_Z, boundary_Z[:1]])
     R_in = float(np.min(boundary_R))
@@ -641,18 +772,18 @@ def _write_reference_summary_json(reference: ReferenceBundle) -> None:
     delta_bottom = (float(native_eq.R0) - R_bottom) / a_lcfs
     delta_average = 0.5 * (delta_top + delta_bottom)
 
-    rho = np.asarray(REFERENCE_SUMMARY_GRID.rho, dtype=np.float64)
-    native_rho = np.asarray(native_eq.rho, dtype=np.float64)
-    psin = _profile_interp(native_rho, np.asarray(native_eq.psin, dtype=np.float64), rho)
+    rho = _REFERENCE_SUMMARY_RHO_AXIS
+    native_rho_axis = _prepare_interp_axis(native_eq.rho)
+    psin = _profile_interp(native_rho_axis, native_eq.psin, rho)
     np.maximum(psin, 0.0, out=psin)
     if psin.size:
         psin[0] = 0.0
         psin[-1] = 1.0
 
     mu0 = 4.0e-7 * np.pi
-    native_P_psi = np.asarray(native_eq.alpha1 * native_eq.Pn_psin / mu0, dtype=np.float64)
-    P_psi = _profile_interp(native_rho, native_P_psi, rho)
-    q = _profile_interp(native_rho, np.asarray(native_eq.q, dtype=np.float64), rho)
+    native_P_psi = _as_float64_array(native_eq.alpha1 * native_eq.Pn_psin / mu0)
+    P_psi = _profile_interp(native_rho_axis, native_P_psi, rho)
+    q = _profile_interp(native_rho_axis, native_eq.q, rho)
 
     payload = {
         "sampling": {
@@ -693,7 +824,7 @@ def _write_reference_summary_json(reference: ReferenceBundle) -> None:
 
 
 def run_full_benchmark(*, show_progress: bool = SHOW_PROGRESS) -> tuple[ReferenceBundle, list[BenchmarkCaseResult]]:
-    reference = _solve_reference()
+    reference = _solve_reference(show_progress=show_progress)
     rows: list[BenchmarkCaseResult] = []
     plot_failures: list[str] = []
     specs = list(_iter_benchmark_specs())

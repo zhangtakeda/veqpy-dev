@@ -13,6 +13,7 @@ tests/**/*.json
 __pycache__
  
 .backup
+.claude
 .codex
 .ruff_cache
 .venv

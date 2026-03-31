@@ -50,6 +50,7 @@ from veqpy.operator.layout import (
     build_shape_profile_names,
     packed_size,
 )
+from veqpy.operator.layouts import RuntimeLayout, SetupLayout, StaticLayout
 from veqpy.operator.operator_case import OperatorCase
 
 _PROFILE_STATIC_KWARGS: dict[str, dict[str, int]] = {
@@ -109,7 +110,12 @@ class _OperatorCore:
 
     grid: Grid = field(repr=False)
     case: OperatorCase = field(repr=False)
+    static_layout: StaticLayout = field(init=False, repr=False)
+    setup_layout: SetupLayout = field(init=False, repr=False)
+    runtime_layout: RuntimeLayout = field(init=False, repr=False)
     geometry: Geometry = field(init=False)
+    geometry_surface_slab: np.ndarray = field(init=False, repr=False)
+    geometry_radial_slab: np.ndarray = field(init=False, repr=False)
 
     h_profile: Profile = field(init=False)
     v_profile: Profile = field(init=False)
@@ -147,6 +153,7 @@ class _OperatorCore:
     active_u_fields: np.ndarray = field(init=False, repr=False)
     active_rp_fields: np.ndarray = field(init=False, repr=False)
     active_env_fields: np.ndarray = field(init=False, repr=False)
+    active_profile_slab: np.ndarray = field(init=False, repr=False)
     active_offsets: np.ndarray = field(init=False, repr=False)
     active_scales: np.ndarray = field(init=False, repr=False)
     active_lengths: np.ndarray = field(init=False, repr=False)
@@ -155,6 +162,7 @@ class _OperatorCore:
     s_family_fields: np.ndarray = field(init=False, repr=False)
     c_family_base_fields: np.ndarray = field(init=False, repr=False)
     s_family_base_fields: np.ndarray = field(init=False, repr=False)
+    family_field_slab: np.ndarray = field(init=False, repr=False)
     active_slot_by_profile_id: np.ndarray = field(init=False, repr=False)
     c_family_source_slots: np.ndarray = field(init=False, repr=False)
     s_family_source_slots: np.ndarray = field(init=False, repr=False)
@@ -184,12 +192,12 @@ class _OperatorCore:
     materialized_heat_input: np.ndarray = field(init=False, repr=False)
     materialized_current_input: np.ndarray = field(init=False, repr=False)
     source_target_root_fields: np.ndarray = field(init=False, repr=False)
+    source_vector_slab: np.ndarray = field(init=False, repr=False)
     _source_projection_policy: _SourceProjectionPolicy | None = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         """完成 layout 构造, 运行时缓冲区分配和 case 绑定."""
         self._refresh_operator_identity()
-        self.geometry = Geometry(grid=self.grid)
         self.prefix_profile_names = PREFIX_PROFILE_NAMES
         self.shape_profile_names = build_shape_profile_names(self.grid.K_max)
         self.profile_names = build_profile_names(self.grid.K_max)
@@ -197,6 +205,7 @@ class _OperatorCore:
         fourier_profile_names = build_fourier_profile_names(self.grid.K_max)
         self.c_profile_names = tuple(name for name in fourier_profile_names if name.startswith("c"))
         self.s_profile_names = tuple(name for name in fourier_profile_names if name.startswith("s"))
+        self.static_layout = self._build_static_layout()
 
         self.profile_L, self.coeff_index, self.order_offsets = build_profile_layout(
             self.case.profile_coeffs,
@@ -208,6 +217,7 @@ class _OperatorCore:
             profile_names=self.profile_names,
         )
         self.x_size = packed_size(self.coeff_index)
+        self.setup_layout = self._build_setup_layout()
         self._validate_runtime_profile_support()
 
         self._setup_runtime_state()
@@ -412,14 +422,127 @@ class _OperatorCore:
         x_full[indices] = x_values
         return x_full
 
+    def _build_static_layout(self) -> StaticLayout:
+        return StaticLayout(
+            Nr=int(self.grid.Nr),
+            Nt=int(self.grid.Nt),
+            K_max=int(self.grid.K_max),
+            T_fields=self.grid.T_fields,
+            rho=self.grid.rho,
+            theta=self.grid.theta,
+            cos_ktheta=self.grid.cos_ktheta,
+            sin_ktheta=self.grid.sin_ktheta,
+            k_cos_ktheta=self.grid.k_cos_ktheta,
+            k_sin_ktheta=self.grid.k_sin_ktheta,
+            k2_cos_ktheta=self.grid.k2_cos_ktheta,
+            k2_sin_ktheta=self.grid.k2_sin_ktheta,
+            weights=self.grid.weights,
+            differentiation_matrix=self.grid.differentiation_matrix,
+            integration_matrix=self.grid.integration_matrix,
+            rho_powers=self.grid.rho_powers,
+            y=self.grid.y,
+        )
+
+    def _build_setup_layout(self) -> SetupLayout:
+        fixed_point_use_projected_finalize = False
+        fixed_point_projection_domain_code = 0
+        fixed_point_endpoint_policy_code = 0
+        policy = self._source_projection_policy
+        if policy is not None:
+            endpoint_policy = (
+                policy.current_ip_endpoint_policy if np.isfinite(self.case.Ip) else policy.current_other_endpoint_policy
+            )
+            fixed_point_use_projected_finalize = self.case.coordinate == "psin"
+            fixed_point_projection_domain_code = _PROJECTION_DOMAIN_CODES[policy.domain]
+            fixed_point_endpoint_policy_code = _ENDPOINT_POLICY_CODES[endpoint_policy]
+        return SetupLayout(
+            case_name=self.case.name,
+            coordinate=self.case.coordinate,
+            nodes=self.case.nodes,
+            source_strategy=self.source_strategy,
+            source_parameterization=self.source_parameterization,
+            source_n_src=int(self.source_n_src),
+            fixed_point_use_projected_finalize=fixed_point_use_projected_finalize,
+            fixed_point_projection_domain_code=fixed_point_projection_domain_code,
+            fixed_point_endpoint_policy_code=fixed_point_endpoint_policy_code,
+            prefix_profile_names=self.prefix_profile_names,
+            shape_profile_names=self.shape_profile_names,
+            profile_names=self.profile_names,
+            profile_index=self.profile_index,
+            c_profile_names=self.c_profile_names,
+            s_profile_names=self.s_profile_names,
+            profile_L=self.profile_L,
+            coeff_index=self.coeff_index,
+            order_offsets=self.order_offsets,
+            active_profile_mask=self.active_profile_mask,
+            active_profile_ids=self.active_profile_ids,
+            x_size=int(self.x_size),
+        )
+
+    def _refresh_setup_layout(self) -> None:
+        self.setup_layout = self._build_setup_layout()
+
+    def _refresh_runtime_layout_views(self) -> None:
+        runtime = self.runtime_layout
+        runtime.geometry = self.geometry
+        runtime.profiles_by_name = self.profiles_by_name
+        runtime.active_profile_slab = self.active_profile_slab
+        runtime.family_field_slab = self.family_field_slab
+        runtime.source_vector_slab = self.source_vector_slab
+        runtime.geometry_surface_slab = self.geometry_surface_slab
+        runtime.geometry_radial_slab = self.geometry_radial_slab
+        runtime.residual_fields = self.residual_fields
+        runtime.root_fields = self.root_fields
+        runtime.packed_residual = self.packed_residual
+        runtime.active_u_fields = self.active_u_fields
+        runtime.active_rp_fields = self.active_rp_fields
+        runtime.active_env_fields = self.active_env_fields
+        runtime.active_offsets = self.active_offsets
+        runtime.active_scales = self.active_scales
+        runtime.active_lengths = self.active_lengths
+        runtime.active_coeff_index_rows = self.active_coeff_index_rows
+        runtime.c_family_fields = self.c_family_fields
+        runtime.s_family_fields = self.s_family_fields
+        runtime.c_family_base_fields = self.c_family_base_fields
+        runtime.s_family_base_fields = self.s_family_base_fields
+        runtime.active_slot_by_profile_id = self.active_slot_by_profile_id
+        runtime.c_family_source_slots = self.c_family_source_slots
+        runtime.s_family_source_slots = self.s_family_source_slots
+        runtime.source_barycentric_weights = self.source_barycentric_weights
+        runtime.source_fixed_remap_matrix = self.source_fixed_remap_matrix
+        runtime.source_psin_query = self.source_psin_query
+        runtime.source_parameter_query = self.source_parameter_query
+        runtime.source_heat_projection_fit_matrix = self.source_heat_projection_fit_matrix
+        runtime.source_current_projection_fit_matrix = self.source_current_projection_fit_matrix
+        runtime.source_heat_projection_coeff = self.source_heat_projection_coeff
+        runtime.source_current_projection_coeff = self.source_current_projection_coeff
+        runtime.source_projection_query = self.source_projection_query
+        runtime.source_endpoint_blend = self.source_endpoint_blend
+        runtime.materialized_heat_input = self.materialized_heat_input
+        runtime.materialized_current_input = self.materialized_current_input
+        runtime.source_target_root_fields = self.source_target_root_fields
+
     def _setup_runtime_state(self) -> None:
-        nr = self.grid.Nr
-        nt = self.grid.Nt
+        nr = self.static_layout.Nr
+        nt = self.static_layout.Nt
         n_active = int(self.active_profile_ids.size)
         max_active_len = 0
         if n_active > 0:
             max_active_len = max(int(self.profile_L[int(p)]) + 1 for p in self.active_profile_ids)
 
+        self.geometry = Geometry(grid=self.grid)
+        self.geometry_surface_slab = np.empty((35, nr, nt), dtype=np.float64)
+        self.geometry_radial_slab = np.empty((5, nr), dtype=np.float64)
+        object.__setattr__(self.geometry, "tb_fields", self.geometry_surface_slab[0:8])
+        object.__setattr__(self.geometry, "R_fields", self.geometry_surface_slab[8:14])
+        object.__setattr__(self.geometry, "Z_fields", self.geometry_surface_slab[14:20])
+        object.__setattr__(self.geometry, "J_fields", self.geometry_surface_slab[20:28])
+        object.__setattr__(self.geometry, "g_fields", self.geometry_surface_slab[28:35])
+        object.__setattr__(self.geometry, "S_r", self.geometry_radial_slab[0])
+        object.__setattr__(self.geometry, "V_r", self.geometry_radial_slab[1])
+        object.__setattr__(self.geometry, "Kn", self.geometry_radial_slab[2])
+        object.__setattr__(self.geometry, "Kn_r", self.geometry_radial_slab[3])
+        object.__setattr__(self.geometry, "Ln_r", self.geometry_radial_slab[4])
         profiles_by_name: dict[str, Profile] = {}
         for name in self.profile_names:
             profile = self._make_profile(name)
@@ -441,31 +564,37 @@ class _OperatorCore:
         self._source_cache_key = None
         self.source_barycentric_weights = np.empty(0, dtype=np.float64)
         self.source_fixed_remap_matrix = np.empty((0, 0), dtype=np.float64)
-        self.materialized_heat_input = np.empty(nr, dtype=np.float64)
-        self.materialized_current_input = np.empty(nr, dtype=np.float64)
-        self.source_psin_query = np.empty(nr, dtype=np.float64)
-        self.source_parameter_query = np.empty(nr, dtype=np.float64)
-        self.source_projection_query = np.empty(nr, dtype=np.float64)
+        self.source_vector_slab = np.empty((8, nr), dtype=np.float64)
+        self.materialized_heat_input = self.source_vector_slab[0]
+        self.materialized_current_input = self.source_vector_slab[1]
+        self.source_psin_query = self.source_vector_slab[2]
+        self.source_parameter_query = self.source_vector_slab[3]
+        self.source_projection_query = self.source_vector_slab[4]
         self.source_heat_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
         self.source_current_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
         self.source_heat_projection_coeff = np.empty(0, dtype=np.float64)
         self.source_current_projection_coeff = np.empty(0, dtype=np.float64)
         self.source_endpoint_blend = np.linspace(0.0, 1.0, nr, dtype=np.float64)
-        self.source_target_root_fields = np.empty((3, nr), dtype=np.float64)
+        self.source_target_root_fields = self.source_vector_slab[5:8]
         self.alpha1 = 0.0
         self.alpha2 = 0.0
         self.packed_residual = np.empty(self.x_size, dtype=np.float64)
-        self.active_u_fields = np.empty((n_active, 3, nr), dtype=np.float64)
-        self.active_rp_fields = np.empty((n_active, 3, nr), dtype=np.float64)
-        self.active_env_fields = np.empty((n_active, 3, nr), dtype=np.float64)
+        self.active_profile_slab = np.empty((3, n_active, 3, nr), dtype=np.float64)
+        self.active_u_fields = self.active_profile_slab[0]
+        self.active_rp_fields = self.active_profile_slab[1]
+        self.active_env_fields = self.active_profile_slab[2]
         self.active_offsets = np.empty(n_active, dtype=np.float64)
         self.active_scales = np.empty(n_active, dtype=np.float64)
         self.active_lengths = np.empty(n_active, dtype=np.int64)
         self.active_coeff_index_rows = np.full((n_active, max_active_len), -1, dtype=np.int64)
-        self.c_family_fields = np.empty((self.grid.K_max + 1, 3, nr), dtype=np.float64)
-        self.s_family_fields = np.zeros((self.grid.K_max + 1, 3, nr), dtype=np.float64)
-        self.c_family_base_fields = np.zeros((self.grid.K_max + 1, 3, nr), dtype=np.float64)
-        self.s_family_base_fields = np.zeros((self.grid.K_max + 1, 3, nr), dtype=np.float64)
+        self.family_field_slab = np.empty((4, self.grid.K_max + 1, 3, nr), dtype=np.float64)
+        self.c_family_fields = self.family_field_slab[0]
+        self.s_family_fields = self.family_field_slab[1]
+        self.c_family_base_fields = self.family_field_slab[2]
+        self.s_family_base_fields = self.family_field_slab[3]
+        self.s_family_fields.fill(0.0)
+        self.c_family_base_fields.fill(0.0)
+        self.s_family_base_fields.fill(0.0)
         self.active_slot_by_profile_id = np.full(len(self.profile_names), -1, dtype=np.int64)
         for slot, p in enumerate(self.active_profile_ids):
             self.active_slot_by_profile_id[int(p)] = int(slot)
@@ -481,12 +610,54 @@ class _OperatorCore:
             if s_name in self.profile_index:
                 self.s_family_source_slots[order] = self.active_slot_by_profile_id[self.profile_index[s_name]]
 
+        self.runtime_layout = RuntimeLayout(
+            geometry=self.geometry,
+            profiles_by_name=self.profiles_by_name,
+            active_profile_slab=self.active_profile_slab,
+            family_field_slab=self.family_field_slab,
+            source_vector_slab=self.source_vector_slab,
+            geometry_surface_slab=self.geometry_surface_slab,
+            geometry_radial_slab=self.geometry_radial_slab,
+            residual_fields=self.residual_fields,
+            root_fields=self.root_fields,
+            packed_residual=self.packed_residual,
+            active_u_fields=self.active_u_fields,
+            active_rp_fields=self.active_rp_fields,
+            active_env_fields=self.active_env_fields,
+            active_offsets=self.active_offsets,
+            active_scales=self.active_scales,
+            active_lengths=self.active_lengths,
+            active_coeff_index_rows=self.active_coeff_index_rows,
+            c_family_fields=self.c_family_fields,
+            s_family_fields=self.s_family_fields,
+            c_family_base_fields=self.c_family_base_fields,
+            s_family_base_fields=self.s_family_base_fields,
+            active_slot_by_profile_id=self.active_slot_by_profile_id,
+            c_family_source_slots=self.c_family_source_slots,
+            s_family_source_slots=self.s_family_source_slots,
+            source_barycentric_weights=self.source_barycentric_weights,
+            source_fixed_remap_matrix=self.source_fixed_remap_matrix,
+            source_psin_query=self.source_psin_query,
+            source_parameter_query=self.source_parameter_query,
+            source_heat_projection_fit_matrix=self.source_heat_projection_fit_matrix,
+            source_current_projection_fit_matrix=self.source_current_projection_fit_matrix,
+            source_heat_projection_coeff=self.source_heat_projection_coeff,
+            source_current_projection_coeff=self.source_current_projection_coeff,
+            source_projection_query=self.source_projection_query,
+            source_endpoint_blend=self.source_endpoint_blend,
+            materialized_heat_input=self.materialized_heat_input,
+            materialized_current_input=self.materialized_current_input,
+            source_target_root_fields=self.source_target_root_fields,
+        )
+
     def _refresh_runtime_state(self) -> None:
         self._refresh_operator_identity()
+        self._refresh_setup_layout()
         self._validate_runtime_profile_support()
         self._refresh_profile_runtime()
         self._refresh_fourier_family_metadata()
         self._refresh_source_runtime()
+        self._refresh_runtime_layout_views()
         self._refresh_stage_a_runtime()
         self._refresh_runtime_bindings()
 
@@ -1313,65 +1484,19 @@ class Operator(_OperatorCore):
         self.fused_residual_runner = self._build_fused_residual_runner()
 
     def _build_fused_common_kwargs(self) -> dict[str, object]:
-        profile_names = tuple(self.profile_names[int(p)] for p in self.active_profile_ids)
         return dict(
             source_kernel=self._source_route_spec.implementation,
             coordinate_code=int(self._source_route_spec.coordinate_code),
-            profile_names=profile_names,
-            coeff_index_rows=self.active_coeff_index_rows,
-            lengths=self.active_lengths,
-            residual_size=self.x_size,
+            static_layout=self.static_layout,
+            setup_layout=self.setup_layout,
+            runtime_layout=self.runtime_layout,
             alpha_state=self.fused_alpha_state,
-            active_u_fields=self.active_u_fields,
-            T_fields=self.grid.T_fields,
-            active_rp_fields=self.active_rp_fields,
-            active_env_fields=self.active_env_fields,
-            active_offsets=self.active_offsets,
-            active_scales=self.active_scales,
-            c_family_fields=self.c_family_fields,
-            s_family_fields=self.s_family_fields,
-            c_family_base_fields=self.c_family_base_fields,
-            s_family_base_fields=self.s_family_base_fields,
-            c_source_slots=self.c_family_source_slots,
-            s_source_slots=self.s_family_source_slots,
             c_active_order=int(self.c_effective_order),
             s_active_order=int(self.s_effective_order),
-            h_fields=self.h_profile.u_fields,
-            v_fields=self.v_profile.u_fields,
-            k_fields=self.k_profile.u_fields,
-            tb_fields=self.geometry.tb_fields,
-            R_fields=self.geometry.R_fields,
-            Z_fields=self.geometry.Z_fields,
-            J_fields=self.geometry.J_fields,
-            g_fields=self.geometry.g_fields,
-            S_r=self.geometry.S_r,
-            V_r=self.geometry.V_r,
-            Kn=self.geometry.Kn,
-            Kn_r=self.geometry.Kn_r,
-            Ln_r=self.geometry.Ln_r,
             a=float(self.case.a),
             R0=float(self.case.R0),
             Z0=float(self.case.Z0),
             B0=float(self.case.B0),
-            rho=self.grid.rho,
-            theta=self.grid.theta,
-            cos_ktheta=self.grid.cos_ktheta,
-            sin_ktheta=self.grid.sin_ktheta,
-            k_cos_ktheta=self.grid.k_cos_ktheta,
-            k_sin_ktheta=self.grid.k_sin_ktheta,
-            k2_cos_ktheta=self.grid.k2_cos_ktheta,
-            k2_sin_ktheta=self.grid.k2_sin_ktheta,
-            weights=self.grid.weights,
-            differentiation_matrix=self.grid.differentiation_matrix,
-            integration_matrix=self.grid.integration_matrix,
-            rho_powers=self.grid.rho_powers,
-            y=self.grid.y,
-            root_fields=self.root_fields,
-            residual_fields=self.residual_fields,
-            packed_residual=self.packed_residual,
-            materialized_heat_input=self.materialized_heat_input,
-            materialized_current_input=self.materialized_current_input,
-            F_profile_u=self.F_profile.u,
             Ip=float(self.case.Ip),
             beta=float(self.case.beta),
         )
@@ -1381,53 +1506,23 @@ class Operator(_OperatorCore):
         return bind_fused_single_pass_residual_runner(**self._build_fused_common_kwargs())
 
     def _build_profile_owned_psin_fused_runner(self) -> Callable[[np.ndarray], np.ndarray]:
-        psin_profile_fields = self.psin_profile.u_fields
-        if psin_profile_fields is None:
+        if self.psin_profile.u_fields is None:
             self.supports_fused_residual = False
             return lambda x_eval: _OperatorCore._evaluate_residual(self, x_eval)
         self.supports_fused_residual = True
         return bind_fused_profile_owned_psin_residual_runner(
             **self._build_fused_common_kwargs(),
             parameterization_code=_SOURCE_PARAMETERIZATION_CODES[self.source_parameterization],
-            source_target_root_fields=self.source_target_root_fields,
-            source_psin_query=self.source_psin_query,
-            source_parameter_query=self.source_parameter_query,
-            psin_profile_fields=psin_profile_fields,
             heat_input=self.case.heat_input,
             current_input=self.case.current_input,
         )
 
     def _build_fixed_point_psin_fused_runner(self) -> Callable[[np.ndarray], np.ndarray]:
-        policy = self._source_projection_policy
-        if policy is None:
-            use_projected_finalize = False
-            projection_domain_code = 0
-            endpoint_policy_code = 0
-        else:
-            endpoint_policy = (
-                policy.current_ip_endpoint_policy
-                if np.isfinite(self.case.Ip)
-                else policy.current_other_endpoint_policy
-            )
-            use_projected_finalize = self.case.coordinate == "psin"
-            projection_domain_code = _PROJECTION_DOMAIN_CODES[policy.domain]
-            endpoint_policy_code = _ENDPOINT_POLICY_CODES[endpoint_policy]
         self.supports_fused_residual = True
         return bind_fused_fixed_point_psin_residual_runner(
             **self._build_fused_common_kwargs(),
-            source_psin_query=self.source_psin_query,
-            psin_seed=self.psin_profile.u,
             heat_input=self.case.heat_input,
             current_input=self.case.current_input,
-            source_n_src=self.source_n_src,
-            source_barycentric_weights=self.source_barycentric_weights,
-            source_fixed_remap_matrix=self.source_fixed_remap_matrix,
-            use_projected_finalize=use_projected_finalize,
-            heat_projection_coeff=self.source_heat_projection_coeff,
-            current_projection_coeff=self.source_current_projection_coeff,
-            endpoint_blend=self.source_endpoint_blend,
-            projection_domain_code=projection_domain_code,
-            endpoint_policy_code=endpoint_policy_code,
         )
 
     def _build_fused_residual_runner(self) -> Callable[[np.ndarray], np.ndarray]:

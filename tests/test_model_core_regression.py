@@ -8,7 +8,7 @@ from veqpy.model import Boundary
 from veqpy.model.equilibrium import Equilibrium
 from veqpy.model.geqdsk import Geqdsk
 from veqpy.model.grid import Grid
-from veqpy.operator import Operator
+from veqpy.operator import Operator, RuntimeLayout, SetupLayout, StaticLayout
 from veqpy.operator.layout import build_profile_names
 from veqpy.operator.operator_case import OperatorCase
 
@@ -65,6 +65,37 @@ def _build_high_order_equilibrium() -> tuple[Equilibrium, Operator]:
     operator = Operator(grid=grid, case=case)
     equilibrium = operator.build_equilibrium(operator.encode_initial_state())
     return equilibrium, operator
+
+
+def _build_operator_case(*, mode="PF", coordinate="rho", nodes="uniform") -> OperatorCase:
+    grid = Grid(Nr=8, Nt=16, scheme="uniform", K_max=4)
+    profile_coeffs = {name: None for name in build_profile_names(grid.K_max)}
+    profile_coeffs.update(
+        {
+            "psin": [0.0, 1.0],
+            "F": [1.0],
+            "h": [0.0],
+            "c3": [0.05],
+            "s4": [-0.03],
+        }
+    )
+    case = OperatorCase(
+        name=mode,
+        coordinate=coordinate,
+        nodes=nodes,
+        profile_coeffs=profile_coeffs,
+        boundary=Boundary(
+            a=1.1,
+            R0=1.7,
+            Z0=0.2,
+            B0=3.0,
+            c_offsets=np.zeros(grid.K_max + 1),
+            s_offsets=np.zeros(grid.K_max + 1),
+        ),
+        heat_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
+        current_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
+    )
+    return grid, case
 
 
 def _make_geqdsk_with_boundary() -> Geqdsk:
@@ -228,6 +259,60 @@ def test_equilibrium_roundtrips_canonical_active_profiles():
         assert np.allclose(loaded.active_profiles["s4"].u, equilibrium.active_profiles["s4"].u)
     finally:
         outpath.unlink(missing_ok=True)
+
+
+def test_operator_exposes_three_layout_layers_with_expected_ownership():
+    grid, case = _build_operator_case()
+    operator = Operator(grid=grid, case=case)
+
+    assert isinstance(operator.static_layout, StaticLayout)
+    assert isinstance(operator.setup_layout, SetupLayout)
+    assert isinstance(operator.runtime_layout, RuntimeLayout)
+
+    assert operator.static_layout.rho is grid.rho
+    assert operator.static_layout.T_fields is grid.T_fields
+    assert operator.setup_layout.profile_L is operator.profile_L
+    assert operator.setup_layout.coeff_index is operator.coeff_index
+    assert operator.setup_layout.x_size == operator.x_size
+    assert operator.runtime_layout.geometry is operator.geometry
+    assert operator.runtime_layout.root_fields is operator.root_fields
+    assert operator.runtime_layout.packed_residual is operator.packed_residual
+    assert operator.active_u_fields.base is operator.active_profile_slab
+    assert operator.c_family_fields.base is operator.family_field_slab
+    assert operator.source_psin_query.base is operator.source_vector_slab
+    assert operator.geometry.tb_fields.base is operator.geometry_surface_slab
+    assert operator.geometry.S_r.base is operator.geometry_radial_slab
+
+
+def test_operator_replace_case_preserves_static_layout_and_refreshes_setup_layout():
+    grid, case = _build_operator_case()
+    operator = Operator(grid=grid, case=case)
+    static_layout = operator.static_layout
+    setup_layout = operator.setup_layout
+
+    next_case = case.copy()
+    next_case.beta = 0.25
+    next_case.profile_coeffs["c3"] = [0.02]
+
+    operator.replace_case(next_case)
+
+    assert operator.static_layout is static_layout
+    assert operator.setup_layout is not setup_layout
+    assert operator.setup_layout.coordinate == next_case.coordinate
+    assert operator.setup_layout.nodes == next_case.nodes
+    assert operator.runtime_layout.geometry is operator.geometry
+
+
+def test_setup_layout_captures_fixed_point_route_metadata():
+    grid, case = _build_operator_case(mode="PQ", coordinate="psin", nodes="uniform")
+    case.profile_coeffs["psin"] = None
+    operator = Operator(grid=grid, case=case)
+
+    assert operator.setup_layout.source_strategy == "fixed_point_psin"
+    assert operator.setup_layout.source_n_src == TEST_SOURCE_SAMPLE_COUNT
+    assert operator.setup_layout.fixed_point_use_projected_finalize is True
+    assert operator.setup_layout.fixed_point_projection_domain_code == 1
+    assert operator.setup_layout.fixed_point_endpoint_policy_code == 0
 
 
 def test_equilibrium_load_rejects_legacy_shape_payload():

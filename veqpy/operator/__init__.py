@@ -7,6 +7,9 @@ Role:
 Public API:
 - Operator
 - OperatorCase
+- StaticLayout
+- SetupLayout
+- RuntimeLayout
 - build_profile_layout
 - build_profile_names
 - build_profile_index
@@ -19,6 +22,7 @@ Notes:
 
 from veqpy.operator.codec import decode_packed_blocks
 from veqpy.operator.layout import build_profile_index, build_profile_layout, build_profile_names
+from veqpy.operator.layouts import RuntimeLayout, SetupLayout, StaticLayout
 from veqpy.operator.operator import Operator
 from veqpy.operator.operator_case import OperatorCase
 
@@ -29,4 +33,7 @@ __all__ = [
     "decode_packed_blocks",
     "Operator",
     "OperatorCase",
+    "StaticLayout",
+    "SetupLayout",
+    "RuntimeLayout",
 ]
