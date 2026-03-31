@@ -31,6 +31,7 @@ from veqpy.engine import (
     materialize_profile_owned_psin_source,
     materialize_projected_source_inputs,
     resolve_source_inputs,
+    resolve_source_scratch_kernel,
     update_geometry,
     update_fourier_family_fields,
     update_fixed_point_psin_query,
@@ -191,6 +192,7 @@ class _OperatorCore:
     source_endpoint_blend: np.ndarray = field(init=False, repr=False)
     materialized_heat_input: np.ndarray = field(init=False, repr=False)
     materialized_current_input: np.ndarray = field(init=False, repr=False)
+    source_scratch_1d: np.ndarray = field(init=False, repr=False)
     source_target_root_fields: np.ndarray = field(init=False, repr=False)
     source_vector_slab: np.ndarray = field(init=False, repr=False)
     _source_projection_policy: _SourceProjectionPolicy | None = field(init=False, repr=False)
@@ -520,6 +522,7 @@ class _OperatorCore:
         runtime.source_endpoint_blend = self.source_endpoint_blend
         runtime.materialized_heat_input = self.materialized_heat_input
         runtime.materialized_current_input = self.materialized_current_input
+        runtime.source_scratch_1d = self.source_scratch_1d
         runtime.source_target_root_fields = self.source_target_root_fields
 
     def _setup_runtime_state(self) -> None:
@@ -576,6 +579,7 @@ class _OperatorCore:
         self.source_current_projection_coeff = np.empty(0, dtype=np.float64)
         self.source_endpoint_blend = np.linspace(0.0, 1.0, nr, dtype=np.float64)
         self.source_target_root_fields = self.source_vector_slab[5:8]
+        self.source_scratch_1d = np.empty((6, nr), dtype=np.float64)
         self.alpha1 = 0.0
         self.alpha2 = 0.0
         self.packed_residual = np.empty(self.x_size, dtype=np.float64)
@@ -647,6 +651,7 @@ class _OperatorCore:
             source_endpoint_blend=self.source_endpoint_blend,
             materialized_heat_input=self.materialized_heat_input,
             materialized_current_input=self.materialized_current_input,
+            source_scratch_1d=self.source_scratch_1d,
             source_target_root_fields=self.source_target_root_fields,
         )
 
@@ -808,6 +813,8 @@ class _OperatorCore:
             )
         if self.case.nodes == "grid" or self.case.coordinate != "psin":
             self._materialize_source_inputs(self.psin)
+        elif self.source_strategy == "fixed_point_psin":
+            self.invalidate_source_state()
 
     def _validate_source_inputs(self, case: OperatorCase) -> None:
         if case.heat_input.shape != case.current_input.shape:
@@ -1028,6 +1035,7 @@ class _OperatorCore:
         Pn_psin = self.Pn_psin
         materialized_heat_input = self.materialized_heat_input
         materialized_current_input = self.materialized_current_input
+        source_scratch_1d = self.source_scratch_1d
         source_target_root_fields = self.source_target_root_fields
         grid = self.grid
         geometry = self.geometry
@@ -1086,6 +1094,7 @@ class _OperatorCore:
                         F_profile_u,
                         case_Ip,
                         case_beta,
+                        source_scratch_1d,
                     )
 
                 return runner
@@ -1120,16 +1129,13 @@ class _OperatorCore:
                     F_profile_u,
                     case_Ip,
                     case_beta,
+                    source_scratch_1d,
                 )
 
             return runner
 
         if self.source_strategy == "fixed_point_psin":
-            source_psin_query = self.source_psin_query
-            psin_profile_u = self.psin_profile.u
-
             def runner() -> tuple[float, float]:
-                _normalize_psin_query_inplace(source_psin_query, psin_profile_u)
                 return self._run_psin_source_fixed_point()
 
             return runner
@@ -1159,6 +1165,7 @@ class _OperatorCore:
                 F_profile_u,
                 case_Ip,
                 case_beta,
+                source_scratch_1d,
             )
 
         return runner
@@ -1367,12 +1374,24 @@ class _OperatorCore:
             self.F_profile.u,
             float(self.case.Ip),
             float(self.case.beta),
+            self.source_scratch_1d,
         )
 
     def _run_psin_source_fixed_point(self) -> tuple[float, float]:
+        use_projected_finalize = self.case.coordinate == "psin" and self._source_projection_policy is not None
+        allow_query_warmstart = not use_projected_finalize
+        if use_projected_finalize:
+            policy = self._source_projection_policy
+            if policy is None:
+                raise RuntimeError("Projected finalize requested without a source projection policy")
+            current_endpoint_policy = (
+                policy.current_ip_endpoint_policy if np.isfinite(self.case.Ip) else policy.current_other_endpoint_policy
+            )
+            allow_query_warmstart = _ENDPOINT_POLICY_CODES[current_endpoint_policy] != _ENDPOINT_POLICY_CODES["none"]
+        if (not allow_query_warmstart) or self.source_psin_query[0] < 0.0:
+            _normalize_psin_query_inplace(self.source_psin_query, self.psin_profile.u)
         alpha1 = float("nan")
         alpha2 = float("nan")
-        use_projected_finalize = self.case.coordinate == "psin" and self._source_projection_policy is not None
         for _ in range(8):
             self._materialize_source_inputs(self.source_psin_query, enable_projection=not use_projected_finalize)
             alpha1, alpha2 = self._source_runner(
@@ -1399,6 +1418,7 @@ class _OperatorCore:
                 self.F_profile.u,
                 float(self.case.Ip),
                 float(self.case.beta),
+                self.source_scratch_1d,
             )
             if update_fixed_point_psin_query(self.source_psin_query, self.psin, 1e-10):
                 break
@@ -1429,8 +1449,13 @@ class _OperatorCore:
                 self.F_profile.u,
                 float(self.case.Ip),
                 float(self.case.beta),
+                self.source_scratch_1d,
             )
         return alpha1, alpha2
+
+    def invalidate_source_state(self) -> None:
+        if self.source_strategy == "fixed_point_psin":
+            self.source_psin_query.fill(-1.0)
 
     def _assemble_residual(self) -> np.ndarray:
         return self.residual_pack_stage_runner()
@@ -1660,6 +1685,7 @@ def _apply_endpoint_policy_inplace(
 def _build_source_stage_runner(route_spec) -> Callable:
     coordinate_code = int(route_spec.coordinate_code)
     operator_kernel = route_spec.implementation
+    scratch_kernel = resolve_source_scratch_kernel(operator_kernel)
 
     def runner(
         out_psin: np.ndarray,
@@ -1685,7 +1711,36 @@ def _build_source_stage_runner(route_spec) -> Callable:
         F: np.ndarray,
         Ip: float,
         beta: float,
+        source_scratch_1d: np.ndarray,
     ) -> tuple[float, float]:
+        if scratch_kernel is not None:
+            return scratch_kernel(
+                out_psin,
+                out_psin_r,
+                out_psin_rr,
+                out_FFn_psin,
+                out_Pn_psin,
+                heat_input,
+                current_input,
+                coordinate_code,
+                R0,
+                B0,
+                weights,
+                differentiation_matrix,
+                integration_matrix,
+                rho,
+                V_r,
+                Kn,
+                Kn_r,
+                Ln_r,
+                S_r,
+                R,
+                JdivR,
+                F,
+                Ip,
+                beta,
+                source_scratch_1d,
+            )
         return operator_kernel(
             out_psin,
             out_psin_r,

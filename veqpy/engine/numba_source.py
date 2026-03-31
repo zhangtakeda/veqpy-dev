@@ -1310,6 +1310,77 @@ def _update_pj2_from_psin_inputs(
     return alpha1, alpha2
 
 
+@njit(cache=True, nogil=True)
+def _update_pj2_from_psin_inputs_with_scratch(
+    out_psin: np.ndarray,
+    out_psin_r: np.ndarray,
+    out_psin_rr: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    V_r: np.ndarray,
+    Kn: np.ndarray,
+    Kn_r: np.ndarray,
+    Ln_r: np.ndarray,
+    S_r: np.ndarray,
+    R: np.ndarray,
+    JdivR: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+    source_scratch_1d: np.ndarray,
+) -> tuple[float, float]:
+    has_Ip = not np.isnan(Ip)
+    has_beta = not np.isnan(beta)
+    integrand = source_scratch_1d[0]
+    integral_val = source_scratch_1d[1]
+    I_tor = source_scratch_1d[2]
+    scratch_Pn_r = source_scratch_1d[3]
+    psin_r_safe = source_scratch_1d[4]
+    scratch_aux = source_scratch_1d[5]
+
+    _fill_product_ratio(integrand, Ln_r, current_input, F, 1.0)
+    corrected_integration(out_psin_r, integrand, integration_matrix, 1, rho, differentiation_matrix)
+    _copy_vector(integral_val, out_psin_r)
+
+    if has_Ip:
+        _fill_scaled_product(I_tor, F, integral_val, Ip / (R0 * B0 * integral_val[-1]))
+    else:
+        _fill_scaled_product(I_tor, F, integral_val, 2.0 * np.pi)
+
+    _fill_scaled_ratio(integrand, I_tor, Kn, MU0 / (2.0 * np.pi))
+    alpha2 = quadrature(integrand, weights)
+    _fill_scaled_vector(out_psin_r, integrand, 1.0 / alpha2)
+    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
+    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    _maximum_floor_out(psin_r_safe, out_psin_r, 1e-10)
+
+    if has_beta:
+        _fill_pointwise_product(scratch_Pn_r, heat_input, out_psin_r)
+        _compute_Pn_out(scratch_aux, scratch_Pn_r, integration_matrix, weights)
+        alpha1 = 0.5 * beta * B0**2 / alpha2 * quadrature(V_r, weights) / _quadrature_product(
+            scratch_aux,
+            V_r,
+            weights,
+        )
+        _copy_vector(out_Pn_psin, heat_input)
+    else:
+        alpha1 = -MU0 * _quadrature_product(heat_input, out_psin_r, weights)
+        _fill_product_ratio(out_Pn_psin, heat_input, out_psin_r, psin_r_safe, MU0 / alpha1)
+
+    full_differentiation(scratch_aux, F, differentiation_matrix)
+    _fill_product_ratio(out_FFn_psin, F, scratch_aux, psin_r_safe, 1.0 / (alpha1 * alpha2))
+    return alpha1, alpha2
+
+
 @register_operator("PJ2_RHO", supported_coordinates=(RHO_COORDINATE,))
 @njit(cache=True, nogil=True)
 def update_PJ2_RHO(
@@ -1549,6 +1620,72 @@ def _update_pq_from_psin_inputs(
     full_differentiation(F_r, F, differentiation_matrix)
     _fill_scaled_product(out_FFn_psin, F, F_r, 1.0 / (alpha1 * alpha2))
     _fill_scaled_ratio(out_FFn_psin, out_FFn_psin, psin_r_safe, 1.0)
+    return alpha1, alpha2
+
+
+@njit(cache=True, nogil=True)
+def _update_pq_from_psin_inputs_with_scratch(
+    out_psin: np.ndarray,
+    out_psin_r: np.ndarray,
+    out_psin_rr: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    V_r: np.ndarray,
+    Kn: np.ndarray,
+    Kn_r: np.ndarray,
+    Ln_r: np.ndarray,
+    S_r: np.ndarray,
+    R: np.ndarray,
+    JdivR: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+    source_scratch_1d: np.ndarray,
+) -> tuple[float, float]:
+    has_Ip = not np.isnan(Ip)
+    has_beta = not np.isnan(beta)
+    q_prof = source_scratch_1d[0]
+    scratch_Pn_r = source_scratch_1d[3]
+    psin_r_safe = source_scratch_1d[4]
+    scratch_aux = source_scratch_1d[5]
+
+    if has_Ip:
+        q_scale = (2.0 * np.pi * R0 * B0) / (MU0 * Ip)
+        _fill_scaled_vector(q_prof, current_input, q_scale * (Kn[-1] * Ln_r[-1] / current_input[-1]))
+        alpha2 = _quadrature_product_ratio(F, Ln_r, q_prof, weights)
+        _fill_product_ratio(out_psin_r, F, Ln_r, q_prof, 1.0 / alpha2)
+    else:
+        alpha2 = _quadrature_product_ratio(F, Ln_r, current_input, weights)
+        _fill_product_ratio(out_psin_r, F, Ln_r, current_input, 1.0 / alpha2)
+
+    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
+    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    _maximum_floor_out(psin_r_safe, out_psin_r, 1e-10)
+
+    if has_beta:
+        _fill_pointwise_product(scratch_Pn_r, heat_input, out_psin_r)
+        _compute_Pn_out(scratch_aux, scratch_Pn_r, integration_matrix, weights)
+        alpha1 = 0.5 * beta * B0**2 / alpha2 * quadrature(V_r, weights) / _quadrature_product(
+            scratch_aux,
+            V_r,
+            weights,
+        )
+        _copy_vector(out_Pn_psin, heat_input)
+    else:
+        alpha1 = -MU0 * _quadrature_product(heat_input, out_psin_r, weights)
+        _fill_product_ratio(out_Pn_psin, heat_input, out_psin_r, psin_r_safe, MU0 / alpha1)
+
+    full_differentiation(scratch_aux, F, differentiation_matrix)
+    _fill_product_ratio(out_FFn_psin, F, scratch_aux, psin_r_safe, 1.0 / (alpha1 * alpha2))
     return alpha1, alpha2
 
 
@@ -1802,6 +1939,22 @@ def quadrature(arr: np.ndarray, weights: np.ndarray) -> float:
 
 
 @njit(cache=True, nogil=True)
+def _quadrature_product(lhs: np.ndarray, rhs: np.ndarray, weights: np.ndarray) -> float:
+    total = 0.0
+    for i in range(lhs.shape[0]):
+        total += weights[i] * lhs[i] * rhs[i]
+    return total
+
+
+@njit(cache=True, nogil=True)
+def _quadrature_product_ratio(lhs: np.ndarray, rhs: np.ndarray, den: np.ndarray, weights: np.ndarray) -> float:
+    total = 0.0
+    for i in range(lhs.shape[0]):
+        total += weights[i] * lhs[i] * rhs[i] / den[i]
+    return total
+
+
+@njit(cache=True, nogil=True)
 def full_integration(out: np.ndarray, arr: np.ndarray, integration_matrix: np.ndarray) -> np.ndarray:
     """执行全径向积分."""
     rows = integration_matrix.shape[0]
@@ -1886,6 +2039,18 @@ def _compute_Pn(Pn_r: np.ndarray, integration_matrix: np.ndarray, weights: np.nd
     full_integration(Pn, Pn_r, integration_matrix)
     Pn -= quadrature(Pn_r, weights)
     return Pn
+
+
+@njit(cache=True, nogil=True)
+def _compute_Pn_out(
+    out_Pn: np.ndarray,
+    Pn_r: np.ndarray,
+    integration_matrix: np.ndarray,
+    weights: np.ndarray,
+) -> np.ndarray:
+    full_integration(out_Pn, Pn_r, integration_matrix)
+    out_Pn -= quadrature(Pn_r, weights)
+    return out_Pn
 
 
 @njit(cache=True, fastmath=True, nogil=True)
@@ -2074,6 +2239,14 @@ def _maximum_floor(arr: np.ndarray, floor: float) -> np.ndarray:
     return out
 
 
+@njit(cache=True, nogil=True)
+def _maximum_floor_out(out: np.ndarray, arr: np.ndarray, floor: float) -> np.ndarray:
+    for i in range(arr.shape[0]):
+        value = arr[i]
+        out[i] = value if value > floor else floor
+    return out
+
+
 def build_source_remap_cache(
     coordinate: str,
     n_src: int,
@@ -2149,6 +2322,19 @@ def resolve_source_inputs(
         psin_query,
     )
     return out_heat_input, out_current_input
+
+
+_SOURCE_SCRATCH_KERNELS: dict[str, Callable] = {
+    "update_PJ2_PSIN": _update_pj2_from_psin_inputs_with_scratch,
+    "update_PQ_PSIN": _update_pq_from_psin_inputs_with_scratch,
+}
+
+
+def resolve_source_scratch_kernel(operator_kernel: Callable) -> Callable | None:
+    """返回 numba backend 中支持显式 scratch 的 source kernel 实现."""
+    if getattr(operator_kernel, "__module__", "") != __name__:
+        return None
+    return _SOURCE_SCRATCH_KERNELS.get(getattr(operator_kernel, "__name__", ""))
 
 
 def materialize_profile_owned_psin_source(

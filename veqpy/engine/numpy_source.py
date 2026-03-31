@@ -1938,6 +1938,11 @@ def resolve_source_inputs(
     return out_heat_input, out_current_input
 
 
+def resolve_source_scratch_kernel(operator_kernel: Callable) -> Callable | None:
+    """numpy backend 当前不提供 scratch-aware source kernel."""
+    return None
+
+
 def materialize_profile_owned_psin_source(
     out_psin: np.ndarray,
     out_psin_r: np.ndarray,

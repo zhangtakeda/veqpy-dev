@@ -30,6 +30,7 @@ from veqpy.engine.numba_source import (
     _materialize_projected_source_inputs_impl,
     _update_fixed_point_psin_query_impl,
     _update_fourier_family_fields_impl,
+    resolve_source_scratch_kernel,
 )
 
 if TYPE_CHECKING:
@@ -117,12 +118,14 @@ def bind_fused_single_pass_residual_runner(
     packed_residual = runtime_layout.packed_residual
     materialized_heat_input = runtime_layout.materialized_heat_input
     materialized_current_input = runtime_layout.materialized_current_input
+    source_scratch_1d = runtime_layout.source_scratch_1d
     profiles_by_name = runtime_layout.profiles_by_name
     h_fields = profiles_by_name["h"].u_fields
     v_fields = profiles_by_name["v"].u_fields
     k_fields = profiles_by_name["k"].u_fields
     F_profile_u = profiles_by_name["F"].u
     block_codes, block_orders = _build_residual_block_metadata(profile_names)
+    scratch_source_kernel = resolve_source_scratch_kernel(source_kernel)
     scratch_holder: list[np.ndarray | None] = [None]
     psin = root_fields[0]
     psin_r = root_fields[1]
@@ -184,32 +187,61 @@ def bind_fused_single_pass_residual_runner(
             c_active_order,
             s_active_order,
         )
-        alpha1, alpha2 = source_kernel(
-            psin,
-            psin_r,
-            psin_rr,
-            FFn_psin,
-            Pn_psin,
-            materialized_heat_input,
-            materialized_current_input,
-            coordinate_code,
-            R0,
-            B0,
-            weights,
-            differentiation_matrix,
-            integration_matrix,
-            rho,
-            V_r,
-            Kn,
-            Kn_r,
-            Ln_r,
-            S_r,
-            R_fields[0],
-            J_fields[6],
-            F_profile_u,
-            Ip,
-            beta,
-        )
+        if scratch_source_kernel is None:
+            alpha1, alpha2 = source_kernel(
+                psin,
+                psin_r,
+                psin_rr,
+                FFn_psin,
+                Pn_psin,
+                materialized_heat_input,
+                materialized_current_input,
+                coordinate_code,
+                R0,
+                B0,
+                weights,
+                differentiation_matrix,
+                integration_matrix,
+                rho,
+                V_r,
+                Kn,
+                Kn_r,
+                Ln_r,
+                S_r,
+                R_fields[0],
+                J_fields[6],
+                F_profile_u,
+                Ip,
+                beta,
+            )
+        else:
+            alpha1, alpha2 = scratch_source_kernel(
+                psin,
+                psin_r,
+                psin_rr,
+                FFn_psin,
+                Pn_psin,
+                materialized_heat_input,
+                materialized_current_input,
+                coordinate_code,
+                R0,
+                B0,
+                weights,
+                differentiation_matrix,
+                integration_matrix,
+                rho,
+                V_r,
+                Kn,
+                Kn_r,
+                Ln_r,
+                S_r,
+                R_fields[0],
+                J_fields[6],
+                F_profile_u,
+                Ip,
+                beta,
+                source_scratch_1d,
+            )
         alpha_state[0] = alpha1
         alpha_state[1] = alpha2
         update_residual(
@@ -321,6 +353,7 @@ def bind_fused_profile_owned_psin_residual_runner(
     source_parameter_query = runtime_layout.source_parameter_query
     materialized_heat_input = runtime_layout.materialized_heat_input
     materialized_current_input = runtime_layout.materialized_current_input
+    source_scratch_1d = runtime_layout.source_scratch_1d
     profiles_by_name = runtime_layout.profiles_by_name
     psin_profile_fields = profiles_by_name["psin"].u_fields
     h_fields = profiles_by_name["h"].u_fields
@@ -328,6 +361,7 @@ def bind_fused_profile_owned_psin_residual_runner(
     k_fields = profiles_by_name["k"].u_fields
     F_profile_u = profiles_by_name["F"].u
     block_codes, block_orders = _build_residual_block_metadata(profile_names)
+    scratch_source_kernel = resolve_source_scratch_kernel(source_kernel)
     scratch_holder: list[np.ndarray | None] = [None]
     psin = root_fields[0]
     psin_r = root_fields[1]
@@ -402,32 +436,61 @@ def bind_fused_profile_owned_psin_residual_runner(
             current_input,
             parameterization_code,
         )
-        alpha1, alpha2 = source_kernel(
-            source_target_root_fields[0],
-            source_target_root_fields[1],
-            source_target_root_fields[2],
-            FFn_psin,
-            Pn_psin,
-            materialized_heat_input,
-            materialized_current_input,
-            coordinate_code,
-            R0,
-            B0,
-            weights,
-            differentiation_matrix,
-            integration_matrix,
-            rho,
-            V_r,
-            Kn,
-            Kn_r,
-            Ln_r,
-            S_r,
-            R_fields[0],
-            J_fields[6],
-            F_profile_u,
-            Ip,
-            beta,
-        )
+        if scratch_source_kernel is None:
+            alpha1, alpha2 = source_kernel(
+                source_target_root_fields[0],
+                source_target_root_fields[1],
+                source_target_root_fields[2],
+                FFn_psin,
+                Pn_psin,
+                materialized_heat_input,
+                materialized_current_input,
+                coordinate_code,
+                R0,
+                B0,
+                weights,
+                differentiation_matrix,
+                integration_matrix,
+                rho,
+                V_r,
+                Kn,
+                Kn_r,
+                Ln_r,
+                S_r,
+                R_fields[0],
+                J_fields[6],
+                F_profile_u,
+                Ip,
+                beta,
+            )
+        else:
+            alpha1, alpha2 = scratch_source_kernel(
+                source_target_root_fields[0],
+                source_target_root_fields[1],
+                source_target_root_fields[2],
+                FFn_psin,
+                Pn_psin,
+                materialized_heat_input,
+                materialized_current_input,
+                coordinate_code,
+                R0,
+                B0,
+                weights,
+                differentiation_matrix,
+                integration_matrix,
+                rho,
+                V_r,
+                Kn,
+                Kn_r,
+                Ln_r,
+                S_r,
+                R_fields[0],
+                J_fields[6],
+                F_profile_u,
+                Ip,
+                beta,
+                source_scratch_1d,
+            )
         alpha_state[0] = alpha1
         alpha_state[1] = alpha2
         update_residual(
@@ -538,13 +601,13 @@ def bind_fused_fixed_point_psin_residual_runner(
     source_psin_query = runtime_layout.source_psin_query
     materialized_heat_input = runtime_layout.materialized_heat_input
     materialized_current_input = runtime_layout.materialized_current_input
+    source_scratch_1d = runtime_layout.source_scratch_1d
     source_barycentric_weights = runtime_layout.source_barycentric_weights
     source_fixed_remap_matrix = runtime_layout.source_fixed_remap_matrix
     heat_projection_coeff = runtime_layout.source_heat_projection_coeff
     current_projection_coeff = runtime_layout.source_current_projection_coeff
     endpoint_blend = runtime_layout.source_endpoint_blend
     profiles_by_name = runtime_layout.profiles_by_name
-    psin_seed = profiles_by_name["psin"].u
     h_fields = profiles_by_name["h"].u_fields
     v_fields = profiles_by_name["v"].u_fields
     k_fields = profiles_by_name["k"].u_fields
@@ -553,7 +616,9 @@ def bind_fused_fixed_point_psin_residual_runner(
     use_projected_finalize = bool(setup_layout.fixed_point_use_projected_finalize)
     projection_domain_code = int(setup_layout.fixed_point_projection_domain_code)
     endpoint_policy_code = int(setup_layout.fixed_point_endpoint_policy_code)
+    allow_query_warmstart = (not use_projected_finalize) or (endpoint_policy_code != 0)
     block_codes, block_orders = _build_residual_block_metadata(profile_names)
+    scratch_source_kernel = resolve_source_scratch_kernel(source_kernel)
     scratch_holder: list[np.ndarray | None] = [None]
     psin = root_fields[0]
     psin_r = root_fields[1]
@@ -616,7 +681,8 @@ def bind_fused_fixed_point_psin_residual_runner(
             s_active_order,
         )
 
-        _normalize_psin_query(source_psin_query, psin_seed)
+        if (not allow_query_warmstart) or source_psin_query[0] < 0.0:
+            _normalize_psin_query(source_psin_query, profiles_by_name["psin"].u)
 
         alpha1 = np.nan
         alpha2 = np.nan
@@ -628,32 +694,61 @@ def bind_fused_fixed_point_psin_residual_runner(
                 current_input,
                 source_psin_query,
             )
-            alpha1, alpha2 = source_kernel(
-                psin,
-                psin_r,
-                psin_rr,
-                FFn_psin,
-                Pn_psin,
-                materialized_heat_input,
-                materialized_current_input,
-                coordinate_code,
-                R0,
-                B0,
-                weights,
-                differentiation_matrix,
-                integration_matrix,
-                rho,
-                V_r,
-                Kn,
-                Kn_r,
-                Ln_r,
-                S_r,
-                R_fields[0],
-                J_fields[6],
-                F_profile_u,
-                Ip,
-                beta,
-            )
+            if scratch_source_kernel is None:
+                alpha1, alpha2 = source_kernel(
+                    psin,
+                    psin_r,
+                    psin_rr,
+                    FFn_psin,
+                    Pn_psin,
+                    materialized_heat_input,
+                    materialized_current_input,
+                    coordinate_code,
+                    R0,
+                    B0,
+                    weights,
+                    differentiation_matrix,
+                    integration_matrix,
+                    rho,
+                    V_r,
+                    Kn,
+                    Kn_r,
+                    Ln_r,
+                    S_r,
+                    R_fields[0],
+                    J_fields[6],
+                    F_profile_u,
+                    Ip,
+                    beta,
+                )
+            else:
+                alpha1, alpha2 = scratch_source_kernel(
+                    psin,
+                    psin_r,
+                    psin_rr,
+                    FFn_psin,
+                    Pn_psin,
+                    materialized_heat_input,
+                    materialized_current_input,
+                    coordinate_code,
+                    R0,
+                    B0,
+                    weights,
+                    differentiation_matrix,
+                    integration_matrix,
+                    rho,
+                    V_r,
+                    Kn,
+                    Kn_r,
+                    Ln_r,
+                    S_r,
+                    R_fields[0],
+                    J_fields[6],
+                    F_profile_u,
+                    Ip,
+                    beta,
+                    source_scratch_1d,
+                )
             if _update_fixed_point_psin_query_impl(source_psin_query, psin, tolerance):
                 break
 
@@ -671,32 +766,61 @@ def bind_fused_fixed_point_psin_residual_runner(
                 endpoint_policy_code,
                 endpoint_blend,
             )
-            alpha1, alpha2 = source_kernel(
-                psin,
-                psin_r,
-                psin_rr,
-                FFn_psin,
-                Pn_psin,
-                materialized_heat_input,
-                materialized_current_input,
-                coordinate_code,
-                R0,
-                B0,
-                weights,
-                differentiation_matrix,
-                integration_matrix,
-                rho,
-                V_r,
-                Kn,
-                Kn_r,
-                Ln_r,
-                S_r,
-                R_fields[0],
-                J_fields[6],
-                F_profile_u,
-                Ip,
-                beta,
-            )
+            if scratch_source_kernel is None:
+                alpha1, alpha2 = source_kernel(
+                    psin,
+                    psin_r,
+                    psin_rr,
+                    FFn_psin,
+                    Pn_psin,
+                    materialized_heat_input,
+                    materialized_current_input,
+                    coordinate_code,
+                    R0,
+                    B0,
+                    weights,
+                    differentiation_matrix,
+                    integration_matrix,
+                    rho,
+                    V_r,
+                    Kn,
+                    Kn_r,
+                    Ln_r,
+                    S_r,
+                    R_fields[0],
+                    J_fields[6],
+                    F_profile_u,
+                    Ip,
+                    beta,
+                )
+            else:
+                alpha1, alpha2 = scratch_source_kernel(
+                    psin,
+                    psin_r,
+                    psin_rr,
+                    FFn_psin,
+                    Pn_psin,
+                    materialized_heat_input,
+                    materialized_current_input,
+                    coordinate_code,
+                    R0,
+                    B0,
+                    weights,
+                    differentiation_matrix,
+                    integration_matrix,
+                    rho,
+                    V_r,
+                    Kn,
+                    Kn_r,
+                    Ln_r,
+                    S_r,
+                    R_fields[0],
+                    J_fields[6],
+                    F_profile_u,
+                    Ip,
+                    beta,
+                    source_scratch_1d,
+                )
 
         alpha_state[0] = alpha1
         alpha_state[1] = alpha2

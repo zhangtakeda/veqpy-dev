@@ -117,4 +117,5 @@ class RuntimeLayout:
     source_endpoint_blend: np.ndarray
     materialized_heat_input: np.ndarray
     materialized_current_input: np.ndarray
+    source_scratch_1d: np.ndarray
     source_target_root_fields: np.ndarray

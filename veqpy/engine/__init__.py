@@ -19,6 +19,7 @@ Public API:
 - materialize_profile_owned_psin_source
 - update_fourier_family_fields
 - resolve_source_inputs
+- resolve_source_scratch_kernel
 - validate_operator
 
 Notes:
@@ -60,6 +61,7 @@ if BACKEND == "numpy":
         quadrature,
         materialize_projected_source_inputs,
         resolve_source_inputs,
+        resolve_source_scratch_kernel,
         theta_reduction,
         update_fourier_family_fields,
         update_fixed_point_psin_query,
@@ -92,6 +94,7 @@ elif BACKEND == "numba":
         quadrature,
         materialize_projected_source_inputs,
         resolve_source_inputs,
+        resolve_source_scratch_kernel,
         theta_reduction,
         update_fourier_family_fields,
         update_fixed_point_psin_query,
@@ -119,6 +122,7 @@ __all__ = [
     "materialize_profile_owned_psin_source",
     "update_fourier_family_fields",
     "resolve_source_inputs",
+    "resolve_source_scratch_kernel",
     "full_differentiation",
     "theta_reduction",
     "quadrature",

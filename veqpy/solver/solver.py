@@ -110,6 +110,8 @@ class Solver:
             self.x0 = self.operator.coerce_x(x0).copy()
         elif not solve_config.enable_warmstart:
             self.reset()
+        if (x0 is not None or not solve_config.enable_warmstart) and hasattr(self.operator, "invalidate_source_state"):
+            self.operator.invalidate_source_state()
 
         x_guess = self.x0.copy()
 
@@ -309,7 +311,9 @@ class Solver:
             _SolveAttemptPlan(
                 label=self._display_attempt_label(
                     solve_config,
-                    start_kind="warm-start" if self._is_warm_initial_guess(x_initial, x0_was_provided) else "cold-start",
+                    start_kind="warm-start"
+                    if self._is_warm_initial_guess(x_initial, x0_was_provided)
+                    else "cold-start",
                 ),
                 x_guess=x_initial,
                 solve_config=solve_config,
@@ -414,12 +418,7 @@ class Solver:
         attempt: tuple[np.ndarray, bool, str, int, int, int, float] | None,
         error: Exception | None,
     ) -> bool:
-        return bool(
-            error is None
-            and attempt is not None
-            and bool(attempt[1])
-            and np.isfinite(float(attempt[6]))
-        )
+        return bool(error is None and attempt is not None and bool(attempt[1]) and np.isfinite(float(attempt[6])))
 
     def _display_attempt_label(self, solve_config: SolverConfig, *, start_kind: str) -> str:
         return f"{self._display_method_label(solve_config)} [{start_kind}]"
@@ -611,6 +610,7 @@ def _opt_residual_norm(opt) -> float | None:
     if arr.ndim == 0:
         arr = arr.reshape(1)
     return float(np.linalg.norm(arr))
+
 
 def _uses_least_squares_api(solve_config: SolverConfig) -> bool:
     return solve_config.method in LEAST_SQUARES_METHODS

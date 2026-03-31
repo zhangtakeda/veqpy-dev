@@ -502,7 +502,6 @@ def bind_fused_fixed_point_psin_residual_runner(
     current_projection_coeff = runtime_layout.source_current_projection_coeff
     endpoint_blend = runtime_layout.source_endpoint_blend
     profiles_by_name = runtime_layout.profiles_by_name
-    psin_seed = profiles_by_name["psin"].u
     h_fields = profiles_by_name["h"].u_fields
     v_fields = profiles_by_name["v"].u_fields
     k_fields = profiles_by_name["k"].u_fields
@@ -511,6 +510,7 @@ def bind_fused_fixed_point_psin_residual_runner(
     use_projected_finalize = bool(setup_layout.fixed_point_use_projected_finalize)
     projection_domain_code = int(setup_layout.fixed_point_projection_domain_code)
     endpoint_policy_code = int(setup_layout.fixed_point_endpoint_policy_code)
+    allow_query_warmstart = (not use_projected_finalize) or (endpoint_policy_code != 0)
 
     def runner(x: np.ndarray) -> np.ndarray:
         update_profiles_packed_bulk(
@@ -567,7 +567,8 @@ def bind_fused_fixed_point_psin_residual_runner(
             s_active_order,
         )
 
-        _normalize_psin_query(source_psin_query, psin_seed)
+        if (not allow_query_warmstart) or source_psin_query[0] < 0.0:
+            _normalize_psin_query(source_psin_query, profiles_by_name["psin"].u)
 
         alpha1 = np.nan
         alpha2 = np.nan
