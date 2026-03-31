@@ -10,6 +10,9 @@ Public API:
 - update_profiles_packed_bulk
 - update_geometry
 - update_residual
+- bind_fused_single_pass_residual_runner
+- bind_fused_profile_owned_psin_residual_runner
+- bind_fused_fixed_point_psin_residual_runner
 - bind_residual_runner
 - bind_residual_stage_runner
 - build_source_remap_cache
@@ -32,6 +35,11 @@ if BACKEND not in ("numpy", "numba"):
 
 if BACKEND == "numpy":
     from veqpy.engine.numpy_geometry import update_geometry
+    from veqpy.engine.numpy_operator import (
+        bind_fused_fixed_point_psin_residual_runner,
+        bind_fused_profile_owned_psin_residual_runner,
+        bind_fused_single_pass_residual_runner,
+    )
     from veqpy.engine.numpy_profile import update_profile, update_profiles_packed_bulk
     from veqpy.engine.numpy_residual import (
         bind_residual_runner,
@@ -59,6 +67,11 @@ if BACKEND == "numpy":
     )
 elif BACKEND == "numba":
     from veqpy.engine.numba_geometry import update_geometry
+    from veqpy.engine.numba_operator import (
+        bind_fused_fixed_point_psin_residual_runner,
+        bind_fused_profile_owned_psin_residual_runner,
+        bind_fused_single_pass_residual_runner,
+    )
     from veqpy.engine.numba_profile import update_profile, update_profiles_packed_bulk
     from veqpy.engine.numba_residual import (
         bind_residual_runner,
@@ -91,6 +104,9 @@ __all__ = [
     "update_profiles_packed_bulk",
     "update_geometry",
     "update_residual",
+    "bind_fused_single_pass_residual_runner",
+    "bind_fused_profile_owned_psin_residual_runner",
+    "bind_fused_fixed_point_psin_residual_runner",
     "bind_residual_runner",
     "bind_residual_stage_runner",
     "RHO_AXIS",

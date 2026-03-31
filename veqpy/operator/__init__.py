@@ -13,7 +13,7 @@ Public API:
 - decode_packed_blocks
 
 Notes:
-- 这里只做包级导出.
+- 包级默认 `Operator` 现在是 fused 主实现.
 - 不负责 engine backend 选择, solver 驱动, 或文档示例编排.
 """
 

@@ -1,13 +1,11 @@
 """
-Boundary parameter aggregate and fitting helpers.
+Boundary parameter aggregate and GEQDSK-to-Boundary fitting helpers.
 """
 
 from __future__ import annotations
 
-import os
 import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import numpy as np
 from rich.console import Console
@@ -15,9 +13,7 @@ from rich.text import Text
 from rich.tree import Tree
 from scipy.optimize import least_squares
 
-if TYPE_CHECKING:
-    from veqpy.model.geqdsk import Geqdsk
-
+from veqpy.model.geqdsk import Geqdsk
 
 MAX_FOURIER_ORDER = 10
 
@@ -66,7 +62,7 @@ class Boundary:
     @classmethod
     def from_geqdsk(
         cls,
-        source: str | os.PathLike[str] | Geqdsk,
+        geqdsk: Geqdsk,
         *,
         M: int | None = None,
         N: int | None = None,
@@ -76,7 +72,8 @@ class Boundary:
         a: float | None = None,
         ka: float | None = None,
     ) -> Boundary:
-        geqdsk = _coerce_geqdsk(source)
+        if not isinstance(geqdsk, Geqdsk):
+            raise TypeError(f"geqdsk must be Geqdsk, got {type(geqdsk).__name__}")
         params = _fit_boundary_params(geqdsk, M=M, N=N, maxtol=maxtol, R0=R0, Z0=Z0, a=a, ka=ka)
         return cls(
             a=float(params["a"]),
@@ -89,21 +86,8 @@ class Boundary:
         )
 
 
-def _coerce_geqdsk(source: str | os.PathLike[str] | Geqdsk) -> Geqdsk:
-    from veqpy.model.geqdsk import Geqdsk
-
-    return source if isinstance(source, Geqdsk) else Geqdsk(source)
-
-
-def _validate_orders(M: int, N: int) -> None:
-    if int(M) < 0 or int(N) < 0:
-        raise ValueError(f"M and N must be non-negative, got M={M!r}, N={N!r}")
-    if int(M) > MAX_FOURIER_ORDER or int(N) > MAX_FOURIER_ORDER:
-        raise ValueError(f"M and N must be <= {MAX_FOURIER_ORDER}, got M={M!r}, N={N!r}")
-
-
 def _fit_boundary_params(
-    geqdsk,
+    geqdsk: Geqdsk,
     *,
     M: int | None,
     N: int | None,
@@ -113,6 +97,9 @@ def _fit_boundary_params(
     a: float | None,
     ka: float | None,
 ) -> dict[str, float | np.ndarray]:
+    if not isinstance(geqdsk, Geqdsk):
+        raise TypeError(f"geqdsk must be Geqdsk, got {type(geqdsk).__name__}")
+
     maxtol = float(maxtol)
     if maxtol <= 0.0:
         raise ValueError(f"maxtol must be positive, got {maxtol!r}")
@@ -120,24 +107,10 @@ def _fit_boundary_params(
     if (M is None) != (N is None):
         raise ValueError("M and N must be provided together or both omitted")
     if M is None and N is None:
-        return _fit_minimal_order_boundary(
-            geqdsk,
-            maxtol=maxtol,
-            R0=R0,
-            Z0=Z0,
-            a=a,
-            ka=ka,
-        )
+        return _fit_minimal_order_boundary(geqdsk, maxtol=maxtol, R0=R0, Z0=Z0, a=a, ka=ka)
+
     assert M is not None and N is not None
-    params = _fit_boundary_for_orders(
-        geqdsk,
-        M=M,
-        N=N,
-        R0=R0,
-        Z0=Z0,
-        a=a,
-        ka=ka,
-    )
+    params = _fit_boundary_for_orders(geqdsk, M=M, N=N, R0=R0, Z0=Z0, a=a, ka=ka)
     if params["rms"] >= maxtol:
         warnings.warn(
             (
@@ -150,7 +123,7 @@ def _fit_boundary_params(
 
 
 def _fit_minimal_order_boundary(
-    geqdsk,
+    geqdsk: Geqdsk,
     *,
     maxtol: float,
     R0: float | None,
@@ -158,20 +131,16 @@ def _fit_minimal_order_boundary(
     a: float | None,
     ka: float | None,
 ) -> dict[str, float | np.ndarray]:
-    min_M = 0
-    min_N = 1
-    max_order = MAX_FOURIER_ORDER
     best = None
+    curve_tol = max(maxtol * 0.25, 1.0e-6)
 
-    for step in range(max_order - min_N + 1):
-        M = min_M + step
-        N = min_N + step
-        if M > max_order or N > max_order:
-            break
+    for step in range(MAX_FOURIER_ORDER):
+        M = step
+        N = step + 1
         params = _fit_boundary_for_orders(geqdsk, M=M, N=N, R0=R0, Z0=Z0, a=a, ka=ka)
         if best is None or params["rms"] < best["rms"]:
             best = params
-        if params["rms"] < maxtol:
+        if params["rms"] < maxtol and params["max_curve_error"] < curve_tol:
             return params
 
     if best is None:
@@ -180,7 +149,7 @@ def _fit_minimal_order_boundary(
 
 
 def _fit_boundary_for_orders(
-    geqdsk,
+    geqdsk: Geqdsk,
     *,
     M: int,
     N: int,
@@ -194,8 +163,8 @@ def _fit_boundary_for_orders(
     if geqdsk.boundary.size == 0:
         raise ValueError("Boundary is empty. Read GEQDSK first.")
 
-    R = geqdsk.boundary[:, 0].astype(float)
-    Z = geqdsk.boundary[:, 1].astype(float)
+    R = geqdsk.boundary[:, 0].astype(np.float64)
+    Z = geqdsk.boundary[:, 1].astype(np.float64)
 
     r_min = float(np.nanmin(R))
     r_max = float(np.nanmax(R))
@@ -209,9 +178,9 @@ def _fit_boundary_for_orders(
     initial_R0 = float(R0) if R0 is not None else r_mid
     initial_Z0 = float(Z0) if Z0 is not None else z_mid
     initial_a = float(a) if a is not None else 0.5 * span_r
-    if initial_a <= 0:
+    if initial_a <= 0.0:
         raise ValueError("Boundary width must be positive")
-    ka0 = max(float(ka) if ka is not None else float(0.5 * span_z / initial_a), 1e-6)
+    ka0 = max(float(ka) if ka is not None else float(0.5 * span_z / initial_a), 1.0e-6)
 
     def ordered_boundary_variants():
         start = int(np.argmin(Z))
@@ -220,7 +189,7 @@ def _fit_boundary_for_orders(
         yield r_ordered, z_ordered
         yield np.concatenate(([r_ordered[0]], r_ordered[:0:-1])), np.concatenate(([z_ordered[0]], z_ordered[:0:-1]))
 
-    lower_bounds = [r_min - 0.25 * span_r, z_min - 0.25 * span_z, max(1e-6, 0.25 * initial_a), 1e-6]
+    lower_bounds = [r_min - 0.25 * span_r, z_min - 0.25 * span_z, max(1.0e-6, 0.25 * initial_a), 1.0e-6]
     upper_bounds = [r_max + 0.25 * span_r, z_max + 0.25 * span_z, max(4.0 * initial_a, span_z, 1.0), 10.0]
     lower_bounds.extend([-10.0] * (M + 1))
     upper_bounds.extend([10.0] * (M + 1))
@@ -307,7 +276,7 @@ def _fit_boundary_for_orders(
         rms = float(np.sqrt(np.mean(fit.fun**2)))
         max_curve_error = _max_bidirectional_distance(np.column_stack((r_points, z_points)), fitted_boundary)
         if best_fit is None or rms < best_fit["rms"]:
-            best_fit = {"fit": fit, "rms": rms, "params": params, "max_curve_error": max_curve_error}
+            best_fit = {"rms": rms, "params": params, "max_curve_error": max_curve_error}
 
     fitted = best_fit["params"]
     c_offsets = np.asarray(fitted["c_offsets"], dtype=np.float64).copy()
@@ -323,11 +292,18 @@ def _fit_boundary_for_orders(
         "ka": float(fitted["ka"]),
         "c_offsets": c_offsets,
         "s_offsets": s_offsets,
-        "rms": best_fit["rms"],
+        "rms": float(best_fit["rms"]),
         "max_curve_error": float(best_fit["max_curve_error"]),
         "M": int(M),
         "N": int(N),
     }
+
+
+def _validate_orders(M: int, N: int) -> None:
+    if int(M) < 0 or int(N) < 0:
+        raise ValueError(f"M and N must be non-negative, got M={M!r}, N={N!r}")
+    if int(M) > MAX_FOURIER_ORDER or int(N) > MAX_FOURIER_ORDER:
+        raise ValueError(f"M and N must be <= {MAX_FOURIER_ORDER}, got M={M!r}, N={N!r}")
 
 
 def _as_1d_array(value: np.ndarray | list[float], *, name: str) -> np.ndarray:
@@ -349,15 +325,13 @@ def _normalize_offset_array(value, *, name: str) -> np.ndarray:
 
 
 def _default_offset_array(name: str) -> np.ndarray:
-    if name == "c_offsets":
-        return np.zeros(1, dtype=np.float64)
-    if name == "s_offsets":
+    if name in {"c_offsets", "s_offsets"}:
         return np.zeros(1, dtype=np.float64)
     raise KeyError(f"Unknown offset array {name!r}")
 
 
 def _infer_theta(z_points: np.ndarray, z0: float, a_value: float, ka: float) -> np.ndarray:
-    sin_theta = np.clip(-(z_points - z0) / (a_value * max(float(ka), 1e-6)), -1.0, 1.0)
+    sin_theta = np.clip(-(z_points - z0) / (a_value * max(float(ka), 1.0e-6)), -1.0, 1.0)
     theta = np.empty_like(sin_theta)
     theta[0] = 0.5 * np.pi
     previous = theta[0]
@@ -367,7 +341,7 @@ def _infer_theta(z_points: np.ndarray, z0: float, a_value: float, ka: float) -> 
         alpha = np.arcsin(sin_theta[index])
         candidates = []
         for candidate in (alpha, np.pi - alpha):
-            while candidate < previous - 1e-12:
+            while candidate < previous - 1.0e-12:
                 candidate += 2.0 * np.pi
             candidates.extend((candidate, candidate + 2.0 * np.pi))
         target = previous + step

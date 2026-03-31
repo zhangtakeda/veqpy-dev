@@ -195,18 +195,16 @@ def test_boundary_from_geqdsk_rejects_invalid_inputs(build_source, kwargs, expec
         Boundary.from_geqdsk(build_source(), **kwargs)
 
 
-def test_boundary_from_geqdsk_supports_instance_and_path_sources():
+def test_boundary_from_geqdsk_requires_instance_source():
     geqdsk = Geqdsk(str(GEQDSK_PATH))
 
     boundary_from_instance = Boundary.from_geqdsk(geqdsk, M=1, N=2, maxtol=1.0e-1)
-    boundary_from_path = Boundary.from_geqdsk(GEQDSK_PATH, M=1, N=2, maxtol=1.0e-1)
+    with pytest.raises(TypeError, match="geqdsk must be Geqdsk"):
+        Boundary.from_geqdsk(GEQDSK_PATH, M=1, N=2, maxtol=1.0e-1)
 
     assert boundary_from_instance.B0 > 0.0
     assert boundary_from_instance.a > 0.0
     assert boundary_from_instance.ka > 1.0
-    assert boundary_from_path.B0 > 0.0
-    assert boundary_from_path.a > 0.0
-    assert boundary_from_path.ka > 1.0
 
 
 def test_equilibrium_roundtrips_canonical_active_profiles():

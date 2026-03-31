@@ -68,7 +68,7 @@ def main() -> None:
 
     geqdsk = Geqdsk(str(GEQDSK_PATH))
     fit = _fit_boundary_params(geqdsk, M=None, N=None, maxtol=1.0e-2, R0=None, Z0=None, a=None, ka=None)
-    boundary = Boundary.from_geqdsk(str(GEQDSK_PATH))
+    boundary = Boundary.from_geqdsk(geqdsk)
     surface_rhos = np.linspace(1.0 / NR, 1.0, NR)
     fitted_surfaces = [close_path(build_boundary_curve(boundary, rho=rho)) for rho in surface_rhos]
 

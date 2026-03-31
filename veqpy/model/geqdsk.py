@@ -1,9 +1,8 @@
 """
-Compact CHEASE GEQDSK reader for LCFS boundary extraction.
+Canonical GEQDSK reader.
 
-This type is intentionally narrow:
-- read CHEASE-style GEQDSK files
-- retain only boundary-related geometry metadata
+Boundary fitting stays in `veqpy.model.boundary`; this module only owns
+GEQDSK parsing and the passive geometry/current payload.
 """
 
 from __future__ import annotations
@@ -28,7 +27,8 @@ class Geqdsk:
         self.Zmin = 0.0
         self.Zmax = 0.0
 
-        self.boundary = np.empty((0, 2), dtype=float)
+        self.boundary = np.empty((0, 2), dtype=np.float64)
+        self.limiter = np.empty((0, 2), dtype=np.float64)
 
         self.Bt0 = 0.0
         self.Raxis = 0.0
@@ -46,6 +46,40 @@ class Geqdsk:
             self._read_geometry(file)
             self._read_axfig_and_current(file)
             self._read_boundary(file)
+
+    def fit_boundary_params(
+        self,
+        *,
+        M: int | None = None,
+        N: int | None = None,
+        maxtol: float = 1.0e-2,
+        R0: float | None = None,
+        Z0: float | None = None,
+        a: float | None = None,
+        ka: float | None = None,
+    ) -> dict[str, float | np.ndarray]:
+        from veqpy.model.boundary import _fit_boundary_params
+
+        return _fit_boundary_params(self, M=M, N=N, maxtol=maxtol, R0=R0, Z0=Z0, a=a, ka=ka)
+
+    def boundary_shape_params(
+        self,
+        *,
+        R0: float | None = None,
+        Z0: float | None = None,
+        a: float | None = None,
+    ) -> dict[str, float | np.ndarray]:
+        initial_R0 = R0 if R0 is not None else (float(self.R0) if np.isfinite(self.R0) else None)
+        initial_Z0 = Z0 if Z0 is not None else (float(self.Z0) if np.isfinite(self.Z0) else None)
+        return self.fit_boundary_params(
+            M=1,
+            N=2,
+            maxtol=np.inf,
+            R0=initial_R0,
+            Z0=initial_Z0,
+            a=a,
+            ka=None,
+        )
 
     def _read_header(self, file) -> None:
         line = file.readline()
@@ -81,24 +115,32 @@ class Geqdsk:
         file.readline()
         payload = _sanitize_line(file.read().replace("\n", " "))
         fields = re.split(r"\s+", payload.strip())
-        data = np.array([_safe_float_conversion(value) for value in fields if value], dtype=float)
+        data = np.array([_safe_float_conversion(value) for value in fields if value], dtype=np.float64)
 
         index = 4 * self.nr + self.nr * self.nz + self.nr
         if data.size < index + 2:
             raise ValueError("CHEASE payload ended before boundary metadata.")
 
         nbound = int(data[index])
+        nlimiter = int(data[index + 1])
         index += 2
 
-        if nbound <= 0:
-            self.boundary = np.empty((0, 2), dtype=float)
-            return
+        if nbound > 0:
+            end = index + 2 * nbound
+            if data.size < end:
+                raise ValueError("CHEASE payload ended before LCFS boundary points.")
+            self.boundary = data[index:end].reshape(nbound, 2)
+            index = end
+        else:
+            self.boundary = np.empty((0, 2), dtype=np.float64)
 
-        end = index + 2 * nbound
-        if data.size < end:
-            raise ValueError("CHEASE payload ended before LCFS boundary points.")
-
-        self.boundary = data[index:end].reshape(nbound, 2)
+        if nlimiter > 0:
+            end = index + 2 * nlimiter
+            if data.size < end:
+                raise ValueError("CHEASE payload ended before limiter points.")
+            self.limiter = data[index:end].reshape(nlimiter, 2)
+        else:
+            self.limiter = np.empty((0, 2), dtype=np.float64)
 
 
 def _sanitize_line(line: str) -> str:
@@ -110,3 +152,6 @@ def _safe_float_conversion(value: str) -> float:
         return float(value)
     except ValueError:
         return np.nan
+
+
+__all__ = ["Geqdsk"]

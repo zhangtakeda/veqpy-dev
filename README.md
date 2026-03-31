@@ -5,7 +5,7 @@ a high-performance Python wrapper for plasma equilibrium simulations in magnetic
 
 - Author: `rhzhang`
 - Updated: `2026-03-30`
-- Version: `0.2.1`
+- Version: `0.2.2`
 
 ## Code Structure
 

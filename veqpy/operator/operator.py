@@ -9,7 +9,7 @@ Public API:
 - Operator
 
 Notes:
-- `Operator` 是 operator 层主协调器.
+- `Operator` 是默认 fused 算子.
 - 不负责 solver 迭代策略, backend 选择, 或 benchmark 编排.
 """
 
@@ -22,6 +22,9 @@ from typing import Callable
 import numpy as np
 
 from veqpy.engine import (
+    bind_fused_fixed_point_psin_residual_runner,
+    bind_fused_profile_owned_psin_residual_runner,
+    bind_fused_single_pass_residual_runner,
     bind_residual_runner,
     bind_residual_stage_runner,
     build_source_remap_cache,
@@ -101,7 +104,7 @@ _SOURCE_PARAMETERIZATION_CODES = {
 
 
 @dataclass(slots=True)
-class Operator:
+class _OperatorCore:
     """封装固定 case, grid 与 runtime 的 residual 求值器."""
 
     grid: Grid = field(repr=False)
@@ -1294,6 +1297,169 @@ class Operator:
             name: self._snapshot_profile(name, coeff_blocks[self.profile_index[name]])
             for name in self.shape_profile_names
         }
+
+
+class Operator(_OperatorCore):
+    """默认 fused residual 算子。"""
+
+    def __post_init__(self) -> None:
+        self.fused_alpha_state = np.zeros(2, dtype=np.float64)
+        self.fused_residual_runner = lambda x_eval: _OperatorCore._evaluate_residual(self, x_eval)
+        self.supports_fused_residual = False
+        super().__post_init__()
+
+    def _refresh_runtime_bindings(self) -> None:
+        super()._refresh_runtime_bindings()
+        self.fused_residual_runner = self._build_fused_residual_runner()
+
+    def _build_fused_common_kwargs(self) -> dict[str, object]:
+        profile_names = tuple(self.profile_names[int(p)] for p in self.active_profile_ids)
+        return dict(
+            source_kernel=self._source_route_spec.implementation,
+            coordinate_code=int(self._source_route_spec.coordinate_code),
+            profile_names=profile_names,
+            coeff_index_rows=self.active_coeff_index_rows,
+            lengths=self.active_lengths,
+            residual_size=self.x_size,
+            alpha_state=self.fused_alpha_state,
+            active_u_fields=self.active_u_fields,
+            T_fields=self.grid.T_fields,
+            active_rp_fields=self.active_rp_fields,
+            active_env_fields=self.active_env_fields,
+            active_offsets=self.active_offsets,
+            active_scales=self.active_scales,
+            c_family_fields=self.c_family_fields,
+            s_family_fields=self.s_family_fields,
+            c_family_base_fields=self.c_family_base_fields,
+            s_family_base_fields=self.s_family_base_fields,
+            c_source_slots=self.c_family_source_slots,
+            s_source_slots=self.s_family_source_slots,
+            c_active_order=int(self.c_effective_order),
+            s_active_order=int(self.s_effective_order),
+            h_fields=self.h_profile.u_fields,
+            v_fields=self.v_profile.u_fields,
+            k_fields=self.k_profile.u_fields,
+            tb_fields=self.geometry.tb_fields,
+            R_fields=self.geometry.R_fields,
+            Z_fields=self.geometry.Z_fields,
+            J_fields=self.geometry.J_fields,
+            g_fields=self.geometry.g_fields,
+            S_r=self.geometry.S_r,
+            V_r=self.geometry.V_r,
+            Kn=self.geometry.Kn,
+            Kn_r=self.geometry.Kn_r,
+            Ln_r=self.geometry.Ln_r,
+            a=float(self.case.a),
+            R0=float(self.case.R0),
+            Z0=float(self.case.Z0),
+            B0=float(self.case.B0),
+            rho=self.grid.rho,
+            theta=self.grid.theta,
+            cos_ktheta=self.grid.cos_ktheta,
+            sin_ktheta=self.grid.sin_ktheta,
+            k_cos_ktheta=self.grid.k_cos_ktheta,
+            k_sin_ktheta=self.grid.k_sin_ktheta,
+            k2_cos_ktheta=self.grid.k2_cos_ktheta,
+            k2_sin_ktheta=self.grid.k2_sin_ktheta,
+            weights=self.grid.weights,
+            differentiation_matrix=self.grid.differentiation_matrix,
+            integration_matrix=self.grid.integration_matrix,
+            rho_powers=self.grid.rho_powers,
+            y=self.grid.y,
+            root_fields=self.root_fields,
+            residual_fields=self.residual_fields,
+            packed_residual=self.packed_residual,
+            materialized_heat_input=self.materialized_heat_input,
+            materialized_current_input=self.materialized_current_input,
+            F_profile_u=self.F_profile.u,
+            Ip=float(self.case.Ip),
+            beta=float(self.case.beta),
+        )
+
+    def _build_single_pass_fused_runner(self) -> Callable[[np.ndarray], np.ndarray]:
+        self.supports_fused_residual = True
+        return bind_fused_single_pass_residual_runner(**self._build_fused_common_kwargs())
+
+    def _build_profile_owned_psin_fused_runner(self) -> Callable[[np.ndarray], np.ndarray]:
+        psin_profile_fields = self.psin_profile.u_fields
+        if psin_profile_fields is None:
+            self.supports_fused_residual = False
+            return lambda x_eval: _OperatorCore._evaluate_residual(self, x_eval)
+        self.supports_fused_residual = True
+        return bind_fused_profile_owned_psin_residual_runner(
+            **self._build_fused_common_kwargs(),
+            parameterization_code=_SOURCE_PARAMETERIZATION_CODES[self.source_parameterization],
+            source_target_root_fields=self.source_target_root_fields,
+            source_psin_query=self.source_psin_query,
+            source_parameter_query=self.source_parameter_query,
+            psin_profile_fields=psin_profile_fields,
+            heat_input=self.case.heat_input,
+            current_input=self.case.current_input,
+        )
+
+    def _build_fixed_point_psin_fused_runner(self) -> Callable[[np.ndarray], np.ndarray]:
+        policy = self._source_projection_policy
+        if policy is None:
+            use_projected_finalize = False
+            projection_domain_code = 0
+            endpoint_policy_code = 0
+        else:
+            endpoint_policy = (
+                policy.current_ip_endpoint_policy
+                if np.isfinite(self.case.Ip)
+                else policy.current_other_endpoint_policy
+            )
+            use_projected_finalize = self.case.coordinate == "psin"
+            projection_domain_code = _PROJECTION_DOMAIN_CODES[policy.domain]
+            endpoint_policy_code = _ENDPOINT_POLICY_CODES[endpoint_policy]
+        self.supports_fused_residual = True
+        return bind_fused_fixed_point_psin_residual_runner(
+            **self._build_fused_common_kwargs(),
+            source_psin_query=self.source_psin_query,
+            psin_seed=self.psin_profile.u,
+            heat_input=self.case.heat_input,
+            current_input=self.case.current_input,
+            source_n_src=self.source_n_src,
+            source_barycentric_weights=self.source_barycentric_weights,
+            source_fixed_remap_matrix=self.source_fixed_remap_matrix,
+            use_projected_finalize=use_projected_finalize,
+            heat_projection_coeff=self.source_heat_projection_coeff,
+            current_projection_coeff=self.source_current_projection_coeff,
+            endpoint_blend=self.source_endpoint_blend,
+            projection_domain_code=projection_domain_code,
+            endpoint_policy_code=endpoint_policy_code,
+        )
+
+    def _build_fused_residual_runner(self) -> Callable[[np.ndarray], np.ndarray]:
+        if self.source_strategy == "single_pass":
+            return self._build_single_pass_fused_runner()
+        if self.source_strategy == "profile_owned_psin":
+            return self._build_profile_owned_psin_fused_runner()
+        if self.source_strategy == "fixed_point_psin":
+            return self._build_fixed_point_psin_fused_runner()
+        self.supports_fused_residual = False
+        return lambda x_eval: _OperatorCore._evaluate_residual(self, x_eval)
+
+    def residual(
+        self,
+        x: np.ndarray,
+    ) -> np.ndarray:
+        x_eval = self.coerce_x(x)
+        residual = self.fused_residual_runner(x_eval)
+        self.alpha1 = float(self.fused_alpha_state[0])
+        self.alpha2 = float(self.fused_alpha_state[1])
+        return residual
+
+    def residual_fast(
+        self,
+        x: np.ndarray,
+    ) -> np.ndarray:
+        if isinstance(x, np.ndarray) and x.dtype == np.float64 and x.ndim == 1 and x.shape[0] == self.x_size:
+            residual = self.fused_residual_runner(x)
+            self.alpha1 = float(self.fused_alpha_state[0])
+            self.alpha2 = float(self.fused_alpha_state[1])
+            return residual
+        return self.residual(x)
 
 
 def _normalize_psin_query_inplace(out: np.ndarray, source: np.ndarray | None) -> np.ndarray:
