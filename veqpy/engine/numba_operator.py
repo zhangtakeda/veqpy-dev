@@ -6,6 +6,7 @@ Role:
 - 把常见 route 的 stage A/B/C/D 串成单个 engine 绑定入口.
 
 Public API:
+- bind_fused_residual_runner
 - bind_fused_single_pass_residual_runner
 - bind_fused_profile_owned_psin_residual_runner
 - bind_fused_fixed_point_psin_residual_runner
@@ -23,7 +24,7 @@ import numpy as np
 
 from veqpy.engine.numba_geometry import update_geometry
 from veqpy.engine.numba_profile import update_profiles_packed_bulk
-from veqpy.engine.numba_residual import _decode_residual_block_code, _run_residual_blocks_packed, update_residual
+from veqpy.engine.numba_residual import _run_residual_blocks_packed, update_residual
 from veqpy.engine.numba_source import (
     _linear_uniform_interpolate_pair,
     _materialize_profile_owned_psin_source_impl,
@@ -34,16 +35,8 @@ from veqpy.engine.numba_source import (
 )
 
 if TYPE_CHECKING:
-    from veqpy.operator.layouts import RuntimeLayout, SetupLayout, StaticLayout
-
-
-def _build_residual_block_metadata(profile_names: tuple[str, ...]) -> tuple[np.ndarray, np.ndarray]:
-    block_codes = np.empty(len(profile_names), dtype=np.int64)
-    block_orders = np.zeros(len(profile_names), dtype=np.int64)
-    for i, name in enumerate(profile_names):
-        block_codes[i], block_orders[i] = _decode_residual_block_code(name)
-    return block_codes, block_orders
-
+    from veqpy.operator.layouts import ResidualBindingLayout, RuntimeLayout, SetupLayout, StaticLayout
+    from veqpy.operator.plans import ResidualPlan
 
 def _normalize_psin_query(out: np.ndarray, source: np.ndarray) -> None:
     np.copyto(out, np.asarray(source, dtype=np.float64))
@@ -57,11 +50,11 @@ def _normalize_psin_query(out: np.ndarray, source: np.ndarray) -> None:
     out[-1] = 1.0
 
 
-def bind_fused_single_pass_residual_runner(
+def bind_fused_residual_runner(
     *,
-    source_kernel: Callable,
-    coordinate_code: int,
+    residual_plan: ResidualPlan,
     static_layout: StaticLayout,
+    residual_binding_layout: ResidualBindingLayout,
     setup_layout: SetupLayout,
     runtime_layout: RuntimeLayout,
     alpha_state: np.ndarray,
@@ -71,10 +64,71 @@ def bind_fused_single_pass_residual_runner(
     R0: float,
     Z0: float,
     B0: float,
-    Ip: float,
-    beta: float,
 ) -> Callable[[np.ndarray], np.ndarray]:
-    profile_names = tuple(setup_layout.profile_names[int(p)] for p in setup_layout.active_profile_ids)
+    if residual_plan.is_single_pass:
+        return bind_fused_single_pass_residual_runner(
+            residual_plan=residual_plan,
+            static_layout=static_layout,
+            residual_binding_layout=residual_binding_layout,
+            setup_layout=setup_layout,
+            runtime_layout=runtime_layout,
+            alpha_state=alpha_state,
+            c_active_order=c_active_order,
+            s_active_order=s_active_order,
+            a=a,
+            R0=R0,
+            Z0=Z0,
+            B0=B0,
+        )
+    if residual_plan.is_profile_owned_psin:
+        return bind_fused_profile_owned_psin_residual_runner(
+            residual_plan=residual_plan,
+            static_layout=static_layout,
+            residual_binding_layout=residual_binding_layout,
+            setup_layout=setup_layout,
+            runtime_layout=runtime_layout,
+            alpha_state=alpha_state,
+            c_active_order=c_active_order,
+            s_active_order=s_active_order,
+            a=a,
+            R0=R0,
+            Z0=Z0,
+            B0=B0,
+        )
+    if residual_plan.is_fixed_point_psin:
+        return bind_fused_fixed_point_psin_residual_runner(
+            residual_plan=residual_plan,
+            static_layout=static_layout,
+            residual_binding_layout=residual_binding_layout,
+            setup_layout=setup_layout,
+            runtime_layout=runtime_layout,
+            alpha_state=alpha_state,
+            c_active_order=c_active_order,
+            s_active_order=s_active_order,
+            a=a,
+            R0=R0,
+            Z0=Z0,
+            B0=B0,
+        )
+    raise ValueError(f"Unsupported residual runner code {residual_plan.runner_code}")
+
+
+def bind_fused_single_pass_residual_runner(
+    *,
+    residual_plan: ResidualPlan,
+    static_layout: StaticLayout,
+    residual_binding_layout: ResidualBindingLayout,
+    setup_layout: SetupLayout,
+    runtime_layout: RuntimeLayout,
+    alpha_state: np.ndarray,
+    c_active_order: int,
+    s_active_order: int,
+    a: float,
+    R0: float,
+    Z0: float,
+    B0: float,
+) -> Callable[[np.ndarray], np.ndarray]:
+    source_plan = residual_plan.source_plan
     coeff_index_rows = runtime_layout.active_coeff_index_rows
     lengths = runtime_layout.active_lengths
     active_u_fields = runtime_layout.active_u_fields
@@ -124,7 +178,12 @@ def bind_fused_single_pass_residual_runner(
     v_fields = profiles_by_name["v"].u_fields
     k_fields = profiles_by_name["k"].u_fields
     F_profile_u = profiles_by_name["F"].u
-    block_codes, block_orders = _build_residual_block_metadata(profile_names)
+    source_kernel = source_plan.kernel
+    coordinate_code = int(source_plan.coordinate_code)
+    Ip = float(source_plan.Ip)
+    beta = float(source_plan.beta)
+    block_codes = residual_binding_layout.active_residual_block_codes
+    block_orders = residual_binding_layout.active_residual_block_orders
     scratch_source_kernel = resolve_source_scratch_kernel(source_kernel)
     scratch_holder: list[np.ndarray | None] = [None]
     psin = root_fields[0]
@@ -288,10 +347,9 @@ def bind_fused_single_pass_residual_runner(
 
 def bind_fused_profile_owned_psin_residual_runner(
     *,
-    source_kernel: Callable,
-    coordinate_code: int,
-    parameterization_code: int,
+    residual_plan: ResidualPlan,
     static_layout: StaticLayout,
+    residual_binding_layout: ResidualBindingLayout,
     setup_layout: SetupLayout,
     runtime_layout: RuntimeLayout,
     alpha_state: np.ndarray,
@@ -301,12 +359,8 @@ def bind_fused_profile_owned_psin_residual_runner(
     R0: float,
     Z0: float,
     B0: float,
-    heat_input: np.ndarray,
-    current_input: np.ndarray,
-    Ip: float,
-    beta: float,
 ) -> Callable[[np.ndarray], np.ndarray]:
-    profile_names = tuple(setup_layout.profile_names[int(p)] for p in setup_layout.active_profile_ids)
+    source_plan = residual_plan.source_plan
     coeff_index_rows = runtime_layout.active_coeff_index_rows
     lengths = runtime_layout.active_lengths
     active_u_fields = runtime_layout.active_u_fields
@@ -360,7 +414,15 @@ def bind_fused_profile_owned_psin_residual_runner(
     v_fields = profiles_by_name["v"].u_fields
     k_fields = profiles_by_name["k"].u_fields
     F_profile_u = profiles_by_name["F"].u
-    block_codes, block_orders = _build_residual_block_metadata(profile_names)
+    source_kernel = source_plan.kernel
+    coordinate_code = int(source_plan.coordinate_code)
+    parameterization_code = int(source_plan.parameterization_code)
+    heat_input = source_plan.heat_input
+    current_input = source_plan.current_input
+    Ip = float(source_plan.Ip)
+    beta = float(source_plan.beta)
+    block_codes = residual_binding_layout.active_residual_block_codes
+    block_orders = residual_binding_layout.active_residual_block_orders
     scratch_source_kernel = resolve_source_scratch_kernel(source_kernel)
     scratch_holder: list[np.ndarray | None] = [None]
     psin = root_fields[0]
@@ -537,9 +599,9 @@ def bind_fused_profile_owned_psin_residual_runner(
 
 def bind_fused_fixed_point_psin_residual_runner(
     *,
-    source_kernel: Callable,
-    coordinate_code: int,
+    residual_plan: ResidualPlan,
     static_layout: StaticLayout,
+    residual_binding_layout: ResidualBindingLayout,
     setup_layout: SetupLayout,
     runtime_layout: RuntimeLayout,
     alpha_state: np.ndarray,
@@ -549,14 +611,10 @@ def bind_fused_fixed_point_psin_residual_runner(
     R0: float,
     Z0: float,
     B0: float,
-    heat_input: np.ndarray,
-    current_input: np.ndarray,
-    Ip: float,
-    beta: float,
     max_iter: int = 8,
     tolerance: float = 1.0e-10,
 ) -> Callable[[np.ndarray], np.ndarray]:
-    profile_names = tuple(setup_layout.profile_names[int(p)] for p in setup_layout.active_profile_ids)
+    source_plan = residual_plan.source_plan
     coeff_index_rows = runtime_layout.active_coeff_index_rows
     lengths = runtime_layout.active_lengths
     active_u_fields = runtime_layout.active_u_fields
@@ -612,12 +670,18 @@ def bind_fused_fixed_point_psin_residual_runner(
     v_fields = profiles_by_name["v"].u_fields
     k_fields = profiles_by_name["k"].u_fields
     F_profile_u = profiles_by_name["F"].u
-    source_n_src = int(setup_layout.source_n_src)
-    use_projected_finalize = bool(setup_layout.fixed_point_use_projected_finalize)
-    projection_domain_code = int(setup_layout.fixed_point_projection_domain_code)
-    endpoint_policy_code = int(setup_layout.fixed_point_endpoint_policy_code)
-    allow_query_warmstart = (not use_projected_finalize) or (endpoint_policy_code != 0)
-    block_codes, block_orders = _build_residual_block_metadata(profile_names)
+    source_kernel = source_plan.kernel
+    coordinate_code = int(source_plan.coordinate_code)
+    heat_input = source_plan.heat_input
+    current_input = source_plan.current_input
+    Ip = float(source_plan.Ip)
+    beta = float(source_plan.beta)
+    use_projected_finalize = bool(source_plan.use_projected_finalize)
+    projection_domain_code = int(source_plan.projection_domain_code)
+    endpoint_policy_code = int(source_plan.endpoint_policy_code)
+    allow_query_warmstart = bool(source_plan.allow_query_warmstart)
+    block_codes = residual_binding_layout.active_residual_block_codes
+    block_orders = residual_binding_layout.active_residual_block_orders
     scratch_source_kernel = resolve_source_scratch_kernel(source_kernel)
     scratch_holder: list[np.ndarray | None] = [None]
     psin = root_fields[0]

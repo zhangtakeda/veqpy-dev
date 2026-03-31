@@ -5,7 +5,7 @@ a high-performance Python wrapper for plasma equilibrium simulations in magnetic
 
 - Author: `rhzhang`
 - Updated: `2026-03-30`
-- Version: `0.2.2`
+- Version: `0.2.3`
 
 ## Code Structure
 
@@ -81,15 +81,15 @@ The main runtime path is:
 
 ## Performance Snapshot
 
-Current Fourier-family runtime is driven by `Grid.K_max`, but hot-path kernels only compute up to the current effective active order.
+Current Fourier-family runtime is driven by `Grid.M_max`, but hot-path kernels only compute up to the current effective active order.
 
 - Low-order case with the same active profiles:
-  - `K_max=4` vs `K_max=2` currently gives about `1.05x` full residual time in the `numba` microbenchmark.
+  - `M_max=4` vs `M_max=2` currently gives about `1.05x` full residual time in the `numba` microbenchmark.
   - Geometry alone is about `1.03x`.
 - When higher-order terms are actually active:
-  - `K_max=4` high-order case is about `1.23x` full residual time relative to the low-order `K_max=2` baseline.
+  - `M_max=4` high-order case is about `1.23x` full residual time relative to the low-order `M_max=2` baseline.
 
-This means the remaining cost from the more general `K_max` architecture is small in steady-state hot paths; most extra cost appears only when higher-order Fourier terms are really in use.
+This means the remaining cost from the more general `M_max` architecture is small in steady-state hot paths; most extra cost appears only when higher-order Fourier terms are really in use.
 
 Benchmark entry points:
 
@@ -107,7 +107,7 @@ The project is organized around one core idea: packed optimization variables are
 
 Current shape parameterization is a dynamic Fourier family:
 
-- Packed profile order is generated from `Grid.K_max`.
+- Packed profile order is generated from `Grid.M_max`.
 - Boundary offsets are stored canonically in:
   - `OperatorCase.c_offsets`
   - `OperatorCase.s_offsets`

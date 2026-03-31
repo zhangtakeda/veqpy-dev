@@ -6,7 +6,9 @@ Role:
 - 负责提供 packed state 形状校验工具.
 
 Public API:
-- PREFIX_PROFILE_NAMES
+- PACKED_PROFILE_FAMILY_ORDER
+- INTERLEAVE_SHAPE_COEFFS_BY_ORDER
+- get_prefix_profile_names
 - build_fourier_profile_names
 - build_shape_profile_names
 - build_profile_names
@@ -24,26 +26,82 @@ Notes:
 
 import numpy as np
 
-PREFIX_PROFILE_NAMES = ("psin", "F")
-CORE_SHAPE_PROFILE_NAMES = ("h", "v", "k")
+from veqpy.residual_blocks import BLOCK_CODE_BY_NAME
+
+_BLOCK_CODE_FAMILY_ORDER = tuple(
+    "c0" if name == "c0" else "c" if name == "c_family" else "s" if name == "s_family" else name
+    for name in BLOCK_CODE_BY_NAME
+)
+PACKED_PROFILE_FAMILY_ORDER = _BLOCK_CODE_FAMILY_ORDER
+INTERLEAVE_SHAPE_COEFFS_BY_ORDER = True
+
+_PREFIX_PROFILE_FAMILIES = ("psin", "F")
+_SHAPE_PROFILE_FAMILIES = ("h", "v", "k", "c0", "c", "s")
+_ALL_PROFILE_FAMILIES = _SHAPE_PROFILE_FAMILIES + _PREFIX_PROFILE_FAMILIES
 
 
-def build_fourier_profile_names(K_max: int) -> tuple[str, ...]:
-    K_max = int(K_max)
-    if K_max < 0:
-        raise ValueError(f"K_max must be non-negative, got {K_max}")
-
-    cosine_names = tuple(f"c{k}" for k in range(K_max + 1))
-    sine_names = tuple(f"s{k}" for k in range(1, K_max + 1))
-    return cosine_names + sine_names
-
-
-def build_shape_profile_names(K_max: int) -> tuple[str, ...]:
-    return CORE_SHAPE_PROFILE_NAMES + build_fourier_profile_names(K_max)
+def _validated_profile_family_order() -> tuple[str, ...]:
+    family_order = tuple(PACKED_PROFILE_FAMILY_ORDER)
+    if len(family_order) != len(_ALL_PROFILE_FAMILIES) or set(family_order) != set(_ALL_PROFILE_FAMILIES):
+        raise ValueError(
+            "PACKED_PROFILE_FAMILY_ORDER must contain each family exactly once: "
+            f"{_ALL_PROFILE_FAMILIES!r}, got {family_order!r}"
+        )
+    return family_order
 
 
-def build_profile_names(K_max: int) -> tuple[str, ...]:
-    return PREFIX_PROFILE_NAMES + build_shape_profile_names(K_max)
+def get_prefix_profile_names() -> tuple[str, ...]:
+    return tuple(family for family in _validated_profile_family_order() if family in _PREFIX_PROFILE_FAMILIES)
+
+
+def _expand_profile_family(family: str, M_max: int) -> tuple[str, ...]:
+    if family == "psin":
+        return ("psin",)
+    if family == "F":
+        return ("F",)
+    if family == "h":
+        return ("h",)
+    if family == "v":
+        return ("v",)
+    if family == "k":
+        return ("k",)
+    if family == "c0":
+        return ("c0",)
+    if family == "c":
+        return tuple(f"c{k}" for k in range(1, M_max + 1))
+    if family == "s":
+        return tuple(f"s{k}" for k in range(1, M_max + 1))
+    raise KeyError(f"Unknown profile family {family!r}")
+
+
+def build_fourier_profile_names(M_max: int) -> tuple[str, ...]:
+    M_max = int(M_max)
+    if M_max < 0:
+        raise ValueError(f"M_max must be non-negative, got {M_max}")
+
+    fourier_names: list[str] = []
+    for family in _validated_profile_family_order():
+        if family not in ("c0", "c", "s"):
+            continue
+        fourier_names.extend(_expand_profile_family(family, M_max))
+    return tuple(fourier_names)
+
+
+def build_shape_profile_names(M_max: int) -> tuple[str, ...]:
+    shape_profile_names: list[str] = []
+    for family in _validated_profile_family_order():
+        if family in _PREFIX_PROFILE_FAMILIES:
+            continue
+        shape_profile_names.extend(_expand_profile_family(family, int(M_max)))
+    return tuple(shape_profile_names)
+
+
+def build_profile_names(M_max: int) -> tuple[str, ...]:
+    M_max = int(M_max)
+    profile_names: list[str] = []
+    for family in _validated_profile_family_order():
+        profile_names.extend(_expand_profile_family(family, M_max))
+    return tuple(profile_names)
 
 
 def build_profile_index(profile_names: tuple[str, ...]) -> dict[str, int]:
@@ -54,10 +112,12 @@ def build_profile_layout(
     profile_coeffs: dict[str, list[float] | None],
     *,
     profile_names: tuple[str, ...],
-    prefix_profile_names: tuple[str, ...] = PREFIX_PROFILE_NAMES,
+    prefix_profile_names: tuple[str, ...] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """根据 profile 系数字典构造 packed 状态布局."""
     profile_names = tuple(profile_names)
+    if prefix_profile_names is None:
+        prefix_profile_names = get_prefix_profile_names()
     prefix_profile_names = tuple(prefix_profile_names)
     profile_index = build_profile_index(profile_names)
     profile_count = len(profile_names)
@@ -80,25 +140,31 @@ def build_profile_layout(
         raise ValueError("At least one active profile is required")
 
     coeff_index = -np.ones((profile_count, max_L + 1), dtype=np.int64)
-    order_offsets = np.zeros(max_L + 2, dtype=np.int64)
+    order_offsets = np.full(max_L + 2, -1, dtype=np.int64)
 
     x_pos = 0
-    for name in prefix_profile_names:
-        p = profile_index[name]
-        L = int(profile_L[p])
-        if L < 0:
-            continue
-        for k in range(L + 1):
-            coeff_index[p, k] = x_pos
-            x_pos += 1
-
-    for k in range(max_L + 1):
-        order_offsets[k] = x_pos
-        for name in shape_profile_names:
+    if INTERLEAVE_SHAPE_COEFFS_BY_ORDER:
+        for k in range(max_L + 1):
+            order_offsets[k] = x_pos
+            for name in profile_names:
+                p = profile_index[name]
+                if profile_L[p] >= k:
+                    coeff_index[p, k] = x_pos
+                    x_pos += 1
+    else:
+        for name in profile_names:
             p = profile_index[name]
-            if profile_L[p] >= k:
+            L = int(profile_L[p])
+            if L < 0:
+                continue
+            for k in range(L + 1):
+                if order_offsets[k] < 0:
+                    order_offsets[k] = x_pos
                 coeff_index[p, k] = x_pos
                 x_pos += 1
+        for k in range(max_L + 1):
+            if order_offsets[k] < 0:
+                order_offsets[k] = x_pos
     order_offsets[max_L + 1] = x_pos
 
     return profile_L, coeff_index, order_offsets

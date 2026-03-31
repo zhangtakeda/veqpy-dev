@@ -333,7 +333,7 @@ def _extract_shape_parameters(operator: Operator, x: np.ndarray) -> tuple[tuple[
         operator.coeff_index,
         profile_names=operator.profile_names,
     )
-    shape_names = set(build_shape_profile_names(operator.grid.K_max))
+    shape_names = set(build_shape_profile_names(operator.grid.M_max))
     labels: list[str] = []
     values: list[float] = []
     for name, block in zip(operator.profile_names, blocks, strict=True):

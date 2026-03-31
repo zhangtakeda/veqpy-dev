@@ -23,7 +23,7 @@ $$
 
 当前实现对应的运行时约束是:
 
-- `Grid.K_max` 给出可表示的最高 Fourier 阶数
+- `Grid.M_max` 给出可表示的最高 Fourier 阶数
 - `Grid.rho_powers` 保存 `rho^0 .. rho^(K+1)`
 - `Grid.cos_ktheta` / `Grid.sin_ktheta` 保存 `k = 0 .. K` 的 Fourier 表
 - `OperatorCase.c_offsets` 保存 `c0 .. cK`

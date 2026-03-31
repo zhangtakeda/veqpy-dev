@@ -8,8 +8,19 @@ from veqpy.model import Boundary
 from veqpy.model.equilibrium import Equilibrium
 from veqpy.model.geqdsk import Geqdsk
 from veqpy.model.grid import Grid
-from veqpy.operator import Operator, RuntimeLayout, SetupLayout, StaticLayout
-from veqpy.operator.layout import build_profile_names
+from veqpy.operator import (
+    ExecutionState,
+    FieldRuntimeState,
+    Operator,
+    ResidualBindingLayout,
+    RuntimeLayout,
+    SetupLayout,
+    SourceRuntimeState,
+    StaticLayout,
+)
+from veqpy.operator import layout as layout_module
+from veqpy.operator.codec import encode_packed_state
+from veqpy.operator.layout import build_profile_layout, build_profile_names
 from veqpy.operator.operator_case import OperatorCase
 
 GEQDSK_PATH = Path("tests/fitting/geqdsk.txt")
@@ -35,8 +46,8 @@ def _max_bidirectional_distance(points_a, points_b):
 
 
 def _build_high_order_equilibrium() -> tuple[Equilibrium, Operator]:
-    grid = Grid(Nr=8, Nt=16, scheme="uniform", K_max=4)
-    profile_coeffs = {name: None for name in build_profile_names(grid.K_max)}
+    grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=4)
+    profile_coeffs = {name: None for name in build_profile_names(grid.M_max)}
     profile_coeffs.update(
         {
             "psin": [0.0, 1.0],
@@ -56,8 +67,8 @@ def _build_high_order_equilibrium() -> tuple[Equilibrium, Operator]:
             R0=1.7,
             Z0=0.2,
             B0=3.0,
-            c_offsets=np.zeros(grid.K_max + 1),
-            s_offsets=np.zeros(grid.K_max + 1),
+            c_offsets=np.zeros(grid.M_max + 1),
+            s_offsets=np.zeros(grid.M_max + 1),
         ),
         heat_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
         current_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
@@ -68,8 +79,8 @@ def _build_high_order_equilibrium() -> tuple[Equilibrium, Operator]:
 
 
 def _build_operator_case(*, mode="PF", coordinate="rho", nodes="uniform") -> OperatorCase:
-    grid = Grid(Nr=8, Nt=16, scheme="uniform", K_max=4)
-    profile_coeffs = {name: None for name in build_profile_names(grid.K_max)}
+    grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=4)
+    profile_coeffs = {name: None for name in build_profile_names(grid.M_max)}
     profile_coeffs.update(
         {
             "psin": [0.0, 1.0],
@@ -89,8 +100,8 @@ def _build_operator_case(*, mode="PF", coordinate="rho", nodes="uniform") -> Ope
             R0=1.7,
             Z0=0.2,
             B0=3.0,
-            c_offsets=np.zeros(grid.K_max + 1),
-            s_offsets=np.zeros(grid.K_max + 1),
+            c_offsets=np.zeros(grid.M_max + 1),
+            s_offsets=np.zeros(grid.M_max + 1),
         ),
         heat_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
         current_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
@@ -112,7 +123,7 @@ def _make_geqdsk_with_boundary() -> Geqdsk:
 
 
 def test_grid_precomputes_fourier_tables_and_rho_powers():
-    grid = Grid(Nr=8, Nt=16, scheme="uniform", K_max=5)
+    grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=5)
 
     assert grid.cos_ktheta.shape == (6, 16)
     assert grid.sin_ktheta.shape == (6, 16)
@@ -244,7 +255,7 @@ def test_equilibrium_roundtrips_canonical_active_profiles():
     assert set(equilibrium.active_profiles) == {"k", "c3", "s4"}
     assert equilibrium.geometry.tb.shape == (equilibrium.grid.Nr, equilibrium.grid.Nt)
 
-    resampled = equilibrium.resample(target_grid=Grid(Nr=10, Nt=12, scheme="uniform", K_max=4))
+    resampled = equilibrium.resample(target_grid=Grid(Nr=10, Nt=12, scheme="uniform", M_max=4))
     assert set(resampled.active_profiles) == {"k", "c3", "s4"}
 
     outpath = Path("tests/.tmp-equilibrium-k4.json")
@@ -261,22 +272,35 @@ def test_equilibrium_roundtrips_canonical_active_profiles():
         outpath.unlink(missing_ok=True)
 
 
-def test_operator_exposes_three_layout_layers_with_expected_ownership():
+def test_operator_exposes_explicit_layout_and_execution_layers():
     grid, case = _build_operator_case()
     operator = Operator(grid=grid, case=case)
 
     assert isinstance(operator.static_layout, StaticLayout)
+    assert isinstance(operator.residual_binding_layout, ResidualBindingLayout)
     assert isinstance(operator.setup_layout, SetupLayout)
     assert isinstance(operator.runtime_layout, RuntimeLayout)
+    assert isinstance(operator.field_runtime_state, FieldRuntimeState)
+    assert isinstance(operator.execution_state, ExecutionState)
+    assert isinstance(operator.source_runtime_state, SourceRuntimeState)
 
     assert operator.static_layout.rho is grid.rho
     assert operator.static_layout.T_fields is grid.T_fields
     assert operator.setup_layout.profile_L is operator.profile_L
     assert operator.setup_layout.coeff_index is operator.coeff_index
     assert operator.setup_layout.x_size == operator.x_size
+    assert operator.residual_binding_layout.active_profile_names == tuple(
+        operator.profile_names[int(p)] for p in operator.active_profile_ids
+    )
     assert operator.runtime_layout.geometry is operator.geometry
     assert operator.runtime_layout.root_fields is operator.root_fields
     assert operator.runtime_layout.packed_residual is operator.packed_residual
+    assert operator.field_runtime_state.root_fields is operator.root_fields
+    assert operator.field_runtime_state.residual_fields is operator.residual_fields
+    assert operator.execution_state.fused_alpha_state is operator.fused_alpha_state
+    assert operator.execution_state.fused_residual_runner is operator.fused_residual_runner
+    assert operator.source_runtime_state.psin_query is operator.source_psin_query
+    assert operator.source_runtime_state.materialized_heat_input is operator.materialized_heat_input
     assert operator.active_u_fields.base is operator.active_profile_slab
     assert operator.c_family_fields.base is operator.family_field_slab
     assert operator.source_psin_query.base is operator.source_vector_slab
@@ -303,16 +327,56 @@ def test_operator_replace_case_preserves_static_layout_and_refreshes_setup_layou
     assert operator.runtime_layout.geometry is operator.geometry
 
 
-def test_setup_layout_captures_fixed_point_route_metadata():
+def test_source_plan_captures_fixed_point_route_metadata():
     grid, case = _build_operator_case(mode="PQ", coordinate="psin", nodes="uniform")
     case.profile_coeffs["psin"] = None
     operator = Operator(grid=grid, case=case)
 
-    assert operator.setup_layout.source_strategy == "fixed_point_psin"
-    assert operator.setup_layout.source_n_src == TEST_SOURCE_SAMPLE_COUNT
-    assert operator.setup_layout.fixed_point_use_projected_finalize is True
-    assert operator.setup_layout.fixed_point_projection_domain_code == 1
-    assert operator.setup_layout.fixed_point_endpoint_policy_code == 0
+    assert operator.source_plan.strategy == "fixed_point_psin"
+    assert operator.source_plan.n_src == TEST_SOURCE_SAMPLE_COUNT
+    assert operator.source_plan.use_projected_finalize is True
+    assert operator.source_plan.projection_domain_code == 1
+    assert operator.source_plan.endpoint_policy_code == 0
+    assert operator.residual_plan.is_fixed_point_psin is True
+
+
+def test_build_profile_names_respects_module_family_order(monkeypatch):
+    monkeypatch.setattr(layout_module, "PACKED_PROFILE_FAMILY_ORDER", ("psin", "F", "k", "h", "v", "c0", "s", "c"))
+    assert layout_module.build_profile_names(2) == (
+        "psin",
+        "F",
+        "k",
+        "h",
+        "v",
+        "c0",
+        "s1",
+        "s2",
+        "c1",
+        "c2",
+    )
+
+
+def test_build_profile_layout_can_group_shape_coeffs_by_profile(monkeypatch):
+    monkeypatch.setattr(
+        layout_module,
+        "PACKED_PROFILE_FAMILY_ORDER",
+        ("h", "v", "k", "c0", "c", "s", "psin", "F"),
+    )
+    monkeypatch.setattr(layout_module, "INTERLEAVE_SHAPE_COEFFS_BY_ORDER", False)
+    profile_names = layout_module.build_profile_names(1)
+    profile_coeffs = {name: None for name in profile_names}
+    profile_coeffs.update(
+        {
+            "psin": [0.0, 1.0],
+            "F": [1.0, 2.0],
+            "h": [10.0, 11.0],
+            "v": [20.0, 21.0],
+            "k": [30.0, 31.0],
+        }
+    )
+    profile_L, coeff_index, _ = build_profile_layout(profile_coeffs, profile_names=profile_names)
+    x = encode_packed_state(profile_coeffs, profile_L, coeff_index, profile_names=profile_names)
+    assert x.tolist()[:10] == [10.0, 11.0, 20.0, 21.0, 30.0, 31.0, 0.0, 1.0, 1.0, 2.0]
 
 
 def test_equilibrium_load_rejects_legacy_shape_payload():
@@ -324,7 +388,9 @@ def test_equilibrium_load_rejects_legacy_shape_payload():
             "Z0": equilibrium.Z0,
             "B0": equilibrium.B0,
             "a": equilibrium.a,
-            "grid": {"Grid": {"Nr": grid.Nr, "Nt": grid.Nt, "scheme": grid.scheme, "L_max": grid.L_max, "K_max": grid.K_max}},
+            "grid": {
+                "Grid": {"Nr": grid.Nr, "Nt": grid.Nt, "scheme": grid.scheme, "L_max": grid.L_max, "M_max": grid.M_max}
+            },
             "active_profiles": ["h", "k", "c3", "s4"],
             "shape_profile_names": list(operator.shape_profile_names),
             "shape_profiles": [],
@@ -359,8 +425,8 @@ def test_equilibrium_load_rejects_legacy_shape_payload():
 
 
 def test_equilibrium_compare_reports_only_primary_shape_errors():
-    grid = Grid(Nr=8, Nt=16, scheme="uniform", K_max=4)
-    profile_coeffs = {name: None for name in build_profile_names(grid.K_max)}
+    grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=4)
+    profile_coeffs = {name: None for name in build_profile_names(grid.M_max)}
     profile_coeffs.update(
         {
             "psin": [0.0, 1.0],
@@ -381,8 +447,8 @@ def test_equilibrium_compare_reports_only_primary_shape_errors():
             R0=1.7,
             Z0=0.2,
             B0=3.0,
-            c_offsets=np.zeros(grid.K_max + 1),
-            s_offsets=np.zeros(grid.K_max + 1),
+            c_offsets=np.zeros(grid.M_max + 1),
+            s_offsets=np.zeros(grid.M_max + 1),
         ),
         heat_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
         current_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),

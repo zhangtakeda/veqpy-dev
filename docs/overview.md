@@ -94,15 +94,15 @@ packed runtime 的权威定义只在 [`veqpy/operator/layout.py`](../veqpy/opera
 
 当前必须知道的事实:
 
-- profile 权威顺序由 `Grid.K_max` 驱动:
+- profile 权威顺序由 `Grid.M_max` 驱动:
   - `psin`, `F`
   - `h`, `v`, `k`
   - `c0 .. cK`
   - `s1 .. sK`
 - `veqpy/operator/layout.py` 通过:
-  - `build_fourier_profile_names(K_max)`
-  - `build_shape_profile_names(K_max)`
-  - `build_profile_names(K_max)`
+  - `build_fourier_profile_names(M_max)`
+  - `build_shape_profile_names(M_max)`
+  - `build_profile_names(M_max)`
     生成当前 packed ABI
 - packed state 和 packed residual 的唯一位置语义都是:
   - `coeff_index`
@@ -261,7 +261,7 @@ backend control surface 只有 [`veqpy/engine/__init__.py`](../veqpy/engine/__in
 
 当前 `c/s` 边界族不再由固定低阶字段控制, 而是:
 
-- `Grid.K_max`
+- `Grid.M_max`
   - 控制运行时允许的最大 Fourier 阶数
 - `OperatorCase.c_offsets`
 - `OperatorCase.s_offsets`
@@ -278,7 +278,7 @@ backend control surface 只有 [`veqpy/engine/__init__.py`](../veqpy/engine/__in
 
 这意味着:
 
-- `K_max` 决定可表示的上界
+- `M_max` 决定可表示的上界
 - `effective_order` 决定当前一次 runtime 求值真正需要计算的上界
 
 ## Key Files

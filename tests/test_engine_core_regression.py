@@ -50,8 +50,8 @@ def _build_family_fields(grid: Grid) -> tuple[np.ndarray, np.ndarray, np.ndarray
     h_fields = _poly_fields(grid, 0.05, -0.02, 0.01)
     v_fields = _poly_fields(grid, -0.03, 0.01, -0.02)
     k_fields = _poly_fields(grid, 1.6, 0.05, -0.01)
-    c_fields = np.zeros((grid.K_max + 1, 3, grid.Nr), dtype=np.float64)
-    s_fields = np.zeros((grid.K_max + 1, 3, grid.Nr), dtype=np.float64)
+    c_fields = np.zeros((grid.M_max + 1, 3, grid.Nr), dtype=np.float64)
+    s_fields = np.zeros((grid.M_max + 1, 3, grid.Nr), dtype=np.float64)
     c_fields[0] = _poly_fields(grid, 0.02, 0.01, -0.005)
     c_fields[2] = _poly_fields(grid, -0.04, 0.03, 0.0)
     c_fields[3] = _poly_fields(grid, 0.01, -0.02, 0.01)
@@ -79,8 +79,8 @@ def _expected_tb(grid: Grid, c_fields: np.ndarray, s_fields: np.ndarray) -> tupl
 
 
 def _build_operator_with_high_order_profiles() -> Operator:
-    grid = Grid(Nr=8, Nt=16, scheme="uniform", K_max=4)
-    profile_coeffs = {name: None for name in build_profile_names(grid.K_max)}
+    grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=4)
+    profile_coeffs = {name: None for name in build_profile_names(grid.M_max)}
     profile_coeffs.update(
         {
             "psin": [0.0, 1.0],
@@ -103,8 +103,8 @@ def _build_operator_with_high_order_profiles() -> Operator:
             R0=1.7,
             Z0=0.2,
             B0=3.0,
-            c_offsets=np.zeros(grid.K_max + 1),
-            s_offsets=np.zeros(grid.K_max + 1),
+            c_offsets=np.zeros(grid.M_max + 1),
+            s_offsets=np.zeros(grid.M_max + 1),
         ),
         heat_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
         current_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
@@ -113,7 +113,7 @@ def _build_operator_with_high_order_profiles() -> Operator:
 
 
 def test_geometry_update_uses_high_order_fourier_family_terms():
-    grid = Grid(Nr=8, Nt=16, scheme="uniform", K_max=4)
+    grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=4)
     geometry = Geometry(grid=grid)
     h_fields, v_fields, k_fields, c_fields, s_fields = _build_family_fields(grid)
 
@@ -138,7 +138,7 @@ def test_geometry_update_uses_high_order_fourier_family_terms():
 
 
 def test_numpy_and_numba_geometry_match_for_high_order_terms():
-    grid = Grid(Nr=8, Nt=16, scheme="uniform", K_max=4)
+    grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=4)
     h_fields, v_fields, k_fields, c_fields, s_fields = _build_family_fields(grid)
     numpy_outputs = _allocate_outputs(grid)
     numba_outputs = _allocate_outputs(grid)
@@ -162,8 +162,8 @@ def test_numpy_and_numba_geometry_match_for_high_order_terms():
         k_fields,
         c_fields,
         s_fields,
-        grid.K_max,
-        grid.K_max,
+        grid.M_max,
+        grid.M_max,
     )
     numba_update_geometry(
         *numba_outputs,
@@ -184,8 +184,8 @@ def test_numpy_and_numba_geometry_match_for_high_order_terms():
         k_fields,
         c_fields,
         s_fields,
-        grid.K_max,
-        grid.K_max,
+        grid.M_max,
+        grid.M_max,
     )
 
     for numpy_arr, numba_arr in zip(numpy_outputs, numba_outputs, strict=True):
@@ -193,7 +193,7 @@ def test_numpy_and_numba_geometry_match_for_high_order_terms():
 
 
 def test_numpy_and_numba_residual_runners_match_for_high_order_blocks():
-    grid = Grid(Nr=8, Nt=16, scheme="uniform", K_max=4)
+    grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=4)
     rng = np.random.default_rng(0)
     profile_names = ("c3", "s4", "k", "c0", "psin", "F")
     coeff_index_rows = np.array(
@@ -253,8 +253,8 @@ def test_numpy_and_numba_residual_runners_match_for_high_order_blocks():
 
 
 def test_operator_runtime_propagates_high_order_geometry_and_residual():
-    grid = Grid(Nr=8, Nt=16, scheme="uniform", K_max=4)
-    profile_coeffs = {name: None for name in build_profile_names(grid.K_max)}
+    grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=4)
+    profile_coeffs = {name: None for name in build_profile_names(grid.M_max)}
     profile_coeffs["psin"] = [0.0]
     case = OperatorCase(
         name="PF",

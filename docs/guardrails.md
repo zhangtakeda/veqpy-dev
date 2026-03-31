@@ -106,7 +106,7 @@
 必须:
 
 - packed state 和 packed residual 都只用 `coeff_index` / `coeff_indices` 表示位置语义.
-- profile 权威顺序由 `Grid.K_max` 动态生成:
+- profile 权威顺序由 `Grid.M_max` 动态生成:
   - `psin`, `F`
   - `h`, `v`, `k`
   - `c0 .. cK`

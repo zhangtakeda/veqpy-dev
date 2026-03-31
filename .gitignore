@@ -1,6 +1,7 @@
-/*.json
-/*.png
-/*.svg
+*.json
+*.pkl
+*.png
+*.svg
 *.egg-info
 /veqpy-*
 

@@ -155,7 +155,7 @@ packed ABI 的唯一权威位置是:
 - 可以替换 case 数值
 - 不可以改变 packed topology
 
-如果你需要变 profile activation / coefficient counts / `K_max`, 通常意味着应该重建 `Operator`, 不是热替换 case.
+如果你需要变 profile activation / coefficient counts / `M_max`, 通常意味着应该重建 `Operator`, 不是热替换 case.
 
 ### `Equilibrium` Is Canonical Snapshot, Not Runtime Cache
 
@@ -174,16 +174,16 @@ packed ABI 的唯一权威位置是:
 
 - `Equilibrium` 里能算出来的东西, 优先视为 derived, 不要再存成第二份状态
 
-### `K_max` And `effective_order` Are Different
+### `M_max` And `effective_order` Are Different
 
 当前 Fourier family 语义里:
 
-- `Grid.K_max` 表示可表示的最大阶数
+- `Grid.M_max` 表示可表示的最大阶数
 - `Operator.c_effective_order`
 - `Operator.s_effective_order`
   表示当前一次 runtime 真正需要算到几阶
 
-决定 `effective_order` 的不是 `K_max` 本身, 而是:
+决定 `effective_order` 的不是 `M_max` 本身, 而是:
 
 - active high-order coeffs
 - fixed nonzero boundary offsets
@@ -260,7 +260,7 @@ source route 通过 bound runner 绑定.
 `tests/benchmark.py` 的用途:
 
 - 比较性能口径
-- 观察 `K_max` 和 active high-order terms 的成本变化
+- 观察 `M_max` 和 active high-order terms 的成本变化
 
 不要把它们当成正确性回归的替代品.
 
@@ -326,7 +326,7 @@ source route 通过 bound runner 绑定.
 后续 agent 最常见的误判通常是这些:
 
 - “`Equilibrium` 有这些 property, 所以它应该是 runtime owner”
-- “`K_max` 提高了, 所以 runtime 一定会完整算到高阶”
+- “`M_max` 提高了, 所以 runtime 一定会完整算到高阶”
 - “demo 跑通了, 所以 serialization / snapshot / compare 没问题”
 - “benchmark 正常, 所以 residual 语义没变”
 - “某个字段在对象里存在, 所以它一定是 canonical state”

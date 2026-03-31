@@ -41,7 +41,7 @@ class Grid(Serial):
     Nr: int
     Nt: int
     scheme: Literal["legendre", "chebyshev", "lobatto", "radau", "uniform"]
-    K_max: int = 10
+    M_max: int = 10
     L_max: int = 10
 
     rho: np.ndarray = field(init=False)
@@ -71,7 +71,7 @@ class Grid(Serial):
             "Nt": int,
             "scheme": str,
             "L_max": int,
-            "K_max": int,
+            "M_max": int,
         }
 
     def __post_init__(self):
@@ -94,12 +94,12 @@ class Grid(Serial):
             raise ValueError("Nt must be positive")
         if self.L_max < 0:
             raise ValueError("L_max must be non-negative")
-        if self.K_max < 2:
-            raise ValueError("K_max must be at least 2")
+        if self.M_max < 2:
+            raise ValueError("M_max must be at least 2")
 
         rho, weights = _build_rho_and_weights(self.Nr, scheme)
         theta = np.linspace(0.0, 2.0 * np.pi, self.Nt, endpoint=False)
-        harmonics = np.arange(self.K_max + 1, dtype=np.float64)[:, None]
+        harmonics = np.arange(self.M_max + 1, dtype=np.float64)[:, None]
         ktheta = harmonics * theta[None, :]
         cos_ktheta = np.cos(ktheta)
         sin_ktheta = np.sin(ktheta)
@@ -109,9 +109,9 @@ class Grid(Serial):
         k2_cos_ktheta = k2 * cos_ktheta
         k2_sin_ktheta = k2 * sin_ktheta
         rho2 = rho * rho
-        rho_powers = np.empty((self.K_max + 2, self.Nr), dtype=np.float64)
+        rho_powers = np.empty((self.M_max + 2, self.Nr), dtype=np.float64)
         rho_powers[0].fill(1.0)
-        for power in range(1, self.K_max + 2):
+        for power in range(1, self.M_max + 2):
             rho_powers[power] = rho**power
         x = 2.0 * rho2 - 1.0
         y = 1.0 - rho2

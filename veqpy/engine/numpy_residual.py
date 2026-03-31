@@ -19,6 +19,8 @@ from typing import Callable
 
 import numpy as np
 
+from veqpy.residual_blocks import decode_residual_block_kind
+
 
 @dataclass(frozen=True, slots=True)
 class _ResidualBlockSpec:
@@ -41,18 +43,13 @@ def register_residual_block(name: str) -> Callable:
 
 
 def _decode_residual_block(name: str) -> tuple[str, int, Callable | None]:
-    if name.startswith("c") and name[1:].isdigit():
-        order = int(name[1:])
-        if order == 0:
-            return ("fixed", 0, RESIDUAL_BLOCK_REGISTRY["c0"].implementation)
-        return ("c_family", order, None)
-    if name.startswith("s") and name[1:].isdigit():
-        order = int(name[1:])
-        if order == 0:
-            raise KeyError("s0 is not a valid residual block")
-        return ("s_family", order, None)
+    kind, order, fixed_name = decode_residual_block_kind(name)
+    if kind != "fixed":
+        return (kind, order, None)
     try:
-        return ("fixed", 0, RESIDUAL_BLOCK_REGISTRY[name].implementation)
+        if fixed_name is None:
+            raise KeyError(name)
+        return ("fixed", 0, RESIDUAL_BLOCK_REGISTRY[fixed_name].implementation)
     except KeyError as exc:
         supported = ", ".join(sorted(RESIDUAL_BLOCK_REGISTRY))
         raise KeyError(f"Unknown residual block {name!r}. Supported blocks: {supported}, c<k>, s<k>") from exc
@@ -63,6 +60,9 @@ def bind_residual_runner(
     coeff_index_rows: np.ndarray,
     lengths: np.ndarray,
     residual_size: int,
+    *,
+    block_codes: np.ndarray | None = None,
+    block_orders: np.ndarray | None = None,
 ) -> Callable:
     specs: list[tuple[str, int, Callable | None]] = []
     for name in profile_names:
@@ -146,6 +146,9 @@ def bind_residual_stage_runner(
     coeff_index_rows: np.ndarray,
     lengths: np.ndarray,
     residual_size: int,
+    *,
+    block_codes: np.ndarray | None = None,
+    block_orders: np.ndarray | None = None,
 ) -> Callable:
     specs: list[tuple[str, int, Callable | None]] = []
     for name in profile_names:

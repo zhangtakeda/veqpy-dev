@@ -21,6 +21,8 @@ from typing import Callable
 import numpy as np
 from numba import njit
 
+from veqpy.residual_blocks import decode_residual_block_code
+
 
 @dataclass(frozen=True, slots=True)
 class _ResidualBlockSpec:
@@ -42,37 +44,11 @@ def register_residual_block(name: str) -> Callable:
     return decorator
 
 
-_BLOCK_CODE_BY_NAME = {
-    "h": 0,
-    "v": 1,
-    "k": 2,
-    "c0": 3,
-    "c_family": 4,
-    "s_family": 5,
-    "psin": 6,
-    "F": 7,
-}
-
-
 def _decode_residual_block_code(name: str) -> tuple[int, int]:
-    if name.startswith("c") and name[1:].isdigit():
-        order = int(name[1:])
-        if order == 0:
-            return (_BLOCK_CODE_BY_NAME["c0"], 0)
-        return (_BLOCK_CODE_BY_NAME["c_family"], order)
-    if name.startswith("s") and name[1:].isdigit():
-        order = int(name[1:])
-        if order == 0:
-            raise KeyError("s0 is not a valid residual block")
-        return (_BLOCK_CODE_BY_NAME["s_family"], order)
-    if name not in RESIDUAL_BLOCK_REGISTRY:
+    if not (name.startswith(("c", "s")) and name[1:].isdigit()) and name not in RESIDUAL_BLOCK_REGISTRY:
         supported = ", ".join(sorted(RESIDUAL_BLOCK_REGISTRY))
         raise KeyError(f"Unknown residual block {name!r}. Supported blocks: {supported}, c<k>, s<k>")
-    try:
-        return (_BLOCK_CODE_BY_NAME[name], 0)
-    except KeyError as exc:
-        supported = ", ".join(_BLOCK_CODE_BY_NAME)
-        raise KeyError(f"Unknown residual block {name!r}. Supported blocks: {supported}") from exc
+    return decode_residual_block_code(name)
 
 
 def bind_residual_runner(
@@ -80,11 +56,18 @@ def bind_residual_runner(
     coeff_index_rows: np.ndarray,
     lengths: np.ndarray,
     residual_size: int,
+    *,
+    block_codes: np.ndarray | None = None,
+    block_orders: np.ndarray | None = None,
 ) -> Callable:
-    block_codes = np.empty(len(profile_names), dtype=np.int64)
-    block_orders = np.zeros(len(profile_names), dtype=np.int64)
-    for i, name in enumerate(profile_names):
-        block_codes[i], block_orders[i] = _decode_residual_block_code(name)
+    if block_codes is None or block_orders is None:
+        block_codes = np.empty(len(profile_names), dtype=np.int64)
+        block_orders = np.zeros(len(profile_names), dtype=np.int64)
+        for i, name in enumerate(profile_names):
+            block_codes[i], block_orders[i] = _decode_residual_block_code(name)
+    else:
+        block_codes = np.asarray(block_codes, dtype=np.int64)
+        block_orders = np.asarray(block_orders, dtype=np.int64)
     scratch_holder: list[np.ndarray | None] = [None]
 
     def runner(
@@ -138,11 +121,18 @@ def bind_residual_stage_runner(
     coeff_index_rows: np.ndarray,
     lengths: np.ndarray,
     residual_size: int,
+    *,
+    block_codes: np.ndarray | None = None,
+    block_orders: np.ndarray | None = None,
 ) -> Callable:
-    block_codes = np.empty(len(profile_names), dtype=np.int64)
-    block_orders = np.zeros(len(profile_names), dtype=np.int64)
-    for i, name in enumerate(profile_names):
-        block_codes[i], block_orders[i] = _decode_residual_block_code(name)
+    if block_codes is None or block_orders is None:
+        block_codes = np.empty(len(profile_names), dtype=np.int64)
+        block_orders = np.zeros(len(profile_names), dtype=np.int64)
+        for i, name in enumerate(profile_names):
+            block_codes[i], block_orders[i] = _decode_residual_block_code(name)
+    else:
+        block_codes = np.asarray(block_codes, dtype=np.int64)
+        block_orders = np.asarray(block_orders, dtype=np.int64)
     scratch_holder: list[np.ndarray | None] = [None]
 
     def runner(

@@ -28,7 +28,7 @@ REFERENCE_CACHE_VERSION = 1
 
 REFERENCE_GRID = Grid(Nr=32, Nt=32, scheme="legendre")
 TEST_GRID = Grid(Nr=12, Nt=12, scheme="legendre", L_max=REFERENCE_GRID.L_max)
-REFERENCE_SUMMARY_GRID = Grid(Nr=64, Nt=128, scheme="uniform", L_max=REFERENCE_GRID.L_max, K_max=REFERENCE_GRID.K_max)
+REFERENCE_SUMMARY_GRID = Grid(Nr=64, Nt=128, scheme="uniform", L_max=REFERENCE_GRID.L_max, M_max=REFERENCE_GRID.M_max)
 CONFIG = SolverConfig(
     method="hybr",
     enable_verbose=False,
@@ -57,7 +57,7 @@ BOUNDARY = Boundary(
 )
 
 REFERENCE_IP = 3.0e6
-SHAPE_PROFILE_NAMES = build_shape_profile_names(REFERENCE_GRID.K_max)
+SHAPE_PROFILE_NAMES = build_shape_profile_names(REFERENCE_GRID.M_max)
 BENCHMARK_MODES = ("PF", "PP", "PI", "PJ1", "PJ2", "PQ")
 BENCHMARK_INPUT_KINDS = ("uniform", "grid")
 BENCHMARK_MODE_CONSTRAINTS = {
@@ -154,7 +154,7 @@ def _render_ranking_section(
 
 
 def _artifact_dir() -> Path:
-    outdir = Path(__file__).resolve().parent / "benchmark" / f"full46-{BACKEND}"
+    outdir = Path(__file__).resolve().parent / f"benchmark-{BACKEND}"
     outdir.mkdir(parents=True, exist_ok=True)
     return outdir
 
@@ -188,7 +188,7 @@ def _as_float64_array(values, *, copy: bool = False) -> np.ndarray:
 
 
 def _extract_shape_x(profile_coeffs: dict[str, list[float] | None], x: np.ndarray) -> np.ndarray:
-    profile_names = build_profile_names(REFERENCE_GRID.K_max)
+    profile_names = build_profile_names(REFERENCE_GRID.M_max)
     profile_index = build_profile_index(profile_names)
     _, coeff_index, _ = build_profile_layout(profile_coeffs, profile_names=profile_names)
     shape_values: list[float] = []
@@ -321,7 +321,7 @@ def _reference_cache_signature() -> dict[str, object]:
             "Nt": int(REFERENCE_GRID.Nt),
             "scheme": REFERENCE_GRID.scheme,
             "L_max": int(REFERENCE_GRID.L_max),
-            "K_max": int(REFERENCE_GRID.K_max),
+            "M_max": int(REFERENCE_GRID.M_max),
         },
         "boundary": {
             "a": float(BOUNDARY.a),
@@ -847,7 +847,7 @@ def run_full_benchmark(*, show_progress: bool = SHOW_PROGRESS) -> tuple[Referenc
                     label_ref="PF_RHO_ref",
                     label_other=row.case_name,
                 )
-                row.equilibrium.plot(plot_dir / f"{row.case_name}_summary.png")
+                # row.equilibrium.plot(plot_dir / f"{row.case_name}_summary.png")
             except Exception as exc:
                 message = f"{row.case_name}: {type(exc).__name__}: {exc}"
                 plot_failures.append(message)

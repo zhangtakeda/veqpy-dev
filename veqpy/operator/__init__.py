@@ -8,8 +8,15 @@ Public API:
 - Operator
 - OperatorCase
 - StaticLayout
+- ResidualBindingLayout
 - SetupLayout
 - RuntimeLayout
+- FieldRuntimeState
+- ExecutionState
+- SourceRuntimeState
+- ResidualPlan
+- SourcePlan
+- build_residual_plan
 - build_profile_layout
 - build_profile_names
 - build_profile_index
@@ -22,9 +29,18 @@ Notes:
 
 from veqpy.operator.codec import decode_packed_blocks
 from veqpy.operator.layout import build_profile_index, build_profile_layout, build_profile_names
-from veqpy.operator.layouts import RuntimeLayout, SetupLayout, StaticLayout
+from veqpy.operator.layouts import (
+    ExecutionState,
+    FieldRuntimeState,
+    ResidualBindingLayout,
+    RuntimeLayout,
+    SetupLayout,
+    SourceRuntimeState,
+    StaticLayout,
+)
 from veqpy.operator.operator import Operator
 from veqpy.operator.operator_case import OperatorCase
+from veqpy.operator.plans import ResidualPlan, SourcePlan, build_residual_plan
 
 __all__ = [
     "build_profile_layout",
@@ -34,6 +50,13 @@ __all__ = [
     "Operator",
     "OperatorCase",
     "StaticLayout",
+    "ResidualBindingLayout",
     "SetupLayout",
     "RuntimeLayout",
+    "FieldRuntimeState",
+    "ExecutionState",
+    "SourceRuntimeState",
+    "ResidualPlan",
+    "SourcePlan",
+    "build_residual_plan",
 ]

@@ -1,0 +1,219 @@
+"""
+Module: operator.runtime_allocation
+
+Role:
+- 收敛 operator runtime/state 的一次性分配逻辑.
+- 避免 operator.py 直接承载大块 slab/state 初始化细节.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Callable
+
+import numpy as np
+
+from veqpy.model import Geometry, Grid, Profile
+from veqpy.operator.layouts import FieldRuntimeState, RuntimeLayout, SourceRuntimeState, StaticLayout
+
+
+@dataclass(slots=True)
+class RuntimeAllocationBundle:
+    geometry: Geometry
+    geometry_surface_slab: np.ndarray
+    geometry_radial_slab: np.ndarray
+    profiles_by_name: dict[str, Profile]
+    field_runtime_state: FieldRuntimeState
+    source_vector_slab: np.ndarray
+    source_runtime_state: SourceRuntimeState
+    active_profile_slab: np.ndarray
+    active_u_fields: np.ndarray
+    active_rp_fields: np.ndarray
+    active_env_fields: np.ndarray
+    active_offsets: np.ndarray
+    active_scales: np.ndarray
+    active_lengths: np.ndarray
+    active_coeff_index_rows: np.ndarray
+    family_field_slab: np.ndarray
+    c_family_fields: np.ndarray
+    s_family_fields: np.ndarray
+    c_family_base_fields: np.ndarray
+    s_family_base_fields: np.ndarray
+    active_slot_by_profile_id: np.ndarray
+    c_family_source_slots: np.ndarray
+    s_family_source_slots: np.ndarray
+    runtime_layout: RuntimeLayout
+
+
+def allocate_runtime_state(
+    *,
+    grid: Grid,
+    static_layout: StaticLayout,
+    profile_names: tuple[str, ...],
+    profile_index: dict[str, int],
+    active_profile_ids: np.ndarray,
+    profile_L: np.ndarray,
+    x_size: int,
+    make_profile: Callable[[str], Profile],
+) -> RuntimeAllocationBundle:
+    nr = static_layout.Nr
+    nt = static_layout.Nt
+    n_active = int(active_profile_ids.size)
+    max_active_len = 0
+    if n_active > 0:
+        max_active_len = max(int(profile_L[int(p)]) + 1 for p in active_profile_ids)
+
+    geometry = Geometry(grid=grid)
+    geometry_surface_slab = np.empty((35, nr, nt), dtype=np.float64)
+    geometry_radial_slab = np.empty((5, nr), dtype=np.float64)
+    object.__setattr__(geometry, "tb_fields", geometry_surface_slab[0:8])
+    object.__setattr__(geometry, "R_fields", geometry_surface_slab[8:14])
+    object.__setattr__(geometry, "Z_fields", geometry_surface_slab[14:20])
+    object.__setattr__(geometry, "J_fields", geometry_surface_slab[20:28])
+    object.__setattr__(geometry, "g_fields", geometry_surface_slab[28:35])
+    object.__setattr__(geometry, "S_r", geometry_radial_slab[0])
+    object.__setattr__(geometry, "V_r", geometry_radial_slab[1])
+    object.__setattr__(geometry, "Kn", geometry_radial_slab[2])
+    object.__setattr__(geometry, "Kn_r", geometry_radial_slab[3])
+    object.__setattr__(geometry, "Ln_r", geometry_radial_slab[4])
+
+    profiles_by_name: dict[str, Profile] = {}
+    for name in profile_names:
+        profiles_by_name[name] = make_profile(name)
+
+    residual_fields = np.zeros((3, nr, nt), dtype=np.float64)
+    root_fields = np.empty((5, nr), dtype=np.float64)
+    field_runtime_state = FieldRuntimeState(
+        residual_fields=residual_fields,
+        root_fields=root_fields,
+        packed_residual=np.empty(x_size, dtype=np.float64),
+        psin_R=residual_fields[0],
+        psin_Z=residual_fields[1],
+        G=residual_fields[2],
+        psin=root_fields[0],
+        psin_r=root_fields[1],
+        psin_rr=root_fields[2],
+        FFn_psin=root_fields[3],
+        Pn_psin=root_fields[4],
+    )
+
+    source_vector_slab = np.empty((8, nr), dtype=np.float64)
+    source_runtime_state = SourceRuntimeState(
+        cache_key=None,
+        barycentric_weights=np.empty(0, dtype=np.float64),
+        fixed_remap_matrix=np.empty((0, 0), dtype=np.float64),
+        materialized_heat_input=source_vector_slab[0],
+        materialized_current_input=source_vector_slab[1],
+        psin_query=source_vector_slab[2],
+        parameter_query=source_vector_slab[3],
+        projection_query=source_vector_slab[4],
+        heat_projection_fit_matrix=np.empty((0, 0), dtype=np.float64),
+        current_projection_fit_matrix=np.empty((0, 0), dtype=np.float64),
+        heat_projection_coeff=np.empty(0, dtype=np.float64),
+        current_projection_coeff=np.empty(0, dtype=np.float64),
+        endpoint_blend=np.linspace(0.0, 1.0, nr, dtype=np.float64),
+        target_root_fields=source_vector_slab[5:8],
+        scratch_1d=np.empty((6, nr), dtype=np.float64),
+    )
+
+    active_profile_slab = np.empty((3, n_active, 3, nr), dtype=np.float64)
+    active_u_fields = active_profile_slab[0]
+    active_rp_fields = active_profile_slab[1]
+    active_env_fields = active_profile_slab[2]
+    active_offsets = np.empty(n_active, dtype=np.float64)
+    active_scales = np.empty(n_active, dtype=np.float64)
+    active_lengths = np.empty(n_active, dtype=np.int64)
+    active_coeff_index_rows = np.full((n_active, max_active_len), -1, dtype=np.int64)
+
+    family_field_slab = np.empty((4, grid.M_max + 1, 3, nr), dtype=np.float64)
+    c_family_fields = family_field_slab[0]
+    s_family_fields = family_field_slab[1]
+    c_family_base_fields = family_field_slab[2]
+    s_family_base_fields = family_field_slab[3]
+    s_family_fields.fill(0.0)
+    c_family_base_fields.fill(0.0)
+    s_family_base_fields.fill(0.0)
+
+    active_slot_by_profile_id = np.full(len(profile_names), -1, dtype=np.int64)
+    for slot, p in enumerate(active_profile_ids):
+        active_slot_by_profile_id[int(p)] = int(slot)
+
+    c_family_source_slots = np.full(grid.M_max + 1, -1, dtype=np.int64)
+    s_family_source_slots = np.full(grid.M_max + 1, -1, dtype=np.int64)
+    for order in range(grid.M_max + 1):
+        c_name = f"c{order}"
+        if c_name in profile_index:
+            c_family_source_slots[order] = active_slot_by_profile_id[profile_index[c_name]]
+        if order == 0:
+            continue
+        s_name = f"s{order}"
+        if s_name in profile_index:
+            s_family_source_slots[order] = active_slot_by_profile_id[profile_index[s_name]]
+
+    runtime_layout = RuntimeLayout(
+        geometry=geometry,
+        profiles_by_name=profiles_by_name,
+        active_profile_slab=active_profile_slab,
+        family_field_slab=family_field_slab,
+        source_vector_slab=source_vector_slab,
+        geometry_surface_slab=geometry_surface_slab,
+        geometry_radial_slab=geometry_radial_slab,
+        residual_fields=field_runtime_state.residual_fields,
+        root_fields=field_runtime_state.root_fields,
+        packed_residual=field_runtime_state.packed_residual,
+        active_u_fields=active_u_fields,
+        active_rp_fields=active_rp_fields,
+        active_env_fields=active_env_fields,
+        active_offsets=active_offsets,
+        active_scales=active_scales,
+        active_lengths=active_lengths,
+        active_coeff_index_rows=active_coeff_index_rows,
+        c_family_fields=c_family_fields,
+        s_family_fields=s_family_fields,
+        c_family_base_fields=c_family_base_fields,
+        s_family_base_fields=s_family_base_fields,
+        active_slot_by_profile_id=active_slot_by_profile_id,
+        c_family_source_slots=c_family_source_slots,
+        s_family_source_slots=s_family_source_slots,
+        source_barycentric_weights=source_runtime_state.barycentric_weights,
+        source_fixed_remap_matrix=source_runtime_state.fixed_remap_matrix,
+        source_psin_query=source_runtime_state.psin_query,
+        source_parameter_query=source_runtime_state.parameter_query,
+        source_heat_projection_fit_matrix=source_runtime_state.heat_projection_fit_matrix,
+        source_current_projection_fit_matrix=source_runtime_state.current_projection_fit_matrix,
+        source_heat_projection_coeff=source_runtime_state.heat_projection_coeff,
+        source_current_projection_coeff=source_runtime_state.current_projection_coeff,
+        source_projection_query=source_runtime_state.projection_query,
+        source_endpoint_blend=source_runtime_state.endpoint_blend,
+        materialized_heat_input=source_runtime_state.materialized_heat_input,
+        materialized_current_input=source_runtime_state.materialized_current_input,
+        source_scratch_1d=source_runtime_state.scratch_1d,
+        source_target_root_fields=source_runtime_state.target_root_fields,
+    )
+
+    return RuntimeAllocationBundle(
+        geometry=geometry,
+        geometry_surface_slab=geometry_surface_slab,
+        geometry_radial_slab=geometry_radial_slab,
+        profiles_by_name=profiles_by_name,
+        field_runtime_state=field_runtime_state,
+        source_vector_slab=source_vector_slab,
+        source_runtime_state=source_runtime_state,
+        active_profile_slab=active_profile_slab,
+        active_u_fields=active_u_fields,
+        active_rp_fields=active_rp_fields,
+        active_env_fields=active_env_fields,
+        active_offsets=active_offsets,
+        active_scales=active_scales,
+        active_lengths=active_lengths,
+        active_coeff_index_rows=active_coeff_index_rows,
+        family_field_slab=family_field_slab,
+        c_family_fields=c_family_fields,
+        s_family_fields=s_family_fields,
+        c_family_base_fields=c_family_base_fields,
+        s_family_base_fields=s_family_base_fields,
+        active_slot_by_profile_id=active_slot_by_profile_id,
+        c_family_source_slots=c_family_source_slots,
+        s_family_source_slots=s_family_source_slots,
+        runtime_layout=runtime_layout,
+    )

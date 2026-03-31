@@ -7,8 +7,12 @@ Role:
 
 Public API:
 - StaticLayout
+- ResidualBindingLayout
 - SetupLayout
 - RuntimeLayout
+- FieldRuntimeState
+- ExecutionState
+- SourceRuntimeState
 
 Notes:
 - 这里定义的是 layout ownership 和生命周期边界.
@@ -18,7 +22,7 @@ Notes:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 
@@ -33,7 +37,7 @@ class StaticLayout:
 
     Nr: int
     Nt: int
-    K_max: int
+    M_max: int
     T_fields: np.ndarray
     rho: np.ndarray
     theta: np.ndarray
@@ -52,17 +56,11 @@ class StaticLayout:
 
 @dataclass(frozen=True, slots=True)
 class SetupLayout:
-    """绑定到当前 operator case/setup 的拓扑布局."""
+    """绑定到当前 operator case/setup 的拓扑与索引布局."""
 
     case_name: str
     coordinate: str
     nodes: str
-    source_strategy: str
-    source_parameterization: str
-    source_n_src: int
-    fixed_point_use_projected_finalize: bool
-    fixed_point_projection_domain_code: int
-    fixed_point_endpoint_policy_code: int
     prefix_profile_names: tuple[str, ...]
     shape_profile_names: tuple[str, ...]
     profile_names: tuple[str, ...]
@@ -75,6 +73,15 @@ class SetupLayout:
     active_profile_mask: np.ndarray
     active_profile_ids: np.ndarray
     x_size: int
+
+
+@dataclass(frozen=True, slots=True)
+class ResidualBindingLayout:
+    """绑定到 residual binder 的只读 metadata."""
+
+    active_profile_names: tuple[str, ...]
+    active_residual_block_codes: np.ndarray
+    active_residual_block_orders: np.ndarray
 
 
 @dataclass(slots=True)
@@ -119,3 +126,57 @@ class RuntimeLayout:
     materialized_current_input: np.ndarray
     source_scratch_1d: np.ndarray
     source_target_root_fields: np.ndarray
+
+
+@dataclass(slots=True)
+class FieldRuntimeState:
+    """绑定到 root/residual 场缓存的可变 runtime 状态."""
+
+    residual_fields: np.ndarray
+    root_fields: np.ndarray
+    packed_residual: np.ndarray
+    psin_R: np.ndarray
+    psin_Z: np.ndarray
+    G: np.ndarray
+    psin: np.ndarray
+    psin_r: np.ndarray
+    psin_rr: np.ndarray
+    FFn_psin: np.ndarray
+    Pn_psin: np.ndarray
+
+
+@dataclass(slots=True)
+class ExecutionState:
+    """绑定到 operator 执行策略的可变 runner/state 容器."""
+
+    profile_stage_runner: Callable
+    geometry_stage_runner: Callable
+    source_stage_runner: Callable
+    residual_pack_stage_runner: Callable
+    residual_full_stage_runner: Callable
+    residual_pack_runner: Callable
+    residual_stage_runner: Callable
+    fused_residual_runner: Callable
+    fused_alpha_state: np.ndarray
+    supports_fused_residual: bool
+
+
+@dataclass(slots=True)
+class SourceRuntimeState:
+    """绑定到 source materialization/remap 的可变 runtime 状态."""
+
+    cache_key: tuple[str, str, int] | None
+    barycentric_weights: np.ndarray
+    fixed_remap_matrix: np.ndarray
+    psin_query: np.ndarray
+    parameter_query: np.ndarray
+    heat_projection_fit_matrix: np.ndarray
+    current_projection_fit_matrix: np.ndarray
+    heat_projection_coeff: np.ndarray
+    current_projection_coeff: np.ndarray
+    projection_query: np.ndarray
+    endpoint_blend: np.ndarray
+    materialized_heat_input: np.ndarray
+    materialized_current_input: np.ndarray
+    scratch_1d: np.ndarray
+    target_root_fields: np.ndarray

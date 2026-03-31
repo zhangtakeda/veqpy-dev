@@ -210,19 +210,19 @@ class Equilibrium(Reactive, Serial):
     def geometry(self) -> Geometry:
         """从当前快照 root fields 重新物化 Geometry."""
         geometry = Geometry(grid=self.grid)
-        c_fields = np.zeros((self.grid.K_max + 1, 3, self.grid.Nr), dtype=np.float64)
-        s_fields = np.zeros((self.grid.K_max + 1, 3, self.grid.Nr), dtype=np.float64)
+        c_fields = np.zeros((self.grid.M_max + 1, 3, self.grid.Nr), dtype=np.float64)
+        s_fields = np.zeros((self.grid.M_max + 1, 3, self.grid.Nr), dtype=np.float64)
         c_active_order = 0
         s_active_order = 0
         for name, profile in _shape_profiles(self).items():
             if name.startswith("c") and name[1:].isdigit():
                 order = int(name[1:])
-                if order <= self.grid.K_max:
+                if order <= self.grid.M_max:
                     c_fields[order] = profile.u_fields
                     c_active_order = max(c_active_order, order)
             elif name.startswith("s") and name[1:].isdigit():
                 order = int(name[1:])
-                if order <= self.grid.K_max:
+                if order <= self.grid.M_max:
                     s_fields[order] = profile.u_fields
                     s_active_order = max(s_active_order, order)
         geometry.update(
@@ -667,7 +667,7 @@ def plot_comparison(
         Nt=32,
         scheme="uniform",
         L_max=max(reference.grid.L_max, other.grid.L_max),
-        K_max=max(reference.grid.K_max, other.grid.K_max),
+        M_max=max(reference.grid.M_max, other.grid.M_max),
     )
     ref_surface = ref_plot.resample(
         target_grid=surface_grid,
@@ -787,7 +787,7 @@ def _build_resampled_equilibrium(
         return equilibrium
 
     source_grid = equilibrium.grid
-    plot_grid = target_grid or Grid(Nr=64, Nt=32, scheme="uniform", L_max=source_grid.L_max, K_max=source_grid.K_max)
+    plot_grid = target_grid or Grid(Nr=64, Nt=32, scheme="uniform", L_max=source_grid.L_max, M_max=source_grid.M_max)
     degree = min(source_grid.Nr - 1, 16) if profile_degree is None else int(profile_degree)
 
     def resample_vector(y_src: np.ndarray) -> np.ndarray:
