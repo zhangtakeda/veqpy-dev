@@ -1244,10 +1244,10 @@ def _render_panel_f_safety(ax: plt.Axes, data: dict):
     rho = data["rho"]
     if len(rho) < 32:
         ax.plot(data["rho"], data["q"], "-o", color=BLUE, label=r"$q$")
-        ax.plot(data["rho"], data["s"], "-o", color=ORANGE, label=r"$s$")
+        ax.plot(data["rho"], data["s"], "--o", color=ORANGE, label=r"$s$")
     else:
         ax.plot(data["rho"], data["q"], "-", color=BLUE, label=r"$q$")
-        ax.plot(data["rho"], data["s"], "-", color=ORANGE, label=r"$s$")
+        ax.plot(data["rho"], data["s"], "--", color=ORANGE, label=r"$s$")
     ax.set(xlabel=r"$\rho$", ylabel="Profile")
     ax.legend(loc="upper left")
     ax.grid(True)

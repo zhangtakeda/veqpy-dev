@@ -2006,15 +2006,20 @@ def update_fourier_family_fields(
     s_active_order: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     if out_c_fields.ndim != 3 or out_s_fields.ndim != 3:
-        raise ValueError(f"Expected out_c_fields/out_s_fields to be 3D, got {out_c_fields.shape} and {out_s_fields.shape}")
+        raise ValueError(
+            f"Expected out_c_fields/out_s_fields to be 3D, got {out_c_fields.shape} and {out_s_fields.shape}"
+        )
     if base_c_fields.shape != out_c_fields.shape or base_s_fields.shape != out_s_fields.shape:
         raise ValueError(
-            f"Expected base_c_fields/base_s_fields to match output shapes, got {base_c_fields.shape} and {base_s_fields.shape}"
+            "Expected base_c_fields/base_s_fields to match output shapes, "
+            f"got {base_c_fields.shape} and {base_s_fields.shape}"
         )
     if active_u_fields.ndim != 3:
         raise ValueError(f"Expected active_u_fields to be 3D, got {active_u_fields.shape}")
     if c_source_slots.ndim != 1 or s_source_slots.ndim != 1:
-        raise ValueError(f"Expected c_source_slots/s_source_slots to be 1D, got {c_source_slots.shape} and {s_source_slots.shape}")
+        raise ValueError(
+            f"Expected c_source_slots/s_source_slots to be 1D, got {c_source_slots.shape} and {s_source_slots.shape}"
+        )
 
     _update_fourier_family_fields_impl(
         out_c_fields,

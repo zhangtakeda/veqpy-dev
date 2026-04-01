@@ -660,8 +660,6 @@ def bind_fused_fixed_point_psin_residual_runner(
     materialized_heat_input = runtime_layout.materialized_heat_input
     materialized_current_input = runtime_layout.materialized_current_input
     source_scratch_1d = runtime_layout.source_scratch_1d
-    source_barycentric_weights = runtime_layout.source_barycentric_weights
-    source_fixed_remap_matrix = runtime_layout.source_fixed_remap_matrix
     heat_projection_coeff = runtime_layout.source_heat_projection_coeff
     current_projection_coeff = runtime_layout.source_current_projection_coeff
     endpoint_blend = runtime_layout.source_endpoint_blend

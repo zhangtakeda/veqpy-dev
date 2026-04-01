@@ -1,16 +1,17 @@
 import importlib.util
-import numpy as np
-from pathlib import Path
 import sys
+from pathlib import Path
+
+import numpy as np
 
 from veqpy.engine import PSIN_COORDINATE, RHO_COORDINATE
 from veqpy.engine.numba_geometry import update_geometry as numba_update_geometry
-from veqpy.engine.numba_source import build_source_remap_cache as build_numba_source_remap_cache
 from veqpy.engine.numba_residual import bind_residual_runner as bind_numba_residual_runner
+from veqpy.engine.numba_source import build_source_remap_cache as build_numba_source_remap_cache
 from veqpy.engine.numba_source import resolve_source_inputs as numba_resolve_source_inputs
 from veqpy.engine.numpy_geometry import update_geometry as numpy_update_geometry
-from veqpy.engine.numpy_source import build_source_remap_cache as build_numpy_source_remap_cache
 from veqpy.engine.numpy_residual import bind_residual_runner as bind_numpy_residual_runner
+from veqpy.engine.numpy_source import build_source_remap_cache as build_numpy_source_remap_cache
 from veqpy.engine.numpy_source import resolve_source_inputs as numpy_resolve_source_inputs
 from veqpy.model import Boundary, Geometry, Grid
 from veqpy.operator import Operator
@@ -288,7 +289,7 @@ def test_operator_runtime_propagates_high_order_geometry_and_residual():
     residual_operator.psin_Z[:] = rng.normal(size=residual_operator.psin_Z.shape)
     residual_operator.geometry.tb_fields[7] = rng.normal(size=residual_operator.geometry.sin_tb.shape)
 
-    residual = residual_operator._assemble_residual()
+    residual = residual_operator.execution_state.residual_pack_stage_runner()
 
     assert residual.shape == (residual_operator.x_size,)
     assert np.all(np.isfinite(residual))

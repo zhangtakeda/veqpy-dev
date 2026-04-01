@@ -123,7 +123,12 @@ def refresh_profile_runtime(
         profile = profiles_by_name[name]
         profile.offset = profile_offset_from_case(case, name, profile_offset_specs=profile_offset_specs)
         profile.scale = profile_scale_from_case(case, name, profile_scale_specs=profile_scale_specs)
-        profile.coeff = profile_coeff_from_case(case, p=profile_index[name], profile_L=profile_L, profile_names=profile_names)
+        profile.coeff = profile_coeff_from_case(
+            case,
+            p=profile_index[name],
+            profile_L=profile_L,
+            profile_names=profile_names,
+        )
         profile._prepare_runtime_cache(grid)
         profile.update()
     refresh_fourier_family_base_fields()

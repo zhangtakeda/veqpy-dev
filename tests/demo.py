@@ -164,13 +164,13 @@ FFn_r, Pn_r = _build_uniform_rho_inputs()
 
 LOWER_CASE = OperatorCase(
     name="PF",
+    coordinate="rho",
+    nodes="uniform",
+    Ip=3.0e6,
     profile_coeffs=LOWER_COEFFS,
     boundary=BOUNDARY,
     heat_input=Pn_r,
     current_input=FFn_r,
-    coordinate="rho",
-    nodes="uniform",
-    Ip=3.0e6,
 )
 
 HIGHER_CASE = OperatorCase(

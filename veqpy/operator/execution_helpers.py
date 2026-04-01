@@ -2,8 +2,8 @@
 Module: operator.execution_helpers
 
 Role:
-- 承载 operator 执行阶段的轻量装配 helper.
-- 避免 operator.py 混入 fused runner 绑定与 equilibrium snapshot 细节.
+- 承载 operator 到 Equilibrium snapshot 的共享 helper.
+- 避免 operator.py 混入 packed-state 解码与 profile 拷贝细节.
 """
 
 from __future__ import annotations
@@ -17,40 +17,7 @@ from veqpy.operator.codec import decode_packed_blocks
 
 if TYPE_CHECKING:
     from veqpy.model.grid import Grid
-    from veqpy.operator.layouts import ResidualBindingLayout, RuntimeLayout, SetupLayout, StaticLayout
     from veqpy.operator.operator_case import OperatorCase
-    from veqpy.operator.plans import ResidualPlan
-
-
-def build_fused_common_kwargs(
-    *,
-    residual_plan: "ResidualPlan",
-    static_layout: "StaticLayout",
-    residual_binding_layout: "ResidualBindingLayout",
-    setup_layout: "SetupLayout",
-    runtime_layout: "RuntimeLayout",
-    alpha_state: np.ndarray,
-    c_active_order: int,
-    s_active_order: int,
-    a: float,
-    R0: float,
-    Z0: float,
-    B0: float,
-) -> dict[str, object]:
-    return dict(
-        residual_plan=residual_plan,
-        static_layout=static_layout,
-        residual_binding_layout=residual_binding_layout,
-        setup_layout=setup_layout,
-        runtime_layout=runtime_layout,
-        alpha_state=alpha_state,
-        c_active_order=int(c_active_order),
-        s_active_order=int(s_active_order),
-        a=float(a),
-        R0=float(R0),
-        Z0=float(Z0),
-        B0=float(B0),
-    )
 
 
 def snapshot_equilibrium_from_runtime(

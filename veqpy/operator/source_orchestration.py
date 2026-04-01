@@ -13,20 +13,21 @@ from typing import Any, Callable
 import numpy as np
 
 from veqpy.engine import materialize_profile_owned_psin_source, update_fixed_point_psin_query
-from veqpy.operator.source_runtime import normalize_psin_query_inplace
+from veqpy.operator.source_runtime import materialize_source_inputs, normalize_psin_query_inplace
 
 
 def build_bound_source_stage_runner(operator_core: Any) -> Callable:
     source_plan = operator_core.source_plan
+    source_runtime_state = operator_core.source_runtime_state
     psin = operator_core.psin
     psin_r = operator_core.psin_r
     psin_rr = operator_core.psin_rr
     FFn_psin = operator_core.FFn_psin
     Pn_psin = operator_core.Pn_psin
-    materialized_heat_input = operator_core.materialized_heat_input
-    materialized_current_input = operator_core.materialized_current_input
-    source_scratch_1d = operator_core.source_scratch_1d
-    source_target_root_fields = operator_core.source_target_root_fields
+    materialized_heat_input = source_runtime_state.materialized_heat_input
+    materialized_current_input = source_runtime_state.materialized_current_input
+    source_scratch_1d = source_runtime_state.scratch_1d
+    source_target_root_fields = source_runtime_state.target_root_fields
     grid = operator_core.grid
     geometry = operator_core.geometry
     F_profile_u = operator_core.F_profile.u
@@ -37,8 +38,8 @@ def build_bound_source_stage_runner(operator_core: Any) -> Callable:
 
     if source_plan.strategy == "profile_owned_psin":
         if source_plan.is_psin_coordinate and not source_plan.is_grid_nodes:
-            source_psin_query = operator_core.source_psin_query
-            source_parameter_query = operator_core.source_parameter_query
+            source_psin_query = source_runtime_state.psin_query
+            source_parameter_query = source_runtime_state.parameter_query
             psin_profile_fields = operator_core.psin_profile.u_fields
             heat_input = source_plan.heat_input
             current_input = source_plan.current_input
@@ -90,12 +91,16 @@ def build_bound_source_stage_runner(operator_core: Any) -> Callable:
 
             return runner
 
-        source_psin_query = operator_core.source_psin_query
+        source_psin_query = source_runtime_state.psin_query
 
         def runner() -> tuple[float, float]:
             copy_psin_profile_to_root_fields(operator_core)
             np.copyto(source_psin_query, psin)
-            operator_core._materialize_source_inputs(source_psin_query)
+            materialize_source_inputs(
+                source_plan=source_plan,
+                source_runtime_state=source_runtime_state,
+                psin_query=source_psin_query,
+            )
             return _run_source_kernel(
                 operator_core,
                 source_target_root_fields[0],
@@ -173,67 +178,51 @@ def copy_psin_profile_to_root_fields(operator_core: Any) -> None:
     np.copyto(operator_core.psin_rr, operator_core.psin_profile.u_rr)
 
 
-def run_profile_owned_psin_source(operator_core: Any) -> tuple[float, float]:
-    source_plan = operator_core.source_plan
-    if source_plan.is_psin_coordinate and not source_plan.is_grid_nodes:
-        if operator_core.psin_profile.u_fields is None:
-            raise RuntimeError("psin_profile runtime fields are not initialized")
-        materialize_profile_owned_psin_source(
-            operator_core.psin,
-            operator_core.psin_r,
-            operator_core.psin_rr,
-            operator_core.source_psin_query,
-            operator_core.source_parameter_query,
-            operator_core.materialized_heat_input,
-            operator_core.materialized_current_input,
-            operator_core.psin_profile.u_fields,
-            source_plan.heat_input,
-            source_plan.current_input,
-            source_plan.parameterization_code,
-        )
-    else:
-        copy_psin_profile_to_root_fields(operator_core)
-        np.copyto(operator_core.source_psin_query, operator_core.psin)
-        operator_core._materialize_source_inputs(operator_core.source_psin_query)
-    return _run_source_kernel_from_operator(operator_core)
-
-
 def run_psin_source_fixed_point(operator_core: Any) -> tuple[float, float]:
     source_plan = operator_core.source_plan
-    if (not source_plan.allow_query_warmstart) or operator_core.source_psin_query[0] < 0.0:
-        normalize_psin_query_inplace(operator_core.source_psin_query, operator_core.psin_profile.u)
+    source_runtime_state = operator_core.source_runtime_state
+    if (not source_plan.allow_query_warmstart) or source_runtime_state.psin_query[0] < 0.0:
+        normalize_psin_query_inplace(source_runtime_state.psin_query, operator_core.psin_profile.u)
     alpha1 = float("nan")
     alpha2 = float("nan")
     for _ in range(8):
-        operator_core._materialize_source_inputs(
-            operator_core.source_psin_query,
+        materialize_source_inputs(
+            source_plan=source_plan,
+            source_runtime_state=source_runtime_state,
+            psin_query=source_runtime_state.psin_query,
             enable_projection=not source_plan.use_projected_finalize,
         )
         alpha1, alpha2 = _run_source_kernel_from_operator(operator_core)
-        if update_fixed_point_psin_query(operator_core.source_psin_query, operator_core.psin, 1e-10):
+        if update_fixed_point_psin_query(source_runtime_state.psin_query, operator_core.psin, 1e-10):
             break
     if source_plan.use_projected_finalize:
-        np.copyto(operator_core.source_psin_query, operator_core.psin)
-        operator_core._materialize_source_inputs(operator_core.source_psin_query, enable_projection=True)
+        np.copyto(source_runtime_state.psin_query, operator_core.psin)
+        materialize_source_inputs(
+            source_plan=source_plan,
+            source_runtime_state=source_runtime_state,
+            psin_query=source_runtime_state.psin_query,
+            enable_projection=True,
+        )
         alpha1, alpha2 = _run_source_kernel_from_operator(operator_core)
     return alpha1, alpha2
 
 
 def invalidate_source_state(operator_core: Any) -> None:
-    if operator_core.source_strategy == "fixed_point_psin":
-        operator_core.source_psin_query.fill(-1.0)
+    if operator_core.source_plan.strategy == "fixed_point_psin":
+        operator_core.source_runtime_state.psin_query.fill(-1.0)
 
 
 def _run_source_kernel_from_operator(operator_core: Any) -> tuple[float, float]:
+    source_runtime_state = operator_core.source_runtime_state
     return _run_source_kernel(
         operator_core,
-        operator_core.source_target_root_fields[0],
-        operator_core.source_target_root_fields[1],
-        operator_core.source_target_root_fields[2],
+        source_runtime_state.target_root_fields[0],
+        source_runtime_state.target_root_fields[1],
+        source_runtime_state.target_root_fields[2],
         operator_core.FFn_psin,
         operator_core.Pn_psin,
-        operator_core.materialized_heat_input,
-        operator_core.materialized_current_input,
+        source_runtime_state.materialized_heat_input,
+        source_runtime_state.materialized_current_input,
         float(operator_core.case.R0),
         float(operator_core.case.B0),
         operator_core.grid.weights,
@@ -250,7 +239,7 @@ def _run_source_kernel_from_operator(operator_core: Any) -> tuple[float, float]:
         operator_core.F_profile.u,
         float(operator_core.case.Ip),
         float(operator_core.case.beta),
-        operator_core.source_scratch_1d,
+        source_runtime_state.scratch_1d,
     )
 
 

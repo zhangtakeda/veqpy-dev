@@ -123,8 +123,6 @@ def build_profile_layout(
     profile_count = len(profile_names)
     profile_L = np.full(profile_count, -1, dtype=np.int64)
 
-    shape_profile_names = tuple(name for name in profile_names if name not in prefix_profile_names)
-
     unknown = set(profile_coeffs) - set(profile_index)
     if unknown:
         raise KeyError(f"Unknown profile names: {sorted(unknown)}")

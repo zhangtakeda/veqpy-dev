@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import json
 import os
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from time import perf_counter
-from typing import Callable
 
 import numpy as np
 
@@ -21,9 +21,9 @@ HOTSPOT_TOPK = int(os.environ.get("VEQPY_HOTSPOT_TOPK", "10"))
 
 STAGE_NAMES = ("stage_a", "stage_b", "stage_c", "stage_d")
 
-import veqpy.model.geometry as geometry_module
-import veqpy.operator.operator as operator_module
-from veqpy.solver import Solver
+geometry_module = importlib.import_module("veqpy.model.geometry")
+operator_module = importlib.import_module("veqpy.operator.operator")
+Solver = importlib.import_module("veqpy.solver").Solver
 
 
 @dataclass(slots=True)
@@ -532,7 +532,7 @@ def _write_reports(results: list[HotspotCaseResult], *, analyzed_case_count: int
         f"residual_repeat_count : {RESIDUAL_REPEAT_COUNT}",
         f"analyzed_case_count   : {analyzed_case_count}",
         f"saved_case_count      : {len(results)}",
-        f"selection_metric      : single_residual_total_non_engine_share",
+        "selection_metric      : single_residual_total_non_engine_share",
         "",
     ]
     for result in results:

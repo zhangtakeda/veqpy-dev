@@ -38,9 +38,9 @@ if BACKEND not in ("numpy", "numba"):
 if BACKEND == "numpy":
     from veqpy.engine.numpy_geometry import update_geometry
     from veqpy.engine.numpy_operator import (
-        bind_fused_residual_runner,
         bind_fused_fixed_point_psin_residual_runner,
         bind_fused_profile_owned_psin_residual_runner,
+        bind_fused_residual_runner,
         bind_fused_single_pass_residual_runner,
     )
     from veqpy.engine.numpy_profile import update_profile, update_profiles_packed_bulk
@@ -60,21 +60,21 @@ if BACKEND == "numpy":
         full_differentiation,
         full_integration,
         materialize_profile_owned_psin_source,
-        quadrature,
         materialize_projected_source_inputs,
+        quadrature,
         resolve_source_inputs,
         resolve_source_scratch_kernel,
         theta_reduction,
-        update_fourier_family_fields,
         update_fixed_point_psin_query,
+        update_fourier_family_fields,
         validate_operator,
     )
 elif BACKEND == "numba":
     from veqpy.engine.numba_geometry import update_geometry
     from veqpy.engine.numba_operator import (
-        bind_fused_residual_runner,
         bind_fused_fixed_point_psin_residual_runner,
         bind_fused_profile_owned_psin_residual_runner,
+        bind_fused_residual_runner,
         bind_fused_single_pass_residual_runner,
     )
     from veqpy.engine.numba_profile import update_profile, update_profiles_packed_bulk
@@ -94,13 +94,13 @@ elif BACKEND == "numba":
         full_differentiation,
         full_integration,
         materialize_profile_owned_psin_source,
-        quadrature,
         materialize_projected_source_inputs,
+        quadrature,
         resolve_source_inputs,
         resolve_source_scratch_kernel,
         theta_reduction,
-        update_fourier_family_fields,
         update_fixed_point_psin_query,
+        update_fourier_family_fields,
         validate_operator,
     )
 

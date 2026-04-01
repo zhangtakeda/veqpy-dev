@@ -72,8 +72,6 @@ def main() -> None:
     surface_rhos = np.linspace(1.0 / NR, 1.0, NR)
     fitted_surfaces = [close_path(build_boundary_curve(boundary, rho=rho)) for rho in surface_rhos]
 
-    original_closed = close_path(np.asarray(geqdsk.boundary, dtype=np.float64))
-
     fig = plt.figure(figsize=(6, 3))
     ax = fig.add_subplot(121)
     ax_text = fig.add_subplot(122)

@@ -5,7 +5,8 @@
 *.egg-info
 /veqpy-*
 
-build 
+build
+docs
 tests/demo
 tests/benchmark
 tests/**/*.png

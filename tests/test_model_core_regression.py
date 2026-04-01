@@ -297,13 +297,13 @@ def test_operator_exposes_explicit_layout_and_execution_layers():
     assert operator.runtime_layout.packed_residual is operator.packed_residual
     assert operator.field_runtime_state.root_fields is operator.root_fields
     assert operator.field_runtime_state.residual_fields is operator.residual_fields
-    assert operator.execution_state.fused_alpha_state is operator.fused_alpha_state
-    assert operator.execution_state.fused_residual_runner is operator.fused_residual_runner
-    assert operator.source_runtime_state.psin_query is operator.source_psin_query
-    assert operator.source_runtime_state.materialized_heat_input is operator.materialized_heat_input
+    assert operator.execution_state.fused_alpha_state.shape == (2,)
+    assert callable(operator.execution_state.fused_residual_runner)
+    assert operator.runtime_layout.source_psin_query is operator.source_runtime_state.psin_query
+    assert operator.runtime_layout.materialized_heat_input is operator.source_runtime_state.materialized_heat_input
     assert operator.active_u_fields.base is operator.active_profile_slab
     assert operator.c_family_fields.base is operator.family_field_slab
-    assert operator.source_psin_query.base is operator.source_vector_slab
+    assert operator.source_runtime_state.psin_query.base is operator.source_vector_slab
     assert operator.geometry.tb_fields.base is operator.geometry_surface_slab
     assert operator.geometry.S_r.base is operator.geometry_radial_slab
 
