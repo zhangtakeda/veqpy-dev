@@ -1235,14 +1235,15 @@ def _update_pj2_from_rho_inputs(
     I_tor = np.empty_like(current_input)
 
     if has_Ip:
-        _fill_scaled_product(I_tor, F, integral_val, Ip / (R0 * B0 * integral_val[-1]))
+        _fill_scaled_product(I_tor, F, integral_val, Ip / (F[-1] * integral_val[-1]))
     else:
         _fill_scaled_product(I_tor, F, integral_val, 2.0 * np.pi)
-
+    _enforce_axis_quadratic_itor(I_tor, rho)
     itor_over_kn = np.empty_like(current_input)
     _fill_scaled_ratio(itor_over_kn, I_tor, Kn, MU0 / (2.0 * np.pi))
     alpha2 = quadrature(itor_over_kn, weights)
     _fill_scaled_ratio(out_psin_r, I_tor, Kn, MU0 / (2.0 * np.pi * alpha2))
+    _enforce_axis_linear_psin_r(out_psin_r, rho)
     corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = _maximum_floor(out_psin_r, 1e-10)
@@ -1305,14 +1306,15 @@ def _update_pj2_from_psin_inputs(
     I_tor = np.empty_like(current_input)
 
     if has_Ip:
-        _fill_scaled_product(I_tor, F, integral_val, Ip / (R0 * B0 * integral_val[-1]))
+        _fill_scaled_product(I_tor, F, integral_val, Ip / (F[-1] * integral_val[-1]))
     else:
         _fill_scaled_product(I_tor, F, integral_val, 2.0 * np.pi)
-
+    _enforce_axis_quadratic_itor(I_tor, rho)
     itor_over_kn = np.empty_like(current_input)
     _fill_scaled_ratio(itor_over_kn, I_tor, Kn, MU0 / (2.0 * np.pi))
     alpha2 = quadrature(itor_over_kn, weights)
     _fill_scaled_ratio(out_psin_r, I_tor, Kn, MU0 / (2.0 * np.pi * alpha2))
+    _enforce_axis_linear_psin_r(out_psin_r, rho)
     corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = _maximum_floor(out_psin_r, 1e-10)
@@ -1379,13 +1381,14 @@ def _update_pj2_from_psin_inputs_with_scratch(
     _copy_vector(integral_val, out_psin_r)
 
     if has_Ip:
-        _fill_scaled_product(I_tor, F, integral_val, Ip / (R0 * B0 * integral_val[-1]))
+        _fill_scaled_product(I_tor, F, integral_val, Ip / (F[-1] * integral_val[-1]))
     else:
         _fill_scaled_product(I_tor, F, integral_val, 2.0 * np.pi)
-
+    _enforce_axis_quadratic_itor(I_tor, rho)
     _fill_scaled_ratio(integrand, I_tor, Kn, MU0 / (2.0 * np.pi))
     alpha2 = quadrature(integrand, weights)
     _fill_scaled_vector(out_psin_r, integrand, 1.0 / alpha2)
+    _enforce_axis_linear_psin_r(out_psin_r, rho)
     corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     _maximum_floor_out(psin_r_safe, out_psin_r, 1e-10)

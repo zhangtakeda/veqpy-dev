@@ -15,6 +15,8 @@ import numpy as np
 from veqpy.engine import update_fixed_point_psin_query
 from veqpy.operator.source_runtime import materialize_source_inputs, normalize_psin_query_inplace
 
+FF_R_REGULARIZATION_BOUNDARY_RATIO = 0.05
+
 
 def build_bound_source_stage_runner(operator_core: Any) -> Callable:
     source_plan = operator_core.source_plan
@@ -250,7 +252,7 @@ def _run_source_kernel(
     beta: float,
     source_scratch_1d: np.ndarray,
 ) -> tuple[float, float]:
-    return operator_core._source_runner(
+    alpha1, alpha2 = operator_core._source_runner(
         out_psin,
         out_psin_r,
         out_psin_rr,
@@ -276,3 +278,43 @@ def _run_source_kernel(
         beta,
         source_scratch_1d,
     )
+    _regularize_source_ffn_psin(
+        operator_core,
+        out_psin_r,
+        out_FFn_psin,
+        alpha1,
+        alpha2,
+        source_scratch_1d,
+    )
+    return alpha1, alpha2
+
+
+def _regularize_source_ffn_psin(
+    operator_core: Any,
+    out_psin_r: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    alpha1: float,
+    alpha2: float,
+    scratch: np.ndarray,
+) -> None:
+    scratch_ff_r = scratch[0] if scratch.ndim == 2 else scratch
+    scale = float(alpha1) * float(alpha2)
+    if (not np.isfinite(scale)) or abs(scale) <= 1.0e-14:
+        return
+
+    np.multiply(out_FFn_psin, out_psin_r, out=scratch_ff_r)
+    scratch_ff_r *= scale
+
+    max_abs = float(np.max(np.abs(scratch_ff_r)))
+    if max_abs <= 1.0e-14:
+        return
+
+    boundary_ratio = abs(float(scratch_ff_r[-1])) / max_abs
+    blend_weight = float(np.clip(boundary_ratio / FF_R_REGULARIZATION_BOUNDARY_RATIO, 0.0, 1.0))
+    if blend_weight <= 1.0e-12:
+        return
+
+    operator_core.grid.regularize_ff_r(scratch_ff_r, out=out_FFn_psin)
+    out_FFn_psin *= blend_weight
+    out_FFn_psin += (1.0 - blend_weight) * scratch_ff_r
+    np.divide(out_FFn_psin, scale * np.maximum(out_psin_r, 1.0e-10), out=out_FFn_psin)

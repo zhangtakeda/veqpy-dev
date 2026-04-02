@@ -63,6 +63,7 @@ class Grid(Serial):
     corrected_integration_matrix_p2: np.ndarray = field(init=False, default=None)
     corrected_linear_derivative_matrix: np.ndarray = field(init=False, default=None)
     corrected_even_derivative_matrix: np.ndarray = field(init=False, default=None)
+    ff_r_regularization_matrix: np.ndarray = field(init=False, default=None)
 
     x: np.ndarray = field(init=False)
     y: np.ndarray = field(init=False)
@@ -142,6 +143,7 @@ class Grid(Serial):
         )
         corrected_linear_derivative_matrix = _build_corrected_linear_derivative_matrix(rho, differentiation_matrix)
         corrected_even_derivative_matrix = _build_corrected_even_derivative_matrix(rho, differentiation_matrix)
+        ff_r_regularization_matrix = _build_ff_r_regularization_matrix(rho)
 
         T_fields = _build_chebyshev_tables(rho, x, self.L_max)
 
@@ -189,6 +191,11 @@ class Grid(Serial):
             "corrected_even_derivative_matrix",
             np.asarray(corrected_even_derivative_matrix, dtype=np.float64),
         )
+        object.__setattr__(
+            self,
+            "ff_r_regularization_matrix",
+            np.asarray(ff_r_regularization_matrix, dtype=np.float64),
+        )
         object.__setattr__(self, "x", np.asarray(x, dtype=np.float64))
         object.__setattr__(self, "y", np.asarray(y, dtype=np.float64))
         object.__setattr__(self, "T_fields", np.asarray(T_fields, dtype=np.float64))
@@ -198,6 +205,7 @@ class Grid(Serial):
         self.corrected_integration_matrix_p2.flags.writeable = False
         self.corrected_linear_derivative_matrix.flags.writeable = False
         self.corrected_even_derivative_matrix.flags.writeable = False
+        self.ff_r_regularization_matrix.flags.writeable = False
 
     def __rich__(self):
         tree = Tree("[bold blue]Grid[/]")
@@ -267,6 +275,13 @@ class Grid(Serial):
         if out is None:
             out = np.empty_like(f_1D)
         np.matmul(self.corrected_even_derivative_matrix, f_1D, out=out)
+        return out
+
+    def regularize_ff_r(self, f_1D: np.ndarray, *, out: np.ndarray | None = None) -> np.ndarray:
+        """将 FF_r 投影到共享的轴心/边界正则基底上."""
+        if out is None:
+            out = np.empty_like(f_1D)
+        np.matmul(self.ff_r_regularization_matrix, f_1D, out=out)
         return out
 
     def quadrature(
@@ -493,6 +508,12 @@ def _build_corrected_even_derivative_matrix(rho: np.ndarray, differentiation_mat
             rho=rho,
         ),
     )
+
+
+def _build_ff_r_regularization_matrix(rho: np.ndarray, *, degree: int = 3) -> np.ndarray:
+    s = np.asarray(rho, dtype=np.float64) ** 2
+    basis = np.column_stack([rho * (1.0 - s) * (s**k) for k in range(degree + 1)])
+    return basis @ np.linalg.pinv(basis)
 
 
 def _build_linear_operator_matrix(

@@ -1232,12 +1232,13 @@ def _update_pj2_from_rho_inputs(
     integral_val = out_psin_r
 
     if has_Ip:
-        I_tor = Ip * (F * integral_val) / (R0 * B0 * integral_val[-1])
+        I_tor = Ip * (F * integral_val) / (F[-1] * integral_val[-1])
     else:
         I_tor = 2.0 * np.pi * F * integral_val
-
+    I_tor = _enforce_axis_quadratic_itor(I_tor, rho)
     alpha2 = quadrature(MU0 * I_tor / (2.0 * np.pi * Kn), weights)
     out_psin_r[:] = MU0 * I_tor / (2.0 * np.pi * alpha2 * Kn)
+    _enforce_axis_linear_psin_r(out_psin_r, rho)
     corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = np.maximum(out_psin_r, 1e-10)
@@ -1295,12 +1296,13 @@ def _update_pj2_from_psin_inputs(
     integral_val = out_psin_r
 
     if has_Ip:
-        I_tor = Ip * (F * integral_val) / (R0 * B0 * integral_val[-1])
+        I_tor = Ip * (F * integral_val) / (F[-1] * integral_val[-1])
     else:
         I_tor = 2.0 * np.pi * F * integral_val
-
+    I_tor = _enforce_axis_quadratic_itor(I_tor, rho)
     alpha2 = quadrature(MU0 * I_tor / (2.0 * np.pi * Kn), weights)
     out_psin_r[:] = MU0 * I_tor / (2.0 * np.pi * alpha2 * Kn)
+    _enforce_axis_linear_psin_r(out_psin_r, rho)
     corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = np.maximum(out_psin_r, 1e-10)

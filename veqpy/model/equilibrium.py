@@ -292,38 +292,7 @@ class Equilibrium(Reactive, Serial):
 
     @property
     def FFn_r(self) -> np.ndarray:
-        ffn_psin = self._diagnostic_FFn_psin
-        raw = ffn_psin * self.psin_r
-
-        tail_candidate_ffn_psin = _stabilize_tail_profile_on_rho(
-            self.rho,
-            ffn_psin,
-            fit_end_offset=6,
-            fit_count=8,
-            replace_count=6,
-            degree=2,
-        )
-        tail_candidate = tail_candidate_ffn_psin * self.psin_r
-        if _tail_monotonicity_violations(tail_candidate, tail=8) < _tail_monotonicity_violations(raw, tail=8):
-            ffn_psin = tail_candidate_ffn_psin
-            raw = tail_candidate
-
-        raw_changes = _axis_derivative_sign_changes(raw)
-        if raw_changes == 0:
-            return raw
-
-        stabilized_FFn_psin = _stabilize_axis_even_profile(
-            self.rho,
-            ffn_psin,
-            fit_start=6,
-            fit_count=12,
-            replace_count=12,
-            degree=3,
-        )
-        stabilized = stabilized_FFn_psin * self.psin_r
-        if _axis_derivative_sign_changes(stabilized) < raw_changes:
-            return stabilized
-        return raw
+        return self._diagnostic_FFn_psin * self.psin_r
 
     @property
     def F2(self) -> np.ndarray:
@@ -504,41 +473,7 @@ class Equilibrium(Reactive, Serial):
 
     @property
     def _diagnostic_FFn_psin(self) -> np.ndarray:
-        values = np.asarray(self.FFn_psin, dtype=np.float64)
-        if _derivative_sign_changes(values) >= 8:
-            values = _stabilize_axis_even_profile(
-                self.rho,
-                _smooth_three_point_profile(values, passes=2),
-                fit_start=1,
-                fit_count=6,
-                replace_count=2,
-                degree=2,
-            )
-
-        tail_candidate = _stabilize_tail_profile_on_rho(
-            self.rho,
-            values,
-            fit_end_offset=6,
-            fit_count=8,
-            replace_count=3,
-            degree=2,
-        )
-        tail_changes = _tail_derivative_sign_changes(values, tail=12)
-        tail_candidate_changes = _tail_derivative_sign_changes(tail_candidate, tail=12)
-        if tail_candidate_changes < tail_changes or _tail_last_jump_ratio(values, tail_candidate) <= 0.5:
-            values = tail_candidate
-
-        head_candidate = _stabilize_axis_even_profile(
-            self.rho,
-            values,
-            fit_start=1,
-            fit_count=8,
-            replace_count=8,
-            degree=2,
-        )
-        if _axis_derivative_sign_changes(head_candidate, head=12) < _axis_derivative_sign_changes(values, head=12):
-            values = head_candidate
-        return values
+        return np.asarray(self.FFn_psin, dtype=np.float64)
 
     def plot(
         self,
@@ -748,34 +683,23 @@ def plot_comparison(
     profile_degree: int | None = None,
     native_grid: bool = False,
 ) -> dict[str, float]:
-    """Render a veqpy-poor-style comparison figure with one shared surface panel."""
+    """Render a compact 3-column comparison figure with shared surface overlay."""
     ref_plot = reference
     other_plot = other
 
     shape_keys = ["h", "k", "s1"]
-    groups = [(key, _shape_profile_plot_meta(key)["label"], None) for key in shape_keys]
-    groups.extend(
-        [
-            ("psi_r", r"$\psi_\rho$", None),
-            ("FF_r", r"$FF_\rho$", None),
-            ("mu0_P_r", r"$\mu_0 P_\rho$", None),
-            ("Itor", r"$I_{\rm tor}$ [MA]", 1e6),
-            ("jtor", r"$j_{\rm tor}$ [MA/m²]", 1e6),
-            ("jpara", r"$j_{\|}$ [MA/m²]", 1e6),
-        ]
-    )
-    while len(groups) < 9:
-        groups.append(("", "", None))
+    source_groups = [
+        ("psi_r", r"$\psi_\rho$", None),
+        ("FF_psi", r"$FF_\psi$", None),
+        ("mu0_P_psi", r"$\mu_0 P_\psi$", None),
+    ]
 
     def _extract(eq: Equilibrium) -> dict[str, np.ndarray]:
         data = {
             "rho": np.asarray(eq.rho, dtype=np.float64),
             "psi_r": np.asarray(eq.alpha2 * eq.psin_r, dtype=np.float64),
-            "FF_r": np.asarray(eq.FF_r, dtype=np.float64),
-            "mu0_P_r": MU0 * np.asarray(eq.P_r, dtype=np.float64),
-            "Itor": np.asarray(eq.Itor, dtype=np.float64),
-            "jtor": np.asarray(eq.jtor, dtype=np.float64),
-            "jpara": np.asarray(eq.jpara, dtype=np.float64),
+            "FF_psi": np.asarray(eq.alpha1 * eq.FFn_psin, dtype=np.float64),
+            "mu0_P_psi": np.asarray(eq.alpha1 * eq.Pn_psin, dtype=np.float64),
         }
         profiles = _shape_profiles(eq)
         for key in shape_keys:
@@ -798,12 +722,12 @@ def plot_comparison(
         return np.interp(rho2, rho1, y1), y2
 
     errors: dict[str, float] = {}
-    fig = plt.figure(figsize=(18, 8))
+    fig = plt.figure(figsize=(14, 8))
     gs = GridSpec(
         3,
-        4,
+        3,
         figure=fig,
-        width_ratios=[1.1, 1.0, 1.0, 1.0],
+        width_ratios=[1.2, 0.9, 0.9],
         hspace=0.25,
         wspace=0.3,
         top=0.95,
@@ -844,12 +768,32 @@ def plot_comparison(
         label_other=label_other,
     )
 
-    metric_axes = [fig.add_subplot(gs[row, col]) for row in range(3) for col in range(1, 4)]
-    for i, (ax, (key, ylabel, scale)) in enumerate(zip(metric_axes, groups, strict=True)):
-        if not key:
-            ax.set_visible(False)
-            continue
+    shape_axes = [fig.add_subplot(gs[row, 1]) for row in range(3)]
+    source_axes = [fig.add_subplot(gs[row, 2]) for row in range(3)]
 
+    for i, (ax, key) in enumerate(zip(shape_axes, shape_keys, strict=True)):
+        ylabel = _shape_profile_plot_meta(key)["label"]
+        ref_values, cur_values = _aligned_reference(key)
+        scale_ref = float(np.max(np.abs(ref_values))) or 1.0
+        diff = cur_values - ref_values
+        errors[f"rel_{key}_max"] = float(np.max(np.abs(diff)) / scale_ref)
+        errors[f"rel_{key}_rms"] = float(np.sqrt(np.mean(diff**2)) / scale_ref)
+
+        ax.plot(d1["rho"], d1[key], color=BLACK, linestyle="-", label=label_ref)
+        ax.plot(d2["rho"], d2[key], color=RED, linestyle="--", marker="o", markersize=4, zorder=5, label=label_other)
+        ax.set_ylabel(ylabel)
+        ax.grid(True, linestyle=":", alpha=0.5)
+        _add_top_headroom(ax, 0.15)
+        ax.text(0.03, 0.97, f"err = {errors[f'rel_{key}_max']:.1e}", transform=ax.transAxes, ha="left", va="top")
+        if i == 0:
+            ax.set_title("(b) Shape Parameters", fontsize=SUBPLOT_TITLE_FONTSIZE)
+            ax.legend(loc="best", frameon=False)
+        if i == len(shape_keys) - 1:
+            ax.set_xlabel(r"$\rho$")
+        else:
+            ax.set_xticklabels([])
+
+    for i, (ax, (key, ylabel, scale)) in enumerate(zip(source_axes, source_groups, strict=True)):
         s = scale or 1.0
         ref_values, cur_values = _aligned_reference(key)
         scale_ref = float(np.max(np.abs(ref_values))) or 1.0
@@ -858,49 +802,17 @@ def plot_comparison(
         errors[f"rel_{key}_rms"] = float(np.sqrt(np.mean(diff**2)) / scale_ref)
 
         ax.plot(d1["rho"], d1[key] / s, color=BLACK, linestyle="-", label=label_ref)
-        ax.plot(
-            d2["rho"],
-            d2[key] / s,
-            color=RED,
-            linestyle="--",
-            marker="o",
-            markersize=5,
-            zorder=5,
-            label=label_other,
-        )
+        ax.plot(d2["rho"], d2[key] / s, color=RED, linestyle="--", marker="o", markersize=4, zorder=5, label=label_other)
         ax.set_ylabel(ylabel)
-        # ax.tick_params(direction="in", top=True, right=True, labelsize=10)
         ax.grid(True, linestyle=":", alpha=0.5)
         _add_top_headroom(ax, 0.15)
-        ax.text(
-            0.03,
-            0.97,
-            f"err = {errors[f'rel_{key}_max']:.1e}",
-            transform=ax.transAxes,
-            ha="left",
-            va="top",
-        )
-
+        ax.text(0.03, 0.97, f"err = {errors[f'rel_{key}_max']:.1e}", transform=ax.transAxes, ha="left", va="top")
         if i == 0:
-            ax.legend(loc="best", frameon=False)
-        if i >= 6:
+            ax.set_title("(c) Source Profiles", fontsize=SUBPLOT_TITLE_FONTSIZE)
+        if i == len(source_groups) - 1:
             ax.set_xlabel(r"$\rho$")
         else:
             ax.set_xticklabels([])
-
-    visible_metric_axes = [ax for ax in metric_axes if ax.get_visible()]
-    if visible_metric_axes:
-        metric_boxes = [ax.get_position() for ax in visible_metric_axes]
-        metrics_x0 = min(box.x0 for box in metric_boxes)
-        metrics_y1 = max(box.y1 for box in metric_boxes)
-        fig.text(
-            metrics_x0,
-            metrics_y1 + 0.01,
-            "(b) Profiles",
-            fontsize=SUBPLOT_TITLE_FONTSIZE,
-            ha="left",
-            va="bottom",
-        )
 
     if outpath is not None:
         fig.savefig(Path(outpath), dpi=300, facecolor="white")

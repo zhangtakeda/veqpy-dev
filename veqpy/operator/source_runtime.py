@@ -40,7 +40,7 @@ SOURCE_PROJECTION_POLICIES: dict[tuple[str, str, str], SourceProjectionPolicy] =
     ("PI", "psin", "uniform"): SourceProjectionPolicy(
         domain="psin",
         heat_degree=7,
-        current_degree=8,
+        current_degree=9,
         current_ip_endpoint_policy="both",
         current_other_endpoint_policy="none",
     ),
@@ -57,7 +57,14 @@ SOURCE_PROJECTION_POLICIES: dict[tuple[str, str, str], SourceProjectionPolicy] =
         current_degree=8,
         current_ip_endpoint_policy="affine_both",
         current_other_endpoint_policy="none",
-    )
+    ),
+    ("PJ2", "psin", "uniform"): SourceProjectionPolicy(
+        domain="psin",
+        heat_degree=5,
+        current_degree=5,
+        current_ip_endpoint_policy="none",
+        current_other_endpoint_policy="none",
+    ),
 }
 
 PROJECTION_DOMAIN_CODES = {
