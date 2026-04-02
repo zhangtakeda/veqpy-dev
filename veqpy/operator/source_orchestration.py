@@ -12,10 +12,8 @@ from typing import Any, Callable
 
 import numpy as np
 
-from veqpy.engine import update_fixed_point_psin_query
+from veqpy.engine import materialize_profile_owned_psin_source, update_fixed_point_psin_query
 from veqpy.operator.source_runtime import materialize_source_inputs, normalize_psin_query_inplace
-
-FF_R_REGULARIZATION_BOUNDARY_RATIO = 0.05
 
 
 def build_bound_source_stage_runner(operator_core: Any) -> Callable:
@@ -41,14 +39,27 @@ def build_bound_source_stage_runner(operator_core: Any) -> Callable:
     if source_plan.strategy == "profile_owned_psin":
         if source_plan.is_psin_coordinate and not source_plan.is_grid_nodes:
             source_psin_query = source_runtime_state.psin_query
+            source_parameter_query = source_runtime_state.parameter_query
+            psin_profile_fields = operator_core.psin_profile.u_fields
+            heat_input = source_plan.heat_input
+            current_input = source_plan.current_input
+            parameterization_code = source_plan.parameterization_code
 
             def runner() -> tuple[float, float]:
-                copy_psin_profile_to_root_fields(operator_core)
-                np.copyto(source_psin_query, psin)
-                materialize_source_inputs(
-                    source_plan=source_plan,
-                    source_runtime_state=source_runtime_state,
-                    psin_query=source_psin_query,
+                if psin_profile_fields is None:
+                    raise RuntimeError("psin_profile runtime fields are not initialized")
+                materialize_profile_owned_psin_source(
+                    psin,
+                    psin_r,
+                    psin_rr,
+                    source_psin_query,
+                    source_parameter_query,
+                    materialized_heat_input,
+                    materialized_current_input,
+                    psin_profile_fields,
+                    heat_input,
+                    current_input,
+                    parameterization_code,
                 )
                 return _run_source_kernel(
                     operator_core,
@@ -194,6 +205,8 @@ def run_psin_source_fixed_point(operator_core: Any) -> tuple[float, float]:
         )
         alpha1, alpha2 = _run_source_kernel_from_operator(operator_core)
     return alpha1, alpha2
+
+
 def _run_source_kernel_from_operator(operator_core: Any) -> tuple[float, float]:
     source_runtime_state = operator_core.source_runtime_state
     return _run_source_kernel(
@@ -252,7 +265,7 @@ def _run_source_kernel(
     beta: float,
     source_scratch_1d: np.ndarray,
 ) -> tuple[float, float]:
-    alpha1, alpha2 = operator_core._source_runner(
+    return operator_core._source_runner(
         out_psin,
         out_psin_r,
         out_psin_rr,
@@ -278,43 +291,3 @@ def _run_source_kernel(
         beta,
         source_scratch_1d,
     )
-    _regularize_source_ffn_psin(
-        operator_core,
-        out_psin_r,
-        out_FFn_psin,
-        alpha1,
-        alpha2,
-        source_scratch_1d,
-    )
-    return alpha1, alpha2
-
-
-def _regularize_source_ffn_psin(
-    operator_core: Any,
-    out_psin_r: np.ndarray,
-    out_FFn_psin: np.ndarray,
-    alpha1: float,
-    alpha2: float,
-    scratch: np.ndarray,
-) -> None:
-    scratch_ff_r = scratch[0] if scratch.ndim == 2 else scratch
-    scale = float(alpha1) * float(alpha2)
-    if (not np.isfinite(scale)) or abs(scale) <= 1.0e-14:
-        return
-
-    np.multiply(out_FFn_psin, out_psin_r, out=scratch_ff_r)
-    scratch_ff_r *= scale
-
-    max_abs = float(np.max(np.abs(scratch_ff_r)))
-    if max_abs <= 1.0e-14:
-        return
-
-    boundary_ratio = abs(float(scratch_ff_r[-1])) / max_abs
-    blend_weight = float(np.clip(boundary_ratio / FF_R_REGULARIZATION_BOUNDARY_RATIO, 0.0, 1.0))
-    if blend_weight <= 1.0e-12:
-        return
-
-    operator_core.grid.regularize_ff_r(scratch_ff_r, out=out_FFn_psin)
-    out_FFn_psin *= blend_weight
-    out_FFn_psin += (1.0 - blend_weight) * scratch_ff_r
-    np.divide(out_FFn_psin, scale * np.maximum(out_psin_r, 1.0e-10), out=out_FFn_psin)

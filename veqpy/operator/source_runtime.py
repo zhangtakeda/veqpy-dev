@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable
 
 import numpy as np
-from numpy.polynomial.chebyshev import chebvander
+from numpy.polynomial.chebyshev import chebval, chebvander
 
 from veqpy.engine import (
     build_source_remap_cache,
@@ -37,34 +37,13 @@ class SourceProjectionPolicy:
 
 
 SOURCE_PROJECTION_POLICIES: dict[tuple[str, str, str], SourceProjectionPolicy] = {
-    ("PI", "psin", "uniform"): SourceProjectionPolicy(
-        domain="psin",
-        heat_degree=7,
-        current_degree=9,
-        current_ip_endpoint_policy="both",
-        current_other_endpoint_policy="none",
-    ),
-    ("PJ1", "psin", "uniform"): SourceProjectionPolicy(
-        domain="psin",
-        heat_degree=7,
-        current_degree=8,
-        current_ip_endpoint_policy="both",
-        current_other_endpoint_policy="none",
-    ),
     ("PQ", "psin", "uniform"): SourceProjectionPolicy(
-        domain="psin",
-        heat_degree=8,
-        current_degree=8,
+        domain="sqrt_psin",
+        heat_degree=5,
+        current_degree=6,
         current_ip_endpoint_policy="affine_both",
         current_other_endpoint_policy="none",
-    ),
-    ("PJ2", "psin", "uniform"): SourceProjectionPolicy(
-        domain="psin",
-        heat_degree=5,
-        current_degree=5,
-        current_ip_endpoint_policy="none",
-        current_other_endpoint_policy="none",
-    ),
+    )
 }
 
 PROJECTION_DOMAIN_CODES = {
@@ -141,11 +120,54 @@ def build_source_projection_fit_matrix(n_src: int, *, degree: int, domain: str) 
     return np.linalg.pinv(vandermonde)
 
 
+def evaluate_source_projection_inplace(
+    out: np.ndarray,
+    source_values: np.ndarray,
+    fit_matrix: np.ndarray,
+    projected_query: np.ndarray,
+) -> np.ndarray:
+    coeff = fit_matrix @ np.asarray(source_values, dtype=np.float64)
+    out[:] = chebval(projected_query, coeff)
+    return out
+
+
+def evaluate_projection_coeff_inplace(
+    out: np.ndarray,
+    coeff: np.ndarray,
+    projected_query: np.ndarray,
+) -> np.ndarray:
+    out[:] = chebval(projected_query, coeff)
+    return out
+
+
+def apply_endpoint_policy_inplace(
+    out: np.ndarray,
+    source_values: np.ndarray,
+    *,
+    policy: str,
+    blend: np.ndarray,
+) -> np.ndarray:
+    if policy == "none":
+        return out
+    if policy == "right":
+        out[-1] = float(source_values[-1])
+        return out
+    if policy == "both":
+        out[0] = float(source_values[0])
+        out[-1] = float(source_values[-1])
+        return out
+    if policy == "affine_both":
+        delta_left = float(source_values[0]) - float(out[0])
+        delta_right = float(source_values[-1]) - float(out[-1])
+        out += (1.0 - blend) * delta_left + blend * delta_right
+        return out
+    raise ValueError(f"Unsupported endpoint policy {policy!r}")
+
+
 def validate_source_inputs(case: "OperatorCase", nr: int) -> None:
     if case.heat_input.shape != case.current_input.shape:
         raise ValueError(
-            "Expected heat_input/current_input to share a shape, "
-            f"got {case.heat_input.shape} and {case.current_input.shape}"
+            f"Expected heat_input/current_input to share a shape, got {case.heat_input.shape} and {case.current_input.shape}"
         )
     if case.nodes == "grid" and case.heat_input.shape[0] != nr:
         raise ValueError(f"Expected grid inputs to have shape ({nr},), got {case.heat_input.shape}")

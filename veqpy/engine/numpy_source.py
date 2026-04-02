@@ -371,7 +371,7 @@ def _update_pf_from_rho_inputs(
     prof = out_psin_r
     integral_prof = quadrature(prof, weights)
     out_psin_r /= integral_prof
-    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
+    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
 
     psin_r_safe = np.maximum(out_psin_r, 1e-10)
@@ -453,7 +453,7 @@ def _update_pf_from_psin_inputs(
     prof = out_psin_r
     integral_prof = quadrature(prof, weights)
     out_psin_r /= integral_prof
-    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
+    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
 
     if not has_Ip and not has_beta:
@@ -521,7 +521,7 @@ def _update_pp_from_rho_inputs(
         alpha2 = quadrature(current_input, weights)
         out_psin_r[:] = current_input / alpha2
 
-    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
+    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = np.maximum(out_psin_r, 1e-10)
 
@@ -537,9 +537,6 @@ def _update_pp_from_rho_inputs(
     out_FFn_psin[:] = (
         -((alpha2 / alpha1) * (Kn_r * out_psin_r + Kn * out_psin_rr) + V_r * out_Pn_psin / (4.0 * np.pi**2)) / Ln_r
     )
-    out_FFn_psin *= out_psin_r
-    _stabilize_odd_profile_head_on_rho(out_FFn_psin, rho, fit_start=6, fit_count=12, replace_count=12, degree=2)
-    out_FFn_psin[:] = out_FFn_psin / psin_r_safe
     return alpha1, alpha2
 
 
@@ -579,7 +576,7 @@ def _update_pp_from_psin_inputs(
         alpha2 = quadrature(current_input, weights)
         out_psin_r[:] = current_input / alpha2
 
-    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
+    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = np.maximum(out_psin_r, 1e-10)
 
@@ -595,10 +592,6 @@ def _update_pp_from_psin_inputs(
     out_FFn_psin[:] = (
         -((alpha2 / alpha1) * (Kn_r * out_psin_r + Kn * out_psin_rr) + V_r * out_Pn_psin / (4.0 * np.pi**2)) / Ln_r
     )
-    out_FFn_psin *= out_psin_r
-    _stabilize_odd_profile_head_on_rho(out_FFn_psin, rho, fit_start=6, fit_count=12, replace_count=12, degree=2)
-    out_FFn_psin[:] = out_FFn_psin / psin_r_safe
-    _smooth_profile_head_three_point(out_FFn_psin, replace_count=8, passes=1)
     return alpha1, alpha2
 
 
@@ -745,7 +738,6 @@ def _update_pi_from_rho_inputs(
         Itor = Ip / current_input[-1] * current_input
     else:
         Itor = current_input
-    Itor = _enforce_axis_quadratic_itor(Itor, rho)
     # PI treats current_input as enclosed toroidal current; interpolation undershoot can
     # create tiny non-physical negatives near the magnetic axis for rho-route samples.
     # Keep a tiny positive floor so axis diagnostics that divide by psin_r stay finite.
@@ -755,13 +747,11 @@ def _update_pi_from_rho_inputs(
     alpha2 = quadrature(MU0 * Itor / (2.0 * np.pi * Kn), weights)
 
     out_psin_r[:] = MU0 * Itor / (2.0 * np.pi * alpha2 * Kn)
-    _enforce_axis_linear_psin_r(out_psin_r, rho)
-    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
+    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = np.maximum(out_psin_r, 1e-10)
     Itor_r = np.empty_like(Itor)
-    corrected_even_derivative(Itor_r, Itor, differentiation_matrix, rho=rho)
-    _enforce_axis_linear_psin_r(Itor_r, rho)
+    full_differentiation(Itor_r, Itor, differentiation_matrix)
 
     if has_beta:
         np.divide(heat_input, psin_r_safe, out=out_Pn_psin)
@@ -809,19 +799,16 @@ def _update_pi_from_psin_inputs(
         Itor = Ip / current_input[-1] * current_input
     else:
         Itor = current_input
-    Itor = _enforce_axis_quadratic_itor(Itor, rho)
     itor_floor = max(float(Itor[-1]), 1.0) * 1e-12
     Itor = np.maximum(Itor, itor_floor)
 
     alpha2 = quadrature(MU0 * Itor / (2.0 * np.pi * Kn), weights)
     out_psin_r[:] = MU0 * Itor / (2.0 * np.pi * alpha2 * Kn)
-    _enforce_axis_linear_psin_r(out_psin_r, rho)
-    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
+    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = np.maximum(out_psin_r, 1e-10)
     Itor_r = np.empty_like(Itor)
-    corrected_even_derivative(Itor_r, Itor, differentiation_matrix, rho=rho)
-    _enforce_axis_linear_psin_r(Itor_r, rho)
+    full_differentiation(Itor_r, Itor, differentiation_matrix)
 
     if has_beta:
         out_Pn_psin[:] = heat_input
@@ -988,32 +975,27 @@ def _update_pj1_from_rho_inputs(
 
     if has_Ip:
         I_tor = Ip * (I_tor_prof / I_tor_prof[-1])
+        jtor = current_input * (Ip / I_tor_prof[-1])
     else:
         I_tor = I_tor_prof
-    I_tor = _enforce_axis_quadratic_itor(I_tor, rho)
+        jtor = current_input
 
     alpha2 = quadrature(MU0 * I_tor / (2.0 * np.pi * Kn), weights)
     out_psin_r[:] = MU0 * I_tor / (2.0 * np.pi * alpha2 * Kn)
-    _enforce_axis_linear_psin_r(out_psin_r, rho)
-    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
+    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = np.maximum(out_psin_r, 1e-10)
 
     if has_beta:
         np.divide(heat_input, psin_r_safe, out=out_Pn_psin)
-        _smooth_even_profile_on_rho2(out_Pn_psin, rho)
         Pn = _compute_Pn(out_Pn_psin * out_psin_r, integration_matrix, weights)
         alpha1 = 0.5 * beta * B0**2 / alpha2 * quadrature(V_r, weights) / quadrature(Pn * V_r, weights)
     else:
         P_r = heat_input
         alpha1 = -MU0 / alpha2 * quadrature(P_r, weights)
         out_Pn_psin[:] = MU0 * P_r / (alpha1 * alpha2 * psin_r_safe)
-        _smooth_even_profile_on_rho2(out_Pn_psin, rho)
 
-    current_term = current_input * S_r if not has_Ip else (Ip / I_tor_prof[-1]) * current_input * S_r
-    Itor_r = current_term
-    _enforce_axis_linear_psin_r(Itor_r, rho)
-    out_FFn_psin[:] = -((MU0 / (2.0 * np.pi * alpha1)) * Itor_r + V_r * out_Pn_psin / (4.0 * np.pi**2)) / Ln_r
+    out_FFn_psin[:] = -((MU0 / (2.0 * np.pi * alpha1)) * jtor * S_r + V_r * out_Pn_psin / (4.0 * np.pi**2)) / Ln_r
     return alpha1, alpha2
 
 
@@ -1054,14 +1036,14 @@ def _update_pj1_from_psin_inputs(
 
     if has_Ip:
         I_tor = Ip * (I_tor_prof / I_tor_prof[-1])
+        jtor = current_input * (Ip / I_tor_prof[-1])
     else:
         I_tor = I_tor_prof
-    I_tor = _enforce_axis_quadratic_itor(I_tor, rho)
+        jtor = current_input
 
     alpha2 = quadrature(MU0 * I_tor / (2.0 * np.pi * Kn), weights)
     out_psin_r[:] = MU0 * I_tor / (2.0 * np.pi * alpha2 * Kn)
-    _enforce_axis_linear_psin_r(out_psin_r, rho)
-    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
+    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = np.maximum(out_psin_r, 1e-10)
 
@@ -1074,10 +1056,7 @@ def _update_pj1_from_psin_inputs(
         alpha1 = -MU0 / alpha2 * quadrature(P_r, weights)
         out_Pn_psin[:] = MU0 * P_r / (alpha1 * alpha2 * psin_r_safe)
 
-    current_term = current_input * S_r if not has_Ip else (Ip / I_tor_prof[-1]) * current_input * S_r
-    Itor_r = current_term
-    _enforce_axis_linear_psin_r(Itor_r, rho)
-    out_FFn_psin[:] = -((MU0 / (2.0 * np.pi * alpha1)) * Itor_r + V_r * out_Pn_psin / (4.0 * np.pi**2)) / Ln_r
+    out_FFn_psin[:] = -((MU0 / (2.0 * np.pi * alpha1)) * jtor * S_r + V_r * out_Pn_psin / (4.0 * np.pi**2)) / Ln_r
     return alpha1, alpha2
 
 
@@ -1232,14 +1211,12 @@ def _update_pj2_from_rho_inputs(
     integral_val = out_psin_r
 
     if has_Ip:
-        I_tor = Ip * (F * integral_val) / (F[-1] * integral_val[-1])
+        I_tor = Ip * (F * integral_val) / (R0 * B0 * integral_val[-1])
     else:
         I_tor = 2.0 * np.pi * F * integral_val
-    I_tor = _enforce_axis_quadratic_itor(I_tor, rho)
     alpha2 = quadrature(MU0 * I_tor / (2.0 * np.pi * Kn), weights)
     out_psin_r[:] = MU0 * I_tor / (2.0 * np.pi * alpha2 * Kn)
-    _enforce_axis_linear_psin_r(out_psin_r, rho)
-    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
+    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = np.maximum(out_psin_r, 1e-10)
 
@@ -1253,9 +1230,8 @@ def _update_pj2_from_rho_inputs(
         out_Pn_psin[:] = MU0 * P_r / (alpha1 * alpha2 * psin_r_safe)
 
     F_r = np.empty_like(F)
-    corrected_even_derivative(F_r, F, differentiation_matrix, rho=rho)
+    full_differentiation(F_r, F, differentiation_matrix)
     FF_r = F * F_r
-    _enforce_axis_linear_psin_r(FF_r, rho)
     out_FFn_psin[:] = FF_r / (alpha1 * alpha2 * psin_r_safe)
     return alpha1, alpha2
 
@@ -1296,14 +1272,12 @@ def _update_pj2_from_psin_inputs(
     integral_val = out_psin_r
 
     if has_Ip:
-        I_tor = Ip * (F * integral_val) / (F[-1] * integral_val[-1])
+        I_tor = Ip * (F * integral_val) / (R0 * B0 * integral_val[-1])
     else:
         I_tor = 2.0 * np.pi * F * integral_val
-    I_tor = _enforce_axis_quadratic_itor(I_tor, rho)
     alpha2 = quadrature(MU0 * I_tor / (2.0 * np.pi * Kn), weights)
     out_psin_r[:] = MU0 * I_tor / (2.0 * np.pi * alpha2 * Kn)
-    _enforce_axis_linear_psin_r(out_psin_r, rho)
-    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
+    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = np.maximum(out_psin_r, 1e-10)
 
@@ -1317,9 +1291,8 @@ def _update_pj2_from_psin_inputs(
         out_Pn_psin[:] = MU0 * P_r / (alpha1 * alpha2 * psin_r_safe)
 
     F_r = np.empty_like(F)
-    corrected_even_derivative(F_r, F, differentiation_matrix, rho=rho)
+    full_differentiation(F_r, F, differentiation_matrix)
     FF_r = F * F_r
-    _enforce_axis_linear_psin_r(FF_r, rho)
     out_FFn_psin[:] = FF_r / (alpha1 * alpha2 * psin_r_safe)
     return alpha1, alpha2
 
@@ -1473,8 +1446,7 @@ def _update_pq_from_rho_inputs(
     alpha2 = quadrature(integrand_alpha2, weights)
 
     out_psin_r[:] = (F * Ln_r) / (alpha2 * q_prof)
-    _enforce_axis_linear_psin_r(out_psin_r, rho)
-    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
+    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = np.maximum(out_psin_r, 1e-10)
 
@@ -1487,9 +1459,9 @@ def _update_pq_from_rho_inputs(
         alpha1 = -MU0 / alpha2 * quadrature(P_r, weights)
         out_Pn_psin[:] = MU0 * P_r / (alpha1 * alpha2 * psin_r_safe)
 
-    smooth_F2 = 0.5 * F * F
-    _enforce_axis_even_profile(smooth_F2, rho)
-    FF_r = corrected_even_derivative(np.empty_like(smooth_F2), smooth_F2, differentiation_matrix, rho=rho)
+    F_r = np.empty_like(F)
+    full_differentiation(F_r, F, differentiation_matrix)
+    FF_r = F * F_r
     out_FFn_psin[:] = FF_r / (alpha1 * alpha2 * psin_r_safe)
     return alpha1, alpha2
 
@@ -1533,8 +1505,7 @@ def _update_pq_from_psin_inputs(
     alpha2 = quadrature(integrand_alpha2, weights)
 
     out_psin_r[:] = (F * Ln_r) / (alpha2 * q_prof)
-    _enforce_axis_linear_psin_r(out_psin_r, rho)
-    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
+    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = np.maximum(out_psin_r, 1e-10)
 
@@ -1547,9 +1518,9 @@ def _update_pq_from_psin_inputs(
         alpha1 = -MU0 / alpha2 * quadrature(P_r, weights)
         out_Pn_psin[:] = MU0 * P_r / (alpha1 * alpha2 * psin_r_safe)
 
-    smooth_F2 = 0.5 * F * F
-    _enforce_axis_even_profile(smooth_F2, rho)
-    FF_r = corrected_even_derivative(np.empty_like(smooth_F2), smooth_F2, differentiation_matrix, rho=rho)
+    F_r = np.empty_like(F)
+    full_differentiation(F_r, F, differentiation_matrix)
+    FF_r = F * F_r
     out_FFn_psin[:] = FF_r / (alpha1 * alpha2 * psin_r_safe)
     return alpha1, alpha2
 
@@ -2536,14 +2507,18 @@ def _validate_vector_matrix_kernel(
     out: np.ndarray,
     arr: np.ndarray,
     matrix: np.ndarray,
-    matrix_name: str,
+    matrix_name: str | None = None,
+    matrix_route: str | None = None,
 ) -> None:
+    label = matrix_name if matrix_name is not None else matrix_route
+    if label is None:
+        label = "matrix"
     if arr.ndim != 1:
         raise ValueError(f"Expected a 1D array, got {arr.shape}")
     if out.ndim != 1 or out.shape != arr.shape:
         raise ValueError(f"Expected out to have shape {arr.shape}, got {out.shape}")
     if matrix.ndim != 2 or matrix.shape != (arr.shape[0], arr.shape[0]):
-        raise ValueError(f"Expected {matrix_name} to have shape ({arr.shape[0]}, {arr.shape[0]}), got {matrix.shape}")
+        raise ValueError(f"Expected {label} to have shape ({arr.shape[0]}, {arr.shape[0]}), got {matrix.shape}")
 
 
 def _compute_Pn(
