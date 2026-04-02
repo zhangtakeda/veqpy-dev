@@ -470,17 +470,17 @@ if __name__ == "__main__":
     x_typical = solver_1.solve()
     eq1 = solver_1.build_equilibrium()
     eq1.write("tests/demo/demo-1.json")
-    eq1.plot("tests/demo/demo-1.png")
+    eq1.plot("tests/demo/demo-1.svg")
     print(eq1)
 
     print("\n\n=== High Precision Coefficients + High Precision Grid ===")
     x_high_precision = solver_2.solve()
     eq2 = solver_2.build_equilibrium()
     eq2.write("tests/demo/demo-2.json")
-    eq2.plot("tests/demo/demo-2.png")
+    eq2.plot("tests/demo/demo-2.svg")
     eq2.compare(
         eq1,
-        "tests/demo/demo-comparison.png",
+        "tests/demo/demo-comparison.svg",
         label_ref="Higher",
         label_other="Lower",
     )

@@ -251,11 +251,12 @@ class Solver:
                 result=result,
                 error=error,
             )
-            warnings.warn(
-                (f"Solve with method={label!r} failed ({failure}). Retrying with {next_label!r}."),
-                RuntimeWarning,
-                stacklevel=2,
-            )
+            if solve_config.enable_verbose:
+                warnings.warn(
+                    (f"Solve with method={label!r} failed ({failure}). Retrying with {next_label!r}."),
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
 
         return self._finalize_attempts(attempts)
 
@@ -291,7 +292,7 @@ class Solver:
             )
 
         seen_methods = {solve_config.method}
-        for fallback_method in solve_config.fallback_methods if solve_config.enable_fallback else ():
+        for fallback_method in self._ordered_fallback_methods(solve_config):
             if fallback_method in seen_methods:
                 continue
             seen_methods.add(fallback_method)
@@ -304,6 +305,40 @@ class Solver:
                 )
             )
         return attempt_plans
+
+    def _ordered_fallback_methods(self, solve_config: SolverConfig) -> tuple[str, ...]:
+        if not solve_config.enable_fallback:
+            return ()
+
+        fallback_methods = tuple(solve_config.fallback_methods)
+        if not self._prefers_dogbox_fallback(solve_config):
+            return fallback_methods
+
+        ordered: list[str] = []
+        if solve_config.method != "dogbox":
+            ordered.append("dogbox")
+        ordered.extend(fallback_methods)
+        return tuple(ordered)
+
+    def _prefers_dogbox_fallback(self, solve_config: SolverConfig) -> bool:
+        if solve_config.method != "hybr":
+            return False
+
+        case = getattr(self.operator, "case", None)
+        if case is None:
+            return False
+        if (
+            getattr(case, "route", None) != "PQ"
+            or getattr(case, "coordinate", None) != "psin"
+            or getattr(case, "nodes", None) != "uniform"
+        ):
+            return False
+        Ip = getattr(case, "Ip", np.nan)
+        beta = getattr(case, "beta", np.nan)
+        if not (np.isfinite(Ip) and np.isfinite(beta)):
+            return False
+        source_plan = getattr(self.operator, "source_plan", None)
+        return bool(source_plan is not None and getattr(source_plan, "strategy", None) == "fixed_point_psin")
 
     def _try_solve_attempt(
         self,

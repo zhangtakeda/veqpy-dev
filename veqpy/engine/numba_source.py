@@ -2307,8 +2307,6 @@ def _smooth_profile_head_three_point(
         for i in range(1, stop):
             profile[i] = 0.25 * scratch[i - 1] + 0.5 * scratch[i] + 0.25 * scratch[i + 1]
     return profile
-
-
 @njit(cache=True, nogil=True)
 def _compute_Pn(Pn_r: np.ndarray, integration_matrix: np.ndarray, weights: np.ndarray) -> np.ndarray:
     Pn = np.empty_like(Pn_r)

@@ -130,10 +130,10 @@ class Equilibrium(Reactive, Serial):
             profile.update(grid=self.grid)
 
         if psin is None:
-            psin = _recover_psin_from_psin_r(grid.rho, psin_r)
+            psin = _recover_psin_from_psin_r(grid, psin_r)
 
         if psin_rr is None:
-            _, psin_rr = _smoothed_psin_radial_derivatives(grid.rho, psin)
+            psin_rr = grid.corrected_linear_derivative(psin_r)
 
         self.psin = psin
         self.FFn_psin = FFn_psin
@@ -292,14 +292,29 @@ class Equilibrium(Reactive, Serial):
 
     @property
     def FFn_r(self) -> np.ndarray:
-        raw = self._diagnostic_FFn_psin * self.psin_r
+        ffn_psin = self._diagnostic_FFn_psin
+        raw = ffn_psin * self.psin_r
+
+        tail_candidate_ffn_psin = _stabilize_tail_profile_on_rho(
+            self.rho,
+            ffn_psin,
+            fit_end_offset=6,
+            fit_count=8,
+            replace_count=6,
+            degree=2,
+        )
+        tail_candidate = tail_candidate_ffn_psin * self.psin_r
+        if _tail_monotonicity_violations(tail_candidate, tail=8) < _tail_monotonicity_violations(raw, tail=8):
+            ffn_psin = tail_candidate_ffn_psin
+            raw = tail_candidate
+
         raw_changes = _axis_derivative_sign_changes(raw)
         if raw_changes == 0:
             return raw
 
         stabilized_FFn_psin = _stabilize_axis_even_profile(
             self.rho,
-            self._diagnostic_FFn_psin,
+            ffn_psin,
             fit_start=6,
             fit_count=12,
             replace_count=12,
@@ -313,7 +328,7 @@ class Equilibrium(Reactive, Serial):
     @property
     def F2(self) -> np.ndarray:
         """物理 F^2 剖面."""
-        FF_int = _integrate_axis_linear_profile(self.rho, self.FF_r)
+        FF_int = self.grid.integrate(self.FF_r, p=1)
         return (self.R0 * self.B0) ** 2 + 2.0 * (FF_int - FF_int[-1])
 
     @property
@@ -335,7 +350,7 @@ class Equilibrium(Reactive, Serial):
     @property
     def P(self) -> np.ndarray:
         """物理压强剖面 P."""
-        P_int = _integrate_axis_linear_profile(self.rho, self.P_r)
+        P_int = self.grid.integrate(self.P_r, p=1)
         return P_int - P_int[-1]
 
     @property
@@ -381,9 +396,19 @@ class Equilibrium(Reactive, Serial):
     @property
     def s(self) -> np.ndarray:
         """磁剪切 s, model-side diagnostic."""
-        q_r = _differentiate_even_profile_on_rho2(self.rho, self.q)
-        q_safe = np.maximum(np.abs(self.q), 1e-15)
+        q_values = np.asarray(self.q, dtype=np.float64)
+        finite = np.isfinite(q_values)
+        if np.all(finite):
+            q_for_diff = q_values
+        elif np.count_nonzero(finite) >= 2:
+            q_for_diff = np.interp(self.rho, self.rho[finite], q_values[finite])
+        else:
+            return np.zeros_like(q_values)
+
+        q_r = self.grid.corrected_even_derivative(q_for_diff)
+        q_safe = np.maximum(np.abs(q_for_diff), 1e-15)
         shear = self.rho * q_r / q_safe
+        shear[~finite] = 0.0
         shear[0] = 0.0
         return shear
 
@@ -395,11 +420,45 @@ class Equilibrium(Reactive, Serial):
     @property
     def jtor(self) -> np.ndarray:
         """环向电流密度 j_phi, model-side diagnostic."""
+        ffn_psin = self._diagnostic_FFn_psin
+        head_changes = _axis_derivative_sign_changes(ffn_psin, head=12)
+        if head_changes > 0:
+            candidate_ffn = _stabilize_axis_even_profile(
+                self.rho,
+                ffn_psin,
+                fit_start=1,
+                fit_count=8,
+                replace_count=8,
+                degree=2,
+            )
+            if _axis_derivative_sign_changes(candidate_ffn, head=12) < head_changes:
+                ffn_psin = candidate_ffn
+
         with np.errstate(divide="ignore", invalid="ignore"):
-            jtor = (
+            raw_jtor = (
                 -self.alpha1
                 / (MU0 * self.S_r)
-                * (2.0 * np.pi * self._diagnostic_FFn_psin * self.Ln_r + self.V_r * self.Pn_psin / (2.0 * np.pi))
+                * (2.0 * np.pi * ffn_psin * self.Ln_r + self.V_r * self.Pn_psin / (2.0 * np.pi))
+            )
+
+        strong_jtor = _stabilize_axis_even_profile(
+            self.rho,
+            raw_jtor,
+            fit_start=6,
+            fit_count=16,
+            replace_count=20,
+            degree=2,
+        )
+        if _axis_derivative_sign_changes(strong_jtor, head=12) < _axis_derivative_sign_changes(raw_jtor, head=12):
+            jtor = strong_jtor
+        else:
+            jtor = _stabilize_axis_even_profile(
+                self.rho,
+                raw_jtor,
+                fit_start=1,
+                fit_count=6,
+                replace_count=3,
+                degree=2,
             )
 
         _extrapolate_inplace(self.rho, jtor, p=2)
@@ -409,7 +468,7 @@ class Equilibrium(Reactive, Serial):
     def jpara(self) -> np.ndarray:
         """平行电流密度 <j.B>/B0, model-side diagnostic."""
         psin_r_diag, psin_rr_diag = _smoothed_psin_radial_derivatives(self.rho, self.psin)
-        F_r = _differentiate_even_profile_on_rho2(self.rho, self.F)
+        F_r = self.grid.corrected_even_derivative(self.F)
         term_r = (
             self.Kn_r * psin_r_diag / self.F
             + self.Kn * psin_rr_diag / self.F
@@ -419,6 +478,7 @@ class Equilibrium(Reactive, Serial):
         with np.errstate(divide="ignore", invalid="ignore"):
             jpara = self.alpha2 / MU0 * self.F / self.Ln_r * term_r
 
+        jpara = _stabilize_axis_even_profile(self.rho, jpara, fit_start=1, fit_count=20, replace_count=20, degree=2)
         _extrapolate_inplace(self.rho, jpara, p=2)
         return jpara
 
@@ -445,10 +505,40 @@ class Equilibrium(Reactive, Serial):
     @property
     def _diagnostic_FFn_psin(self) -> np.ndarray:
         values = np.asarray(self.FFn_psin, dtype=np.float64)
-        if _derivative_sign_changes(values) < 8:
-            return values
-        smoothed = _smooth_three_point_profile(values, passes=2)
-        return _stabilize_axis_even_profile(self.rho, smoothed, fit_start=1, fit_count=6, replace_count=2, degree=2)
+        if _derivative_sign_changes(values) >= 8:
+            values = _stabilize_axis_even_profile(
+                self.rho,
+                _smooth_three_point_profile(values, passes=2),
+                fit_start=1,
+                fit_count=6,
+                replace_count=2,
+                degree=2,
+            )
+
+        tail_candidate = _stabilize_tail_profile_on_rho(
+            self.rho,
+            values,
+            fit_end_offset=6,
+            fit_count=8,
+            replace_count=3,
+            degree=2,
+        )
+        tail_changes = _tail_derivative_sign_changes(values, tail=12)
+        tail_candidate_changes = _tail_derivative_sign_changes(tail_candidate, tail=12)
+        if tail_candidate_changes < tail_changes or _tail_last_jump_ratio(values, tail_candidate) <= 0.5:
+            values = tail_candidate
+
+        head_candidate = _stabilize_axis_even_profile(
+            self.rho,
+            values,
+            fit_start=1,
+            fit_count=8,
+            replace_count=8,
+            degree=2,
+        )
+        if _axis_derivative_sign_changes(head_candidate, head=12) < _axis_derivative_sign_changes(values, head=12):
+            values = head_candidate
+        return values
 
     def plot(
         self,
@@ -895,7 +985,7 @@ def _build_resampled_equilibrium(
         FFn_psin=FFn_psin,
         Pn_psin=Pn_psin,
         psin_r=psin_r,
-        psin_rr=_smoothed_psin_radial_derivatives(plot_grid.rho, psin)[1],
+        psin_rr=plot_grid.corrected_linear_derivative(psin_r),
         alpha1=equilibrium.alpha1,
         alpha2=equilibrium.alpha2,
     )
@@ -1473,8 +1563,8 @@ def _integrate_axis_linear_profile(rho: np.ndarray, values: np.ndarray) -> np.nd
     return out
 
 
-def _recover_psin_from_psin_r(rho: np.ndarray, psin_r: np.ndarray) -> np.ndarray:
-    psin = _integrate_axis_linear_profile(rho, psin_r)
+def _recover_psin_from_psin_r(grid: Grid, psin_r: np.ndarray) -> np.ndarray:
+    psin = grid.integrate(psin_r, p=1)
     scale = float(psin[-1] - psin[0])
     if abs(scale) < 1e-12:
         raise ValueError("psin_r does not span a valid normalized flux interval")
@@ -1543,6 +1633,27 @@ def _axis_derivative_sign_changes(values: np.ndarray, *, head: int = 12) -> int:
     return int(np.sum(nonzero[1:] * nonzero[:-1] < 0.0))
 
 
+def _tail_derivative_sign_changes(values: np.ndarray, *, tail: int = 12) -> int:
+    values = np.asarray(values, dtype=np.float64)
+    if values.ndim != 1:
+        raise ValueError(f"Expected values to be 1D, got {values.shape}")
+    window = values[-min(int(tail), values.shape[0]) :]
+    delta = np.diff(window)
+    signs = np.sign(delta)
+    nonzero = signs[signs != 0.0]
+    if nonzero.size < 2:
+        return 0
+    return int(np.sum(nonzero[1:] * nonzero[:-1] < 0.0))
+
+
+def _tail_monotonicity_violations(values: np.ndarray, *, tail: int = 8, tol: float = 1.0e-8) -> int:
+    values = np.asarray(values, dtype=np.float64)
+    if values.ndim != 1:
+        raise ValueError(f"Expected values to be 1D, got {values.shape}")
+    window = values[-min(int(tail), values.shape[0]) :]
+    return int(np.count_nonzero(np.diff(window) < -abs(float(tol))))
+
+
 def _derivative_sign_changes(values: np.ndarray) -> int:
     values = np.asarray(values, dtype=np.float64)
     if values.ndim != 1:
@@ -1597,3 +1708,47 @@ def _stabilize_axis_even_profile(
     x_replace = rho[:replace_stop] ** 2
     stabilized[:replace_stop] = np.vander(x_replace, N=fit_degree + 1, increasing=True) @ coeff
     return stabilized
+
+
+def _stabilize_tail_profile_on_rho(
+    rho: np.ndarray,
+    profile: np.ndarray,
+    *,
+    fit_end_offset: int = 6,
+    fit_count: int = 8,
+    replace_count: int = 3,
+    degree: int = 2,
+) -> np.ndarray:
+    rho = np.asarray(rho, dtype=np.float64)
+    profile = np.asarray(profile, dtype=np.float64)
+    if rho.ndim != 1 or profile.ndim != 1 or rho.shape != profile.shape:
+        raise ValueError(f"Expected rho/profile to share a 1D shape, got {rho.shape} and {profile.shape}")
+
+    stop = max(profile.shape[0] - int(fit_end_offset), 0)
+    start = max(stop - int(fit_count), 0)
+    replace_start = max(profile.shape[0] - int(replace_count), 0)
+    fit_degree = min(int(degree), stop - start - 1)
+    if stop - start < 2 or replace_start >= profile.shape[0] or fit_degree <= 0:
+        return profile.copy()
+
+    x_fit = rho[start:stop]
+    vandermonde = np.vander(x_fit, N=fit_degree + 1, increasing=True)
+    coeff, *_ = np.linalg.lstsq(vandermonde, profile[start:stop], rcond=None)
+
+    stabilized = profile.copy()
+    x_replace = rho[replace_start:]
+    stabilized[replace_start:] = np.vander(x_replace, N=fit_degree + 1, increasing=True) @ coeff
+    return stabilized
+
+
+def _tail_last_jump_ratio(values: np.ndarray, candidate: np.ndarray) -> float:
+    values = np.asarray(values, dtype=np.float64)
+    candidate = np.asarray(candidate, dtype=np.float64)
+    if values.ndim != 1 or candidate.ndim != 1 or values.shape != candidate.shape:
+        raise ValueError(f"Expected values/candidate to share a 1D shape, got {values.shape} and {candidate.shape}")
+    if values.size < 2:
+        return 0.0
+    baseline = abs(float(values[-1] - values[-2]))
+    if baseline <= 1.0e-15:
+        return 0.0
+    return abs(float(candidate[-1] - candidate[-2])) / baseline

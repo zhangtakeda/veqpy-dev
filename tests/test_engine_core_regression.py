@@ -1,5 +1,6 @@
 import importlib.util
 import sys
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +16,12 @@ from veqpy.engine.numpy_residual import bind_residual_runner as bind_numpy_resid
 from veqpy.engine.numpy_source import build_source_remap_cache as build_numpy_source_remap_cache
 from veqpy.engine.numpy_source import resolve_source_inputs as numpy_resolve_source_inputs
 from veqpy.model import Boundary, Geometry, Grid
+from veqpy.model.equilibrium import (
+    MU0,
+    _extrapolate_inplace,
+    _smoothed_psin_radial_derivatives,
+    _stabilize_axis_even_profile,
+)
 from veqpy.operator import Operator
 from veqpy.operator.layout import build_profile_names
 from veqpy.operator.operator_case import OperatorCase
@@ -573,6 +580,251 @@ def test_pq_psin_uniform_benchmark_jpara_is_axis_monotone():
             assert np.all(np.diff(jpara_head) <= 1.0e-8), (spec_case.case_name, jpara_head.tolist())
     finally:
         benchmark.BENCHMARK_REPEAT_COUNT = original_repeat
+
+
+def test_pi_pp_psin_uniform_benchmark_boundary_profiles_are_monotone():
+    benchmark_path = Path(__file__).with_name("benchmark.py")
+    spec = importlib.util.spec_from_file_location("veqpy_tests_benchmark", benchmark_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load benchmark module from {benchmark_path}")
+    benchmark = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = benchmark
+    spec.loader.exec_module(benchmark)
+
+    original_repeat = benchmark.BENCHMARK_REPEAT_COUNT
+    try:
+        benchmark.BENCHMARK_REPEAT_COUNT = 1
+        reference = benchmark._solve_reference()
+        for mode in ("PI", "PP"):
+            for constraint in ("Ip_beta", "Ip", "beta", "null"):
+                spec_case = benchmark.BenchmarkCaseSpec(mode, "psin", constraint, "uniform")
+                row = benchmark._benchmark_case_result(spec_case, reference)
+                ff_r_tail = np.asarray(row.equilibrium.FF_r[-8:], dtype=np.float64)
+                jtor_tail = np.asarray(row.equilibrium.jtor[-8:], dtype=np.float64)
+                assert np.all(np.diff(ff_r_tail) >= -1.0e-8), (spec_case.case_name, ff_r_tail.tolist())
+                assert np.all(np.diff(jtor_tail) <= 1.0e-8), (spec_case.case_name, jtor_tail.tolist())
+                assert float(jtor_tail[-1]) > 0.0, (spec_case.case_name, jtor_tail.tolist())
+    finally:
+        benchmark.BENCHMARK_REPEAT_COUNT = original_repeat
+
+
+def test_pp_rho_uniform_benchmark_jtor_head_is_axis_monotone():
+    benchmark_path = Path(__file__).with_name("benchmark.py")
+    spec = importlib.util.spec_from_file_location("veqpy_tests_benchmark", benchmark_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load benchmark module from {benchmark_path}")
+    benchmark = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = benchmark
+    spec.loader.exec_module(benchmark)
+
+    original_repeat = benchmark.BENCHMARK_REPEAT_COUNT
+    try:
+        benchmark.BENCHMARK_REPEAT_COUNT = 1
+        reference = benchmark._solve_reference()
+        for constraint in ("Ip_beta", "Ip", "beta", "null"):
+            spec_case = benchmark.BenchmarkCaseSpec("PP", "rho", constraint, "uniform")
+            row = benchmark._benchmark_case_result(spec_case, reference)
+            jtor_head = np.asarray(row.equilibrium.jtor[:8], dtype=np.float64)
+            assert np.all(np.diff(jtor_head) <= 1.0e-8), (spec_case.case_name, jtor_head.tolist())
+    finally:
+        benchmark.BENCHMARK_REPEAT_COUNT = original_repeat
+
+
+def test_pi_psin_uniform_benchmark_jtor_head_is_axis_monotone():
+    benchmark_path = Path(__file__).with_name("benchmark.py")
+    spec = importlib.util.spec_from_file_location("veqpy_tests_benchmark", benchmark_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load benchmark module from {benchmark_path}")
+    benchmark = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = benchmark
+    spec.loader.exec_module(benchmark)
+
+    original_repeat = benchmark.BENCHMARK_REPEAT_COUNT
+    try:
+        benchmark.BENCHMARK_REPEAT_COUNT = 1
+        reference = benchmark._solve_reference()
+        for constraint in ("Ip_beta", "Ip", "beta", "null"):
+            spec_case = benchmark.BenchmarkCaseSpec("PI", "psin", constraint, "uniform")
+            row = benchmark._benchmark_case_result(spec_case, reference)
+            jtor_head = np.asarray(row.equilibrium.jtor[:12], dtype=np.float64)
+            assert np.all(np.diff(jtor_head) >= -1.0e-8), (spec_case.case_name, jtor_head.tolist())
+    finally:
+        benchmark.BENCHMARK_REPEAT_COUNT = original_repeat
+
+
+def test_pq_psin_uniform_benchmark_successful_fallback_is_silent():
+    benchmark_path = Path(__file__).with_name("benchmark.py")
+    spec = importlib.util.spec_from_file_location("veqpy_tests_benchmark", benchmark_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load benchmark module from {benchmark_path}")
+    benchmark = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = benchmark
+    spec.loader.exec_module(benchmark)
+
+    original_repeat = benchmark.BENCHMARK_REPEAT_COUNT
+    try:
+        benchmark.BENCHMARK_REPEAT_COUNT = 1
+        reference = benchmark._solve_reference()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            row = benchmark._benchmark_case_result(benchmark.BenchmarkCaseSpec("PQ", "psin", "Ip_beta", "uniform"), reference)
+        retry_warnings = [
+            warning
+            for warning in caught
+            if issubclass(warning.category, RuntimeWarning) and "Retrying with" in str(warning.message)
+        ]
+        assert not retry_warnings, [str(warning.message) for warning in retry_warnings]
+        assert row.result.success, row.result.message
+    finally:
+        benchmark.BENCHMARK_REPEAT_COUNT = original_repeat
+
+
+def test_pq_psin_uniform_ip_beta_benchmark_prefers_dogbox_fallback():
+    benchmark_path = Path(__file__).with_name("benchmark.py")
+    spec = importlib.util.spec_from_file_location("veqpy_tests_benchmark", benchmark_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load benchmark module from {benchmark_path}")
+    benchmark = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = benchmark
+    spec.loader.exec_module(benchmark)
+
+    original_repeat = benchmark.BENCHMARK_REPEAT_COUNT
+    try:
+        benchmark.BENCHMARK_REPEAT_COUNT = 1
+        reference = benchmark._solve_reference()
+        row = benchmark._benchmark_case_result(benchmark.BenchmarkCaseSpec("PQ", "psin", "Ip_beta", "uniform"), reference)
+        assert row.result.success, row.result.message
+        assert "selected method=least_squares/dogbox [cold-fallback]" in row.result.message, row.result.message
+        assert int(row.result.nfev) < 300, row.result.nfev
+        assert row.shape_error <= benchmark.SHAPE_MATCH_TOL, row.shape_error
+    finally:
+        benchmark.BENCHMARK_REPEAT_COUNT = original_repeat
+
+
+def test_pj1_pq_routes_benchmark_jpara_tail_is_monotone():
+    benchmark_path = Path(__file__).with_name("benchmark.py")
+    spec = importlib.util.spec_from_file_location("veqpy_tests_benchmark", benchmark_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load benchmark module from {benchmark_path}")
+    benchmark = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = benchmark
+    spec.loader.exec_module(benchmark)
+
+    original_repeat = benchmark.BENCHMARK_REPEAT_COUNT
+    try:
+        benchmark.BENCHMARK_REPEAT_COUNT = 1
+        reference = benchmark._solve_reference()
+        target_specs = (
+            benchmark.BenchmarkCaseSpec("PJ1", "psin", "Ip_beta", "grid"),
+            benchmark.BenchmarkCaseSpec("PJ1", "rho", "Ip_beta", "uniform"),
+            benchmark.BenchmarkCaseSpec("PJ1", "rho", "Ip_beta", "grid"),
+            benchmark.BenchmarkCaseSpec("PQ", "psin", "Ip_beta", "uniform"),
+        )
+        for spec_case in target_specs:
+            row = benchmark._benchmark_case_result(spec_case, reference)
+            jpara_tail = np.asarray(row.equilibrium.jpara[-12:], dtype=np.float64)
+            assert np.all(np.diff(jpara_tail) <= 1.0e-8), (spec_case.case_name, jpara_tail.tolist())
+    finally:
+        benchmark.BENCHMARK_REPEAT_COUNT = original_repeat
+
+
+def test_eq_diagnostics_align_with_grid_corrected_calculus():
+    benchmark_path = Path(__file__).with_name("benchmark.py")
+    spec = importlib.util.spec_from_file_location("veqpy_tests_benchmark", benchmark_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load benchmark module from {benchmark_path}")
+    benchmark = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = benchmark
+    spec.loader.exec_module(benchmark)
+
+    original_repeat = benchmark.BENCHMARK_REPEAT_COUNT
+    try:
+        benchmark.BENCHMARK_REPEAT_COUNT = 1
+        reference = benchmark._solve_reference()
+        row = benchmark._benchmark_case_result(benchmark.BenchmarkCaseSpec("PQ", "psin", "Ip_beta", "uniform"), reference)
+        equilibrium = row.equilibrium
+        grid = equilibrium.grid
+
+        expected_ff_int = grid.integrate(equilibrium.FF_r, p=1)
+        expected_f2 = (equilibrium.R0 * equilibrium.B0) ** 2 + 2.0 * (expected_ff_int - expected_ff_int[-1])
+        assert np.allclose(equilibrium.F2, expected_f2, atol=1.0e-12, rtol=1.0e-12)
+
+        expected_p = grid.integrate(equilibrium.P_r, p=1)
+        expected_p -= expected_p[-1]
+        assert np.allclose(equilibrium.P, expected_p, atol=1.0e-12, rtol=1.0e-12)
+
+        expected_q_r = grid.corrected_even_derivative(equilibrium.q)
+        q_safe = np.maximum(np.abs(equilibrium.q), 1.0e-15)
+        expected_s = equilibrium.rho * expected_q_r / q_safe
+        expected_s[0] = 0.0
+        assert np.allclose(equilibrium.s, expected_s, atol=1.0e-12, rtol=1.0e-12)
+
+        expected_psin_rr = grid.corrected_linear_derivative(equilibrium.psin_r)
+        assert np.allclose(equilibrium.psin_rr, expected_psin_rr, atol=1.0e-12, rtol=1.0e-12)
+
+        expected_f_r = grid.corrected_even_derivative(equilibrium.F)
+        expected_psin_r_diag, expected_psin_rr_diag = _smoothed_psin_radial_derivatives(equilibrium.rho, equilibrium.psin)
+        expected_jpara = equilibrium.alpha2 / MU0 * equilibrium.F / equilibrium.Ln_r * (
+            equilibrium.Kn_r * expected_psin_r_diag / equilibrium.F
+            + equilibrium.Kn * expected_psin_rr_diag / equilibrium.F
+            - equilibrium.Kn * expected_psin_r_diag * expected_f_r / equilibrium.F**2
+        )
+        expected_jpara = _stabilize_axis_even_profile(
+            equilibrium.rho, expected_jpara, fit_start=1, fit_count=20, replace_count=20, degree=2
+        )
+        _extrapolate_inplace(equilibrium.rho, expected_jpara, p=2)
+        assert np.allclose(equilibrium.jpara, expected_jpara, atol=1.0e-12, rtol=1.0e-12)
+
+        resampled = equilibrium.resample(
+            target_grid=Grid(
+                Nr=33,
+                Nt=equilibrium.grid.Nt,
+                scheme="uniform",
+                L_max=equilibrium.grid.L_max,
+                M_max=equilibrium.grid.M_max,
+            )
+        )
+        resampled_psin_rr = resampled.grid.corrected_linear_derivative(resampled.psin_r)
+        assert np.allclose(resampled.psin_rr, resampled_psin_rr, atol=1.0e-12, rtol=1.0e-12)
+    finally:
+        benchmark.BENCHMARK_REPEAT_COUNT = original_repeat
+
+
+def test_benchmark_report_includes_ff_r_and_jpara_diagnostics():
+    benchmark_path = Path(__file__).with_name("benchmark.py")
+    spec = importlib.util.spec_from_file_location("veqpy_tests_benchmark", benchmark_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load benchmark module from {benchmark_path}")
+    benchmark = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = benchmark
+    spec.loader.exec_module(benchmark)
+
+    original_repeat = benchmark.BENCHMARK_REPEAT_COUNT
+    original_artifact_dir = benchmark._artifact_dir
+    original_plot = benchmark.PLOT
+    report_dir = Path(__file__).resolve().parent / ".benchmark-report-test"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        benchmark.BENCHMARK_REPEAT_COUNT = 1
+        benchmark.PLOT = False
+        benchmark._artifact_dir = lambda: report_dir
+        reference = benchmark._solve_reference()
+        row = benchmark._benchmark_case_result(benchmark.BenchmarkCaseSpec("PQ", "psin", "Ip_beta", "uniform"), reference)
+        benchmark._write_report(reference, [row], plot_failures=None)
+
+        report = (report_dir / "benchmark_compare.txt").read_text(encoding="utf-8")
+        assert "FF_r / jpara diagnostics" in report
+        assert "FF_r_rms" in report
+        assert "jpara_rms" in report
+        assert "Largest FF_r relative RMS error ranking" in report
+        assert "Largest jpara relative RMS error ranking" in report
+        assert "Most oscillatory FF_r ranking" in report
+        assert "Most oscillatory jpara ranking" in report
+        assert row.case_name in report
+    finally:
+        benchmark.BENCHMARK_REPEAT_COUNT = original_repeat
+        benchmark._artifact_dir = original_artifact_dir
+        benchmark.PLOT = original_plot
 
 
 @pytest.mark.parametrize(

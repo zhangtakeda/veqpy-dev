@@ -333,14 +333,29 @@ def test_resampled_equilibrium_uses_spline_profile_reconstruction(monkeypatch):
     assert np.allclose(resampled.Pn_psin, sentinel)
 
 
-def test_equilibrium_diagnostics_avoid_grid_matrix_diff_and_integrate(monkeypatch):
+def test_equilibrium_diagnostics_use_grid_corrected_calculus(monkeypatch):
+    calls = {"integrate": 0, "corrected_even_derivative": 0, "corrected_linear_derivative": 0}
+    original_integrate = Grid.integrate
+    original_corrected_even_derivative = Grid.corrected_even_derivative
+    original_corrected_linear_derivative = Grid.corrected_linear_derivative
+
+    def _track_integrate(self, *args, **kwargs):
+        calls["integrate"] += 1
+        return original_integrate(self, *args, **kwargs)
+
+    def _track_corrected_even_derivative(self, *args, **kwargs):
+        calls["corrected_even_derivative"] += 1
+        return original_corrected_even_derivative(self, *args, **kwargs)
+
+    def _track_corrected_linear_derivative(self, *args, **kwargs):
+        calls["corrected_linear_derivative"] += 1
+        return original_corrected_linear_derivative(self, *args, **kwargs)
+
+    monkeypatch.setattr(Grid, "integrate", _track_integrate)
+    monkeypatch.setattr(Grid, "corrected_even_derivative", _track_corrected_even_derivative)
+    monkeypatch.setattr(Grid, "corrected_linear_derivative", _track_corrected_linear_derivative)
+
     equilibrium, _ = _build_high_order_equilibrium()
-
-    def _forbid(*args, **kwargs):
-        raise AssertionError("diagnostic should not use grid matrix differencing/integration")
-
-    monkeypatch.setattr(Grid, "differentiate", _forbid)
-    monkeypatch.setattr(Grid, "integrate", _forbid)
 
     assert np.all(np.isfinite(equilibrium.F2))
     assert np.all(np.isfinite(equilibrium.P))
@@ -348,6 +363,10 @@ def test_equilibrium_diagnostics_avoid_grid_matrix_diff_and_integrate(monkeypatc
     assert np.all(np.isfinite(equilibrium.jpara))
     assert np.all(np.isfinite(equilibrium.Psi))
     assert np.all(np.isfinite(equilibrium.Phi))
+    equilibrium.resample(target_grid=Grid(Nr=12, Nt=24, scheme="uniform", M_max=4))
+    assert calls["integrate"] >= 2
+    assert calls["corrected_even_derivative"] >= 1
+    assert calls["corrected_linear_derivative"] >= 1
 
 
 def test_operator_exposes_explicit_layout_and_execution_layers():

@@ -25,7 +25,9 @@ from scipy.linalg import eigh_tridiagonal
 from veqpy.engine import (
     RHO_AXIS,
     THETA_AXIS,
+    corrected_even_derivative,
     corrected_integration,
+    corrected_linear_derivative,
     full_differentiation,
     full_integration,
     quadrature,
@@ -57,6 +59,10 @@ class Grid(Serial):
     weights: np.ndarray = field(init=False)
     integration_matrix: np.ndarray = field(init=False, default=None)
     differentiation_matrix: np.ndarray = field(init=False, default=None)
+    corrected_integration_matrix_p1: np.ndarray = field(init=False, default=None)
+    corrected_integration_matrix_p2: np.ndarray = field(init=False, default=None)
+    corrected_linear_derivative_matrix: np.ndarray = field(init=False, default=None)
+    corrected_even_derivative_matrix: np.ndarray = field(init=False, default=None)
 
     x: np.ndarray = field(init=False)
     y: np.ndarray = field(init=False)
@@ -122,6 +128,20 @@ class Grid(Serial):
         else:
             integration_matrix = _build_integration_matrix(rho)
             differentiation_matrix = _build_differentiation_matrix(rho)
+        corrected_integration_matrix_p1 = _build_corrected_integration_matrix(
+            rho,
+            integration_matrix,
+            differentiation_matrix,
+            p=1,
+        )
+        corrected_integration_matrix_p2 = _build_corrected_integration_matrix(
+            rho,
+            integration_matrix,
+            differentiation_matrix,
+            p=2,
+        )
+        corrected_linear_derivative_matrix = _build_corrected_linear_derivative_matrix(rho, differentiation_matrix)
+        corrected_even_derivative_matrix = _build_corrected_even_derivative_matrix(rho, differentiation_matrix)
 
         T_fields = _build_chebyshev_tables(rho, x, self.L_max)
 
@@ -149,9 +169,35 @@ class Grid(Serial):
         object.__setattr__(self, "weights", np.asarray(weights, dtype=np.float64))
         object.__setattr__(self, "integration_matrix", np.asarray(integration_matrix, dtype=np.float64))
         object.__setattr__(self, "differentiation_matrix", np.asarray(differentiation_matrix, dtype=np.float64))
+        object.__setattr__(
+            self,
+            "corrected_integration_matrix_p1",
+            np.asarray(corrected_integration_matrix_p1, dtype=np.float64),
+        )
+        object.__setattr__(
+            self,
+            "corrected_integration_matrix_p2",
+            np.asarray(corrected_integration_matrix_p2, dtype=np.float64),
+        )
+        object.__setattr__(
+            self,
+            "corrected_linear_derivative_matrix",
+            np.asarray(corrected_linear_derivative_matrix, dtype=np.float64),
+        )
+        object.__setattr__(
+            self,
+            "corrected_even_derivative_matrix",
+            np.asarray(corrected_even_derivative_matrix, dtype=np.float64),
+        )
         object.__setattr__(self, "x", np.asarray(x, dtype=np.float64))
         object.__setattr__(self, "y", np.asarray(y, dtype=np.float64))
         object.__setattr__(self, "T_fields", np.asarray(T_fields, dtype=np.float64))
+        self.integration_matrix.flags.writeable = False
+        self.differentiation_matrix.flags.writeable = False
+        self.corrected_integration_matrix_p1.flags.writeable = False
+        self.corrected_integration_matrix_p2.flags.writeable = False
+        self.corrected_linear_derivative_matrix.flags.writeable = False
+        self.corrected_even_derivative_matrix.flags.writeable = False
 
     def __rich__(self):
         tree = Tree("[bold blue]Grid[/]")
@@ -193,6 +239,12 @@ class Grid(Serial):
             out = np.empty_like(f_1D)
         if p is None:
             return full_integration(out, f_1D, self.integration_matrix)
+        if p == 1:
+            np.matmul(self.corrected_integration_matrix_p1, f_1D, out=out)
+            return out
+        if p == 2:
+            np.matmul(self.corrected_integration_matrix_p2, f_1D, out=out)
+            return out
 
         return corrected_integration(
             out,
@@ -202,6 +254,20 @@ class Grid(Serial):
             rho=self.rho,
             differentiation_matrix=self.differentiation_matrix,
         )
+
+    def corrected_linear_derivative(self, f_1D: np.ndarray, *, out: np.ndarray | None = None) -> np.ndarray:
+        """在当前 Grid 上对轴心线性起始量做预计算修正微分."""
+        if out is None:
+            out = np.empty_like(f_1D)
+        np.matmul(self.corrected_linear_derivative_matrix, f_1D, out=out)
+        return out
+
+    def corrected_even_derivative(self, f_1D: np.ndarray, *, out: np.ndarray | None = None) -> np.ndarray:
+        """在当前 Grid 上对轴心偶函数量做预计算修正微分."""
+        if out is None:
+            out = np.empty_like(f_1D)
+        np.matmul(self.corrected_even_derivative_matrix, f_1D, out=out)
+        return out
 
     def quadrature(
         self,
@@ -383,6 +449,65 @@ def _build_uniform_integration_matrix(Nr: int) -> np.ndarray:
         if i > 1:
             Q[i, 1:i] = h
     return Q
+
+
+def _build_corrected_integration_matrix(
+    rho: np.ndarray,
+    integration_matrix: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    *,
+    p: int,
+) -> np.ndarray:
+    return _build_linear_operator_matrix(
+        rho.shape[0],
+        lambda out, arr: corrected_integration(
+            out,
+            arr,
+            integration_matrix,
+            p=p,
+            rho=rho,
+            differentiation_matrix=differentiation_matrix,
+        ),
+    )
+
+
+def _build_corrected_linear_derivative_matrix(rho: np.ndarray, differentiation_matrix: np.ndarray) -> np.ndarray:
+    return _build_linear_operator_matrix(
+        rho.shape[0],
+        lambda out, arr: corrected_linear_derivative(
+            out,
+            arr,
+            differentiation_matrix,
+            rho=rho,
+        ),
+    )
+
+
+def _build_corrected_even_derivative_matrix(rho: np.ndarray, differentiation_matrix: np.ndarray) -> np.ndarray:
+    return _build_linear_operator_matrix(
+        rho.shape[0],
+        lambda out, arr: corrected_even_derivative(
+            out,
+            arr,
+            differentiation_matrix,
+            rho=rho,
+        ),
+    )
+
+
+def _build_linear_operator_matrix(
+    n: int,
+    operator,
+) -> np.ndarray:
+    matrix = np.empty((n, n), dtype=np.float64)
+    basis = np.zeros(n, dtype=np.float64)
+    out = np.empty(n, dtype=np.float64)
+    for j in range(n):
+        basis.fill(0.0)
+        basis[j] = 1.0
+        operator(out, basis)
+        matrix[:, j] = out
+    return matrix
 
 
 def _build_chebyshev_tables(

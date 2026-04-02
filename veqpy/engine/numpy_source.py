@@ -2108,10 +2108,6 @@ def _smooth_profile_head_three_point(
         for i in range(1, stop):
             profile[i] = 0.25 * prev[i - 1] + 0.5 * prev[i] + 0.25 * prev[i + 1]
     return profile
-
-
-
-
 def resolve_source_inputs(
     out_heat_input: np.ndarray,
     out_current_input: np.ndarray,

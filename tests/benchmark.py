@@ -25,6 +25,7 @@ TEST_SOURCE_SAMPLE_COUNT = 51
 BENCHMARK_REPEAT_COUNT = 100
 SHAPE_MATCH_TOL = 1e-2
 REFERENCE_CACHE_VERSION = 1
+DIAGNOSTIC_SIGN_CHANGE_WINDOW = 12
 
 REFERENCE_GRID = Grid(Nr=32, Nt=32, scheme="legendre")
 TEST_GRID = Grid(Nr=32, Nt=12, scheme="legendre", L_max=REFERENCE_GRID.L_max)
@@ -109,6 +110,14 @@ class BenchmarkCaseResult:
     avg_ms: float
     std_ms: float
     shape_error: float
+    ff_r_rel_rms_error: float
+    ff_r_rel_max_error: float
+    ff_r_head_sign_changes: int
+    ff_r_tail_sign_changes: int
+    jpara_rel_rms_error: float
+    jpara_rel_max_error: float
+    jpara_head_sign_changes: int
+    jpara_tail_sign_changes: int
 
     @property
     def case_name(self) -> str:
@@ -622,9 +631,73 @@ def _shape_error(reference_x: np.ndarray, current_x: np.ndarray) -> float:
     return float(np.max(np.abs(current_x[:n] - reference_x[:n])))
 
 
+def _relative_profile_errors(reference_values: np.ndarray, current_values: np.ndarray) -> tuple[float, float]:
+    reference_values = _as_float64_array(reference_values)
+    current_values = _as_float64_array(current_values)
+    n = min(reference_values.shape[0], current_values.shape[0])
+    if n == 0:
+        return 0.0, 0.0
+    reference_values = reference_values[:n]
+    current_values = current_values[:n]
+    diff = current_values - reference_values
+    scale = max(float(np.max(np.abs(reference_values))), 1.0e-12)
+    rel_rms = float(np.sqrt(np.mean(diff * diff)) / scale)
+    rel_max = float(np.max(np.abs(diff)) / scale)
+    return rel_rms, rel_max
+
+
+def _window_derivative_sign_changes(values: np.ndarray, *, side: str, window: int = DIAGNOSTIC_SIGN_CHANGE_WINDOW) -> int:
+    values = _as_float64_array(values)
+    count = min(int(window), values.shape[0])
+    if side == "head":
+        sample = values[:count]
+    elif side == "tail":
+        sample = values[-count:]
+    else:
+        raise ValueError(f"Unsupported side {side!r}")
+    delta = np.diff(sample)
+    signs = np.sign(delta)
+    nonzero = signs[signs != 0.0]
+    if nonzero.size < 2:
+        return 0
+    return int(np.sum(nonzero[1:] * nonzero[:-1] < 0.0))
+
+
+def _diagnostic_profile_metrics(
+    reference_axis: PreparedInterpAxis,
+    reference_values: np.ndarray,
+    current_axis: np.ndarray,
+    current_values: np.ndarray,
+) -> tuple[float, float, int, int]:
+    current_axis = _as_float64_array(current_axis)
+    current_values = _as_float64_array(current_values)
+    reference_on_current = _profile_interp(reference_axis, reference_values, current_axis)
+    rel_rms, rel_max = _relative_profile_errors(reference_on_current, current_values)
+    return (
+        rel_rms,
+        rel_max,
+        _window_derivative_sign_changes(current_values, side="head"),
+        _window_derivative_sign_changes(current_values, side="tail"),
+    )
+
+
 def _benchmark_case_result(spec: BenchmarkCaseSpec, reference: ReferenceBundle) -> BenchmarkCaseResult:
     case = _make_benchmark_case(spec, reference)
     result, equilibrium, shape_x, avg_ms, std_ms = _solve_with_timing(case)
+    ff_r_rel_rms_error, ff_r_rel_max_error, ff_r_head_sign_changes, ff_r_tail_sign_changes = _diagnostic_profile_metrics(
+        reference.rho_interp_axis,
+        reference.ref_profiles["FF_r"],
+        equilibrium.rho,
+        equilibrium.FF_r,
+    )
+    jpara_rel_rms_error, jpara_rel_max_error, jpara_head_sign_changes, jpara_tail_sign_changes = (
+        _diagnostic_profile_metrics(
+            reference.rho_interp_axis,
+            reference.ref_profiles["jpara"],
+            equilibrium.rho,
+            equilibrium.jpara,
+        )
+    )
     return BenchmarkCaseResult(
         spec=spec,
         result=result,
@@ -632,6 +705,14 @@ def _benchmark_case_result(spec: BenchmarkCaseSpec, reference: ReferenceBundle) 
         avg_ms=avg_ms,
         std_ms=std_ms,
         shape_error=_shape_error(reference.reference_shape_x, shape_x),
+        ff_r_rel_rms_error=ff_r_rel_rms_error,
+        ff_r_rel_max_error=ff_r_rel_max_error,
+        ff_r_head_sign_changes=ff_r_head_sign_changes,
+        ff_r_tail_sign_changes=ff_r_tail_sign_changes,
+        jpara_rel_rms_error=jpara_rel_rms_error,
+        jpara_rel_max_error=jpara_rel_max_error,
+        jpara_head_sign_changes=jpara_head_sign_changes,
+        jpara_tail_sign_changes=jpara_tail_sign_changes,
     )
 
 
@@ -643,10 +724,28 @@ def _write_report(
     worst_shape = max(rows, key=lambda row: row.shape_error)
     slowest_case = max(rows, key=lambda row: row.avg_ms)
     largest_nfev_case = max(rows, key=lambda row: int(row.result.nfev))
+    worst_ff_r_case = max(rows, key=lambda row: row.ff_r_rel_rms_error)
+    worst_jpara_case = max(rows, key=lambda row: row.jpara_rel_rms_error)
+    most_oscillatory_ff_r_case = max(
+        rows,
+        key=lambda row: row.ff_r_head_sign_changes + row.ff_r_tail_sign_changes,
+    )
+    most_oscillatory_jpara_case = max(
+        rows,
+        key=lambda row: row.jpara_head_sign_changes + row.jpara_tail_sign_changes,
+    )
     failing_rows = [row for row in rows if row.shape_error > SHAPE_MATCH_TOL]
     rows_by_error = _sort_rows_desc(rows, lambda row: row.shape_error)
     rows_by_time = _sort_rows_desc(rows, lambda row: row.avg_ms)
     rows_by_nfev = _sort_rows_desc(rows, lambda row: int(row.result.nfev))
+    rows_by_ff_r_rms = _sort_rows_desc(rows, lambda row: row.ff_r_rel_rms_error)
+    rows_by_jpara_rms = _sort_rows_desc(rows, lambda row: row.jpara_rel_rms_error)
+    rows_by_ff_r_oscillation = _sort_rows_desc(
+        rows, lambda row: row.ff_r_head_sign_changes + row.ff_r_tail_sign_changes
+    )
+    rows_by_jpara_oscillation = _sort_rows_desc(
+        rows, lambda row: row.jpara_head_sign_changes + row.jpara_tail_sign_changes
+    )
 
     lines = [f"PF-rho-Ip reference vs {len(rows)} low-resolution route-specific cases", ""]
     lines.extend(
@@ -662,6 +761,21 @@ def _write_report(
                 ("shape_tol", f"{SHAPE_MATCH_TOL:.3e}"),
                 ("failure_count", f"{len(failing_rows)}/{len(rows)}"),
                 ("worst_shape_case", f"{worst_shape.case_name} ({worst_shape.shape_error:.6e})"),
+                ("worst_ff_r_rel_rms_case", f"{worst_ff_r_case.case_name} ({worst_ff_r_case.ff_r_rel_rms_error:.6e})"),
+                (
+                    "worst_jpara_rel_rms_case",
+                    f"{worst_jpara_case.case_name} ({worst_jpara_case.jpara_rel_rms_error:.6e})",
+                ),
+                (
+                    "most_oscillatory_ff_r_case",
+                    f"{most_oscillatory_ff_r_case.case_name} "
+                    f"(h/t={most_oscillatory_ff_r_case.ff_r_head_sign_changes}/{most_oscillatory_ff_r_case.ff_r_tail_sign_changes})",
+                ),
+                (
+                    "most_oscillatory_jpara_case",
+                    f"{most_oscillatory_jpara_case.case_name} "
+                    f"(h/t={most_oscillatory_jpara_case.jpara_head_sign_changes}/{most_oscillatory_jpara_case.jpara_tail_sign_changes})",
+                ),
                 ("slowest_case", f"{slowest_case.case_name} ({slowest_case.avg_ms:.3f} ms)"),
                 ("largest_nfev_case", f"{largest_nfev_case.case_name} ({int(largest_nfev_case.result.nfev)})"),
             ]
@@ -700,6 +814,34 @@ def _write_report(
             f"{ok:>4}"
         )
 
+    lines.extend(["", "FF_r / jpara diagnostics", ""])
+    lines.append(
+        "case".ljust(24)
+        + " | "
+        + "FF_r_rms".rjust(10)
+        + " | "
+        + "FF_r_max".rjust(10)
+        + " | "
+        + "FF_r_h/t".rjust(8)
+        + " | "
+        + "jpara_rms".rjust(10)
+        + " | "
+        + "jpara_max".rjust(10)
+        + " | "
+        + "jpara_h/t".rjust(10)
+    )
+    lines.append("-" * 96)
+    for row in rows:
+        lines.append(
+            f"{row.case_name:<24} | "
+            f"{row.ff_r_rel_rms_error:>10.3e} | "
+            f"{row.ff_r_rel_max_error:>10.3e} | "
+            f"{f'{row.ff_r_head_sign_changes}/{row.ff_r_tail_sign_changes}':>8} | "
+            f"{row.jpara_rel_rms_error:>10.3e} | "
+            f"{row.jpara_rel_max_error:>10.3e} | "
+            f"{f'{row.jpara_head_sign_changes}/{row.jpara_tail_sign_changes}':>10}"
+        )
+
     lines.extend(
         _render_ranking_section(
             "Largest shape_error ranking",
@@ -711,6 +853,82 @@ def _write_report(
                 ("right", "avg_ms", 12, lambda index, row: f"{row.avg_ms:.3f}"),
                 ("right", "std_ms", 12, lambda index, row: f"{row.std_ms:.3f}"),
                 ("right", "nfev", 6, lambda index, row: int(row.result.nfev)),
+            ],
+        )
+    )
+    lines.extend(
+        _render_ranking_section(
+            "Largest FF_r relative RMS error ranking",
+            rows_by_ff_r_rms,
+            columns=[
+                ("right", "rank", 4, lambda index, row: index),
+                ("left", "case", 24, lambda index, row: row.case_name),
+                ("right", "FF_r_rms", 10, lambda index, row: f"{row.ff_r_rel_rms_error:.3e}"),
+                ("right", "FF_r_max", 10, lambda index, row: f"{row.ff_r_rel_max_error:.3e}"),
+                (
+                    "right",
+                    "FF_r_h/t",
+                    8,
+                    lambda index, row: f"{row.ff_r_head_sign_changes}/{row.ff_r_tail_sign_changes}",
+                ),
+                ("right", "shape_error", 12, lambda index, row: f"{row.shape_error:.6e}"),
+            ],
+        )
+    )
+    lines.extend(
+        _render_ranking_section(
+            "Largest jpara relative RMS error ranking",
+            rows_by_jpara_rms,
+            columns=[
+                ("right", "rank", 4, lambda index, row: index),
+                ("left", "case", 24, lambda index, row: row.case_name),
+                ("right", "jpara_rms", 10, lambda index, row: f"{row.jpara_rel_rms_error:.3e}"),
+                ("right", "jpara_max", 10, lambda index, row: f"{row.jpara_rel_max_error:.3e}"),
+                (
+                    "right",
+                    "jpara_h/t",
+                    10,
+                    lambda index, row: f"{row.jpara_head_sign_changes}/{row.jpara_tail_sign_changes}",
+                ),
+                ("right", "shape_error", 12, lambda index, row: f"{row.shape_error:.6e}"),
+            ],
+        )
+    )
+    lines.extend(
+        _render_ranking_section(
+            "Most oscillatory FF_r ranking",
+            rows_by_ff_r_oscillation,
+            columns=[
+                ("right", "rank", 4, lambda index, row: index),
+                ("left", "case", 24, lambda index, row: row.case_name),
+                (
+                    "right",
+                    "FF_r_h/t",
+                    8,
+                    lambda index, row: f"{row.ff_r_head_sign_changes}/{row.ff_r_tail_sign_changes}",
+                ),
+                ("right", "FF_r_rms", 10, lambda index, row: f"{row.ff_r_rel_rms_error:.3e}"),
+                ("right", "FF_r_max", 10, lambda index, row: f"{row.ff_r_rel_max_error:.3e}"),
+                ("right", "shape_error", 12, lambda index, row: f"{row.shape_error:.6e}"),
+            ],
+        )
+    )
+    lines.extend(
+        _render_ranking_section(
+            "Most oscillatory jpara ranking",
+            rows_by_jpara_oscillation,
+            columns=[
+                ("right", "rank", 4, lambda index, row: index),
+                ("left", "case", 24, lambda index, row: row.case_name),
+                (
+                    "right",
+                    "jpara_h/t",
+                    10,
+                    lambda index, row: f"{row.jpara_head_sign_changes}/{row.jpara_tail_sign_changes}",
+                ),
+                ("right", "jpara_rms", 10, lambda index, row: f"{row.jpara_rel_rms_error:.3e}"),
+                ("right", "jpara_max", 10, lambda index, row: f"{row.jpara_rel_max_error:.3e}"),
+                ("right", "shape_error", 12, lambda index, row: f"{row.shape_error:.6e}"),
             ],
         )
     )
@@ -837,7 +1055,9 @@ def run_full_benchmark(*, show_progress: bool = SHOW_PROGRESS) -> tuple[Referenc
             print(
                 f"[{BACKEND}] [{index:02d}/{len(specs)}] {row.case_name}: "
                 f"time={row.avg_ms:.3f}+/-{row.std_ms:.3f} ms | "
-                f"shape={row.shape_error:.3e}"
+                f"shape={row.shape_error:.3e} | "
+                f"FF_r={row.ff_r_rel_rms_error:.2e} ({row.ff_r_head_sign_changes}/{row.ff_r_tail_sign_changes}) | "
+                f"jpara={row.jpara_rel_rms_error:.2e} ({row.jpara_head_sign_changes}/{row.jpara_tail_sign_changes})"
             )
         if plot_dir is not None:
             try:
