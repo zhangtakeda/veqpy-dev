@@ -314,7 +314,7 @@ source route 通过 bound runner 绑定.
 - solve facade
 - history
 - reset / clear
-- equilibrium-history rebuild
+- solver state lifecycle and fallback behavior
 
 隐含规则:
 

@@ -14,6 +14,7 @@ class _DummyOperator:
     def __init__(self, *, x_size: int = 3):
         self.x_size = x_size
         self.case = _DummyCase()
+        self.source_state_invalidations = 0
 
     def encode_initial_state(self) -> np.ndarray:
         return np.zeros(self.x_size, dtype=np.float64)
@@ -26,6 +27,9 @@ class _DummyOperator:
 
     def __call__(self, x: np.ndarray) -> np.ndarray:
         return self.coerce_x(x)
+
+    def invalidate_source_state(self) -> None:
+        self.source_state_invalidations += 1
 
 
 def _attempt_result(

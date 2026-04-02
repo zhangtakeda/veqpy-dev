@@ -67,7 +67,7 @@ Core regressions are now organized by submodule instead of by temporary refactor
 - [tests/test_engine_core_regression.py](tests/test_engine_core_regression.py)
   - `numpy`/`numba` geometry and residual consistency, high-order runtime propagation
 - [tests/test_solver_core_regression.py](tests/test_solver_core_regression.py)
-  - solve facade, history, reset/clear, equilibrium-history rebuild semantics
+  - solve facade, fallback/reset behavior, and solver state lifecycle semantics
 
 The main runtime path is:
 

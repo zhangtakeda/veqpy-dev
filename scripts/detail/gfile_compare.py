@@ -271,7 +271,7 @@ def extract_gfile_surfaces(geqdsk: Geqdsk, payload: GFilePayload, levels: list[f
 
 def build_solver_case(boundary: Boundary, payload: GFilePayload, geqdsk: Geqdsk, config: CompareConfig) -> OperatorCase:
     return OperatorCase(
-        name="PF",
+        route="PF",
         coordinate="psin",
         nodes="uniform",
         profile_coeffs={name: list(values) for name, values in config.profile_coeffs.items()},

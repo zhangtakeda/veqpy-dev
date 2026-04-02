@@ -141,6 +141,8 @@ def _coerce_optional_array(value, *, copy: bool, name: str = "array") -> np.ndar
 
 def _copy_optional_array(value: np.ndarray | None) -> np.ndarray | None:
     return None if value is None else value.copy()
+
+
 def _fill_profile_outputs(
     u_fields: np.ndarray,
     T_fields: np.ndarray,

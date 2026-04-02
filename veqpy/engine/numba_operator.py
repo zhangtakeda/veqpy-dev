@@ -405,6 +405,9 @@ def bind_fused_profile_owned_psin_residual_runner(
     packed_residual = runtime_layout.packed_residual
     source_psin_query = runtime_layout.source_psin_query
     source_parameter_query = runtime_layout.source_parameter_query
+    heat_projection_coeff = runtime_layout.source_heat_projection_coeff
+    current_projection_coeff = runtime_layout.source_current_projection_coeff
+    endpoint_blend = runtime_layout.source_endpoint_blend
     materialized_heat_input = runtime_layout.materialized_heat_input
     materialized_current_input = runtime_layout.materialized_current_input
     source_scratch_1d = runtime_layout.source_scratch_1d
@@ -417,6 +420,9 @@ def bind_fused_profile_owned_psin_residual_runner(
     source_kernel = source_plan.kernel
     coordinate_code = int(source_plan.coordinate_code)
     parameterization_code = int(source_plan.parameterization_code)
+    has_projection_policy = bool(source_plan.has_projection_policy)
+    projection_domain_code = int(source_plan.projection_domain_code)
+    endpoint_policy_code = int(source_plan.endpoint_policy_code)
     heat_input = source_plan.heat_input
     current_input = source_plan.current_input
     Ip = float(source_plan.Ip)
@@ -498,6 +504,18 @@ def bind_fused_profile_owned_psin_residual_runner(
             current_input,
             parameterization_code,
         )
+        if has_projection_policy:
+            _materialize_projected_source_inputs_impl(
+                materialized_heat_input,
+                materialized_current_input,
+                heat_projection_coeff,
+                current_projection_coeff,
+                current_input,
+                source_psin_query,
+                projection_domain_code,
+                endpoint_policy_code,
+                endpoint_blend,
+            )
         if scratch_source_kernel is None:
             alpha1, alpha2 = source_kernel(
                 source_target_root_fields[0],

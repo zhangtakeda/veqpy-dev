@@ -10,7 +10,7 @@ import numpy as np
 from matplotlib.colors import LogNorm
 from rich import print
 
-from veqpy.engine import validate_operator
+from veqpy.engine import validate_route
 from veqpy.model import Boundary, Grid
 from veqpy.operator import Operator, OperatorCase
 from veqpy.operator.codec import decode_packed_blocks
@@ -49,12 +49,8 @@ LOWER_COEFFS = {
 
 HIGHER_COEFFS = {
     "h": [0.0] * 10,
-    "v": [0.0] * 10,
     "k": [0.0] * 10,
-    "c0": [0.0] * 5,
-    "c1": [0.0] * 5,
-    "c2": [0.0] * 5,
-    "s1": [0.0] * 5,
+    "s1": [0.0] * 10,
     "s2": [0.0] * 5,
     "s3": [0.0] * 5,
 }
@@ -163,7 +159,7 @@ FFn_r, Pn_r = _build_uniform_rho_inputs()
 
 
 LOWER_CASE = OperatorCase(
-    name="PF",
+    route="PF",
     coordinate="rho",
     nodes="uniform",
     Ip=3.0e6,
@@ -174,7 +170,7 @@ LOWER_CASE = OperatorCase(
 )
 
 HIGHER_CASE = OperatorCase(
-    name="PF",
+    route="PF",
     profile_coeffs=HIGHER_COEFFS,
     boundary=BOUNDARY,
     heat_input=Pn_r,
@@ -216,13 +212,13 @@ CASE_SPECS = (
 
 def _prepare_profile_coeffs(
     *,
-    name: str,
+    route: str,
     coordinate: str,
     nodes: str,
     profile_coeffs: dict[str, list[float] | None],
 ) -> dict[str, list[float] | None]:
     coeffs = copy.deepcopy(profile_coeffs)
-    route_spec = validate_operator(name, coordinate, nodes)
+    route_spec = validate_route(route, coordinate, nodes)
     if route_spec.source_strategy == "profile_owned_psin" and coeffs.get("psin") is None:
         coeffs["psin"] = [0.0] * 5
     return coeffs
@@ -232,9 +228,9 @@ def _build_case(grid: Grid, profile_coeffs: dict[str, list[float] | None]) -> Op
     del grid
     current_input, heat_input = _build_uniform_rho_inputs()
     return OperatorCase(
-        name="PF",
+        route="PF",
         profile_coeffs=_prepare_profile_coeffs(
-            name="PF",
+            route="PF",
             coordinate="rho",
             nodes="uniform",
             profile_coeffs=profile_coeffs,
@@ -251,9 +247,9 @@ def _build_case(grid: Grid, profile_coeffs: dict[str, list[float] | None]) -> Op
 def _build_psin_case(profile_coeffs: dict[str, list[float] | None]) -> OperatorCase:
     current_input, heat_input = _build_uniform_psin_inputs()
     return OperatorCase(
-        name="PF",
+        route="PF",
         profile_coeffs=_prepare_profile_coeffs(
-            name="PF",
+            route="PF",
             coordinate="psin",
             nodes="uniform",
             profile_coeffs=profile_coeffs,
@@ -287,9 +283,9 @@ def _build_rho_case_from_psin_solution(
     heat_rho = heat_psin * psin_r_uniform
     current_rho, heat_rho = _enforce_rho_endpoint_constraints(current_rho, heat_rho)
     return OperatorCase(
-        name="PF",
+        route="PF",
         profile_coeffs=_prepare_profile_coeffs(
-            name="PF",
+            route="PF",
             coordinate="rho",
             nodes="uniform",
             profile_coeffs=profile_coeffs,

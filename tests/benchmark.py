@@ -9,13 +9,13 @@ from pathlib import Path
 import numpy as np
 from scipy.interpolate import PchipInterpolator, interp1d
 
-from veqpy.engine import validate_operator
+from veqpy.engine import validate_route
 from veqpy.model import Boundary, Grid
 from veqpy.operator import Operator, OperatorCase, build_profile_index, build_profile_layout, build_profile_names
 from veqpy.operator.layout import build_shape_profile_names
 from veqpy.solver import Solver, SolverConfig
 
-PLOT = False
+PLOT = True
 SHOW_PROGRESS = True
 BACKEND = os.environ.get("VEQPY_BACKEND", "numba")
 os.environ["VEQPY_BACKEND"] = BACKEND
@@ -27,7 +27,7 @@ SHAPE_MATCH_TOL = 1e-2
 REFERENCE_CACHE_VERSION = 1
 
 REFERENCE_GRID = Grid(Nr=32, Nt=32, scheme="legendre")
-TEST_GRID = Grid(Nr=12, Nt=12, scheme="legendre", L_max=REFERENCE_GRID.L_max)
+TEST_GRID = Grid(Nr=32, Nt=12, scheme="legendre", L_max=REFERENCE_GRID.L_max)
 REFERENCE_SUMMARY_GRID = Grid(Nr=64, Nt=128, scheme="uniform", L_max=REFERENCE_GRID.L_max, M_max=REFERENCE_GRID.M_max)
 CONFIG = SolverConfig(
     method="hybr",
@@ -299,7 +299,7 @@ def _reference_pf_case() -> OperatorCase:
     FFn_r_src = FFn_psin_src * (2.0 * rho_src)
     Pn_r_src = Pn_psin_src * (2.0 * rho_src)
     return OperatorCase(
-        name="PF",
+        route="PF",
         coordinate="rho",
         nodes="uniform",
         profile_coeffs=BASE_COEFFS,
@@ -511,7 +511,7 @@ def _split_benchmark_inputs(init_kwargs: dict[str, np.ndarray]) -> tuple[np.ndar
 
 
 def _uniform_source_axis(spec: BenchmarkCaseSpec) -> np.ndarray:
-    route_spec = validate_operator(spec.mode, spec.coordinate, spec.input_kind)
+    route_spec = validate_route(spec.mode, spec.coordinate, spec.input_kind)
     if route_spec.source_parameterization == "sqrt_psin":
         return _UNIFORM_SOURCE_AXIS_SQRT_PSIN
     return _UNIFORM_SOURCE_AXIS
@@ -531,7 +531,7 @@ def _sample_reference_input_on_grid(values: np.ndarray, source_axis: np.ndarray 
 
 
 def _profile_coeffs_for_case(mode: str, coordinate: str, input_kind: str) -> dict[str, list[float] | None]:
-    route_spec = validate_operator(mode, coordinate, input_kind)
+    route_spec = validate_route(mode, coordinate, input_kind)
     if route_spec.source_strategy == "profile_owned_psin":
         coeffs = {name: list(values) for name, values in PSIN_ROBUST_COEFFS.items()}
     else:
@@ -556,7 +556,7 @@ def _make_benchmark_case(spec: BenchmarkCaseSpec, reference: ReferenceBundle) ->
     Ip = REFERENCE_IP if spec.constraint in {"Ip", "Ip_beta"} else None
     beta = float(reference.ref_profiles["beta_constraint"]) if spec.constraint in {"beta", "Ip_beta"} else None
     return OperatorCase(
-        name=spec.mode,
+        route=spec.mode,
         profile_coeffs=_profile_coeffs_for_case(spec.mode, spec.coordinate, spec.input_kind),
         boundary=BOUNDARY,
         heat_input=heat_input,

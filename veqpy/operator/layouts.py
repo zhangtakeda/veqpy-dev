@@ -58,7 +58,7 @@ class StaticLayout:
 class SetupLayout:
     """绑定到当前 operator case/setup 的拓扑与索引布局."""
 
-    case_name: str
+    route: str
     coordinate: str
     nodes: str
     prefix_profile_names: tuple[str, ...]

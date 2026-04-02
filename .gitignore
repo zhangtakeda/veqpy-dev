@@ -7,6 +7,7 @@
 
 build
 docs
+scripts
 tests/demo
 tests/benchmark
 tests/**/*.png

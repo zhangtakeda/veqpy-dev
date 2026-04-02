@@ -12,7 +12,7 @@ from typing import Callable
 
 import numpy as np
 
-from veqpy.engine import validate_operator
+from veqpy.engine import validate_route
 from veqpy.model import Grid, Profile
 from veqpy.operator.layout import build_profile_layout
 from veqpy.operator.operator_case import OperatorCase
@@ -144,7 +144,7 @@ def validate_case_compatibility(
     order_offsets: np.ndarray,
     validate_source_inputs: Callable[[OperatorCase], None],
 ) -> None:
-    validate_operator(case.name, case.coordinate, case.nodes)
+    validate_route(case.route, case.coordinate, case.nodes)
     next_profile_L, next_coeff_index, next_order_offsets = build_profile_layout(
         case.profile_coeffs,
         profile_names=profile_names,

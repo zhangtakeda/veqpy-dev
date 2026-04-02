@@ -71,11 +71,6 @@ class Solver:
 
         self.operator.replace_case(case)
 
-    def replace_config(self, config: SolverConfig) -> None:
-        """替换 solver 的长期默认配置."""
-
-        self.config = config
-
     def solve(
         self,
         x0: np.ndarray | None = None,
@@ -110,7 +105,7 @@ class Solver:
             self.x0 = self.operator.coerce_x(x0).copy()
         elif not solve_config.enable_warmstart:
             self.reset()
-        if (x0 is not None or not solve_config.enable_warmstart) and hasattr(self.operator, "invalidate_source_state"):
+        if x0 is not None or not solve_config.enable_warmstart:
             self.operator.invalidate_source_state()
 
         x_guess = self.x0.copy()
@@ -173,44 +168,10 @@ class Solver:
 
         return self.operator.build_coeffs(self.x0, include_none=include_none)
 
-    def build_coeffs_history(
-        self,
-        *,
-        include_none: bool = True,
-    ) -> list[dict[str, list[float] | None]]:
-        """从 history 中每个结果快照重建 profile 系数字典."""
-
-        history = []
-        for record in self.history:
-            history.append(self.operator.build_coeffs(record.result_snapshot.x, include_none=include_none))
-        return history
-
     def build_equilibrium(self) -> Equilibrium:
         """从当前 solver 持有的 x0 物化一个 Equilibrium snapshot."""
 
         return self.operator.build_equilibrium(self.x0)
-
-    def build_equilibrium_history(self) -> list[Equilibrium]:
-        """从 history 中每个结果快照物化 Equilibrium."""
-
-        saved_case = self.operator.case.copy()
-        saved_config = self.config
-        saved_result = self.result
-        saved_x0 = self.x0.copy()
-
-        try:
-            equilibria: list[Equilibrium] = []
-            for record in self.history:
-                self.replace_case(record.case_snapshot)
-                self.config = record.config_snapshot
-                equilibria.append(self.operator.build_equilibrium(record.result_snapshot.x))
-            return equilibria
-        finally:
-            self.replace_case(saved_case)
-            self.config = saved_config
-            self.result = saved_result
-            self.x0 = saved_x0
-            self.operator(self.x0)
 
     def _resolve_solve_config(
         self,

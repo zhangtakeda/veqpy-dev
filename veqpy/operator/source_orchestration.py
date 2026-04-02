@@ -12,7 +12,7 @@ from typing import Any, Callable
 
 import numpy as np
 
-from veqpy.engine import materialize_profile_owned_psin_source, update_fixed_point_psin_query
+from veqpy.engine import update_fixed_point_psin_query
 from veqpy.operator.source_runtime import materialize_source_inputs, normalize_psin_query_inplace
 
 
@@ -39,27 +39,14 @@ def build_bound_source_stage_runner(operator_core: Any) -> Callable:
     if source_plan.strategy == "profile_owned_psin":
         if source_plan.is_psin_coordinate and not source_plan.is_grid_nodes:
             source_psin_query = source_runtime_state.psin_query
-            source_parameter_query = source_runtime_state.parameter_query
-            psin_profile_fields = operator_core.psin_profile.u_fields
-            heat_input = source_plan.heat_input
-            current_input = source_plan.current_input
-            parameterization_code = source_plan.parameterization_code
 
             def runner() -> tuple[float, float]:
-                if psin_profile_fields is None:
-                    raise RuntimeError("psin_profile runtime fields are not initialized")
-                materialize_profile_owned_psin_source(
-                    psin,
-                    psin_r,
-                    psin_rr,
-                    source_psin_query,
-                    source_parameter_query,
-                    materialized_heat_input,
-                    materialized_current_input,
-                    psin_profile_fields,
-                    heat_input,
-                    current_input,
-                    parameterization_code,
+                copy_psin_profile_to_root_fields(operator_core)
+                np.copyto(source_psin_query, psin)
+                materialize_source_inputs(
+                    source_plan=source_plan,
+                    source_runtime_state=source_runtime_state,
+                    psin_query=source_psin_query,
                 )
                 return _run_source_kernel(
                     operator_core,
@@ -205,13 +192,6 @@ def run_psin_source_fixed_point(operator_core: Any) -> tuple[float, float]:
         )
         alpha1, alpha2 = _run_source_kernel_from_operator(operator_core)
     return alpha1, alpha2
-
-
-def invalidate_source_state(operator_core: Any) -> None:
-    if operator_core.source_plan.strategy == "fixed_point_psin":
-        operator_core.source_runtime_state.psin_query.fill(-1.0)
-
-
 def _run_source_kernel_from_operator(operator_core: Any) -> tuple[float, float]:
     source_runtime_state = operator_core.source_runtime_state
     return _run_source_kernel(

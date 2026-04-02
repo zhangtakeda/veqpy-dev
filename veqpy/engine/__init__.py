@@ -21,7 +21,7 @@ Public API:
 - update_fourier_family_fields
 - resolve_source_inputs
 - resolve_source_scratch_kernel
-- validate_operator
+- validate_route
 
 Notes:
 - 这里只负责 backend dispatch.
@@ -67,7 +67,7 @@ if BACKEND == "numpy":
         theta_reduction,
         update_fixed_point_psin_query,
         update_fourier_family_fields,
-        validate_operator,
+        validate_route,
     )
 elif BACKEND == "numba":
     from veqpy.engine.numba_geometry import update_geometry
@@ -101,7 +101,7 @@ elif BACKEND == "numba":
         theta_reduction,
         update_fixed_point_psin_query,
         update_fourier_family_fields,
-        validate_operator,
+        validate_route,
     )
 
 
@@ -122,7 +122,7 @@ __all__ = [
     "PSIN_COORDINATE",
     "RHO_COORDINATE",
     "build_source_remap_cache",
-    "validate_operator",
+    "validate_route",
     "materialize_profile_owned_psin_source",
     "update_fourier_family_fields",
     "resolve_source_inputs",

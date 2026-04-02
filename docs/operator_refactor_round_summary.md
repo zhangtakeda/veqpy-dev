@@ -24,11 +24,10 @@ In concrete terms, the operator layer is now organized around:
 - Thin operator-facing helpers
   - source runtime/materialization helpers
   - source orchestration helpers
-  - residual binding helpers
   - runner binding helpers
   - stage helpers
   - profile setup helpers
-  - runtime view synchronization helpers
+  - runtime allocation helpers
 
 `Operator` is no longer a class hierarchy. It is now effectively a facade/coordinator over:
 
@@ -49,7 +48,7 @@ In concrete terms, the operator layer is now organized around:
 
 ## Final 3 Cuts
 
-Only the following items are still worth doing in this round:
+Only the following items were worth doing in this round:
 
 1. Move remaining layout/runtime allocation/build glue out of `operator.py`.
 2. Write the operator/engine boundary down as a stable ABI note for future JAX work.
@@ -65,6 +64,6 @@ This round should be considered complete once:
 
 Status now:
 
-- Item 1 is complete via `veqpy/operator/layout_builders.py` and `veqpy/operator/runtime_allocation.py`.
+- Item 1 is complete. The minimal layout/build glue now lives directly in `veqpy/operator/operator.py`, while one-time runtime slab allocation remains in `veqpy/operator/runtime_allocation.py`.
 - Item 2 is complete via `docs/operator_engine_abi.md`.
-- Item 3 is the remaining stop/ship decision rather than a large implementation task.
+- Item 3 is complete. `Operator` now reads primarily as an owner/coordinator instead of a compatibility-heavy facade.

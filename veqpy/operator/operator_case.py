@@ -27,7 +27,7 @@ from veqpy.model import Boundary
 class OperatorCase:
     """描述一次 operator 求值所需的静态 case 输入."""
 
-    name: str
+    route: str
     coordinate: str
     nodes: str
     profile_coeffs: dict[str, list[float] | None]
@@ -39,7 +39,7 @@ class OperatorCase:
 
     def __post_init__(self) -> None:
         """在构造后把各字段规整为稳定运行时表示."""
-        object.__setattr__(self, "name", _normalize_case_value("name", self.name))
+        object.__setattr__(self, "route", _normalize_case_value("route", self.route))
         object.__setattr__(self, "coordinate", _normalize_case_value("coordinate", self.coordinate))
         object.__setattr__(self, "nodes", _normalize_case_value("nodes", self.nodes))
         object.__setattr__(self, "profile_coeffs", _normalize_case_value("profile_coeffs", self.profile_coeffs))
@@ -61,8 +61,7 @@ class OperatorCase:
 
     def __rich__(self):
         tree = Tree("[bold blue]OperatorCase[/]")
-        tree.add(f"name: {self.name}")
-        tree.add(self.boundary)
+        tree.add(f"route: {self.route}")
         tree.add(f"coordinate: {self.coordinate}")
         tree.add(f"nodes: {self.nodes}")
         tree.add(
@@ -77,6 +76,7 @@ class OperatorCase:
             tree.add(f"Ip: {self.Ip:.3e} [A]")
         if np.isfinite(self.beta):
             tree.add(f"beta: {self.beta:.3e}")
+        tree.add(self.boundary)
         return tree
 
     def __str__(self) -> str:
@@ -91,7 +91,7 @@ class OperatorCase:
     def copy(self) -> OperatorCase:
         """创建一个与当前 case 独立的副本."""
         return OperatorCase(
-            name=self.name,
+            route=self.route,
             profile_coeffs=_copy_coeffs(self.profile_coeffs),
             boundary=Boundary(
                 a=self.a,
@@ -173,7 +173,7 @@ def _as_1d_coeff_list(value: list[float], *, name: str) -> list[float]:
 
 
 def _normalize_case_value(name: str, value):
-    if name == "name":
+    if name == "route":
         return str(value).upper()
     if name == "profile_coeffs":
         return _normalize_coeffs(value)
@@ -208,7 +208,7 @@ _ORDERED_OPTIONAL_FLOAT_FIELD_NAMES = ("Ip", "beta")
 _ORDERED_ARRAY_FIELD_NAMES = ("heat_input", "current_input")
 _CASE_FIELD_NAMES = {
     "profile_coeffs",
-    "name",
+    "route",
     "boundary",
     "coordinate",
     "nodes",

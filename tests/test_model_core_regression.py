@@ -5,6 +5,7 @@ import orjson
 import pytest
 
 from veqpy.model import Boundary
+from veqpy.model import equilibrium as equilibrium_module
 from veqpy.model.equilibrium import Equilibrium
 from veqpy.model.geqdsk import Geqdsk
 from veqpy.model.grid import Grid
@@ -58,7 +59,7 @@ def _build_high_order_equilibrium() -> tuple[Equilibrium, Operator]:
         }
     )
     case = OperatorCase(
-        name="PF",
+        route="PF",
         coordinate="rho",
         nodes="uniform",
         profile_coeffs=profile_coeffs,
@@ -78,6 +79,18 @@ def _build_high_order_equilibrium() -> tuple[Equilibrium, Operator]:
     return equilibrium, operator
 
 
+def test_equilibrium_plot_handles_2d_axis_extrapolation():
+    equilibrium, _ = _build_high_order_equilibrium()
+    outdir = Path("tests") / "_tmp_plot_regression"
+    outdir.mkdir(parents=True, exist_ok=True)
+    outpath = outdir / "equilibrium-summary.png"
+
+    fig = equilibrium.plot(outpath=outpath)
+
+    assert outpath.exists()
+    assert fig is not None
+
+
 def _build_operator_case(*, mode="PF", coordinate="rho", nodes="uniform") -> OperatorCase:
     grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=4)
     profile_coeffs = {name: None for name in build_profile_names(grid.M_max)}
@@ -91,7 +104,7 @@ def _build_operator_case(*, mode="PF", coordinate="rho", nodes="uniform") -> Ope
         }
     )
     case = OperatorCase(
-        name=mode,
+        route=mode,
         coordinate=coordinate,
         nodes=nodes,
         profile_coeffs=profile_coeffs,
@@ -272,6 +285,71 @@ def test_equilibrium_roundtrips_canonical_active_profiles():
         outpath.unlink(missing_ok=True)
 
 
+def test_equilibrium_exposes_gs_operator_residual_terms():
+    x = None
+    _, operator = _build_high_order_equilibrium()
+    x = operator.encode_initial_state()
+    operator.stage_a_profile(x)
+    operator.stage_b_geometry()
+    operator.stage_c_source()
+    operator.stage_d_residual()
+    equilibrium = operator.build_equilibrium(x)
+
+    geometry = equilibrium.geometry
+    expected_gn1 = geometry.JdivR * (equilibrium.FFn_psin[:, None] + geometry.R**2 * equilibrium.Pn_psin[:, None])
+    expected_gn2 = (
+        geometry.gttdivJR * equilibrium.psin_rr[:, None]
+        + (geometry.gttdivJR_r - geometry.grtdivJR_t) * equilibrium.psin_r[:, None]
+    )
+
+    assert np.allclose(equilibrium.Gn1, expected_gn1)
+    assert np.allclose(equilibrium.Gn2, expected_gn2)
+    assert np.allclose(equilibrium.G, operator.G)
+    assert np.allclose(equilibrium.G, equilibrium.alpha1 * equilibrium.Gn1 + equilibrium.alpha2 * equilibrium.Gn2)
+
+
+def test_resampled_equilibrium_uses_spline_profile_reconstruction(monkeypatch):
+    profile_equilibrium, _ = _build_high_order_equilibrium()
+    sentinel = np.linspace(0.0, 1.0, 12, dtype=np.float64)
+    called = {"value": False}
+
+    def _fake_resample_profile_spline(rho_src, y_src, rho_eval, **kwargs):
+        called["value"] = True
+        return sentinel
+
+    monkeypatch.setattr(equilibrium_module, "_resample_profile_spline", _fake_resample_profile_spline)
+
+    resampled = equilibrium_module._build_resampled_equilibrium(
+        profile_equilibrium,
+        target_grid=Grid(Nr=12, Nt=24, scheme="uniform", M_max=4),
+        profile_degree=None,
+        native_grid=False,
+    )
+
+    assert called["value"] is True
+    assert np.allclose(resampled.psin_r, sentinel)
+    assert np.allclose(resampled.psin, sentinel)
+    assert np.allclose(resampled.FFn_psin, sentinel)
+    assert np.allclose(resampled.Pn_psin, sentinel)
+
+
+def test_equilibrium_diagnostics_avoid_grid_matrix_diff_and_integrate(monkeypatch):
+    equilibrium, _ = _build_high_order_equilibrium()
+
+    def _forbid(*args, **kwargs):
+        raise AssertionError("diagnostic should not use grid matrix differencing/integration")
+
+    monkeypatch.setattr(Grid, "differentiate", _forbid)
+    monkeypatch.setattr(Grid, "integrate", _forbid)
+
+    assert np.all(np.isfinite(equilibrium.F2))
+    assert np.all(np.isfinite(equilibrium.P))
+    assert np.all(np.isfinite(equilibrium.s))
+    assert np.all(np.isfinite(equilibrium.jpara))
+    assert np.all(np.isfinite(equilibrium.Psi))
+    assert np.all(np.isfinite(equilibrium.Phi))
+
+
 def test_operator_exposes_explicit_layout_and_execution_layers():
     grid, case = _build_operator_case()
     operator = Operator(grid=grid, case=case)
@@ -335,9 +413,35 @@ def test_source_plan_captures_fixed_point_route_metadata():
     assert operator.source_plan.strategy == "fixed_point_psin"
     assert operator.source_plan.n_src == TEST_SOURCE_SAMPLE_COUNT
     assert operator.source_plan.use_projected_finalize is True
-    assert operator.source_plan.projection_domain_code == 1
+    assert operator.source_plan.projection_domain_code == 0
+    assert operator.source_plan.heat_projection_degree == 8
+    assert operator.source_plan.current_projection_degree == 8
     assert operator.source_plan.endpoint_policy_code == 0
     assert operator.residual_plan.is_fixed_point_psin is True
+
+
+@pytest.mark.parametrize(("mode", "heat_degree", "current_degree"), [("PI", 7, 8), ("PJ1", 7, 8)])
+def test_source_plan_captures_profile_owned_projection_policy(mode, heat_degree, current_degree):
+    grid, case = _build_operator_case(mode=mode, coordinate="psin", nodes="uniform")
+    operator = Operator(grid=grid, case=case)
+
+    assert operator.source_plan.strategy == "profile_owned_psin"
+    assert operator.source_plan.has_projection_policy is True
+    assert operator.source_plan.projection_domain == "psin"
+    assert operator.source_plan.heat_projection_degree == heat_degree
+    assert operator.source_plan.current_projection_degree == current_degree
+    assert operator.source_plan.endpoint_policy_code == 0
+    assert operator.source_plan.use_projected_finalize is True
+
+
+@pytest.mark.parametrize("mode", ["PI", "PJ1"])
+def test_source_plan_uses_both_endpoint_policy_when_ip_constraint_is_active(mode):
+    grid, case = _build_operator_case(mode=mode, coordinate="psin", nodes="uniform")
+    case.Ip = 3.0e6
+    operator = Operator(grid=grid, case=case)
+
+    assert operator.source_plan.has_projection_policy is True
+    assert operator.source_plan.endpoint_policy_code == 2
 
 
 def test_build_profile_names_respects_module_family_order(monkeypatch):
@@ -438,7 +542,7 @@ def test_equilibrium_compare_reports_only_primary_shape_errors():
         }
     )
     case_ref = OperatorCase(
-        name="PF",
+        route="PF",
         coordinate="rho",
         nodes="uniform",
         profile_coeffs=profile_coeffs,

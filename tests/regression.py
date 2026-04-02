@@ -71,7 +71,7 @@ FFn_r_uni = FFn_psin_uni * psin_r_uni
 Pn_r_uni = Pn_psin_uni * psin_r_uni
 
 case_1 = OperatorCase(
-    name="PF",
+    route="PF",
     coordinate="rho",
     nodes="uniform",
     profile_coeffs=coeffs,
@@ -102,7 +102,7 @@ FFn_psin_uni = FFn_r_from_psin / psin_r_from_psin
 Pn_psin_uni = Pn_r_from_psin / psin_r_from_psin
 
 case_2 = OperatorCase(
-    name="PF",
+    route="PF",
     coordinate="psin",
     nodes="uniform",
     profile_coeffs=psin_coeffs,

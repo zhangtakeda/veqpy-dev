@@ -23,7 +23,7 @@ import numpy as np
 from veqpy.engine import (
     bind_residual_runner,
     bind_residual_stage_runner,
-    validate_operator,
+    validate_route,
 )
 from veqpy.model import Equilibrium, Geometry, Grid, Profile
 from veqpy.operator.codec import decode_packed_blocks, encode_packed_state
@@ -66,7 +66,6 @@ from veqpy.operator.runner_binding import (
 from veqpy.operator.runtime_allocation import allocate_runtime_state
 from veqpy.operator.source_orchestration import (
     build_bound_source_stage_runner,
-    invalidate_source_state,
 )
 from veqpy.operator.source_runtime import (
     ENDPOINT_POLICY_CODES,
@@ -289,9 +288,9 @@ class Operator:
         """校验当前 source route 对 psin profile ownership 的要求."""
         has_active_psin = int(self.profile_L[self.profile_index["psin"]]) >= 0
         if self.source_plan.strategy == "profile_owned_psin" and not has_active_psin:
-            raise ValueError(f"{self.case.name} requires an active psin profile because psin is optimized externally")
+            raise ValueError(f"{self.case.route} requires an active psin profile because psin is optimized externally")
         if self.case.coordinate == "psin" and self.source_plan.strategy != "profile_owned_psin" and has_active_psin:
-            raise ValueError(f"{self.case.name} does not accept an active psin profile because psin is source-owned")
+            raise ValueError(f"{self.case.route} does not accept an active psin profile because psin is source-owned")
         return None
 
     def replace_case(self, case: OperatorCase) -> None:
@@ -397,7 +396,7 @@ class Operator:
 
     def _build_setup_layout(self) -> SetupLayout:
         return SetupLayout(
-            case_name=self.case.name,
+            route=self.case.route,
             coordinate=self.case.coordinate,
             nodes=self.case.nodes,
             prefix_profile_names=self.prefix_profile_names,
@@ -547,11 +546,11 @@ class Operator:
         self._refresh_runtime_bindings()
 
     def _refresh_operator_identity(self) -> None:
-        spec = validate_operator(self.case.name, self.case.coordinate, self.case.nodes)
+        spec = validate_route(self.case.route, self.case.coordinate, self.case.nodes)
         self._source_route_spec = spec
         self._source_runner = build_source_stage_runner(spec)
         self._source_projection_policy = SOURCE_PROJECTION_POLICIES.get(
-            (self.case.name, self.case.coordinate, self.case.nodes)
+            (self.case.route, self.case.coordinate, self.case.nodes)
         )
         self.source_plan = self._build_source_plan()
         self.residual_plan = self._build_residual_plan()
@@ -739,7 +738,8 @@ class Operator:
         )
 
     def invalidate_source_state(self) -> None:
-        invalidate_source_state(self)
+        if self.source_plan.strategy == "fixed_point_psin":
+            self.source_runtime_state.psin_query.fill(-1.0)
 
     def _build_fused_residual_runner(self) -> Callable[[np.ndarray], np.ndarray]:
         runner, supports_fused = build_fused_residual_runner(
