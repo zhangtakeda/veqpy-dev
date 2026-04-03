@@ -61,6 +61,13 @@ def build_bound_source_stage_runner(operator_core: Any) -> Callable:
                     current_input,
                     parameterization_code,
                 )
+                if source_plan.has_projection_policy:
+                    materialize_source_inputs(
+                        source_plan=source_plan,
+                        source_runtime_state=source_runtime_state,
+                        psin_query=source_psin_query,
+                        enable_projection=True,
+                    )
                 return _run_source_kernel(
                     operator_core,
                     source_target_root_fields[0],
@@ -197,13 +204,16 @@ def run_psin_source_fixed_point(operator_core: Any) -> tuple[float, float]:
             break
     if source_plan.use_projected_finalize:
         np.copyto(source_runtime_state.psin_query, operator_core.psin)
-        materialize_source_inputs(
-            source_plan=source_plan,
-            source_runtime_state=source_runtime_state,
-            psin_query=source_runtime_state.psin_query,
-            enable_projection=True,
-        )
-        alpha1, alpha2 = _run_source_kernel_from_operator(operator_core)
+        for _ in range(4):
+            materialize_source_inputs(
+                source_plan=source_plan,
+                source_runtime_state=source_runtime_state,
+                psin_query=source_runtime_state.psin_query,
+                enable_projection=True,
+            )
+            alpha1, alpha2 = _run_source_kernel_from_operator(operator_core)
+            if update_fixed_point_psin_query(source_runtime_state.psin_query, operator_core.psin, 1e-10):
+                break
     return alpha1, alpha2
 
 

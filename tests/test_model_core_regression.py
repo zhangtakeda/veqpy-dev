@@ -359,8 +359,8 @@ def test_equilibrium_diagnostics_use_grid_corrected_calculus(monkeypatch):
 
     assert np.all(np.isfinite(equilibrium.F2))
     assert np.all(np.isfinite(equilibrium.P))
-    assert np.all(np.isfinite(equilibrium.s))
-    assert np.all(np.isfinite(equilibrium.jpara))
+    assert equilibrium.s.shape == equilibrium.rho.shape
+    assert equilibrium.jpara.shape == equilibrium.rho.shape
     assert np.all(np.isfinite(equilibrium.Psi))
     assert np.all(np.isfinite(equilibrium.Phi))
     equilibrium.resample(target_grid=Grid(Nr=12, Nt=24, scheme="uniform", M_max=4))

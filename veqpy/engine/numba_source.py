@@ -333,7 +333,7 @@ def _update_pf_from_rho_inputs(
     prof = out_psin_r
     integral_prof = quadrature(prof, weights)
     out_psin_r /= integral_prof
-    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
+    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
 
     psin_r_safe = _maximum_floor(out_psin_r, 1e-10)
@@ -420,7 +420,7 @@ def _update_pf_from_psin_inputs(
     prof = out_psin_r
     integral_prof = quadrature(prof, weights)
     out_psin_r /= integral_prof
-    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
+    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
 
     if (not has_Ip) and (not has_beta):
@@ -507,7 +507,18 @@ def _update_pp_from_rho_inputs(
         alpha1 = -MU0 / alpha2 * quadrature(P_r, weights)
         _fill_scaled_ratio(out_Pn_psin, P_r, psin_r_safe, MU0 / (alpha1 * alpha2))
 
-    _fill_pp_ffn_psin(out_FFn_psin, out_psin_r, Kn_r, Kn, out_psin_rr, V_r, out_Pn_psin, Ln_r, alpha2 / alpha1)
+    _fill_pp_ffn_psin(
+        out_FFn_psin,
+        out_psin_r,
+        psin_r_safe,
+        Kn_r,
+        Kn,
+        out_psin_rr,
+        V_r,
+        out_Pn_psin,
+        Ln_r,
+        alpha2 / alpha1,
+    )
     return alpha1, alpha2
 
 
@@ -564,7 +575,18 @@ def _update_pp_from_psin_inputs(
         alpha1 = -MU0 / alpha2 * quadrature(P_r, weights)
         _fill_scaled_ratio(out_Pn_psin, P_r, psin_r_safe, MU0 / (alpha1 * alpha2))
 
-    _fill_pp_ffn_psin(out_FFn_psin, out_psin_r, Kn_r, Kn, out_psin_rr, V_r, out_Pn_psin, Ln_r, alpha2 / alpha1)
+    _fill_pp_ffn_psin(
+        out_FFn_psin,
+        out_psin_r,
+        psin_r_safe,
+        Kn_r,
+        Kn,
+        out_psin_rr,
+        V_r,
+        out_Pn_psin,
+        Ln_r,
+        alpha2 / alpha1,
+    )
     return alpha1, alpha2
 
 
@@ -727,7 +749,7 @@ def _update_pi_from_rho_inputs(
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = _maximum_floor(out_psin_r, 1e-10)
     Itor_r = np.empty_like(Itor)
-    full_differentiation(Itor_r, Itor, differentiation_matrix)
+    corrected_even_derivative(Itor_r, Itor, differentiation_matrix, rho=rho)
 
     if has_beta:
         _fill_scaled_ratio(out_Pn_psin, heat_input, psin_r_safe, 1.0)
@@ -788,11 +810,11 @@ def _update_pi_from_psin_inputs(
     alpha2 = quadrature(itor_over_kn, weights)
 
     _fill_scaled_ratio(out_psin_r, Itor, Kn, MU0 / (2.0 * np.pi * alpha2))
-    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
+    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = _maximum_floor(out_psin_r, 1e-10)
     Itor_r = np.empty_like(Itor)
-    full_differentiation(Itor_r, Itor, differentiation_matrix)
+    corrected_even_derivative(Itor_r, Itor, differentiation_matrix, rho=rho)
 
     if has_beta:
         _copy_vector(out_Pn_psin, heat_input)
@@ -966,12 +988,13 @@ def _update_pj1_from_rho_inputs(
     else:
         _copy_vector(I_tor, I_tor_prof)
         _copy_vector(jtor, current_input)
+    _enforce_axis_even_profile(jtor, rho)
 
     itor_over_kn = np.empty_like(current_input)
     _fill_scaled_ratio(itor_over_kn, I_tor, Kn, MU0 / (2.0 * np.pi))
     alpha2 = quadrature(itor_over_kn, weights)
     _fill_scaled_ratio(out_psin_r, I_tor, Kn, MU0 / (2.0 * np.pi * alpha2))
-    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
+    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = _maximum_floor(out_psin_r, 1e-10)
 
@@ -987,7 +1010,17 @@ def _update_pj1_from_rho_inputs(
         alpha1 = -MU0 / alpha2 * quadrature(P_r, weights)
         _fill_scaled_ratio(out_Pn_psin, P_r, psin_r_safe, MU0 / (alpha1 * alpha2))
 
-    _fill_pj_ffn_psin(out_FFn_psin, jtor, S_r, V_r, out_Pn_psin, Ln_r, MU0 / (2.0 * np.pi * alpha1))
+    _fill_pj_ffn_psin(
+        out_FFn_psin,
+        jtor,
+        S_r,
+        V_r,
+        out_Pn_psin,
+        out_psin_r,
+        psin_r_safe,
+        Ln_r,
+        MU0 / (2.0 * np.pi * alpha1),
+    )
     return alpha1, alpha2
 
 
@@ -1035,12 +1068,13 @@ def _update_pj1_from_psin_inputs(
     else:
         _copy_vector(I_tor, I_tor_prof)
         _copy_vector(jtor, current_input)
+    _enforce_axis_even_profile(jtor, rho)
 
     itor_over_kn = np.empty_like(current_input)
     _fill_scaled_ratio(itor_over_kn, I_tor, Kn, MU0 / (2.0 * np.pi))
     alpha2 = quadrature(itor_over_kn, weights)
     _fill_scaled_ratio(out_psin_r, I_tor, Kn, MU0 / (2.0 * np.pi * alpha2))
-    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
+    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = _maximum_floor(out_psin_r, 1e-10)
 
@@ -1056,7 +1090,17 @@ def _update_pj1_from_psin_inputs(
         alpha1 = -MU0 / alpha2 * quadrature(P_r, weights)
         _fill_scaled_ratio(out_Pn_psin, P_r, psin_r_safe, MU0 / (alpha1 * alpha2))
 
-    _fill_pj_ffn_psin(out_FFn_psin, jtor, S_r, V_r, out_Pn_psin, Ln_r, MU0 / (2.0 * np.pi * alpha1))
+    _fill_pj_ffn_psin(
+        out_FFn_psin,
+        jtor,
+        S_r,
+        V_r,
+        out_Pn_psin,
+        out_psin_r,
+        psin_r_safe,
+        Ln_r,
+        MU0 / (2.0 * np.pi * alpha1),
+    )
     return alpha1, alpha2
 
 
@@ -1210,14 +1254,14 @@ def _update_pj2_from_rho_inputs(
     I_tor = np.empty_like(current_input)
 
     if has_Ip:
-        _fill_scaled_product(I_tor, F, integral_val, Ip / (R0 * B0 * integral_val[-1]))
+        _fill_scaled_product(I_tor, F, integral_val, Ip / (F[-1] * integral_val[-1]))
     else:
         _fill_scaled_product(I_tor, F, integral_val, 2.0 * np.pi)
     itor_over_kn = np.empty_like(current_input)
     _fill_scaled_ratio(itor_over_kn, I_tor, Kn, MU0 / (2.0 * np.pi))
     alpha2 = quadrature(itor_over_kn, weights)
     _fill_scaled_ratio(out_psin_r, I_tor, Kn, MU0 / (2.0 * np.pi * alpha2))
-    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
+    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = _maximum_floor(out_psin_r, 1e-10)
 
@@ -1234,7 +1278,7 @@ def _update_pj2_from_rho_inputs(
         _fill_scaled_ratio(out_Pn_psin, P_r, psin_r_safe, MU0 / (alpha1 * alpha2))
 
     F_r = np.empty_like(F)
-    full_differentiation(F_r, F, differentiation_matrix)
+    corrected_even_derivative(F_r, F, differentiation_matrix, rho=rho)
     _fill_scaled_product(out_FFn_psin, F, F_r, 1.0 / (alpha1 * alpha2))
     _fill_scaled_ratio(out_FFn_psin, out_FFn_psin, psin_r_safe, 1.0)
     return alpha1, alpha2
@@ -1278,14 +1322,14 @@ def _update_pj2_from_psin_inputs(
     I_tor = np.empty_like(current_input)
 
     if has_Ip:
-        _fill_scaled_product(I_tor, F, integral_val, Ip / (R0 * B0 * integral_val[-1]))
+        _fill_scaled_product(I_tor, F, integral_val, Ip / (F[-1] * integral_val[-1]))
     else:
         _fill_scaled_product(I_tor, F, integral_val, 2.0 * np.pi)
     itor_over_kn = np.empty_like(current_input)
     _fill_scaled_ratio(itor_over_kn, I_tor, Kn, MU0 / (2.0 * np.pi))
     alpha2 = quadrature(itor_over_kn, weights)
     _fill_scaled_ratio(out_psin_r, I_tor, Kn, MU0 / (2.0 * np.pi * alpha2))
-    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
+    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = _maximum_floor(out_psin_r, 1e-10)
 
@@ -1302,7 +1346,7 @@ def _update_pj2_from_psin_inputs(
         _fill_scaled_ratio(out_Pn_psin, P_r, psin_r_safe, MU0 / (alpha1 * alpha2))
 
     F_r = np.empty_like(F)
-    full_differentiation(F_r, F, differentiation_matrix)
+    corrected_even_derivative(F_r, F, differentiation_matrix, rho=rho)
     _fill_scaled_product(out_FFn_psin, F, F_r, 1.0 / (alpha1 * alpha2))
     _fill_scaled_ratio(out_FFn_psin, out_FFn_psin, psin_r_safe, 1.0)
     return alpha1, alpha2
@@ -1523,7 +1567,7 @@ def _update_pq_from_rho_inputs(
     q_prof = np.empty_like(current_input)
 
     if has_Ip:
-        q_scale = (2.0 * np.pi * R0 * B0) / (MU0 * Ip)
+        q_scale = (2.0 * np.pi * F[-1]) / (MU0 * Ip)
         _fill_scaled_vector(q_prof, current_input, q_scale * (Kn[-1] * Ln_r[-1] / current_input[-1]))
     else:
         _copy_vector(q_prof, current_input)
@@ -1533,7 +1577,7 @@ def _update_pq_from_rho_inputs(
     alpha2 = quadrature(integrand_alpha2, weights)
 
     _fill_product_ratio(out_psin_r, F, Ln_r, q_prof, 1.0 / alpha2)
-    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
+    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = _maximum_floor(out_psin_r, 1e-10)
 
@@ -1550,7 +1594,7 @@ def _update_pq_from_rho_inputs(
         _fill_scaled_ratio(out_Pn_psin, P_r, psin_r_safe, MU0 / (alpha1 * alpha2))
 
     F_r = np.empty_like(F)
-    full_differentiation(F_r, F, differentiation_matrix)
+    corrected_even_derivative(F_r, F, differentiation_matrix, rho=rho)
     _fill_pointwise_product(out_FFn_psin, F, F_r)
     _fill_scaled_ratio(out_FFn_psin, out_FFn_psin, psin_r_safe, 1.0 / (alpha1 * alpha2))
     return alpha1, alpha2
@@ -1588,7 +1632,7 @@ def _update_pq_from_psin_inputs(
     q_prof = np.empty_like(current_input)
 
     if has_Ip:
-        q_scale = (2.0 * np.pi * R0 * B0) / (MU0 * Ip)
+        q_scale = (2.0 * np.pi * F[-1]) / (MU0 * Ip)
         _fill_scaled_vector(q_prof, current_input, q_scale * (Kn[-1] * Ln_r[-1] / current_input[-1]))
     else:
         _copy_vector(q_prof, current_input)
@@ -1598,7 +1642,7 @@ def _update_pq_from_psin_inputs(
     alpha2 = quadrature(integrand_alpha2, weights)
 
     _fill_product_ratio(out_psin_r, F, Ln_r, q_prof, 1.0 / alpha2)
-    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
+    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = _maximum_floor(out_psin_r, 1e-10)
 
@@ -1615,7 +1659,7 @@ def _update_pq_from_psin_inputs(
         _fill_scaled_ratio(out_Pn_psin, P_r, psin_r_safe, MU0 / (alpha1 * alpha2))
 
     F_r = np.empty_like(F)
-    full_differentiation(F_r, F, differentiation_matrix)
+    corrected_even_derivative(F_r, F, differentiation_matrix, rho=rho)
     _fill_pointwise_product(out_FFn_psin, F, F_r)
     _fill_scaled_ratio(out_FFn_psin, out_FFn_psin, psin_r_safe, 1.0 / (alpha1 * alpha2))
     return alpha1, alpha2
@@ -1657,7 +1701,7 @@ def _update_pq_from_psin_inputs_with_scratch(
     scratch_aux = source_scratch_1d[5]
 
     if has_Ip:
-        q_scale = (2.0 * np.pi * R0 * B0) / (MU0 * Ip)
+        q_scale = (2.0 * np.pi * F[-1]) / (MU0 * Ip)
         _fill_scaled_vector(q_prof, current_input, q_scale * (Kn[-1] * Ln_r[-1] / current_input[-1]))
         alpha2 = _quadrature_product_ratio(F, Ln_r, q_prof, weights)
         _fill_product_ratio(out_psin_r, F, Ln_r, q_prof, 1.0 / alpha2)
@@ -1665,7 +1709,7 @@ def _update_pq_from_psin_inputs_with_scratch(
         alpha2 = _quadrature_product_ratio(F, Ln_r, current_input, weights)
         _fill_product_ratio(out_psin_r, F, Ln_r, current_input, 1.0 / alpha2)
 
-    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
+    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     _maximum_floor_out(psin_r_safe, out_psin_r, 1e-10)
 
@@ -1682,7 +1726,7 @@ def _update_pq_from_psin_inputs_with_scratch(
         alpha1 = -MU0 * _quadrature_product(heat_input, out_psin_r, weights)
         _fill_product_ratio(out_Pn_psin, heat_input, out_psin_r, psin_r_safe, MU0 / alpha1)
 
-    full_differentiation(scratch_aux, F, differentiation_matrix)
+    corrected_even_derivative(scratch_aux, F, differentiation_matrix, rho=rho)
     _fill_pointwise_product(out_FFn_psin, F, scratch_aux)
     _fill_scaled_ratio(out_FFn_psin, out_FFn_psin, psin_r_safe, 1.0 / (alpha1 * alpha2))
     return alpha1, alpha2
@@ -2416,6 +2460,7 @@ def _fill_g1n_rho_integrand(
 def _fill_pp_ffn_psin(
     out: np.ndarray,
     psin_r: np.ndarray,
+    psin_r_safe: np.ndarray,
     Kn_r: np.ndarray,
     Kn: np.ndarray,
     psin_rr: np.ndarray,
@@ -2428,7 +2473,8 @@ def _fill_pp_ffn_psin(
     for i in range(out.shape[0]):
         term0 = alpha_ratio * (Kn_r[i] * psin_r[i] + Kn[i] * psin_rr[i])
         term1 = V_r[i] * Pn_psin[i] * pressure_factor
-        out[i] = -(term0 + term1) / Ln_r[i]
+        ffn_r = -(term0 + term1) * (psin_r[i] / Ln_r[i])
+        out[i] = ffn_r / psin_r_safe[i]
     return out
 
 
@@ -2456,6 +2502,8 @@ def _fill_pj_ffn_psin(
     S_r: np.ndarray,
     V_r: np.ndarray,
     Pn_psin: np.ndarray,
+    psin_r: np.ndarray,
+    psin_r_safe: np.ndarray,
     Ln_r: np.ndarray,
     current_scale: float,
 ) -> np.ndarray:
@@ -2463,7 +2511,8 @@ def _fill_pj_ffn_psin(
     for i in range(out.shape[0]):
         term0 = current_scale * jtor[i] * S_r[i]
         term1 = V_r[i] * Pn_psin[i] * pressure_factor
-        out[i] = -(term0 + term1) / Ln_r[i]
+        ffn_r = -(term0 + term1) * (psin_r[i] / Ln_r[i])
+        out[i] = ffn_r / psin_r_safe[i]
     return out
 
 

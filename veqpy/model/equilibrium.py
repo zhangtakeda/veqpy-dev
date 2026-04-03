@@ -25,7 +25,6 @@ matplotlib.use("Agg")
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
-from numpy.polynomial.chebyshev import chebder, chebval, chebvander
 from matplotlib import ticker
 from matplotlib.gridspec import GridSpec
 from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -292,7 +291,7 @@ class Equilibrium(Reactive, Serial):
 
     @property
     def FFn_r(self) -> np.ndarray:
-        return self._diagnostic_FFn_psin * self.psin_r
+        return self.FFn_psin * self.psin_r
 
     @property
     def F2(self) -> np.ndarray:
@@ -332,7 +331,7 @@ class Equilibrium(Reactive, Serial):
     def Gn1(self) -> np.ndarray:
         """GS 算子源项分量 alpha1 前的归一化项."""
         R, JdivR = self.geometry.R, self.geometry.JdivR
-        return JdivR * (self._diagnostic_FFn_psin[:, None] + R**2 * self.Pn_psin[:, None])
+        return JdivR * (self.FFn_psin[:, None] + R**2 * self.Pn_psin[:, None])
 
     @property
     def Gn2(self) -> np.ndarray:
@@ -357,29 +356,15 @@ class Equilibrium(Reactive, Serial):
     def q(self) -> np.ndarray:
         """安全因子 q, model-side diagnostic."""
         with np.errstate(divide="ignore", invalid="ignore"):
-            q = self.F * self.Ln_r / (self.alpha2 * self.psin_r)
-
-        _extrapolate_inplace(self.rho, q, p=2)
-        return q
+            return self.F * self.Ln_r / (self.alpha2 * self.psin_r)
 
     @property
     def s(self) -> np.ndarray:
         """磁剪切 s, model-side diagnostic."""
-        q_values = np.asarray(self.q, dtype=np.float64)
-        finite = np.isfinite(q_values)
-        if np.all(finite):
-            q_for_diff = q_values
-        elif np.count_nonzero(finite) >= 2:
-            q_for_diff = np.interp(self.rho, self.rho[finite], q_values[finite])
-        else:
-            return np.zeros_like(q_values)
-
-        q_r = self.grid.corrected_even_derivative(q_for_diff)
-        q_safe = np.maximum(np.abs(q_for_diff), 1e-15)
-        shear = self.rho * q_r / q_safe
-        shear[~finite] = 0.0
-        shear[0] = 0.0
-        return shear
+        q_values = self.q
+        q_r = self.grid.corrected_even_derivative(q_values)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return self.rho * q_r / q_values
 
     @property
     def Itor(self) -> np.ndarray:
@@ -389,77 +374,32 @@ class Equilibrium(Reactive, Serial):
     @property
     def jtor(self) -> np.ndarray:
         """环向电流密度 j_phi, model-side diagnostic."""
-        ffn_psin = self._diagnostic_FFn_psin
-        head_changes = _axis_derivative_sign_changes(ffn_psin, head=12)
-        if head_changes > 0:
-            candidate_ffn = _stabilize_axis_even_profile(
-                self.rho,
-                ffn_psin,
-                fit_start=1,
-                fit_count=8,
-                replace_count=8,
-                degree=2,
-            )
-            if _axis_derivative_sign_changes(candidate_ffn, head=12) < head_changes:
-                ffn_psin = candidate_ffn
-
         with np.errstate(divide="ignore", invalid="ignore"):
-            raw_jtor = (
+            return (
                 -self.alpha1
                 / (MU0 * self.S_r)
-                * (2.0 * np.pi * ffn_psin * self.Ln_r + self.V_r * self.Pn_psin / (2.0 * np.pi))
+                * (2.0 * np.pi * self.FFn_psin * self.Ln_r + self.V_r * self.Pn_psin / (2.0 * np.pi))
             )
-
-        strong_jtor = _stabilize_axis_even_profile(
-            self.rho,
-            raw_jtor,
-            fit_start=6,
-            fit_count=16,
-            replace_count=20,
-            degree=2,
-        )
-        if _axis_derivative_sign_changes(strong_jtor, head=12) < _axis_derivative_sign_changes(raw_jtor, head=12):
-            jtor = strong_jtor
-        else:
-            jtor = _stabilize_axis_even_profile(
-                self.rho,
-                raw_jtor,
-                fit_start=1,
-                fit_count=6,
-                replace_count=3,
-                degree=2,
-            )
-
-        _extrapolate_inplace(self.rho, jtor, p=2)
-        return jtor
 
     @property
     def jpara(self) -> np.ndarray:
         """平行电流密度 <j.B>/B0, model-side diagnostic."""
-        psin_r_diag, psin_rr_diag = _smoothed_psin_radial_derivatives(self.rho, self.psin)
         F_r = self.grid.corrected_even_derivative(self.F)
         term_r = (
-            self.Kn_r * psin_r_diag / self.F
-            + self.Kn * psin_rr_diag / self.F
-            - self.Kn * psin_r_diag * F_r / self.F**2
+            self.Kn_r * self.psin_r / self.F
+            + self.Kn * self.psin_rr / self.F
+            - self.Kn * self.psin_r * F_r / self.F**2
         )
 
         with np.errstate(divide="ignore", invalid="ignore"):
-            jpara = self.alpha2 / MU0 * self.F / self.Ln_r * term_r
-
-        jpara = _stabilize_axis_even_profile(self.rho, jpara, fit_start=1, fit_count=20, replace_count=20, degree=2)
-        _extrapolate_inplace(self.rho, jpara, p=2)
-        return jpara
+            return self.alpha2 / MU0 * self.F / self.Ln_r * term_r
 
     @property
     def jphi(self) -> np.ndarray:
         """局部环向电流密度 j_phi(R, Z)."""
         R = self.geometry.R
         with np.errstate(divide="ignore", invalid="ignore"):
-            jphi = -self.alpha1 / (MU0 * R) * (self._diagnostic_FFn_psin[:, None] + R**2 * self.Pn_psin[:, None])
-
-        _extrapolate_inplace(self.rho, jphi, p=2)
-        return jphi
+            return -self.alpha1 / (MU0 * R) * (self.FFn_psin[:, None] + R**2 * self.Pn_psin[:, None])
 
     @property
     def Psi(self) -> np.ndarray:
@@ -470,10 +410,6 @@ class Equilibrium(Reactive, Serial):
     def Phi(self) -> np.ndarray:
         """环向磁通 Phi."""
         return 2.0 * np.pi * _integrate_profile_spline(self.rho, self.F * self.Ln_r)
-
-    @property
-    def _diagnostic_FFn_psin(self) -> np.ndarray:
-        return np.asarray(self.FFn_psin, dtype=np.float64)
 
     def plot(
         self,
@@ -536,24 +472,6 @@ class Equilibrium(Reactive, Serial):
             profile_degree=profile_degree,
             native_grid=native_grid,
         )
-
-
-def _extrapolate_inplace(
-    r: np.ndarray,
-    y: np.ndarray,
-    *,
-    p=2,
-) -> None:
-    r = np.asarray(r, dtype=np.float64)
-    y = np.asarray(y, dtype=np.float64)
-    if r.ndim != 1:
-        raise ValueError(f"Expected r to be 1D, got {r.shape}")
-    if y.ndim < 1 or y.shape[0] != r.shape[0]:
-        raise ValueError(f"Expected y to have leading shape {r.shape[0]}, got {y.shape}")
-
-    if r[0] < 1e-4 and r.size >= 3 and np.all(np.isfinite(y[1])) and np.all(np.isfinite(y[2])):
-        r1, r2 = r[1] ** p, r[2] ** p
-        y[0] = (y[1] * r2 - y[2] * r1) / (r2 - r1)
 
 
 def _normalize_shape_profiles(active_profiles: dict[str, Profile]) -> dict[str, Profile]:
@@ -1452,29 +1370,6 @@ def _integrate_profile_spline(rho: np.ndarray, values: np.ndarray) -> np.ndarray
     return out
 
 
-def _integrate_axis_linear_profile(rho: np.ndarray, values: np.ndarray) -> np.ndarray:
-    rho = np.asarray(rho, dtype=np.float64)
-    values = np.asarray(values, dtype=np.float64)
-    if rho.ndim != 1 or values.ndim != 1 or rho.shape != values.shape:
-        raise ValueError(f"Expected rho/values to share a 1D shape, got {rho.shape} and {values.shape}")
-    if rho.size == 0:
-        return values.copy()
-    if rho.size == 1:
-        return np.zeros_like(values)
-
-    rho_safe = np.where(rho > 1e-12, rho, 1.0)
-    reduced = values / rho_safe
-    reduced[0] = reduced[1]
-    reduced = _stabilize_axis_even_profile(rho, reduced, fit_start=1, fit_count=6, replace_count=2, degree=2)
-
-    x = rho * rho
-    spline = CubicSpline(x, reduced, bc_type="natural", extrapolate=True)
-    anti = spline.antiderivative()
-    out = 0.5 * np.asarray(anti(x) - anti(x[0]), dtype=np.float64)
-    out[0] = 0.0
-    return out
-
-
 def _recover_psin_from_psin_r(grid: Grid, psin_r: np.ndarray) -> np.ndarray:
     psin = grid.integrate(psin_r, p=1)
     scale = float(psin[-1] - psin[0])
@@ -1484,183 +1379,3 @@ def _recover_psin_from_psin_r(grid: Grid, psin_r: np.ndarray) -> np.ndarray:
     psin[0] = 0.0
     psin[-1] = 1.0
     return psin
-
-
-def _differentiate_even_profile_on_rho2(rho: np.ndarray, values: np.ndarray) -> np.ndarray:
-    rho = np.asarray(rho, dtype=np.float64)
-    values = np.asarray(values, dtype=np.float64)
-    if rho.ndim != 1 or values.ndim != 1 or rho.shape != values.shape:
-        raise ValueError(f"Expected rho/values to share a 1D shape, got {rho.shape} and {values.shape}")
-    if rho.size < 2:
-        return np.zeros_like(values)
-
-    smooth = _stabilize_axis_even_profile(rho, values, fit_start=1, fit_count=6, replace_count=2, degree=2)
-    x = rho * rho
-    finite = np.isfinite(smooth)
-    if not np.all(finite):
-        if np.count_nonzero(finite) < 2:
-            return np.zeros_like(values)
-        smooth = np.interp(x, x[finite], smooth[finite])
-    spline = CubicSpline(x, smooth, bc_type="natural", extrapolate=True)
-    out = 2.0 * rho * np.asarray(spline(x, 1), dtype=np.float64)
-    out[0] = 0.0
-    return out
-
-
-def _smoothed_psin_radial_derivatives(rho: np.ndarray, psin: np.ndarray, *, degree: int = 6) -> tuple[np.ndarray, np.ndarray]:
-    rho = np.asarray(rho, dtype=np.float64)
-    psin = np.asarray(psin, dtype=np.float64)
-    if rho.ndim != 1 or psin.ndim != 1 or rho.shape != psin.shape:
-        raise ValueError(f"Expected rho/psin to share a 1D shape, got {rho.shape} and {psin.shape}")
-    if rho.size < 4:
-        psin_r = np.gradient(psin, rho, edge_order=1)
-        psin_rr = np.gradient(psin_r, rho, edge_order=1)
-        return psin_r, psin_rr
-
-    x = rho * rho
-    xi = 2.0 * x - 1.0
-    fit_degree = min(int(degree), rho.size - 1)
-    vandermonde = chebvander(xi, fit_degree)
-    coeff, *_ = np.linalg.lstsq(vandermonde, psin, rcond=None)
-    coeff_r = chebder(coeff)
-    coeff_rr = chebder(coeff_r)
-
-    dpsin_dx = 2.0 * chebval(xi, coeff_r)
-    d2psin_dx2 = 4.0 * chebval(xi, coeff_rr)
-    psin_r = 2.0 * rho * dpsin_dx
-    psin_rr = 2.0 * dpsin_dx + 4.0 * x * d2psin_dx2
-    return np.asarray(psin_r, dtype=np.float64), np.asarray(psin_rr, dtype=np.float64)
-
-
-def _axis_derivative_sign_changes(values: np.ndarray, *, head: int = 12) -> int:
-    values = np.asarray(values, dtype=np.float64)
-    if values.ndim != 1:
-        raise ValueError(f"Expected values to be 1D, got {values.shape}")
-    window = values[: min(int(head), values.shape[0])]
-    delta = np.diff(window)
-    signs = np.sign(delta)
-    nonzero = signs[signs != 0.0]
-    if nonzero.size < 2:
-        return 0
-    return int(np.sum(nonzero[1:] * nonzero[:-1] < 0.0))
-
-
-def _tail_derivative_sign_changes(values: np.ndarray, *, tail: int = 12) -> int:
-    values = np.asarray(values, dtype=np.float64)
-    if values.ndim != 1:
-        raise ValueError(f"Expected values to be 1D, got {values.shape}")
-    window = values[-min(int(tail), values.shape[0]) :]
-    delta = np.diff(window)
-    signs = np.sign(delta)
-    nonzero = signs[signs != 0.0]
-    if nonzero.size < 2:
-        return 0
-    return int(np.sum(nonzero[1:] * nonzero[:-1] < 0.0))
-
-
-def _tail_monotonicity_violations(values: np.ndarray, *, tail: int = 8, tol: float = 1.0e-8) -> int:
-    values = np.asarray(values, dtype=np.float64)
-    if values.ndim != 1:
-        raise ValueError(f"Expected values to be 1D, got {values.shape}")
-    window = values[-min(int(tail), values.shape[0]) :]
-    return int(np.count_nonzero(np.diff(window) < -abs(float(tol))))
-
-
-def _derivative_sign_changes(values: np.ndarray) -> int:
-    values = np.asarray(values, dtype=np.float64)
-    if values.ndim != 1:
-        raise ValueError(f"Expected values to be 1D, got {values.shape}")
-    delta = np.diff(values)
-    signs = np.sign(delta)
-    nonzero = signs[signs != 0.0]
-    if nonzero.size < 2:
-        return 0
-    return int(np.sum(nonzero[1:] * nonzero[:-1] < 0.0))
-
-
-def _smooth_three_point_profile(values: np.ndarray, *, passes: int = 1) -> np.ndarray:
-    values = np.asarray(values, dtype=np.float64)
-    if values.ndim != 1:
-        raise ValueError(f"Expected values to be 1D, got {values.shape}")
-    out = values.copy()
-    if out.size < 3:
-        return out
-    for _ in range(max(int(passes), 0)):
-        prev = out.copy()
-        out[1:-1] = 0.25 * prev[:-2] + 0.5 * prev[1:-1] + 0.25 * prev[2:]
-    return out
-
-
-def _stabilize_axis_even_profile(
-    rho: np.ndarray,
-    profile: np.ndarray,
-    *,
-    fit_start: int = 6,
-    fit_count: int = 12,
-    replace_count: int = 10,
-    degree: int = 3,
-) -> np.ndarray:
-    rho = np.asarray(rho, dtype=np.float64)
-    profile = np.asarray(profile, dtype=np.float64)
-    if rho.ndim != 1 or profile.ndim != 1 or rho.shape != profile.shape:
-        raise ValueError(f"Expected rho/profile to share a 1D shape, got {rho.shape} and {profile.shape}")
-
-    start = max(int(fit_start), 0)
-    stop = min(start + int(fit_count), profile.shape[0])
-    replace_stop = min(int(replace_count), stop)
-    fit_degree = min(int(degree), stop - start - 1)
-    if replace_stop <= 0 or stop - start < 2 or fit_degree <= 0:
-        return profile.copy()
-
-    x_fit = rho[start:stop] ** 2
-    vandermonde = np.vander(x_fit, N=fit_degree + 1, increasing=True)
-    coeff, *_ = np.linalg.lstsq(vandermonde, profile[start:stop], rcond=None)
-
-    stabilized = profile.copy()
-    x_replace = rho[:replace_stop] ** 2
-    stabilized[:replace_stop] = np.vander(x_replace, N=fit_degree + 1, increasing=True) @ coeff
-    return stabilized
-
-
-def _stabilize_tail_profile_on_rho(
-    rho: np.ndarray,
-    profile: np.ndarray,
-    *,
-    fit_end_offset: int = 6,
-    fit_count: int = 8,
-    replace_count: int = 3,
-    degree: int = 2,
-) -> np.ndarray:
-    rho = np.asarray(rho, dtype=np.float64)
-    profile = np.asarray(profile, dtype=np.float64)
-    if rho.ndim != 1 or profile.ndim != 1 or rho.shape != profile.shape:
-        raise ValueError(f"Expected rho/profile to share a 1D shape, got {rho.shape} and {profile.shape}")
-
-    stop = max(profile.shape[0] - int(fit_end_offset), 0)
-    start = max(stop - int(fit_count), 0)
-    replace_start = max(profile.shape[0] - int(replace_count), 0)
-    fit_degree = min(int(degree), stop - start - 1)
-    if stop - start < 2 or replace_start >= profile.shape[0] or fit_degree <= 0:
-        return profile.copy()
-
-    x_fit = rho[start:stop]
-    vandermonde = np.vander(x_fit, N=fit_degree + 1, increasing=True)
-    coeff, *_ = np.linalg.lstsq(vandermonde, profile[start:stop], rcond=None)
-
-    stabilized = profile.copy()
-    x_replace = rho[replace_start:]
-    stabilized[replace_start:] = np.vander(x_replace, N=fit_degree + 1, increasing=True) @ coeff
-    return stabilized
-
-
-def _tail_last_jump_ratio(values: np.ndarray, candidate: np.ndarray) -> float:
-    values = np.asarray(values, dtype=np.float64)
-    candidate = np.asarray(candidate, dtype=np.float64)
-    if values.ndim != 1 or candidate.ndim != 1 or values.shape != candidate.shape:
-        raise ValueError(f"Expected values/candidate to share a 1D shape, got {values.shape} and {candidate.shape}")
-    if values.size < 2:
-        return 0.0
-    baseline = abs(float(values[-1] - values[-2]))
-    if baseline <= 1.0e-15:
-        return 0.0
-    return abs(float(candidate[-1] - candidate[-2])) / baseline

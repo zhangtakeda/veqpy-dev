@@ -42,7 +42,7 @@ CONFIG = SolverConfig(
 
 LOWER_COEFFS = {
     "h": [0.0] * 3,
-    "k": [0.0] * 3,
+    "k": [0.0] * 5,
     "s1": [0.0] * 3,
 }
 

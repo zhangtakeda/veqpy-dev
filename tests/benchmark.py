@@ -39,13 +39,18 @@ CONFIG = SolverConfig(
 
 BASE_COEFFS = {
     "h": [0.0] * 3,
-    "k": [0.0] * 3,
+    "k": [0.0] * 5,
     "s1": [0.0] * 3,
 }
 
 PSIN_ROBUST_COEFFS = {
     **BASE_COEFFS,
     "psin": [0.0] * 5,
+}
+
+F_ROBUST_COEFFS = {
+    **BASE_COEFFS,
+    "F": [0.0] * 5,
 }
 
 BOUNDARY = Boundary(
@@ -536,21 +541,32 @@ def _resample_reference_input(
     spec: BenchmarkCaseSpec,
 ) -> np.ndarray:
     uniform_axis = _uniform_source_axis(spec)
-    return _unique_interp(source_axis, values, uniform_axis)
+    return _profile_interp(source_axis, values, uniform_axis)
 
 
-def _sample_reference_input_on_grid(values: np.ndarray, source_axis: np.ndarray | PreparedInterpAxis) -> np.ndarray:
-    return _unique_interp(source_axis, values, _TEST_GRID_RHO_AXIS, kind="cubic")
+def _sample_reference_input_on_grid(
+    values: np.ndarray,
+    source_axis: np.ndarray | PreparedInterpAxis,
+    grid_axis: np.ndarray,
+) -> np.ndarray:
+    return _profile_interp(source_axis, values, grid_axis)
 
 
-def _profile_coeffs_for_case(mode: str, coordinate: str, input_kind: str) -> dict[str, list[float] | None]:
+def _profile_coeffs_for_case(
+    mode: str,
+    coordinate: str,
+    input_kind: str,
+    *,
+    constraint: str | None = None,
+) -> dict[str, list[float] | None]:
     route_spec = validate_route(mode, coordinate, input_kind)
     if route_spec.source_strategy == "profile_owned_psin":
         coeffs = {name: list(values) for name, values in PSIN_ROBUST_COEFFS.items()}
     else:
         coeffs = {name: list(values) for name, values in BASE_COEFFS.items()}
     if mode in {"PJ2", "PQ"}:
-        coeffs["F"] = [0.0] * 5
+        f_order = 7 if mode == "PQ" and constraint in {"Ip", "Ip_beta"} else 6
+        coeffs["F"] = [0.0] * f_order
     return coeffs
 
 
@@ -558,8 +574,14 @@ def _make_benchmark_case(spec: BenchmarkCaseSpec, reference: ReferenceBundle) ->
     init_kwargs = _build_mode_init_kwargs(spec.mode, spec.coordinate, spec.constraint, reference.ref_profiles)
     heat_profile, current_profile = _split_benchmark_inputs(init_kwargs)
     if spec.input_kind == "grid":
-        heat_input = _sample_reference_input_on_grid(heat_profile, reference.rho_interp_axis)
-        current_input = _sample_reference_input_on_grid(current_profile, reference.rho_interp_axis)
+        if spec.coordinate == "rho":
+            grid_axis = _TEST_GRID_RHO_AXIS
+            source_axis = reference.rho_interp_axis
+        else:
+            grid_axis = _profile_interp(reference.rho_interp_axis, reference.psin_axis, _TEST_GRID_RHO_AXIS)
+            source_axis = reference.psin_interp_axis
+        heat_input = _sample_reference_input_on_grid(heat_profile, source_axis, grid_axis)
+        current_input = _sample_reference_input_on_grid(current_profile, source_axis, grid_axis)
         nodes = "grid"
     else:
         source_axis = reference.rho_interp_axis if spec.coordinate == "rho" else reference.psin_interp_axis
@@ -570,7 +592,12 @@ def _make_benchmark_case(spec: BenchmarkCaseSpec, reference: ReferenceBundle) ->
     beta = float(reference.ref_profiles["beta_constraint"]) if spec.constraint in {"beta", "Ip_beta"} else None
     return OperatorCase(
         route=spec.mode,
-        profile_coeffs=_profile_coeffs_for_case(spec.mode, spec.coordinate, spec.input_kind),
+        profile_coeffs=_profile_coeffs_for_case(
+            spec.mode,
+            spec.coordinate,
+            spec.input_kind,
+            constraint=spec.constraint,
+        ),
         boundary=BOUNDARY,
         heat_input=heat_input,
         current_input=current_input,
