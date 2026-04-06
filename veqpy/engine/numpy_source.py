@@ -22,7 +22,7 @@ from typing import Callable
 import numpy as np
 
 MU0 = 4.0 * np.pi * 1e-7
-DEFAULT_LOCAL_BARYCENTRIC_STENCIL = 12
+DEFAULT_LOCAL_BARYCENTRIC_STENCIL = 8
 
 RHO_AXIS = 0
 THETA_AXIS = 1
@@ -521,7 +521,8 @@ def _update_pp_from_rho_inputs(
         alpha2 = quadrature(current_input, weights)
         out_psin_r[:] = current_input / alpha2
 
-    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
+    _enforce_axis_linear_psin_r(out_psin_r, rho)
+    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = np.maximum(out_psin_r, 1e-10)
 
@@ -577,7 +578,8 @@ def _update_pp_from_psin_inputs(
         alpha2 = quadrature(current_input, weights)
         out_psin_r[:] = current_input / alpha2
 
-    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
+    _enforce_axis_linear_psin_r(out_psin_r, rho)
+    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = np.maximum(out_psin_r, 1e-10)
 
@@ -740,6 +742,7 @@ def _update_pi_from_rho_inputs(
         Itor = Ip / current_input[-1] * current_input
     else:
         Itor = current_input
+    _enforce_axis_quadratic_itor(Itor, rho)
     # PI treats current_input as enclosed toroidal current; interpolation undershoot can
     # create tiny non-physical negatives near the magnetic axis for rho-route samples.
     # Keep a tiny positive floor so axis diagnostics that divide by psin_r stay finite.
@@ -749,7 +752,8 @@ def _update_pi_from_rho_inputs(
     alpha2 = quadrature(MU0 * Itor / (2.0 * np.pi * Kn), weights)
 
     out_psin_r[:] = MU0 * Itor / (2.0 * np.pi * alpha2 * Kn)
-    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
+    _enforce_axis_linear_psin_r(out_psin_r, rho)
+    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = np.maximum(out_psin_r, 1e-10)
     Itor_r = np.empty_like(Itor)
@@ -801,6 +805,7 @@ def _update_pi_from_psin_inputs(
         Itor = Ip / current_input[-1] * current_input
     else:
         Itor = current_input
+    _enforce_axis_quadratic_itor(Itor, rho)
     itor_floor = max(float(Itor[-1]), 1.0) * 1e-12
     Itor = np.maximum(Itor, itor_floor)
 
@@ -969,11 +974,12 @@ def _update_pj1_from_rho_inputs(
         out_psin_r,
         integrand_j,
         integration_matrix,
-        p=2,
+        p=1,
         rho=rho,
         differentiation_matrix=differentiation_matrix,
     )
-    I_tor_prof = out_psin_r
+    I_tor_prof = out_psin_r.copy()
+    _enforce_axis_quadratic_itor(I_tor_prof, rho)
 
     if has_Ip:
         I_tor = Ip * (I_tor_prof / I_tor_prof[-1])
@@ -982,6 +988,7 @@ def _update_pj1_from_rho_inputs(
         I_tor = I_tor_prof
         jtor = current_input
     _enforce_axis_even_profile(jtor, rho)
+    I_tor = np.maximum(I_tor, max(float(I_tor[-1]), 1.0) * 1e-12)
 
     alpha2 = quadrature(MU0 * I_tor / (2.0 * np.pi * Kn), weights)
     out_psin_r[:] = MU0 * I_tor / (2.0 * np.pi * alpha2 * Kn)
@@ -1036,9 +1043,10 @@ def _update_pj1_from_psin_inputs(
 
     integrand_j = current_input * S_r
     corrected_integration(
-        out_psin_r, integrand_j, integration_matrix, p=2, rho=rho, differentiation_matrix=differentiation_matrix
+        out_psin_r, integrand_j, integration_matrix, p=1, rho=rho, differentiation_matrix=differentiation_matrix
     )
-    I_tor_prof = out_psin_r
+    I_tor_prof = out_psin_r.copy()
+    _enforce_axis_quadratic_itor(I_tor_prof, rho)
 
     if has_Ip:
         I_tor = Ip * (I_tor_prof / I_tor_prof[-1])
@@ -1047,6 +1055,7 @@ def _update_pj1_from_psin_inputs(
         I_tor = I_tor_prof
         jtor = current_input
     _enforce_axis_even_profile(jtor, rho)
+    I_tor = np.maximum(I_tor, max(float(I_tor[-1]), 1.0) * 1e-12)
 
     alpha2 = quadrature(MU0 * I_tor / (2.0 * np.pi * Kn), weights)
     out_psin_r[:] = MU0 * I_tor / (2.0 * np.pi * alpha2 * Kn)

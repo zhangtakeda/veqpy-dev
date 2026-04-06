@@ -23,7 +23,7 @@ import numpy as np
 from numba import njit
 
 MU0 = 4.0 * np.pi * 1e-7
-DEFAULT_LOCAL_BARYCENTRIC_STENCIL = 12
+DEFAULT_LOCAL_BARYCENTRIC_STENCIL = 8
 
 RHO_AXIS = 0
 THETA_AXIS = 1
@@ -491,7 +491,8 @@ def _update_pp_from_rho_inputs(
         alpha2 = quadrature(current_input, weights)
         _fill_scaled_vector(out_psin_r, current_input, 1.0 / alpha2)
 
-    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
+    _enforce_axis_linear_psin_r(out_psin_r, rho)
+    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = _maximum_floor(out_psin_r, 1e-10)
 
@@ -559,7 +560,8 @@ def _update_pp_from_psin_inputs(
         alpha2 = quadrature(current_input, weights)
         _fill_scaled_vector(out_psin_r, current_input, 1.0 / alpha2)
 
-    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
+    _enforce_axis_linear_psin_r(out_psin_r, rho)
+    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = _maximum_floor(out_psin_r, 1e-10)
 
@@ -737,6 +739,7 @@ def _update_pi_from_rho_inputs(
         _fill_scaled_vector(Itor, current_input, Ip / current_input[-1])
     else:
         _copy_vector(Itor, current_input)
+    _enforce_axis_quadratic_itor(Itor, rho)
     itor_floor = max(Itor[-1], 1.0) * 1e-12
     Itor[:] = _maximum_floor(Itor, itor_floor)
 
@@ -745,7 +748,8 @@ def _update_pi_from_rho_inputs(
     alpha2 = quadrature(itor_over_kn, weights)
 
     _fill_scaled_ratio(out_psin_r, Itor, Kn, MU0 / (2.0 * np.pi * alpha2))
-    full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
+    _enforce_axis_linear_psin_r(out_psin_r, rho)
+    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
     _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
     psin_r_safe = _maximum_floor(out_psin_r, 1e-10)
     Itor_r = np.empty_like(Itor)
@@ -802,6 +806,7 @@ def _update_pi_from_psin_inputs(
         _fill_scaled_vector(Itor, current_input, Ip / current_input[-1])
     else:
         _copy_vector(Itor, current_input)
+    _enforce_axis_quadratic_itor(Itor, rho)
     itor_floor = max(Itor[-1], 1.0) * 1e-12
     Itor[:] = _maximum_floor(Itor, itor_floor)
 
@@ -976,9 +981,10 @@ def _update_pj1_from_rho_inputs(
 
     integrand_j = np.empty_like(current_input)
     _fill_pointwise_product(integrand_j, current_input, S_r)
-    corrected_integration(out_psin_r, integrand_j, integration_matrix, 2, rho, differentiation_matrix)
+    corrected_integration(out_psin_r, integrand_j, integration_matrix, 1, rho, differentiation_matrix)
     I_tor_prof = np.empty_like(out_psin_r)
     _copy_vector(I_tor_prof, out_psin_r)
+    _enforce_axis_quadratic_itor(I_tor_prof, rho)
     I_tor = np.empty_like(current_input)
     jtor = np.empty_like(current_input)
 
@@ -989,6 +995,9 @@ def _update_pj1_from_rho_inputs(
         _copy_vector(I_tor, I_tor_prof)
         _copy_vector(jtor, current_input)
     _enforce_axis_even_profile(jtor, rho)
+
+    itor_floor = max(I_tor[-1], 1.0) * 1e-12
+    I_tor[:] = _maximum_floor(I_tor, itor_floor)
 
     itor_over_kn = np.empty_like(current_input)
     _fill_scaled_ratio(itor_over_kn, I_tor, Kn, MU0 / (2.0 * np.pi))
@@ -1056,9 +1065,10 @@ def _update_pj1_from_psin_inputs(
 
     integrand_j = np.empty_like(current_input)
     _fill_pointwise_product(integrand_j, current_input, S_r)
-    corrected_integration(out_psin_r, integrand_j, integration_matrix, 2, rho, differentiation_matrix)
+    corrected_integration(out_psin_r, integrand_j, integration_matrix, 1, rho, differentiation_matrix)
     I_tor_prof = np.empty_like(out_psin_r)
     _copy_vector(I_tor_prof, out_psin_r)
+    _enforce_axis_quadratic_itor(I_tor_prof, rho)
     I_tor = np.empty_like(current_input)
     jtor = np.empty_like(current_input)
 
@@ -1069,6 +1079,9 @@ def _update_pj1_from_psin_inputs(
         _copy_vector(I_tor, I_tor_prof)
         _copy_vector(jtor, current_input)
     _enforce_axis_even_profile(jtor, rho)
+
+    itor_floor = max(I_tor[-1], 1.0) * 1e-12
+    I_tor[:] = _maximum_floor(I_tor, itor_floor)
 
     itor_over_kn = np.empty_like(current_input)
     _fill_scaled_ratio(itor_over_kn, I_tor, Kn, MU0 / (2.0 * np.pi))
@@ -2964,6 +2977,60 @@ def _linear_uniform_interpolate_pair(
         frac = position - left
         out0[i] = (1.0 - frac) * values0[left] + frac * values0[right]
         out1[i] = (1.0 - frac) * values1[left] + frac * values1[right]
+    return out0, out1
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def _local_barycentric_interpolate_pair(
+    out0: np.ndarray,
+    out1: np.ndarray,
+    values0: np.ndarray,
+    values1: np.ndarray,
+    query: np.ndarray,
+    weights: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    n_src = values0.shape[0]
+    if n_src == 1:
+        value0 = values0[0]
+        value1 = values1[0]
+        for i in range(out0.shape[0]):
+            out0[i] = value0
+            out1[i] = value1
+        return out0, out1
+
+    local_size = weights.shape[0]
+    denom_scale = n_src - 1.0
+    for i in range(out0.shape[0]):
+        q = query[i]
+        if q < 0.0:
+            q = 0.0
+        elif q > 1.0:
+            q = 1.0
+
+        start = _local_uniform_stencil_start(q, n_src, local_size)
+        hit = -1
+        for local_j in range(local_size):
+            j = start + local_j
+            xj = j / denom_scale
+            if abs(q - xj) <= 1e-14:
+                hit = j
+                break
+        if hit >= 0:
+            out0[i] = values0[hit]
+            out1[i] = values1[hit]
+            continue
+
+        denominator = 0.0
+        numerator0 = 0.0
+        numerator1 = 0.0
+        for local_j in range(local_size):
+            j = start + local_j
+            term = weights[local_j] / (q - j / denom_scale)
+            denominator += term
+            numerator0 += term * values0[j]
+            numerator1 += term * values1[j]
+        out0[i] = numerator0 / denominator
+        out1[i] = numerator1 / denominator
     return out0, out1
 
 

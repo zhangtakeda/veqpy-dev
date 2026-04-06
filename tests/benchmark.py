@@ -27,7 +27,7 @@ SHAPE_MATCH_TOL = 1e-2
 REFERENCE_CACHE_VERSION = 1
 DIAGNOSTIC_SIGN_CHANGE_WINDOW = 12
 
-REFERENCE_GRID = Grid(Nr=32, Nt=32, scheme="legendre")
+REFERENCE_GRID = Grid(Nr=64, Nt=32, scheme="legendre")
 TEST_GRID = Grid(Nr=16, Nt=16, scheme="legendre", L_max=REFERENCE_GRID.L_max)
 REFERENCE_SUMMARY_GRID = Grid(Nr=64, Nt=128, scheme="uniform", L_max=REFERENCE_GRID.L_max, M_max=REFERENCE_GRID.M_max)
 CONFIG = SolverConfig(

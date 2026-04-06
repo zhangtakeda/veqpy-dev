@@ -26,11 +26,13 @@ from veqpy.engine.numba_geometry import update_geometry
 from veqpy.engine.numba_profile import update_profiles_packed_bulk
 from veqpy.engine.numba_residual import _run_residual_blocks_packed, update_residual
 from veqpy.engine.numba_source import (
+    _local_barycentric_interpolate_pair,
     _linear_uniform_interpolate_pair,
     _materialize_profile_owned_psin_source_impl,
     _materialize_projected_source_inputs_impl,
     _update_fixed_point_psin_query_impl,
     _update_fourier_family_fields_impl,
+    _uniform_barycentric_weights,
     resolve_source_scratch_kernel,
 )
 
@@ -421,6 +423,7 @@ def bind_fused_profile_owned_psin_residual_runner(
     coordinate_code = int(source_plan.coordinate_code)
     parameterization_code = int(source_plan.parameterization_code)
     has_projection_policy = bool(source_plan.has_projection_policy)
+    skip_projection_finalize = getattr(source_kernel, "__name__", "") == "update_PI_PSIN"
     projection_domain_code = int(source_plan.projection_domain_code)
     endpoint_policy_code = int(source_plan.endpoint_policy_code)
     heat_input = source_plan.heat_input
@@ -504,7 +507,9 @@ def bind_fused_profile_owned_psin_residual_runner(
             current_input,
             parameterization_code,
         )
-        if has_projection_policy:
+        # PI psin-uniform is more accurate with the direct source-owned interpolation
+        # than with the extra projected rematerialization used by other routes.
+        if has_projection_policy and not skip_projection_finalize:
             _materialize_projected_source_inputs_impl(
                 materialized_heat_input,
                 materialized_current_input,
@@ -692,10 +697,15 @@ def bind_fused_fixed_point_psin_residual_runner(
     current_input = source_plan.current_input
     Ip = float(source_plan.Ip)
     beta = float(source_plan.beta)
+    has_Ip = bool(np.isfinite(Ip))
+    source_kernel_name = getattr(source_kernel, "__name__", "")
     use_projected_finalize = bool(source_plan.use_projected_finalize)
     projection_domain_code = int(source_plan.projection_domain_code)
     endpoint_policy_code = int(source_plan.endpoint_policy_code)
     allow_query_warmstart = bool(source_plan.allow_query_warmstart)
+    # PQ's q-profile is more stable with a slightly narrower local stencil.
+    fixed_point_stencil_size = 4 if source_kernel_name == "update_PQ_PSIN" else 8
+    fixed_point_barycentric_weights = _uniform_barycentric_weights(min(fixed_point_stencil_size, int(source_plan.n_src)))
     block_codes = residual_binding_layout.active_residual_block_codes
     block_orders = residual_binding_layout.active_residual_block_orders
     scratch_source_kernel = resolve_source_scratch_kernel(source_kernel)
@@ -767,13 +777,23 @@ def bind_fused_fixed_point_psin_residual_runner(
         alpha1 = np.nan
         alpha2 = np.nan
         for _ in range(max_iter):
-            _linear_uniform_interpolate_pair(
-                materialized_heat_input,
-                materialized_current_input,
-                heat_input,
-                current_input,
-                source_psin_query,
-            )
+            if has_Ip:
+                _local_barycentric_interpolate_pair(
+                    materialized_heat_input,
+                    materialized_current_input,
+                    heat_input,
+                    current_input,
+                    source_psin_query,
+                    fixed_point_barycentric_weights,
+                )
+            else:
+                _linear_uniform_interpolate_pair(
+                    materialized_heat_input,
+                    materialized_current_input,
+                    heat_input,
+                    current_input,
+                    source_psin_query,
+                )
             if scratch_source_kernel is None:
                 alpha1, alpha2 = source_kernel(
                     psin,
@@ -835,72 +855,75 @@ def bind_fused_fixed_point_psin_residual_runner(
         if use_projected_finalize:
             for i in range(source_psin_query.shape[0]):
                 source_psin_query[i] = psin[i]
-            _materialize_projected_source_inputs_impl(
-                materialized_heat_input,
-                materialized_current_input,
-                heat_projection_coeff,
-                current_projection_coeff,
-                current_input,
-                source_psin_query,
-                projection_domain_code,
-                endpoint_policy_code,
-                endpoint_blend,
-            )
-            if scratch_source_kernel is None:
-                alpha1, alpha2 = source_kernel(
-                    psin,
-                    psin_r,
-                    psin_rr,
-                    FFn_psin,
-                    Pn_psin,
+            for _ in range(4):
+                _materialize_projected_source_inputs_impl(
                     materialized_heat_input,
                     materialized_current_input,
-                    coordinate_code,
-                    R0,
-                    B0,
-                    weights,
-                    differentiation_matrix,
-                    integration_matrix,
-                    rho,
-                    V_r,
-                    Kn,
-                    Kn_r,
-                    Ln_r,
-                    S_r,
-                    R_fields[0],
-                    J_fields[6],
-                    F_profile_u,
-                    Ip,
-                    beta,
+                    heat_projection_coeff,
+                    current_projection_coeff,
+                    current_input,
+                    source_psin_query,
+                    projection_domain_code,
+                    endpoint_policy_code,
+                    endpoint_blend,
                 )
-            else:
-                alpha1, alpha2 = scratch_source_kernel(
-                    psin,
-                    psin_r,
-                    psin_rr,
-                    FFn_psin,
-                    Pn_psin,
-                    materialized_heat_input,
-                    materialized_current_input,
-                    coordinate_code,
-                    R0,
-                    B0,
-                    weights,
-                    differentiation_matrix,
-                    integration_matrix,
-                    rho,
-                    V_r,
-                    Kn,
-                    Kn_r,
-                    Ln_r,
-                    S_r,
-                    R_fields[0],
-                    J_fields[6],
-                    F_profile_u,
-                    Ip,
-                    beta,
-                    source_scratch_1d,
-                )
+                if scratch_source_kernel is None:
+                    alpha1, alpha2 = source_kernel(
+                        psin,
+                        psin_r,
+                        psin_rr,
+                        FFn_psin,
+                        Pn_psin,
+                        materialized_heat_input,
+                        materialized_current_input,
+                        coordinate_code,
+                        R0,
+                        B0,
+                        weights,
+                        differentiation_matrix,
+                        integration_matrix,
+                        rho,
+                        V_r,
+                        Kn,
+                        Kn_r,
+                        Ln_r,
+                        S_r,
+                        R_fields[0],
+                        J_fields[6],
+                        F_profile_u,
+                        Ip,
+                        beta,
+                    )
+                else:
+                    alpha1, alpha2 = scratch_source_kernel(
+                        psin,
+                        psin_r,
+                        psin_rr,
+                        FFn_psin,
+                        Pn_psin,
+                        materialized_heat_input,
+                        materialized_current_input,
+                        coordinate_code,
+                        R0,
+                        B0,
+                        weights,
+                        differentiation_matrix,
+                        integration_matrix,
+                        rho,
+                        V_r,
+                        Kn,
+                        Kn_r,
+                        Ln_r,
+                        S_r,
+                        R_fields[0],
+                        J_fields[6],
+                        F_profile_u,
+                        Ip,
+                        beta,
+                        source_scratch_1d,
+                    )
+                if _update_fixed_point_psin_query_impl(source_psin_query, psin, tolerance):
+                    break
 
         alpha_state[0] = alpha1
         alpha_state[1] = alpha2

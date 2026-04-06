@@ -32,6 +32,7 @@ class SourceProjectionPolicy:
     domain: str
     heat_degree: int
     current_degree: int
+    ip_current_degree: int | None = None
     current_ip_endpoint_policy: str = "none"
     current_other_endpoint_policy: str = "none"
 
@@ -51,11 +52,19 @@ SOURCE_PROJECTION_POLICIES: dict[tuple[str, str, str], SourceProjectionPolicy] =
         current_ip_endpoint_policy="both",
         current_other_endpoint_policy="none",
     ),
-    ("PQ", "psin", "uniform"): SourceProjectionPolicy(
+    ("PJ2", "psin", "uniform"): SourceProjectionPolicy(
         domain="psin",
-        heat_degree=8,
-        current_degree=8,
+        heat_degree=5,
+        current_degree=6,
         current_ip_endpoint_policy="none",
+        current_other_endpoint_policy="none",
+    ),
+    ("PQ", "psin", "uniform"): SourceProjectionPolicy(
+        domain="sqrt_psin",
+        heat_degree=8,
+        current_degree=10,
+        ip_current_degree=12,
+        current_ip_endpoint_policy="affine_both",
         current_other_endpoint_policy="none",
     ),
 }

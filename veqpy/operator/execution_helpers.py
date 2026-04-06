@@ -46,6 +46,11 @@ def snapshot_equilibrium_from_runtime(
         profile_index=profile_index,
         profiles_by_name=profiles_by_name,
     )
+    ffn_psin_snapshot = np.asarray(FFn_psin, dtype=np.float64).copy()
+    if _should_regularize_snapshot_ffn_psin(case):
+        ff_r = ffn_psin_snapshot * np.asarray(psin_r, dtype=np.float64)
+        ff_r = grid.regularize_ff_r(ff_r)
+        ffn_psin_snapshot = ff_r / np.maximum(np.asarray(psin_r, dtype=np.float64), 1.0e-10)
     return Equilibrium(
         R0=case.R0,
         Z0=case.Z0,
@@ -54,13 +59,22 @@ def snapshot_equilibrium_from_runtime(
         grid=grid,
         active_profiles=active_profiles,
         psin=psin.copy(),
-        FFn_psin=FFn_psin.copy(),
+        FFn_psin=ffn_psin_snapshot,
         Pn_psin=Pn_psin.copy(),
         psin_r=psin_r.copy(),
         psin_rr=psin_rr.copy(),
         alpha1=float(alpha1),
         alpha2=float(alpha2),
     )
+
+
+def _should_regularize_snapshot_ffn_psin(case: "OperatorCase") -> bool:
+    has_ip = case.Ip is not None and np.isfinite(case.Ip)
+    if case.route == "PP" and case.nodes == "uniform":
+        return True
+    if case.route == "PQ" and case.coordinate == "psin" and case.nodes == "uniform" and has_ip:
+        return True
+    return False
 
 
 def snapshot_equilibrium_profiles(

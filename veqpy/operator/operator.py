@@ -239,6 +239,7 @@ class Operator:
         policy = self._source_projection_policy
         use_projected_finalize = False
         has_projection_policy = policy is not None
+        has_ip_constraint = bool(np.isfinite(self.case.Ip))
         projection_domain = "psin"
         heat_projection_degree = 0
         current_projection_degree = 0
@@ -246,12 +247,12 @@ class Operator:
         endpoint_policy_code = 0
         allow_query_warmstart = True
         if policy is not None:
-            endpoint_policy = (
-                policy.current_ip_endpoint_policy if np.isfinite(self.case.Ip) else policy.current_other_endpoint_policy
-            )
+            endpoint_policy = policy.current_ip_endpoint_policy if has_ip_constraint else policy.current_other_endpoint_policy
             projection_domain = policy.domain
             heat_projection_degree = int(policy.heat_degree)
-            current_projection_degree = int(policy.current_degree)
+            current_projection_degree = int(
+                policy.ip_current_degree if has_ip_constraint and policy.ip_current_degree is not None else policy.current_degree
+            )
             endpoint_policy_code = ENDPOINT_POLICY_CODES[endpoint_policy]
             projection_domain_code = PROJECTION_DOMAIN_CODES[policy.domain]
             use_projected_finalize = self.case.coordinate == "psin"

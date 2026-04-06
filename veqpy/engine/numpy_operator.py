@@ -707,43 +707,46 @@ def bind_fused_fixed_point_psin_residual_runner(
 
         if use_projected_finalize:
             np.copyto(source_psin_query, root_fields[0])
-            materialize_projected_source_inputs(
-                materialized_heat_input,
-                materialized_current_input,
-                heat_projection_coeff,
-                current_projection_coeff,
-                current_input,
-                source_psin_query,
-                projection_domain_code,
-                endpoint_policy_code,
-                endpoint_blend,
-            )
-            alpha1, alpha2 = source_kernel(
-                root_fields[0],
-                root_fields[1],
-                root_fields[2],
-                root_fields[3],
-                root_fields[4],
-                materialized_heat_input,
-                materialized_current_input,
-                coordinate_code,
-                R0,
-                B0,
-                weights,
-                differentiation_matrix,
-                integration_matrix,
-                rho,
-                V_r,
-                Kn,
-                Kn_r,
-                Ln_r,
-                S_r,
-                R_fields[0],
-                J_fields[6],
-                F_profile_u,
-                Ip,
-                beta,
-            )
+            for _ in range(4):
+                materialize_projected_source_inputs(
+                    materialized_heat_input,
+                    materialized_current_input,
+                    heat_projection_coeff,
+                    current_projection_coeff,
+                    current_input,
+                    source_psin_query,
+                    projection_domain_code,
+                    endpoint_policy_code,
+                    endpoint_blend,
+                )
+                alpha1, alpha2 = source_kernel(
+                    root_fields[0],
+                    root_fields[1],
+                    root_fields[2],
+                    root_fields[3],
+                    root_fields[4],
+                    materialized_heat_input,
+                    materialized_current_input,
+                    coordinate_code,
+                    R0,
+                    B0,
+                    weights,
+                    differentiation_matrix,
+                    integration_matrix,
+                    rho,
+                    V_r,
+                    Kn,
+                    Kn_r,
+                    Ln_r,
+                    S_r,
+                    R_fields[0],
+                    J_fields[6],
+                    F_profile_u,
+                    Ip,
+                    beta,
+                )
+                if update_fixed_point_psin_query(source_psin_query, root_fields[0], tolerance):
+                    break
 
         alpha_state[0] = alpha1
         alpha_state[1] = alpha2
