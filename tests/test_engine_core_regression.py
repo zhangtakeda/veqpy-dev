@@ -703,6 +703,37 @@ def test_pi_psin_uniform_benchmark_jtor_head_is_finite():
         benchmark.BENCHMARK_REPEAT_COUNT = original_repeat
 
 
+def test_pj2_psin_uniform_benchmark_ff_psi_snapshot_stays_bounded():
+    benchmark_path = Path(__file__).with_name("benchmark.py")
+    spec = importlib.util.spec_from_file_location("veqpy_tests_benchmark", benchmark_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load benchmark module from {benchmark_path}")
+    benchmark = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = benchmark
+    spec.loader.exec_module(benchmark)
+
+    original_repeat = benchmark.BENCHMARK_REPEAT_COUNT
+    try:
+        benchmark.BENCHMARK_REPEAT_COUNT = 1
+        reference = benchmark._solve_reference()
+        ff_thresholds = {
+            "Ip_beta": 7.0e-3,
+            "Ip": 1.2e-2,
+            "beta": 2.8e-2,
+            "null": 8.5e-3,
+        }
+        for constraint in ("Ip_beta", "Ip", "beta", "null"):
+            spec_case = benchmark.BenchmarkCaseSpec("PJ2", "psin", constraint, "uniform")
+            row = benchmark._benchmark_case_result(spec_case, reference)
+            assert row.ff_psi_rel_rms_error <= ff_thresholds[constraint], (
+                spec_case.case_name,
+                row.ff_psi_rel_rms_error,
+            )
+            assert row.shape_error <= 6.0e-3, (spec_case.case_name, row.shape_error)
+    finally:
+        benchmark.BENCHMARK_REPEAT_COUNT = original_repeat
+
+
 def test_pi_rho_grid_benchmark_source_profile_errors_stay_low():
     benchmark_path = Path(__file__).with_name("benchmark.py")
     spec = importlib.util.spec_from_file_location("veqpy_tests_benchmark", benchmark_path)

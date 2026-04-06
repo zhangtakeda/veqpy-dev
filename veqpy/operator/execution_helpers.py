@@ -72,6 +72,8 @@ def _should_regularize_snapshot_ffn_psin(case: "OperatorCase") -> bool:
     has_ip = case.Ip is not None and np.isfinite(case.Ip)
     if case.route == "PP" and case.nodes == "uniform":
         return True
+    if case.route == "PJ2" and case.coordinate == "psin" and case.nodes == "uniform":
+        return True
     if case.route == "PQ" and case.coordinate == "psin" and case.nodes == "uniform" and has_ip:
         return True
     return False

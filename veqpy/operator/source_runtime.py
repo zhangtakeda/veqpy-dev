@@ -69,6 +69,49 @@ SOURCE_PROJECTION_POLICIES: dict[tuple[str, str, str], SourceProjectionPolicy] =
     ),
 }
 
+
+def resolve_source_projection_policy(
+    route: str,
+    coordinate: str,
+    nodes: str,
+    *,
+    has_ip_constraint: bool,
+    has_beta_constraint: bool,
+) -> SourceProjectionPolicy | None:
+    policy = SOURCE_PROJECTION_POLICIES.get((route, coordinate, nodes))
+    if policy is None:
+        return None
+    if route != "PQ" or coordinate != "psin" or nodes != "uniform":
+        return policy
+    if has_ip_constraint and has_beta_constraint:
+        return policy
+    if has_ip_constraint:
+        return SourceProjectionPolicy(
+            domain="sqrt_psin",
+            heat_degree=7,
+            current_degree=9,
+            ip_current_degree=7,
+            current_ip_endpoint_policy="affine_both",
+            current_other_endpoint_policy="none",
+        )
+    if has_beta_constraint:
+        return SourceProjectionPolicy(
+            domain="sqrt_psin",
+            heat_degree=7,
+            current_degree=9,
+            ip_current_degree=7,
+            current_ip_endpoint_policy="affine_both",
+            current_other_endpoint_policy="both",
+        )
+    return SourceProjectionPolicy(
+        domain="sqrt_psin",
+        heat_degree=7,
+        current_degree=10,
+        ip_current_degree=7,
+        current_ip_endpoint_policy="affine_both",
+        current_other_endpoint_policy="both",
+    )
+
 PROJECTION_DOMAIN_CODES = {
     "psin": 0,
     "sqrt_psin": 1,

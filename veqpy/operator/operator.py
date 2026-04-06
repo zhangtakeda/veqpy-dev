@@ -74,6 +74,7 @@ from veqpy.operator.source_runtime import (
     SOURCE_PROJECTION_POLICIES,
     SourceProjectionPolicy,
     build_source_stage_runner,
+    resolve_source_projection_policy,
     refresh_source_runtime,
     validate_source_inputs,
 )
@@ -550,8 +551,12 @@ class Operator:
         spec = validate_route(self.case.route, self.case.coordinate, self.case.nodes)
         self._source_route_spec = spec
         self._source_runner = build_source_stage_runner(spec)
-        self._source_projection_policy = SOURCE_PROJECTION_POLICIES.get(
-            (self.case.route, self.case.coordinate, self.case.nodes)
+        self._source_projection_policy = resolve_source_projection_policy(
+            self.case.route,
+            self.case.coordinate,
+            self.case.nodes,
+            has_ip_constraint=bool(np.isfinite(self.case.Ip)),
+            has_beta_constraint=bool(np.isfinite(self.case.beta)),
         )
         self.source_plan = self._build_source_plan()
         self.residual_plan = self._build_residual_plan()

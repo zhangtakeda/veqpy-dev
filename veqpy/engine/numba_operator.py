@@ -181,6 +181,8 @@ def bind_fused_single_pass_residual_runner(
     k_fields = profiles_by_name["k"].u_fields
     F_profile_u = profiles_by_name["F"].u
     source_kernel = source_plan.kernel
+    source_kernel_name = getattr(source_kernel, "__name__", "")
+    enforce_source_psin_consistency = source_kernel_name == "update_PJ2_PSIN"
     coordinate_code = int(source_plan.coordinate_code)
     Ip = float(source_plan.Ip)
     beta = float(source_plan.beta)
@@ -423,7 +425,8 @@ def bind_fused_profile_owned_psin_residual_runner(
     coordinate_code = int(source_plan.coordinate_code)
     parameterization_code = int(source_plan.parameterization_code)
     has_projection_policy = bool(source_plan.has_projection_policy)
-    skip_projection_finalize = getattr(source_kernel, "__name__", "") == "update_PI_PSIN"
+    source_kernel_name = getattr(source_kernel, "__name__", "")
+    skip_projection_finalize = source_kernel_name == "update_PI_PSIN"
     projection_domain_code = int(source_plan.projection_domain_code)
     endpoint_policy_code = int(source_plan.endpoint_policy_code)
     heat_input = source_plan.heat_input
@@ -575,7 +578,7 @@ def bind_fused_profile_owned_psin_residual_runner(
                 Ip,
                 beta,
                 source_scratch_1d,
-            )
+        )
         alpha_state[0] = alpha1
         alpha_state[1] = alpha2
         update_residual(

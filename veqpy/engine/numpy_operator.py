@@ -452,8 +452,8 @@ def bind_fused_profile_owned_psin_residual_runner(
             current_input,
             parameterization_code,
         )
-        if has_projection_policy:
-            materialize_projected_source_inputs(
+    if has_projection_policy:
+        materialize_projected_source_inputs(
                 materialized_heat_input,
                 materialized_current_input,
                 heat_projection_coeff,
