@@ -23,6 +23,7 @@ import numpy as np
 from veqpy.engine import (
     bind_residual_runner,
     bind_residual_stage_runner,
+    resolve_source_scratch_kernel,
     validate_route,
 )
 from veqpy.model import Equilibrium, Geometry, Grid, Profile
@@ -58,11 +59,7 @@ from veqpy.operator.profile_setup import (
     refresh_profile_runtime,
     validate_case_compatibility,
 )
-from veqpy.operator.runner_binding import (
-    build_bound_residual_full_stage_runner,
-    build_bound_residual_pack_stage_runner,
-    build_fused_residual_runner,
-)
+from veqpy.operator.runner_binding import build_fused_residual_runner
 from veqpy.operator.runtime_allocation import allocate_runtime_state
 from veqpy.operator.source_orchestration import (
     build_bound_source_stage_runner,
@@ -73,7 +70,6 @@ from veqpy.operator.source_runtime import (
     SOURCE_PARAMETERIZATION_CODES,
     SOURCE_PROJECTION_POLICIES,
     SourceProjectionPolicy,
-    build_source_stage_runner,
     resolve_source_projection_policy,
     refresh_source_runtime,
     validate_source_inputs,
@@ -165,7 +161,8 @@ class Operator:
     c_effective_order: int = field(init=False, repr=False)
     s_effective_order: int = field(init=False, repr=False)
     _source_route_spec: object = field(init=False, repr=False)
-    _source_runner: Callable = field(init=False, repr=False)
+    _source_kernel: Callable = field(init=False, repr=False)
+    _source_scratch_kernel: Callable | None = field(init=False, repr=False)
     residual_plan: ResidualPlan = field(init=False, repr=False)
     source_plan: SourcePlan = field(init=False, repr=False)
     field_runtime_state: FieldRuntimeState = field(init=False, repr=False)
@@ -550,7 +547,8 @@ class Operator:
     def _refresh_operator_identity(self) -> None:
         spec = validate_route(self.case.route, self.case.coordinate, self.case.nodes)
         self._source_route_spec = spec
-        self._source_runner = build_source_stage_runner(spec)
+        self._source_kernel = spec.implementation
+        self._source_scratch_kernel = resolve_source_scratch_kernel(spec.implementation)
         self._source_projection_policy = resolve_source_projection_policy(
             self.case.route,
             self.case.coordinate,
@@ -692,45 +690,85 @@ class Operator:
         return build_bound_source_stage_runner(self)
 
     def _build_bound_residual_pack_stage_runner(self) -> Callable:
-        return build_bound_residual_pack_stage_runner(
-            residual_pack_runner=self.execution_state.residual_pack_runner,
-            G=self.G,
-            psin_R=self.psin_R,
-            psin_Z=self.psin_Z,
-            sin_tb=self.geometry.sin_tb,
-            sin_ktheta=self.grid.sin_ktheta,
-            cos_ktheta=self.grid.cos_ktheta,
-            rho_powers=self.grid.rho_powers,
-            y=self.grid.y,
-            T=self.grid.T_fields[0],
-            weights=self.grid.weights,
-            a=self.case.a,
-            R0=self.case.R0,
-            B0=self.case.B0,
-        )
+        residual_pack_runner = self.execution_state.residual_pack_runner
+        G = self.G
+        psin_R = self.psin_R
+        psin_Z = self.psin_Z
+        sin_tb = self.geometry.sin_tb
+        sin_ktheta = self.grid.sin_ktheta
+        cos_ktheta = self.grid.cos_ktheta
+        rho_powers = self.grid.rho_powers
+        y = self.grid.y
+        T = self.grid.T_fields[0]
+        weights = self.grid.weights
+        a = self.case.a
+        R0 = self.case.R0
+        B0 = self.case.B0
+
+        def runner() -> np.ndarray:
+            return residual_pack_runner(
+                G,
+                psin_R,
+                psin_Z,
+                sin_tb,
+                sin_ktheta,
+                cos_ktheta,
+                rho_powers,
+                y,
+                T,
+                weights,
+                a,
+                R0,
+                B0,
+            )
+
+        return runner
 
     def _build_bound_residual_full_stage_runner(self) -> Callable:
-        return build_bound_residual_full_stage_runner(
-            residual_stage_runner=self.execution_state.residual_stage_runner,
-            packed_residual=self.packed_residual,
-            residual_fields=self.residual_fields,
-            alpha_state=self.execution_state.fused_alpha_state,
-            root_fields=self.root_fields,
-            R_fields=self.geometry.R_fields,
-            Z_fields=self.geometry.Z_fields,
-            J_fields=self.geometry.J_fields,
-            g_fields=self.geometry.g_fields,
-            sin_tb=self.geometry.sin_tb,
-            sin_ktheta=self.grid.sin_ktheta,
-            cos_ktheta=self.grid.cos_ktheta,
-            rho_powers=self.grid.rho_powers,
-            y=self.grid.y,
-            T=self.grid.T_fields[0],
-            weights=self.grid.weights,
-            a=self.case.a,
-            R0=self.case.R0,
-            B0=self.case.B0,
-        )
+        residual_stage_runner = self.execution_state.residual_stage_runner
+        packed_residual = self.packed_residual
+        residual_fields = self.residual_fields
+        alpha_state = self.execution_state.fused_alpha_state
+        root_fields = self.root_fields
+        R_fields = self.geometry.R_fields
+        Z_fields = self.geometry.Z_fields
+        J_fields = self.geometry.J_fields
+        g_fields = self.geometry.g_fields
+        sin_tb = self.geometry.sin_tb
+        sin_ktheta = self.grid.sin_ktheta
+        cos_ktheta = self.grid.cos_ktheta
+        rho_powers = self.grid.rho_powers
+        y = self.grid.y
+        T = self.grid.T_fields[0]
+        weights = self.grid.weights
+        a = self.case.a
+        R0 = self.case.R0
+        B0 = self.case.B0
+
+        def runner() -> np.ndarray:
+            return residual_stage_runner(
+                packed_residual,
+                residual_fields,
+                float(alpha_state[0]),
+                float(alpha_state[1]),
+                root_fields,
+                R_fields,
+                Z_fields,
+                J_fields,
+                g_fields,
+                sin_tb,
+                sin_ktheta,
+                cos_ktheta,
+                rho_powers,
+                y,
+                T,
+                weights,
+                a,
+                R0,
+                B0,
+            )
+
+        return runner
 
     def _refresh_fourier_family_metadata(self) -> None:
         self.c_effective_order, self.s_effective_order = refresh_fourier_family_metadata(
@@ -756,7 +794,6 @@ class Operator:
                 residual_plan=self.residual_plan,
                 static_layout=self.static_layout,
                 residual_binding_layout=self.residual_binding_layout,
-                setup_layout=self.setup_layout,
                 runtime_layout=self.runtime_layout,
                 alpha_state=self.execution_state.fused_alpha_state,
                 c_active_order=int(self.c_effective_order),

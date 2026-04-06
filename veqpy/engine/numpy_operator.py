@@ -34,7 +34,7 @@ from veqpy.engine.numpy_source import (
 )
 
 if TYPE_CHECKING:
-    from veqpy.operator.layouts import ResidualBindingLayout, RuntimeLayout, SetupLayout, StaticLayout
+    from veqpy.operator.layouts import ResidualBindingLayout, RuntimeLayout, StaticLayout
     from veqpy.operator.plans import ResidualPlan
 
 
@@ -55,7 +55,6 @@ def bind_fused_residual_runner(
     residual_plan: ResidualPlan,
     static_layout: StaticLayout,
     residual_binding_layout: ResidualBindingLayout,
-    setup_layout: SetupLayout,
     runtime_layout: RuntimeLayout,
     alpha_state: np.ndarray,
     c_active_order: int,
@@ -70,7 +69,6 @@ def bind_fused_residual_runner(
             residual_plan=residual_plan,
             static_layout=static_layout,
             residual_binding_layout=residual_binding_layout,
-            setup_layout=setup_layout,
             runtime_layout=runtime_layout,
             alpha_state=alpha_state,
             c_active_order=c_active_order,
@@ -85,7 +83,6 @@ def bind_fused_residual_runner(
             residual_plan=residual_plan,
             static_layout=static_layout,
             residual_binding_layout=residual_binding_layout,
-            setup_layout=setup_layout,
             runtime_layout=runtime_layout,
             alpha_state=alpha_state,
             c_active_order=c_active_order,
@@ -100,7 +97,6 @@ def bind_fused_residual_runner(
             residual_plan=residual_plan,
             static_layout=static_layout,
             residual_binding_layout=residual_binding_layout,
-            setup_layout=setup_layout,
             runtime_layout=runtime_layout,
             alpha_state=alpha_state,
             c_active_order=c_active_order,
@@ -118,7 +114,6 @@ def bind_fused_single_pass_residual_runner(
     residual_plan: ResidualPlan,
     static_layout: StaticLayout,
     residual_binding_layout: ResidualBindingLayout,
-    setup_layout: SetupLayout,
     runtime_layout: RuntimeLayout,
     alpha_state: np.ndarray,
     c_active_order: int,
@@ -302,7 +297,6 @@ def bind_fused_profile_owned_psin_residual_runner(
     residual_plan: ResidualPlan,
     static_layout: StaticLayout,
     residual_binding_layout: ResidualBindingLayout,
-    setup_layout: SetupLayout,
     runtime_layout: RuntimeLayout,
     alpha_state: np.ndarray,
     c_active_order: int,
@@ -523,7 +517,6 @@ def bind_fused_fixed_point_psin_residual_runner(
     residual_plan: ResidualPlan,
     static_layout: StaticLayout,
     residual_binding_layout: ResidualBindingLayout,
-    setup_layout: SetupLayout,
     runtime_layout: RuntimeLayout,
     alpha_state: np.ndarray,
     c_active_order: int,

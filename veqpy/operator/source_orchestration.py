@@ -275,7 +275,35 @@ def _run_source_kernel(
     beta: float,
     source_scratch_1d: np.ndarray,
 ) -> tuple[float, float]:
-    return operator_core._source_runner(
+    if operator_core._source_scratch_kernel is not None:
+        return operator_core._source_scratch_kernel(
+            out_psin,
+            out_psin_r,
+            out_psin_rr,
+            out_FFn_psin,
+            out_Pn_psin,
+            heat_input,
+            current_input,
+            int(operator_core._source_route_spec.coordinate_code),
+            R0,
+            B0,
+            weights,
+            differentiation_matrix,
+            integration_matrix,
+            rho,
+            V_r,
+            Kn,
+            Kn_r,
+            Ln_r,
+            S_r,
+            R,
+            JdivR,
+            F,
+            Ip,
+            beta,
+            source_scratch_1d,
+        )
+    return operator_core._source_kernel(
         out_psin,
         out_psin_r,
         out_psin_rr,
@@ -283,6 +311,7 @@ def _run_source_kernel(
         out_Pn_psin,
         heat_input,
         current_input,
+        int(operator_core._source_route_spec.coordinate_code),
         R0,
         B0,
         weights,
@@ -299,5 +328,4 @@ def _run_source_kernel(
         F,
         Ip,
         beta,
-        source_scratch_1d,
     )

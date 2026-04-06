@@ -18,7 +18,6 @@ from veqpy.engine import (
     build_source_remap_cache,
     materialize_projected_source_inputs,
     resolve_source_inputs,
-    resolve_source_scratch_kernel,
 )
 
 if TYPE_CHECKING:
@@ -364,91 +363,3 @@ def refresh_source_runtime(
     elif source_plan.strategy == "fixed_point_psin":
         source_runtime_state.psin_query.fill(-1.0)
 
-
-def build_source_stage_runner(route_spec) -> Callable:
-    coordinate_code = int(route_spec.coordinate_code)
-    operator_kernel = route_spec.implementation
-    scratch_kernel = resolve_source_scratch_kernel(operator_kernel)
-
-    def runner(
-        out_psin: np.ndarray,
-        out_psin_r: np.ndarray,
-        out_psin_rr: np.ndarray,
-        out_FFn_psin: np.ndarray,
-        out_Pn_psin: np.ndarray,
-        heat_input: np.ndarray,
-        current_input: np.ndarray,
-        R0: float,
-        B0: float,
-        weights: np.ndarray,
-        differentiation_matrix: np.ndarray,
-        integration_matrix: np.ndarray,
-        rho: np.ndarray,
-        V_r: np.ndarray,
-        Kn: np.ndarray,
-        Kn_r: np.ndarray,
-        Ln_r: np.ndarray,
-        S_r: np.ndarray,
-        R: np.ndarray,
-        JdivR: np.ndarray,
-        F: np.ndarray,
-        Ip: float,
-        beta: float,
-        source_scratch_1d: np.ndarray,
-    ) -> tuple[float, float]:
-        if scratch_kernel is not None:
-            return scratch_kernel(
-                out_psin,
-                out_psin_r,
-                out_psin_rr,
-                out_FFn_psin,
-                out_Pn_psin,
-                heat_input,
-                current_input,
-                coordinate_code,
-                R0,
-                B0,
-                weights,
-                differentiation_matrix,
-                integration_matrix,
-                rho,
-                V_r,
-                Kn,
-                Kn_r,
-                Ln_r,
-                S_r,
-                R,
-                JdivR,
-                F,
-                Ip,
-                beta,
-                source_scratch_1d,
-            )
-        return operator_kernel(
-            out_psin,
-            out_psin_r,
-            out_psin_rr,
-            out_FFn_psin,
-            out_Pn_psin,
-            heat_input,
-            current_input,
-            coordinate_code,
-            R0,
-            B0,
-            weights,
-            differentiation_matrix,
-            integration_matrix,
-            rho,
-            V_r,
-            Kn,
-            Kn_r,
-            Ln_r,
-            S_r,
-            R,
-            JdivR,
-            F,
-            Ip,
-            beta,
-        )
-
-    return runner
