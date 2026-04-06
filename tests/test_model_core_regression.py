@@ -15,7 +15,6 @@ from veqpy.operator import (
     Operator,
     ResidualBindingLayout,
     RuntimeLayout,
-    SetupLayout,
     SourceRuntimeState,
     StaticLayout,
 )
@@ -375,7 +374,6 @@ def test_operator_exposes_explicit_layout_and_execution_layers():
 
     assert isinstance(operator.static_layout, StaticLayout)
     assert isinstance(operator.residual_binding_layout, ResidualBindingLayout)
-    assert isinstance(operator.setup_layout, SetupLayout)
     assert isinstance(operator.runtime_layout, RuntimeLayout)
     assert isinstance(operator.field_runtime_state, FieldRuntimeState)
     assert isinstance(operator.execution_state, ExecutionState)
@@ -383,9 +381,9 @@ def test_operator_exposes_explicit_layout_and_execution_layers():
 
     assert operator.static_layout.rho is grid.rho
     assert operator.static_layout.T_fields is grid.T_fields
-    assert operator.setup_layout.profile_L is operator.profile_L
-    assert operator.setup_layout.coeff_index is operator.coeff_index
-    assert operator.setup_layout.x_size == operator.x_size
+    assert operator.profile_L.shape[0] == len(operator.profile_names)
+    assert operator.coeff_index.shape[0] == len(operator.profile_names)
+    assert operator.packed_residual.shape[0] == operator.x_size
     assert operator.residual_binding_layout.active_profile_names == tuple(
         operator.profile_names[int(p)] for p in operator.active_profile_ids
     )
@@ -404,12 +402,10 @@ def test_operator_exposes_explicit_layout_and_execution_layers():
     assert operator.geometry.tb_fields.base is operator.geometry_surface_slab
     assert operator.geometry.S_r.base is operator.geometry_radial_slab
 
-
-def test_operator_replace_case_preserves_static_layout_and_refreshes_setup_layout():
+def test_operator_replace_case_preserves_static_layout_and_refreshes_runtime_identity():
     grid, case = _build_operator_case()
     operator = Operator(grid=grid, case=case)
     static_layout = operator.static_layout
-    setup_layout = operator.setup_layout
 
     next_case = case.copy()
     next_case.beta = 0.25
@@ -418,9 +414,10 @@ def test_operator_replace_case_preserves_static_layout_and_refreshes_setup_layou
     operator.replace_case(next_case)
 
     assert operator.static_layout is static_layout
-    assert operator.setup_layout is not setup_layout
-    assert operator.setup_layout.coordinate == next_case.coordinate
-    assert operator.setup_layout.nodes == next_case.nodes
+    assert operator.case.coordinate == next_case.coordinate
+    assert operator.case.nodes == next_case.nodes
+    assert operator.source_plan.coordinate == next_case.coordinate
+    assert operator.source_plan.nodes == next_case.nodes
     assert operator.runtime_layout.geometry is operator.geometry
 
 
@@ -432,11 +429,12 @@ def test_source_plan_captures_fixed_point_route_metadata():
     assert operator.source_plan.strategy == "fixed_point_psin"
     assert operator.source_plan.n_src == TEST_SOURCE_SAMPLE_COUNT
     assert operator.source_plan.use_projected_finalize is True
-    assert operator.source_plan.projection_domain_code == 0
-    assert operator.source_plan.heat_projection_degree == 8
-    assert operator.source_plan.current_projection_degree == 8
-    assert operator.source_plan.endpoint_policy_code == 0
-    assert operator.residual_plan.is_fixed_point_psin is True
+    assert operator.source_plan.projection_domain == "sqrt_psin"
+    assert operator.source_plan.projection_domain_code == 1
+    assert operator.source_plan.heat_projection_degree == 7
+    assert operator.source_plan.current_projection_degree == 10
+    assert operator.source_plan.endpoint_policy_code == 2
+    assert operator.source_plan.is_fixed_point_psin is True
 
 
 @pytest.mark.parametrize(("mode", "heat_degree", "current_degree"), [("PI", 7, 8), ("PJ1", 7, 8)])

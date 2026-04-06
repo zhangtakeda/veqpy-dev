@@ -35,7 +35,7 @@ from veqpy.engine.numpy_source import (
 
 if TYPE_CHECKING:
     from veqpy.operator.layouts import ResidualBindingLayout, RuntimeLayout, StaticLayout
-    from veqpy.operator.plans import ResidualPlan
+    from veqpy.operator.source_setup import SourcePlan
 
 
 def _normalize_psin_query(out: np.ndarray, source: np.ndarray) -> None:
@@ -52,7 +52,7 @@ def _normalize_psin_query(out: np.ndarray, source: np.ndarray) -> None:
 
 def bind_fused_residual_runner(
     *,
-    residual_plan: ResidualPlan,
+    source_plan: SourcePlan,
     static_layout: StaticLayout,
     residual_binding_layout: ResidualBindingLayout,
     runtime_layout: RuntimeLayout,
@@ -64,9 +64,9 @@ def bind_fused_residual_runner(
     Z0: float,
     B0: float,
 ) -> Callable[[np.ndarray], np.ndarray]:
-    if residual_plan.is_single_pass:
+    if source_plan.is_single_pass:
         return bind_fused_single_pass_residual_runner(
-            residual_plan=residual_plan,
+            source_plan=source_plan,
             static_layout=static_layout,
             residual_binding_layout=residual_binding_layout,
             runtime_layout=runtime_layout,
@@ -78,9 +78,9 @@ def bind_fused_residual_runner(
             Z0=Z0,
             B0=B0,
         )
-    if residual_plan.is_profile_owned_psin:
+    if source_plan.is_profile_owned_psin:
         return bind_fused_profile_owned_psin_residual_runner(
-            residual_plan=residual_plan,
+            source_plan=source_plan,
             static_layout=static_layout,
             residual_binding_layout=residual_binding_layout,
             runtime_layout=runtime_layout,
@@ -92,9 +92,9 @@ def bind_fused_residual_runner(
             Z0=Z0,
             B0=B0,
         )
-    if residual_plan.is_fixed_point_psin:
+    if source_plan.is_fixed_point_psin:
         return bind_fused_fixed_point_psin_residual_runner(
-            residual_plan=residual_plan,
+            source_plan=source_plan,
             static_layout=static_layout,
             residual_binding_layout=residual_binding_layout,
             runtime_layout=runtime_layout,
@@ -106,12 +106,12 @@ def bind_fused_residual_runner(
             Z0=Z0,
             B0=B0,
         )
-    raise ValueError(f"Unsupported residual runner code {residual_plan.runner_code}")
+    raise ValueError(f"Unsupported source strategy {source_plan.strategy!r}")
 
 
 def bind_fused_single_pass_residual_runner(
     *,
-    residual_plan: ResidualPlan,
+    source_plan: SourcePlan,
     static_layout: StaticLayout,
     residual_binding_layout: ResidualBindingLayout,
     runtime_layout: RuntimeLayout,
@@ -123,11 +123,15 @@ def bind_fused_single_pass_residual_runner(
     Z0: float,
     B0: float,
 ) -> Callable[[np.ndarray], np.ndarray]:
-    source_plan = residual_plan.source_plan
     profile_names = residual_binding_layout.active_profile_names
     coeff_index_rows = runtime_layout.active_coeff_index_rows
     lengths = runtime_layout.active_lengths
-    residual_stage_runner = bind_residual_stage_runner(profile_names, coeff_index_rows, lengths, setup_layout.x_size)
+    residual_stage_runner = bind_residual_stage_runner(
+        profile_names,
+        coeff_index_rows,
+        lengths,
+        int(runtime_layout.packed_residual.shape[0]),
+    )
     active_u_fields = runtime_layout.active_u_fields
     active_rp_fields = runtime_layout.active_rp_fields
     active_env_fields = runtime_layout.active_env_fields
@@ -294,7 +298,7 @@ def bind_fused_single_pass_residual_runner(
 
 def bind_fused_profile_owned_psin_residual_runner(
     *,
-    residual_plan: ResidualPlan,
+    source_plan: SourcePlan,
     static_layout: StaticLayout,
     residual_binding_layout: ResidualBindingLayout,
     runtime_layout: RuntimeLayout,
@@ -306,11 +310,15 @@ def bind_fused_profile_owned_psin_residual_runner(
     Z0: float,
     B0: float,
 ) -> Callable[[np.ndarray], np.ndarray]:
-    source_plan = residual_plan.source_plan
     profile_names = residual_binding_layout.active_profile_names
     coeff_index_rows = runtime_layout.active_coeff_index_rows
     lengths = runtime_layout.active_lengths
-    residual_stage_runner = bind_residual_stage_runner(profile_names, coeff_index_rows, lengths, setup_layout.x_size)
+    residual_stage_runner = bind_residual_stage_runner(
+        profile_names,
+        coeff_index_rows,
+        lengths,
+        int(runtime_layout.packed_residual.shape[0]),
+    )
     active_u_fields = runtime_layout.active_u_fields
     active_rp_fields = runtime_layout.active_rp_fields
     active_env_fields = runtime_layout.active_env_fields
@@ -514,7 +522,7 @@ def bind_fused_profile_owned_psin_residual_runner(
 
 def bind_fused_fixed_point_psin_residual_runner(
     *,
-    residual_plan: ResidualPlan,
+    source_plan: SourcePlan,
     static_layout: StaticLayout,
     residual_binding_layout: ResidualBindingLayout,
     runtime_layout: RuntimeLayout,
@@ -528,11 +536,15 @@ def bind_fused_fixed_point_psin_residual_runner(
     max_iter: int = 8,
     tolerance: float = 1.0e-10,
 ) -> Callable[[np.ndarray], np.ndarray]:
-    source_plan = residual_plan.source_plan
     profile_names = residual_binding_layout.active_profile_names
     coeff_index_rows = runtime_layout.active_coeff_index_rows
     lengths = runtime_layout.active_lengths
-    residual_stage_runner = bind_residual_stage_runner(profile_names, coeff_index_rows, lengths, setup_layout.x_size)
+    residual_stage_runner = bind_residual_stage_runner(
+        profile_names,
+        coeff_index_rows,
+        lengths,
+        int(runtime_layout.packed_residual.shape[0]),
+    )
     active_u_fields = runtime_layout.active_u_fields
     active_rp_fields = runtime_layout.active_rp_fields
     active_env_fields = runtime_layout.active_env_fields

@@ -8,7 +8,6 @@ Role:
 Public API:
 - StaticLayout
 - ResidualBindingLayout
-- SetupLayout
 - RuntimeLayout
 - FieldRuntimeState
 - ExecutionState
@@ -55,27 +54,6 @@ class StaticLayout:
 
 
 @dataclass(frozen=True, slots=True)
-class SetupLayout:
-    """绑定到当前 operator case/setup 的拓扑与索引布局."""
-
-    route: str
-    coordinate: str
-    nodes: str
-    prefix_profile_names: tuple[str, ...]
-    shape_profile_names: tuple[str, ...]
-    profile_names: tuple[str, ...]
-    profile_index: dict[str, int]
-    c_profile_names: tuple[str, ...]
-    s_profile_names: tuple[str, ...]
-    profile_L: np.ndarray
-    coeff_index: np.ndarray
-    order_offsets: np.ndarray
-    active_profile_mask: np.ndarray
-    active_profile_ids: np.ndarray
-    x_size: int
-
-
-@dataclass(frozen=True, slots=True)
 class ResidualBindingLayout:
     """绑定到 residual binder 的只读 metadata."""
 
@@ -116,11 +94,8 @@ class RuntimeLayout:
     source_fixed_remap_matrix: np.ndarray
     source_psin_query: np.ndarray
     source_parameter_query: np.ndarray
-    source_heat_projection_fit_matrix: np.ndarray
-    source_current_projection_fit_matrix: np.ndarray
     source_heat_projection_coeff: np.ndarray
     source_current_projection_coeff: np.ndarray
-    source_projection_query: np.ndarray
     source_endpoint_blend: np.ndarray
     materialized_heat_input: np.ndarray
     materialized_current_input: np.ndarray
@@ -158,7 +133,6 @@ class ExecutionState:
     residual_stage_runner: Callable
     fused_residual_runner: Callable
     fused_alpha_state: np.ndarray
-    supports_fused_residual: bool
 
 
 @dataclass(slots=True)
@@ -174,7 +148,6 @@ class SourceRuntimeState:
     current_projection_fit_matrix: np.ndarray
     heat_projection_coeff: np.ndarray
     current_projection_coeff: np.ndarray
-    projection_query: np.ndarray
     endpoint_blend: np.ndarray
     materialized_heat_input: np.ndarray
     materialized_current_input: np.ndarray

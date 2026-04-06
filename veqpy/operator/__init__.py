@@ -9,14 +9,11 @@ Public API:
 - OperatorCase
 - StaticLayout
 - ResidualBindingLayout
-- SetupLayout
 - RuntimeLayout
 - FieldRuntimeState
 - ExecutionState
 - SourceRuntimeState
-- ResidualPlan
 - SourcePlan
-- build_residual_plan
 - build_profile_layout
 - build_profile_names
 - build_profile_index
@@ -34,13 +31,12 @@ from veqpy.operator.layouts import (
     FieldRuntimeState,
     ResidualBindingLayout,
     RuntimeLayout,
-    SetupLayout,
     SourceRuntimeState,
     StaticLayout,
 )
 from veqpy.operator.operator import Operator
 from veqpy.operator.operator_case import OperatorCase
-from veqpy.operator.plans import ResidualPlan, SourcePlan, build_residual_plan
+from veqpy.operator.source_setup import SourcePlan
 
 __all__ = [
     "build_profile_layout",
@@ -51,12 +47,9 @@ __all__ = [
     "OperatorCase",
     "StaticLayout",
     "ResidualBindingLayout",
-    "SetupLayout",
     "RuntimeLayout",
     "FieldRuntimeState",
     "ExecutionState",
     "SourceRuntimeState",
-    "ResidualPlan",
     "SourcePlan",
-    "build_residual_plan",
 ]

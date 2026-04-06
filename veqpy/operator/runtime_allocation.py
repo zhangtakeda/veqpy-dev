@@ -97,7 +97,7 @@ def allocate_runtime_state(
         Pn_psin=root_fields[4],
     )
 
-    source_vector_slab = np.empty((8, nr), dtype=np.float64)
+    source_vector_slab = np.empty((7, nr), dtype=np.float64)
     source_runtime_state = SourceRuntimeState(
         cache_key=None,
         barycentric_weights=np.empty(0, dtype=np.float64),
@@ -106,13 +106,12 @@ def allocate_runtime_state(
         materialized_current_input=source_vector_slab[1],
         psin_query=source_vector_slab[2],
         parameter_query=source_vector_slab[3],
-        projection_query=source_vector_slab[4],
         heat_projection_fit_matrix=np.empty((0, 0), dtype=np.float64),
         current_projection_fit_matrix=np.empty((0, 0), dtype=np.float64),
         heat_projection_coeff=np.empty(0, dtype=np.float64),
         current_projection_coeff=np.empty(0, dtype=np.float64),
         endpoint_blend=np.linspace(0.0, 1.0, nr, dtype=np.float64),
-        target_root_fields=source_vector_slab[5:8],
+        target_root_fields=source_vector_slab[4:7],
         scratch_1d=np.empty((6, nr), dtype=np.float64),
     )
 
@@ -179,11 +178,8 @@ def allocate_runtime_state(
         source_fixed_remap_matrix=source_runtime_state.fixed_remap_matrix,
         source_psin_query=source_runtime_state.psin_query,
         source_parameter_query=source_runtime_state.parameter_query,
-        source_heat_projection_fit_matrix=source_runtime_state.heat_projection_fit_matrix,
-        source_current_projection_fit_matrix=source_runtime_state.current_projection_fit_matrix,
         source_heat_projection_coeff=source_runtime_state.heat_projection_coeff,
         source_current_projection_coeff=source_runtime_state.current_projection_coeff,
-        source_projection_query=source_runtime_state.projection_query,
         source_endpoint_blend=source_runtime_state.endpoint_blend,
         materialized_heat_input=source_runtime_state.materialized_heat_input,
         materialized_current_input=source_runtime_state.materialized_current_input,

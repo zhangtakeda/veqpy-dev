@@ -21,6 +21,7 @@ from typing import Callable
 import numpy as np
 
 from veqpy.engine import (
+    bind_fused_residual_runner,
     bind_residual_runner,
     bind_residual_stage_runner,
     resolve_source_scratch_kernel,
@@ -44,43 +45,32 @@ from veqpy.operator.layouts import (
     FieldRuntimeState,
     ResidualBindingLayout,
     RuntimeLayout,
-    SetupLayout,
     SourceRuntimeState,
     StaticLayout,
 )
 from veqpy.operator.operator_case import OperatorCase
-from veqpy.operator.plans import (
-    ResidualPlan,
-    SourcePlan,
-    build_residual_plan,
-)
 from veqpy.operator.profile_setup import (
+    build_profile_stage_runner,
     make_profile,
+    refresh_fourier_family_base_fields,
+    refresh_fourier_family_metadata,
+    refresh_stage_a_runtime,
     refresh_profile_runtime,
     validate_case_compatibility,
 )
-from veqpy.operator.runner_binding import build_fused_residual_runner
 from veqpy.operator.runtime_allocation import allocate_runtime_state
-from veqpy.operator.source_orchestration import (
-    build_bound_source_stage_runner,
-)
-from veqpy.operator.source_runtime import (
+from veqpy.operator.source_setup import (
     ENDPOINT_POLICY_CODES,
     PROJECTION_DOMAIN_CODES,
     SOURCE_PARAMETERIZATION_CODES,
-    SOURCE_PROJECTION_POLICIES,
+    SourcePlan,
     SourceProjectionPolicy,
+    build_bound_source_stage_runner,
     resolve_source_projection_policy,
     refresh_source_runtime,
     validate_source_inputs,
 )
-from veqpy.operator.stage_helpers import (
-    build_geometry_stage_runner,
-    build_profile_stage_runner,
-    refresh_fourier_family_base_fields,
-    refresh_fourier_family_metadata,
-    refresh_stage_a_runtime,
-)
+from veqpy.operator.stage_helpers import build_geometry_stage_runner
 from veqpy.residual_blocks import build_residual_block_metadata
 
 _PROFILE_STATIC_KWARGS: dict[str, dict[str, int]] = {
@@ -105,7 +95,6 @@ class Operator:
     case: OperatorCase = field(repr=False)
     static_layout: StaticLayout = field(init=False, repr=False)
     residual_binding_layout: ResidualBindingLayout = field(init=False, repr=False)
-    setup_layout: SetupLayout = field(init=False, repr=False)
     runtime_layout: RuntimeLayout = field(init=False, repr=False)
     geometry: Geometry = field(init=False)
     geometry_surface_slab: np.ndarray = field(init=False, repr=False)
@@ -163,7 +152,6 @@ class Operator:
     _source_route_spec: object = field(init=False, repr=False)
     _source_kernel: Callable = field(init=False, repr=False)
     _source_scratch_kernel: Callable | None = field(init=False, repr=False)
-    residual_plan: ResidualPlan = field(init=False, repr=False)
     source_plan: SourcePlan = field(init=False, repr=False)
     field_runtime_state: FieldRuntimeState = field(init=False, repr=False)
     execution_state: ExecutionState = field(init=False, repr=False)
@@ -194,7 +182,6 @@ class Operator:
             profile_names=self.profile_names,
         )
         self.x_size = packed_size(self.coeff_index)
-        self.setup_layout = self._build_setup_layout()
         self.residual_binding_layout = self._build_residual_binding_layout()
         self._validate_runtime_profile_support()
 
@@ -208,7 +195,6 @@ class Operator:
             residual_stage_runner=lambda *args, **kwargs: np.zeros(self.x_size, dtype=np.float64),
             fused_residual_runner=lambda x_eval: self._evaluate_residual(x_eval),
             fused_alpha_state=np.zeros(2, dtype=np.float64),
-            supports_fused_residual=False,
         )
         self._setup_runtime_state()
         self._refresh_runtime_state()
@@ -279,9 +265,6 @@ class Operator:
             endpoint_policy_code=endpoint_policy_code,
             allow_query_warmstart=allow_query_warmstart,
         )
-
-    def _build_residual_plan(self) -> ResidualPlan:
-        return build_residual_plan(self.source_plan)
 
     def _validate_runtime_profile_support(self) -> None:
         """校验当前 source route 对 psin profile ownership 的要求."""
@@ -393,25 +376,6 @@ class Operator:
             y=self.grid.y,
         )
 
-    def _build_setup_layout(self) -> SetupLayout:
-        return SetupLayout(
-            route=self.case.route,
-            coordinate=self.case.coordinate,
-            nodes=self.case.nodes,
-            prefix_profile_names=self.prefix_profile_names,
-            shape_profile_names=self.shape_profile_names,
-            profile_names=self.profile_names,
-            profile_index=self.profile_index,
-            c_profile_names=self.c_profile_names,
-            s_profile_names=self.s_profile_names,
-            profile_L=self.profile_L,
-            coeff_index=self.coeff_index,
-            order_offsets=self.order_offsets,
-            active_profile_mask=self.active_profile_mask,
-            active_profile_ids=self.active_profile_ids,
-            x_size=self.x_size,
-        )
-
     def _build_residual_binding_layout(self) -> ResidualBindingLayout:
         active_profile_names = tuple(self.profile_names[int(p)] for p in self.active_profile_ids)
         active_residual_block_codes, active_residual_block_orders = build_residual_block_metadata(
@@ -422,10 +386,6 @@ class Operator:
             active_residual_block_codes=active_residual_block_codes,
             active_residual_block_orders=active_residual_block_orders,
         )
-
-    def _refresh_setup_layout(self) -> None:
-        self.setup_layout = self._build_setup_layout()
-        self.residual_binding_layout = self._build_residual_binding_layout()
 
     def _refresh_runtime_layout_views(self) -> None:
         runtime = self.runtime_layout
@@ -457,11 +417,8 @@ class Operator:
         runtime.source_fixed_remap_matrix = self.source_runtime_state.fixed_remap_matrix
         runtime.source_psin_query = self.source_runtime_state.psin_query
         runtime.source_parameter_query = self.source_runtime_state.parameter_query
-        runtime.source_heat_projection_fit_matrix = self.source_runtime_state.heat_projection_fit_matrix
-        runtime.source_current_projection_fit_matrix = self.source_runtime_state.current_projection_fit_matrix
         runtime.source_heat_projection_coeff = self.source_runtime_state.heat_projection_coeff
         runtime.source_current_projection_coeff = self.source_runtime_state.current_projection_coeff
-        runtime.source_projection_query = self.source_runtime_state.projection_query
         runtime.source_endpoint_blend = self.source_runtime_state.endpoint_blend
         runtime.materialized_heat_input = self.source_runtime_state.materialized_heat_input
         runtime.materialized_current_input = self.source_runtime_state.materialized_current_input
@@ -529,7 +486,7 @@ class Operator:
 
     def _refresh_runtime_state(self) -> None:
         self._refresh_operator_identity()
-        self._refresh_setup_layout()
+        self.residual_binding_layout = self._build_residual_binding_layout()
         self._validate_runtime_profile_support()
         self._refresh_profile_runtime()
         self._refresh_fourier_family_metadata()
@@ -557,7 +514,6 @@ class Operator:
             has_beta_constraint=bool(np.isfinite(self.case.beta)),
         )
         self.source_plan = self._build_source_plan()
-        self.residual_plan = self._build_residual_plan()
 
     def _refresh_profile_runtime(self) -> None:
         refresh_profile_runtime(
@@ -786,26 +742,23 @@ class Operator:
             self.source_runtime_state.psin_query.fill(-1.0)
 
     def _build_fused_residual_runner(self) -> Callable[[np.ndarray], np.ndarray]:
-        runner, supports_fused = build_fused_residual_runner(
-            residual_plan=self.residual_plan,
-            psin_profile_u_fields=self.psin_profile.u_fields,
-            evaluate_residual=self._evaluate_residual,
-            fused_common_kwargs=dict(
-                residual_plan=self.residual_plan,
-                static_layout=self.static_layout,
-                residual_binding_layout=self.residual_binding_layout,
-                runtime_layout=self.runtime_layout,
-                alpha_state=self.execution_state.fused_alpha_state,
-                c_active_order=int(self.c_effective_order),
-                s_active_order=int(self.s_effective_order),
-                a=float(self.case.a),
-                R0=float(self.case.R0),
-                Z0=float(self.case.Z0),
-                B0=float(self.case.B0),
-            ),
+        if self.source_plan.requires_psin_profile_fields and self.psin_profile.u_fields is None:
+            return self._evaluate_residual
+        if not self.source_plan.supports_fused_residual:
+            return self._evaluate_residual
+        return bind_fused_residual_runner(
+            source_plan=self.source_plan,
+            static_layout=self.static_layout,
+            residual_binding_layout=self.residual_binding_layout,
+            runtime_layout=self.runtime_layout,
+            alpha_state=self.execution_state.fused_alpha_state,
+            c_active_order=int(self.c_effective_order),
+            s_active_order=int(self.s_effective_order),
+            a=float(self.case.a),
+            R0=float(self.case.R0),
+            Z0=float(self.case.Z0),
+            B0=float(self.case.B0),
         )
-        self.execution_state.supports_fused_residual = supports_fused
-        return runner
 
     def _snapshot_equilibrium_from_runtime(self, x: np.ndarray) -> Equilibrium:
         return snapshot_equilibrium_from_runtime(

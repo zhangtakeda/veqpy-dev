@@ -31,7 +31,7 @@ REFERENCE_GRID = Grid(Nr=64, Nt=32, scheme="legendre")
 TEST_GRID = Grid(Nr=16, Nt=16, scheme="legendre", L_max=REFERENCE_GRID.L_max)
 REFERENCE_SUMMARY_GRID = Grid(Nr=64, Nt=128, scheme="uniform", L_max=REFERENCE_GRID.L_max, M_max=REFERENCE_GRID.M_max)
 CONFIG = SolverConfig(
-    method="trf",
+    method="hybr",
     enable_verbose=False,
     enable_warmstart=False,
     enable_history=False,
