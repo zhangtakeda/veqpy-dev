@@ -525,19 +525,31 @@ def test_operator_replace_case_preserves_static_layout_and_refreshes_runtime_ide
     assert operator.runtime_layout.geometry is operator.geometry
 
 
-def test_source_plan_captures_fixed_point_route_metadata():
-    grid, case = _build_operator_case(mode="PQ", coordinate="psin", nodes="uniform")
+@pytest.mark.parametrize(
+    ("mode", "heat_degree", "current_degree", "finalize_iters"),
+    [("PJ2", 5, 6, 8), ("PQ", 7, 10, 16)],
+)
+def test_source_plan_captures_fixed_point_route_metadata(mode, heat_degree, current_degree, finalize_iters):
+    grid, case = _build_operator_case(mode=mode, coordinate="psin", nodes="uniform")
     case.profile_coeffs["psin"] = None
     operator = Operator(grid=grid, case=case)
 
     assert operator.source_plan.strategy == "fixed_point_psin"
     assert operator.source_plan.n_src == TEST_SOURCE_SAMPLE_COUNT
     assert operator.source_plan.use_projected_finalize is True
-    assert operator.source_plan.projection_domain == "sqrt_psin"
-    assert operator.source_plan.projection_domain_code == 1
-    assert operator.source_plan.heat_projection_degree == 7
-    assert operator.source_plan.current_projection_degree == 10
-    assert operator.source_plan.endpoint_policy_code == 2
+    assert operator.source_plan.heat_projection_degree == heat_degree
+    assert operator.source_plan.current_projection_degree == current_degree
+    assert operator.source_plan.fixed_point_max_iter == 16
+    assert operator.source_plan.fixed_point_finalize_max_iter == finalize_iters
+    assert operator.source_plan.fixed_point_tolerance == pytest.approx(1.0e-10)
+    if mode == "PJ2":
+        assert operator.source_plan.projection_domain == "psin"
+        assert operator.source_plan.projection_domain_code == 0
+        assert operator.source_plan.endpoint_policy_code == 0
+    else:
+        assert operator.source_plan.projection_domain == "sqrt_psin"
+        assert operator.source_plan.projection_domain_code == 1
+        assert operator.source_plan.endpoint_policy_code == 2
     assert operator.source_plan.is_fixed_point_psin is True
 
 

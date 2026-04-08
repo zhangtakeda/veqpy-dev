@@ -544,9 +544,7 @@ def assemble_F_residual_block(
     """组装 F 通道 residual block."""
     nt = G.shape[1]
     _collapse_g(scratch, G)
-    _scale_and_project_rows_three(
-        out_packed, coeff_indices, T, scratch, y, y, weights, (2.0 * np.pi / nt) * (R0 * B0)
-    )
+    _scale_and_project_rows_three(out_packed, coeff_indices, T, scratch, y, y, weights, (2.0 * np.pi / nt) * (R0 * B0))
 
 
 @njit(cache=True, fastmath=True, nogil=True)

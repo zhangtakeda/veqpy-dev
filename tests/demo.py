@@ -164,7 +164,7 @@ FFn_r, Pn_r = _build_uniform_rho_inputs()
 
 LOWER_CASE = OperatorCase(
     route="PF",
-    coordinate="rho",
+    coordinate="psin",
     nodes="uniform",
     Ip=3.0e6,
     profile_coeffs=LOWER_COEFFS,

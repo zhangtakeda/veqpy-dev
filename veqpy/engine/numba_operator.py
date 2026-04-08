@@ -27,19 +27,20 @@ from veqpy.engine.numba_geometry import update_geometry
 from veqpy.engine.numba_profile import update_profiles_packed_bulk
 from veqpy.engine.numba_residual import _run_residual_blocks_packed, update_residual
 from veqpy.engine.numba_source import (
-    _local_barycentric_interpolate_pair,
     _linear_uniform_interpolate_pair,
+    _local_barycentric_interpolate_pair,
     _materialize_profile_owned_psin_source_impl,
     _materialize_projected_source_inputs_impl,
+    _uniform_barycentric_weights,
     _update_fixed_point_psin_query_impl,
     _update_fourier_family_fields_impl,
-    _uniform_barycentric_weights,
     resolve_source_scratch_kernel,
 )
 
 if TYPE_CHECKING:
     from veqpy.operator.layouts import ResidualBindingLayout, RuntimeLayout, StaticLayout
     from veqpy.operator.source_setup import SourcePlan
+
 
 def _normalize_psin_query(out: np.ndarray, source: np.ndarray) -> None:
     np.copyto(out, np.asarray(source, dtype=np.float64))
@@ -796,7 +797,7 @@ def bind_fused_profile_owned_psin_residual_runner(
                 Ip,
                 beta,
                 source_scratch_1d,
-        )
+            )
         alpha_state[0] = alpha1
         alpha_state[1] = alpha2
         update_residual(
@@ -854,8 +855,8 @@ def bind_fused_fixed_point_psin_residual_runner(
     R0: float,
     Z0: float,
     B0: float,
-    max_iter: int = 8,
-    tolerance: float = 1.0e-10,
+    max_iter: int | None = None,
+    tolerance: float | None = None,
 ) -> Callable[[np.ndarray], np.ndarray]:
     coeff_index_rows = runtime_layout.active_coeff_index_rows
     lengths = runtime_layout.active_lengths
@@ -916,6 +917,9 @@ def bind_fused_fixed_point_psin_residual_runner(
     current_input = source_plan.current_input
     Ip = float(source_plan.Ip)
     beta = float(source_plan.beta)
+    max_iter = int(source_plan.fixed_point_max_iter if max_iter is None else max_iter)
+    finalize_max_iter = int(source_plan.fixed_point_finalize_max_iter)
+    tolerance = float(source_plan.fixed_point_tolerance if tolerance is None else tolerance)
     has_Ip = bool(np.isfinite(Ip))
     source_kernel_name = getattr(source_kernel, "__name__", "")
     use_projected_finalize = bool(source_plan.use_projected_finalize)
@@ -924,7 +928,9 @@ def bind_fused_fixed_point_psin_residual_runner(
     allow_query_warmstart = bool(source_plan.allow_query_warmstart)
     # PQ's q-profile is more stable with a slightly narrower local stencil.
     fixed_point_stencil_size = 4 if source_kernel_name == "update_PQ_PSIN" else 8
-    fixed_point_barycentric_weights = _uniform_barycentric_weights(min(fixed_point_stencil_size, int(source_plan.n_src)))
+    fixed_point_barycentric_weights = _uniform_barycentric_weights(
+        min(fixed_point_stencil_size, int(source_plan.n_src))
+    )
     block_codes = residual_binding_layout.active_residual_block_codes
     block_orders = residual_binding_layout.active_residual_block_orders
     scratch_source_kernel = resolve_source_scratch_kernel(source_kernel)
@@ -994,7 +1000,7 @@ def bind_fused_fixed_point_psin_residual_runner(
             np.copyto(source_psin_query, psin)
             alpha1 = np.nan
             alpha2 = np.nan
-            for _ in range(4):
+            for _ in range(finalize_max_iter):
                 _materialize_projected_source_inputs_impl(
                     materialized_heat_input,
                     materialized_current_input,
@@ -1122,7 +1128,7 @@ def bind_fused_fixed_point_psin_residual_runner(
         def run_projected_finalize() -> tuple[float, float]:
             return _run_projected_finalize_with_scratch_impl(
                 scratch_source_kernel,
-                4,
+                finalize_max_iter,
                 tolerance,
                 source_psin_query,
                 psin,

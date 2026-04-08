@@ -66,6 +66,7 @@ from veqpy.operator.source_setup import (
     SourcePlan,
     SourceProjectionPolicy,
     build_bound_source_stage_runner,
+    resolve_fixed_point_policy,
     resolve_source_projection_policy,
     refresh_source_runtime,
     validate_source_inputs,
@@ -221,6 +222,7 @@ class Operator:
 
     def _build_source_plan(self) -> SourcePlan:
         policy = self._source_projection_policy
+        fixed_point_policy = resolve_fixed_point_policy(self.case.route, self.case.coordinate, self.case.nodes)
         use_projected_finalize = False
         has_projection_policy = policy is not None
         has_ip_constraint = bool(np.isfinite(self.case.Ip))
@@ -264,6 +266,9 @@ class Operator:
             projection_domain_code=projection_domain_code,
             endpoint_policy_code=endpoint_policy_code,
             allow_query_warmstart=allow_query_warmstart,
+            fixed_point_max_iter=int(fixed_point_policy.max_iter),
+            fixed_point_finalize_max_iter=int(fixed_point_policy.finalize_max_iter),
+            fixed_point_tolerance=float(fixed_point_policy.tolerance),
         )
 
     def _validate_runtime_profile_support(self) -> None:

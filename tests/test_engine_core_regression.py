@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import veqpy._numba as veqpy_numba
 from veqpy.engine import PSIN_COORDINATE, RHO_COORDINATE
 from veqpy.engine.numba_geometry import update_geometry as numba_update_geometry
 from veqpy.engine.numba_residual import bind_residual_runner as bind_numba_residual_runner
@@ -23,6 +24,15 @@ from veqpy.operator.layout import build_profile_names
 from veqpy.operator.operator_case import OperatorCase
 
 TEST_SOURCE_SAMPLE_COUNT = 21
+
+
+def test_numba_cache_uses_runtime_specific_directory():
+    assert veqpy_numba.NUMBA_CACHE_ENABLED is True
+    assert veqpy_numba.NUMBA_CACHE_DIR
+    cache_dir = Path(veqpy_numba.NUMBA_CACHE_DIR)
+    assert cache_dir.exists()
+    assert "veqpy-numba-cache" in cache_dir.as_posix()
+    assert "__pycache__" not in cache_dir.parts
 
 
 def _poly_fields(grid: Grid, c0: float, c1: float = 0.0, c2: float = 0.0) -> np.ndarray:

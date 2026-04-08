@@ -537,8 +537,8 @@ def bind_fused_fixed_point_psin_residual_runner(
     R0: float,
     Z0: float,
     B0: float,
-    max_iter: int = 8,
-    tolerance: float = 1.0e-10,
+    max_iter: int | None = None,
+    tolerance: float | None = None,
 ) -> Callable[[np.ndarray], np.ndarray]:
     profile_names = residual_binding_layout.active_profile_names
     coeff_index_rows = runtime_layout.active_coeff_index_rows
@@ -608,6 +608,9 @@ def bind_fused_fixed_point_psin_residual_runner(
     source_n_src = int(source_plan.n_src)
     Ip = float(source_plan.Ip)
     beta = float(source_plan.beta)
+    max_iter = int(source_plan.fixed_point_max_iter if max_iter is None else max_iter)
+    finalize_max_iter = int(source_plan.fixed_point_finalize_max_iter)
+    tolerance = float(source_plan.fixed_point_tolerance if tolerance is None else tolerance)
     use_projected_finalize = bool(source_plan.use_projected_finalize)
     projection_domain_code = int(source_plan.projection_domain_code)
     endpoint_policy_code = int(source_plan.endpoint_policy_code)
@@ -716,7 +719,7 @@ def bind_fused_fixed_point_psin_residual_runner(
 
         if use_projected_finalize:
             np.copyto(source_psin_query, root_fields[0])
-            for _ in range(4):
+            for _ in range(finalize_max_iter):
                 materialize_projected_source_inputs(
                     materialized_heat_input,
                     materialized_current_input,

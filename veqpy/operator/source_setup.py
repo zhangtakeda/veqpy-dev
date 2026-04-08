@@ -59,6 +59,9 @@ class SourcePlan:
     projection_domain_code: int
     endpoint_policy_code: int
     allow_query_warmstart: bool
+    fixed_point_max_iter: int
+    fixed_point_finalize_max_iter: int
+    fixed_point_tolerance: float
 
     @property
     def is_grid_nodes(self) -> bool:
@@ -99,6 +102,13 @@ class SourceProjectionPolicy:
     current_other_endpoint_policy: str = "none"
 
 
+@dataclass(frozen=True, slots=True)
+class FixedPointPolicy:
+    max_iter: int
+    finalize_max_iter: int
+    tolerance: float
+
+
 SOURCE_PROJECTION_POLICIES: dict[tuple[str, str, str], SourceProjectionPolicy] = {
     ("PI", "psin", "uniform"): SourceProjectionPolicy(
         domain="psin",
@@ -129,6 +139,12 @@ SOURCE_PROJECTION_POLICIES: dict[tuple[str, str, str], SourceProjectionPolicy] =
         current_ip_endpoint_policy="affine_both",
         current_other_endpoint_policy="none",
     ),
+}
+
+
+FIXED_POINT_POLICIES: dict[tuple[str, str, str], FixedPointPolicy] = {
+    ("PJ2", "psin", "uniform"): FixedPointPolicy(max_iter=16, finalize_max_iter=8, tolerance=1.0e-10),
+    ("PQ", "psin", "uniform"): FixedPointPolicy(max_iter=16, finalize_max_iter=16, tolerance=1.0e-10),
 }
 
 
@@ -172,6 +188,13 @@ def resolve_source_projection_policy(
         ip_current_degree=7,
         current_ip_endpoint_policy="affine_both",
         current_other_endpoint_policy="both",
+    )
+
+
+def resolve_fixed_point_policy(route: str, coordinate: str, nodes: str) -> FixedPointPolicy:
+    return FIXED_POINT_POLICIES.get(
+        (str(route).upper(), str(coordinate).lower(), str(nodes).lower()),
+        FixedPointPolicy(max_iter=8, finalize_max_iter=4, tolerance=1.0e-10),
     )
 
 
@@ -556,11 +579,13 @@ def copy_psin_profile_to_root_fields(operator_core: Any) -> None:
 def run_psin_source_fixed_point(operator_core: Any) -> tuple[float, float]:
     source_plan = operator_core.source_plan
     source_runtime_state = operator_core.source_runtime_state
+    target_root_fields = source_runtime_state.target_root_fields
+    tolerance = float(source_plan.fixed_point_tolerance)
     if (not source_plan.allow_query_warmstart) or source_runtime_state.psin_query[0] < 0.0:
         normalize_psin_query_inplace(source_runtime_state.psin_query, operator_core.psin_profile.u)
     alpha1 = float("nan")
     alpha2 = float("nan")
-    for _ in range(8):
+    for _ in range(int(source_plan.fixed_point_max_iter)):
         materialize_source_inputs(
             source_plan=source_plan,
             source_runtime_state=source_runtime_state,
@@ -568,11 +593,11 @@ def run_psin_source_fixed_point(operator_core: Any) -> tuple[float, float]:
             enable_projection=not source_plan.use_projected_finalize,
         )
         alpha1, alpha2 = _run_source_kernel_from_operator(operator_core)
-        if update_fixed_point_psin_query(source_runtime_state.psin_query, operator_core.psin, 1e-10):
+        if update_fixed_point_psin_query(source_runtime_state.psin_query, target_root_fields[0], tolerance):
             break
     if source_plan.use_projected_finalize:
-        np.copyto(source_runtime_state.psin_query, operator_core.psin)
-        for _ in range(4):
+        np.copyto(source_runtime_state.psin_query, target_root_fields[0])
+        for _ in range(int(source_plan.fixed_point_finalize_max_iter)):
             materialize_source_inputs(
                 source_plan=source_plan,
                 source_runtime_state=source_runtime_state,
@@ -580,8 +605,11 @@ def run_psin_source_fixed_point(operator_core: Any) -> tuple[float, float]:
                 enable_projection=True,
             )
             alpha1, alpha2 = _run_source_kernel_from_operator(operator_core)
-            if update_fixed_point_psin_query(source_runtime_state.psin_query, operator_core.psin, 1e-10):
+            if update_fixed_point_psin_query(source_runtime_state.psin_query, target_root_fields[0], tolerance):
                 break
+    np.copyto(operator_core.psin, target_root_fields[0])
+    np.copyto(operator_core.psin_r, target_root_fields[1])
+    np.copyto(operator_core.psin_rr, target_root_fields[2])
     return alpha1, alpha2
 
 

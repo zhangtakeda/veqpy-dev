@@ -21,6 +21,7 @@ from typing import Callable
 
 import numpy as np
 from numba import njit
+
 DEFAULT_LOCAL_BARYCENTRIC_STENCIL = 8
 
 RHO_AXIS = 0
@@ -1418,10 +1419,17 @@ def _update_pj2_from_psin_inputs_with_scratch(
     if has_beta:
         _fill_pointwise_product(scratch_Pn_r, heat_input, out_psin_r)
         _compute_Pn_out(scratch_aux, scratch_Pn_r, integration_matrix, weights)
-        alpha1 = 0.5 * beta * B0**2 / alpha2 * quadrature(V_r, weights) / _quadrature_product(
-            scratch_aux,
-            V_r,
-            weights,
+        alpha1 = (
+            0.5
+            * beta
+            * B0**2
+            / alpha2
+            * quadrature(V_r, weights)
+            / _quadrature_product(
+                scratch_aux,
+                V_r,
+                weights,
+            )
         )
         _copy_vector(out_Pn_psin, heat_input)
     else:
@@ -1727,10 +1735,17 @@ def _update_pq_from_psin_inputs_with_scratch(
     if has_beta:
         _fill_pointwise_product(scratch_Pn_r, heat_input, out_psin_r)
         _compute_Pn_out(scratch_aux, scratch_Pn_r, integration_matrix, weights)
-        alpha1 = 0.5 * beta * B0**2 / alpha2 * quadrature(V_r, weights) / _quadrature_product(
-            scratch_aux,
-            V_r,
-            weights,
+        alpha1 = (
+            0.5
+            * beta
+            * B0**2
+            / alpha2
+            * quadrature(V_r, weights)
+            / _quadrature_product(
+                scratch_aux,
+                V_r,
+                weights,
+            )
         )
         _copy_vector(out_Pn_psin, heat_input)
     else:
@@ -2304,8 +2319,6 @@ def _stabilize_odd_profile_head_on_rho(
     return profile
 
 
-
-
 @njit(cache=True, fastmath=True, nogil=True)
 def _smooth_profile_head_three_point(
     profile: np.ndarray,
@@ -2325,6 +2338,8 @@ def _smooth_profile_head_three_point(
         for i in range(1, stop):
             profile[i] = 0.25 * scratch[i - 1] + 0.5 * scratch[i] + 0.25 * scratch[i + 1]
     return profile
+
+
 @njit(cache=True, nogil=True)
 def _compute_Pn(Pn_r: np.ndarray, integration_matrix: np.ndarray, weights: np.ndarray) -> np.ndarray:
     Pn = np.empty_like(Pn_r)
