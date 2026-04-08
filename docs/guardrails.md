@@ -286,11 +286,11 @@ backend control surface 只有 [`veqpy/engine/__init__.py`](../veqpy/engine/__in
 
 - `uv run python -m compileall veqpy tests`
 - `uv run python tests/demo.py`
-- `uv run python -m pytest tests/test_model_core_regression.py tests/test_operator_core_regression.py tests/test_engine_core_regression.py tests/test_solver_core_regression.py -q`
+- `uv run python -m pytest tests/test_model_core_regression.py tests/test_engine_core_regression.py tests/test_solver_core_regression.py -q`
 
 改 benchmark 口径, source route, residual runner:
 
 - `uv run python -m compileall veqpy tests`
 - `uv run python tests/demo.py`
 - `uv run python tests/benchmark.py`
-- `uv run python -m pytest tests/test_model_core_regression.py tests/test_operator_core_regression.py tests/test_engine_core_regression.py tests/test_solver_core_regression.py -q`
+- `uv run python -m pytest tests/test_model_core_regression.py tests/test_engine_core_regression.py tests/test_solver_core_regression.py -q`

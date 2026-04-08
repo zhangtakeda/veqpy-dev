@@ -1080,7 +1080,7 @@ def _write_report(
 
 def _write_reference_summary_json(reference: ReferenceBundle) -> None:
     native_eq = reference.equilibrium
-    summary_eq = native_eq.resample(target_grid=REFERENCE_SUMMARY_GRID)
+    summary_eq = native_eq.resample(REFERENCE_SUMMARY_GRID)
 
     boundary_R = _as_float64_array(summary_eq.geometry.R[-1])
     boundary_Z = _as_float64_array(summary_eq.geometry.Z[-1])

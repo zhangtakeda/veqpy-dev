@@ -376,6 +376,8 @@ def bind_fused_profile_owned_psin_residual_runner(
     coordinate_code = int(source_plan.coordinate_code)
     parameterization_code = int(source_plan.parameterization_code)
     has_projection_policy = bool(source_plan.has_projection_policy)
+    source_kernel_name = getattr(source_kernel, "__name__", "")
+    skip_projection_finalize = source_kernel_name == "update_PI_PSIN"
     projection_domain_code = int(source_plan.projection_domain_code)
     endpoint_policy_code = int(source_plan.endpoint_policy_code)
     heat_input = source_plan.heat_input
@@ -454,8 +456,10 @@ def bind_fused_profile_owned_psin_residual_runner(
             current_input,
             parameterization_code,
         )
-    if has_projection_policy:
-        materialize_projected_source_inputs(
+        # PI psin-uniform is more accurate with the direct source-owned interpolation
+        # than with the extra projected rematerialization used by other routes.
+        if has_projection_policy and not skip_projection_finalize:
+            materialize_projected_source_inputs(
                 materialized_heat_input,
                 materialized_current_input,
                 heat_projection_coeff,

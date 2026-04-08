@@ -62,12 +62,10 @@ Core regressions are now organized by submodule instead of by temporary refactor
 
 - [tests/test_model_core_regression.py](tests/test_model_core_regression.py)
   - `Grid`, `Boundary.from_geqdsk`, `Equilibrium` snapshot/serialization/comparison semantics
-- [tests/test_operator_core_regression.py](tests/test_operator_core_regression.py)
-  - `OperatorCase`, packed layout naming/order, effective Fourier order behavior
 - [tests/test_engine_core_regression.py](tests/test_engine_core_regression.py)
-  - `numpy`/`numba` geometry and residual consistency, high-order runtime propagation
+  - `numpy`/`numba` geometry and residual consistency, high-order runtime propagation, and operator-facing engine contracts
 - [tests/test_solver_core_regression.py](tests/test_solver_core_regression.py)
-  - solve facade, fallback/reset behavior, and solver state lifecycle semantics
+  - solve facade, fallback/reset behavior, and solver/operator state lifecycle semantics
 
 The main runtime path is:
 

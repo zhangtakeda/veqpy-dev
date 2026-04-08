@@ -16,6 +16,7 @@ from veqpy.engine.numpy_residual import bind_residual_runner as bind_numpy_resid
 from veqpy.engine.numpy_source import build_source_remap_cache as build_numpy_source_remap_cache
 from veqpy.engine.numpy_source import resolve_source_inputs as numpy_resolve_source_inputs
 from veqpy.model import Boundary, Geometry, Grid
+from veqpy.model import equilibrium as equilibrium_module
 from veqpy.model.equilibrium import MU0
 from veqpy.operator import Operator
 from veqpy.operator.layout import build_profile_names
@@ -948,6 +949,7 @@ def test_eq_diagnostics_align_with_direct_formulas():
         assert np.allclose(equilibrium.P, expected_p, atol=1.0e-12, rtol=1.0e-12)
 
         expected_q = equilibrium.F * equilibrium.Ln_r / (equilibrium.alpha2 * equilibrium.psin_r)
+        expected_q = equilibrium_module._regularize_axis_linear_profile(expected_q, equilibrium.rho, copy=True)
         assert np.allclose(equilibrium.q, expected_q, atol=1.0e-12, rtol=1.0e-12)
 
         expected_q_r = grid.corrected_even_derivative(expected_q)
@@ -957,6 +959,7 @@ def test_eq_diagnostics_align_with_direct_formulas():
         expected_jtor = -equilibrium.alpha1 / (MU0 * equilibrium.S_r) * (
             2.0 * np.pi * equilibrium.FFn_psin * equilibrium.Ln_r + equilibrium.V_r * equilibrium.Pn_psin / (2.0 * np.pi)
         )
+        expected_jtor = equilibrium_module._regularize_axis_linear_profile(expected_jtor, equilibrium.rho, copy=True)
         assert np.allclose(equilibrium.jtor, expected_jtor, atol=1.0e-12, rtol=1.0e-12)
 
         expected_f_r = grid.corrected_even_derivative(equilibrium.F)
@@ -965,15 +968,17 @@ def test_eq_diagnostics_align_with_direct_formulas():
             + equilibrium.Kn * equilibrium.psin_rr / equilibrium.F
             - equilibrium.Kn * equilibrium.psin_r * expected_f_r / equilibrium.F**2
         )
+        expected_jpara = equilibrium_module._regularize_axis_linear_profile(expected_jpara, equilibrium.rho, copy=True)
         assert np.allclose(equilibrium.jpara, expected_jpara, atol=1.0e-12, rtol=1.0e-12)
 
         expected_jphi = -equilibrium.alpha1 / (MU0 * equilibrium.geometry.R) * (
             equilibrium.FFn_psin[:, None] + equilibrium.geometry.R**2 * equilibrium.Pn_psin[:, None]
         )
+        expected_jphi = equilibrium_module._regularize_axis_linear_surface(expected_jphi, equilibrium.rho, copy=True)
         assert np.allclose(equilibrium.jphi, expected_jphi, atol=1.0e-12, rtol=1.0e-12)
 
         resampled = equilibrium.resample(
-            target_grid=Grid(
+            Grid(
                 Nr=33,
                 Nt=equilibrium.grid.Nt,
                 scheme="uniform",
@@ -983,6 +988,9 @@ def test_eq_diagnostics_align_with_direct_formulas():
         )
         resampled_psin_rr = resampled.grid.corrected_linear_derivative(resampled.psin_r)
         assert np.allclose(resampled.psin_rr, resampled_psin_rr, atol=1.0e-12, rtol=1.0e-12)
+        assert np.isfinite(resampled.q[0])
+        assert np.isfinite(resampled.jtor[0])
+        assert np.isfinite(resampled.jpara[0])
     finally:
         benchmark.BENCHMARK_REPEAT_COUNT = original_repeat
 

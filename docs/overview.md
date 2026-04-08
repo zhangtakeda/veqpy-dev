@@ -33,12 +33,10 @@
   - 多模式 benchmark 和差异检查入口.
 - [`tests/test_model_core_regression.py`](../tests/test_model_core_regression.py)
   - `model` 核心回归集.
-- [`tests/test_operator_core_regression.py`](../tests/test_operator_core_regression.py)
-  - `operator` 核心回归集.
 - [`tests/test_engine_core_regression.py`](../tests/test_engine_core_regression.py)
-  - `engine` 核心回归集.
+  - `engine` 核心回归集, 同时覆盖 operator-facing engine contracts.
 - [`tests/test_solver_core_regression.py`](../tests/test_solver_core_regression.py)
-  - `solver` 核心回归集.
+  - `solver` 核心回归集, 同时覆盖 solver/operator 生命周期语义.
 
 ## Environment
 
@@ -310,14 +308,14 @@ backend control surface 只有 [`veqpy/engine/__init__.py`](../veqpy/engine/__in
 
 - `uv run python -m compileall veqpy tests`
 - `uv run python tests/demo.py`
-- `uv run python -m pytest tests/test_model_core_regression.py tests/test_operator_core_regression.py tests/test_engine_core_regression.py tests/test_solver_core_regression.py -q`
+- `uv run python -m pytest tests/test_model_core_regression.py tests/test_engine_core_regression.py tests/test_solver_core_regression.py -q`
 
 改 solver 策略, benchmark 口径, source route, residual runner:
 
 - `uv run python -m compileall veqpy tests`
 - `uv run python tests/demo.py`
 - `uv run python tests/benchmark.py`
-- `uv run python -m pytest tests/test_model_core_regression.py tests/test_operator_core_regression.py tests/test_engine_core_regression.py tests/test_solver_core_regression.py -q`
+- `uv run python -m pytest tests/test_model_core_regression.py tests/test_engine_core_regression.py tests/test_solver_core_regression.py -q`
 
 ## High-Risk Files
 

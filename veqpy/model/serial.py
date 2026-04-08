@@ -153,13 +153,7 @@ class Serial:
             data = _orjson_loads(f.read())
 
         attrs_data = _unwrap_typed_dict(data, type(self).__name__)
-
-        for k, t in type(self).serial_attributes().items():
-            desc = getattr(type(self), k, None)
-            if isinstance(desc, property) and desc.fset is None:
-                continue
-            if k in attrs_data:
-                _set_attribute(self, k, _json_to_python(attrs_data[k], t))
+        _restore_serial_fields(self, attrs_data, decoder=_json_to_python)
         return self
 
     @write_serializer("json", "jsonl")
@@ -173,11 +167,7 @@ class Serial:
     def read_pickle(self, file: str) -> Self:
         with open(file, "rb") as f:
             data = pickle.load(f)
-        for k in type(self).serial_attributes():
-            desc = getattr(type(self), k, None)
-            if isinstance(desc, property) and desc.fset is None:
-                continue
-            _set_attribute(self, k, data[k])
+        _restore_serial_fields(self, data, decoder=lambda value, _expected: value)
         return self
 
     @write_serializer("pkl", "pickle")
@@ -400,7 +390,7 @@ def _json_to_python_union(data: Any, types: tuple) -> Any:
     return data
 
 
-def _try_instantiate_from_tagged_dict(data: dict, *, inject_fields: dict[str, Any] | None = None) -> Any | None:
+def _try_instantiate_from_tagged_dict(data: dict) -> Any | None:
     """尝试从 {"TypeName": {attrs}} 结构实例化对象"""
     type_name = next(iter(data))
     cls = _type_registry.get(type_name)
@@ -409,54 +399,18 @@ def _try_instantiate_from_tagged_dict(data: dict, *, inject_fields: dict[str, An
 
     attrs = data[type_name]
     if hasattr(cls, "serial_attributes"):
-        return _instantiate_serial(cls, attrs, inject_fields=inject_fields)
+        return _instantiate_serial(cls, attrs)
 
     return cls(attrs)
 
 
-def _instantiate_serial(cls: type, attrs: dict, *, inject_fields: dict[str, Any] | None = None) -> Any:
+def _instantiate_serial(cls: type, attrs: dict) -> Any:
     """从属性字典实例化一个 Serial 子类"""
     spec = cls.serial_attributes()
-    field_values: dict[str, Any] = dict(inject_fields or {})
+    field_values: dict[str, Any] = {}
     for key, expected in spec.items():
-        field_values[key] = _deserialize_serial_field(attrs.get(key), expected, field_values)
+        field_values[key] = _json_to_python(attrs.get(key), expected)
     return _construct_object(cls, field_values)
-
-
-def _deserialize_serial_field(data: Any, expected: type | tuple, resolved_fields: dict[str, Any]) -> Any:
-    grid = resolved_fields.get("grid")
-    if grid is None or not _requires_grid_context(expected):
-        return _json_to_python(data, expected)
-
-    inject_fields = {"grid": grid}
-    if isinstance(data, dict) and len(data) == 1:
-        result = _try_instantiate_from_tagged_dict(data, inject_fields=inject_fields)
-        if result is not None:
-            return result
-        expected_name = getattr(expected, "__name__", None)
-        if expected_name == next(iter(data)):
-            data = data[expected_name]
-
-    if hasattr(expected, "serial_attributes") and isinstance(data, dict):
-        return _instantiate_serial(expected, data, inject_fields=inject_fields)
-
-    return _json_to_python(data, expected)
-
-
-def _requires_grid_context(expected: type | tuple) -> bool:
-    if not inspect.isclass(expected) or not hasattr(expected, "serial_attributes"):
-        return False
-
-    spec = expected.serial_attributes()
-    if "grid" in spec:
-        return False
-
-    try:
-        sig = inspect.signature(expected.__init__)
-    except (TypeError, ValueError):
-        return False
-
-    return "grid" in sig.parameters
 
 
 def _instantiate_dataclass(cls: type, attrs: dict) -> Any:
@@ -513,3 +467,17 @@ def _set_attribute(instance: Any, key: str, value: Any) -> None:
         setattr(instance, key, value)
     except (AttributeError, TypeError):
         object.__setattr__(instance, key, value)
+
+
+def _restore_serial_fields(
+    instance: Any,
+    attrs: dict[str, Any],
+    *,
+    decoder: Callable[[Any, type | tuple], Any],
+) -> None:
+    for key, expected in type(instance).serial_attributes().items():
+        desc = getattr(type(instance), key, None)
+        if isinstance(desc, property) and desc.fset is None:
+            continue
+        if key in attrs:
+            _set_attribute(instance, key, decoder(attrs[key], expected))

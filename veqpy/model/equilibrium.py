@@ -31,7 +31,6 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from rich.console import Console
 from rich.text import Text
 from rich.tree import Tree
-from scipy.interpolate import CubicSpline
 
 from veqpy.model.geometry import Geometry
 from veqpy.model.grid import Grid
@@ -88,8 +87,72 @@ PURPLE = mcolors.TABLEAU_COLORS["tab:purple"]
 MU0 = 4e-7 * np.pi
 
 
+def _regularize_axis_linear_profile(
+    values: np.ndarray,
+    rho: np.ndarray,
+    *,
+    copy: bool = False,
+) -> np.ndarray:
+    values = np.array(values, dtype=np.float64, copy=copy)
+    rho = np.asarray(rho, dtype=np.float64)
+    if values.ndim != 1 or rho.ndim != 1 or values.shape != rho.shape:
+        raise ValueError(f"Expected values/rho to share a 1D shape, got {values.shape} and {rho.shape}")
+    if values.size < 3 or abs(rho[0]) >= 1e-10:
+        return values
+
+    rho1 = float(rho[1])
+    rho2 = float(rho[2])
+    if abs(rho2 - rho1) < 1e-14:
+        return values
+
+    slope = (values[2] - values[1]) / (rho2 - rho1)
+    values[0] = values[1] + slope * (rho[0] - rho1)
+    return values
+
+
+def _regularize_axis_linear_surface(
+    values: np.ndarray,
+    rho: np.ndarray,
+    *,
+    copy: bool = False,
+) -> np.ndarray:
+    values = np.array(values, dtype=np.float64, copy=copy)
+    rho = np.asarray(rho, dtype=np.float64)
+    if values.ndim != 2 or rho.ndim != 1 or values.shape[0] != rho.shape[0]:
+        raise ValueError(
+            f"Expected values to have shape (Nr, Nt) with rho shape (Nr,), got {values.shape} and {rho.shape}"
+        )
+    if values.shape[0] < 3 or abs(rho[0]) >= 1e-10:
+        return values
+
+    rho1 = float(rho[1])
+    rho2 = float(rho[2])
+    if abs(rho2 - rho1) < 1e-14:
+        return values
+
+    slope = (values[2] - values[1]) / (rho2 - rho1)
+    values[0] = values[1] + slope * (rho[0] - rho1)
+    return values
+
+
 class Equilibrium(Reactive, Serial):
     """单网格上的平衡快照对象."""
+
+    root_properties = {
+        "R0",
+        "Z0",
+        "B0",
+        "a",
+        "grid",
+        "shape_profiles",
+        "FFn_psin",
+        "Pn_psin",
+        "psin",
+        "psin_r",
+        "psin_rr",
+        "alpha1",
+        "alpha2",
+    }
 
     def __init__(
         self,
@@ -98,12 +161,12 @@ class Equilibrium(Reactive, Serial):
         B0: float,
         a: float,
         grid: Grid,
-        active_profiles: dict[str, Profile],
+        shape_profiles: dict[str, Profile],
         FFn_psin: np.ndarray,
         Pn_psin: np.ndarray,
-        psin: np.ndarray | None,
+        psin: np.ndarray,
         psin_r: np.ndarray,
-        psin_rr: np.ndarray | None,
+        psin_rr: np.ndarray,
         alpha1: float = 1.0,
         alpha2: float = 1.0,
     ):
@@ -115,30 +178,24 @@ class Equilibrium(Reactive, Serial):
         self.B0 = B0
         self.a = a
         self.grid = grid
-        self.active_profiles = _normalize_shape_profiles(active_profiles)
+        self.shape_profiles = _normalize_shape_profiles(shape_profiles)
 
-        for name, profile in self.active_profiles.items():
+        for name, profile in self.shape_profiles.items():
             setattr(self, f"{name}_profile", profile)
-        self.h_profile = self.active_profiles.get("h", _build_default_shape_profile("h"))
-        self.v_profile = self.active_profiles.get("v", _build_default_shape_profile("v"))
-        self.k_profile = self.active_profiles.get("k", _build_default_shape_profile("k"))
+        self.h_profile = self.shape_profiles.get("h", _build_default_shape_profile("h"))
+        self.v_profile = self.shape_profiles.get("v", _build_default_shape_profile("v"))
+        self.k_profile = self.shape_profiles.get("k", _build_default_shape_profile("k"))
 
         for profile in _unique_profiles(
-            (*self.active_profiles.values(), self.h_profile, self.v_profile, self.k_profile)
+            (*self.shape_profiles.values(), self.h_profile, self.v_profile, self.k_profile)
         ):
             profile.update(grid=self.grid)
 
-        if psin is None:
-            psin = _recover_psin_from_psin_r(grid, psin_r)
-
-        if psin_rr is None:
-            psin_rr = grid.corrected_linear_derivative(psin_r)
-
-        self.psin = psin
-        self.FFn_psin = FFn_psin
-        self.Pn_psin = Pn_psin
-        self.psin_r = psin_r
-        self.psin_rr = psin_rr
+        self.psin = np.asarray(psin, dtype=np.float64)
+        self.FFn_psin = _regularize_axis_linear_profile(FFn_psin, grid.rho, copy=True)
+        self.Pn_psin = _regularize_axis_linear_profile(Pn_psin, grid.rho, copy=True)
+        self.psin_r = np.asarray(psin_r, dtype=np.float64)
+        self.psin_rr = np.asarray(psin_rr, dtype=np.float64)
         self.alpha1 = alpha1
         self.alpha2 = alpha2
 
@@ -173,7 +230,7 @@ class Equilibrium(Reactive, Serial):
             "B0": float,
             "a": float,
             "grid": Grid,
-            "active_profiles": dict[str, Profile],
+            "shape_profiles": dict[str, Profile],
             "psin": np.ndarray,
             "FFn_psin": np.ndarray,
             "Pn_psin": np.ndarray,
@@ -216,7 +273,7 @@ class Equilibrium(Reactive, Serial):
         s_fields = np.zeros((self.grid.M_max + 1, 3, self.grid.Nr), dtype=np.float64)
         c_active_order = 0
         s_active_order = 0
-        for name, profile in _shape_profiles(self).items():
+        for name, profile in self.shape_profiles.items():
             if name.startswith("c") and name[1:].isdigit():
                 order = int(name[1:])
                 if order <= self.grid.M_max:
@@ -356,15 +413,14 @@ class Equilibrium(Reactive, Serial):
     def q(self) -> np.ndarray:
         """安全因子 q, model-side diagnostic."""
         with np.errstate(divide="ignore", invalid="ignore"):
-            return self.F * self.Ln_r / (self.alpha2 * self.psin_r)
+            q = self.F * self.Ln_r / (self.alpha2 * self.psin_r)
+        return _regularize_axis_linear_profile(q, self.rho)
 
     @property
     def s(self) -> np.ndarray:
         """磁剪切 s, model-side diagnostic."""
-        q_values = self.q
-        q_r = self.grid.corrected_even_derivative(q_values)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            return self.rho * q_r / q_values
+        q_r = self.grid.corrected_even_derivative(self.q)
+        return self.rho * q_r / self.q
 
     @property
     def Itor(self) -> np.ndarray:
@@ -375,31 +431,32 @@ class Equilibrium(Reactive, Serial):
     def jtor(self) -> np.ndarray:
         """环向电流密度 j_phi, model-side diagnostic."""
         with np.errstate(divide="ignore", invalid="ignore"):
-            return (
+            jtor = (
                 -self.alpha1
                 / (MU0 * self.S_r)
                 * (2.0 * np.pi * self.FFn_psin * self.Ln_r + self.V_r * self.Pn_psin / (2.0 * np.pi))
             )
+        return _regularize_axis_linear_profile(jtor, self.rho)
 
     @property
     def jpara(self) -> np.ndarray:
         """平行电流密度 <j.B>/B0, model-side diagnostic."""
         F_r = self.grid.corrected_even_derivative(self.F)
         term_r = (
-            self.Kn_r * self.psin_r / self.F
-            + self.Kn * self.psin_rr / self.F
-            - self.Kn * self.psin_r * F_r / self.F**2
+            self.Kn_r * self.psin_r / self.F + self.Kn * self.psin_rr / self.F - self.Kn * self.psin_r * F_r / self.F**2
         )
 
         with np.errstate(divide="ignore", invalid="ignore"):
-            return self.alpha2 / MU0 * self.F / self.Ln_r * term_r
+            jpara = self.alpha2 / MU0 * self.F / self.Ln_r * term_r
+        return _regularize_axis_linear_profile(jpara, self.rho)
 
     @property
     def jphi(self) -> np.ndarray:
         """局部环向电流密度 j_phi(R, Z)."""
         R = self.geometry.R
         with np.errstate(divide="ignore", invalid="ignore"):
-            return -self.alpha1 / (MU0 * R) * (self.FFn_psin[:, None] + R**2 * self.Pn_psin[:, None])
+            jphi = -self.alpha1 / (MU0 * R) * (self.FFn_psin[:, None] + R**2 * self.Pn_psin[:, None])
+        return _regularize_axis_linear_surface(jphi, self.rho)
 
     @property
     def Psi(self) -> np.ndarray:
@@ -409,26 +466,24 @@ class Equilibrium(Reactive, Serial):
     @property
     def Phi(self) -> np.ndarray:
         """环向磁通 Phi."""
-        return 2.0 * np.pi * _integrate_profile_spline(self.rho, self.F * self.Ln_r)
+        return 2.0 * np.pi * self.grid.integrate(self.F * self.Ln_r, p=1)
 
     def plot(
         self,
         outpath: str | None = None,
         *,
         show: bool = False,
-        target_grid: Grid | None = None,
-        profile_degree: int | None = None,
-        native_grid: bool = False,
+        plot_residual: bool = False,
+        grid: Grid | None = None,
     ):
         """Render the legacy 6-panel summary figure for this equilibrium."""
 
-        return plot_equilibrium(
+        return _plot_equilibrium(
             self,
             outpath=outpath,
             show=show,
-            target_grid=target_grid,
-            profile_degree=profile_degree,
-            native_grid=native_grid,
+            plot_residual=plot_residual,
+            grid=grid,
         )
 
     def compare(
@@ -439,47 +494,37 @@ class Equilibrium(Reactive, Serial):
         show: bool = False,
         label_ref: str = "reference",
         label_other: str = "current",
-        target_grid: Grid | None = None,
-        profile_degree: int | None = None,
-        native_grid: bool = False,
+        grid: Grid | None = None,
     ) -> dict[str, float]:
         """Compare this equilibrium against another one."""
 
-        return plot_comparison(
+        return _compare_equilibrium(
             self,
             other,
             outpath=outpath,
             show=show,
             label_ref=label_ref,
             label_other=label_other,
-            target_grid=target_grid,
-            profile_degree=profile_degree,
-            native_grid=native_grid,
+            grid=grid,
         )
 
     def resample(
         self,
-        *,
-        target_grid: Grid | None = None,
-        profile_degree: int | None = None,
-        native_grid: bool = False,
+        grid: Grid,
     ) -> "Equilibrium":
         """将当前平衡快照插值到目标网格."""
-
         return _build_resampled_equilibrium(
             self,
-            target_grid=target_grid,
-            profile_degree=profile_degree,
-            native_grid=native_grid,
+            grid=grid,
         )
 
 
-def _normalize_shape_profiles(active_profiles: dict[str, Profile]) -> dict[str, Profile]:
-    if not isinstance(active_profiles, dict):
-        raise TypeError(f"active_profiles must be dict[str, Profile], got {type(active_profiles).__name__}")
-    for name, profile in active_profiles.items():
+def _normalize_shape_profiles(shape_profiles: dict[str, Profile]) -> dict[str, Profile]:
+    if not isinstance(shape_profiles, dict):
+        raise TypeError(f"shape_profiles must be dict[str, Profile], got {type(shape_profiles).__name__}")
+    for name, profile in shape_profiles.items():
         if not isinstance(name, str):
-            raise TypeError(f"active profile names must be str, got {type(name).__name__}")
+            raise TypeError(f"shape profile names must be str, got {type(name).__name__}")
         profile_type = type(profile)
         if not (
             isinstance(profile, Profile)
@@ -488,18 +533,8 @@ def _normalize_shape_profiles(active_profiles: dict[str, Profile]) -> dict[str, 
                 and getattr(profile_type, "__module__", None) == Profile.__module__
             )
         ):
-            raise TypeError(f"active profile {name!r} must be Profile, got {type(profile).__name__}")
-    return _minimize_shape_profiles(active_profiles)
-
-
-def _shape_profiles(equilibrium: Equilibrium) -> dict[str, Profile]:
-    return equilibrium.active_profiles
-
-
-def _shape_profile_payload(profiles: dict[str, Profile]) -> dict[str, dict[str, Profile]]:
-    return {
-        "active_profiles": _minimize_shape_profiles(profiles),
-    }
+            raise TypeError(f"shape profile {name!r} must be Profile, got {type(profile).__name__}")
+    return {name: profile.copy() for name, profile in shape_profiles.items()}
 
 
 def _build_default_shape_profile(name: str) -> Profile:
@@ -507,32 +542,6 @@ def _build_default_shape_profile(name: str) -> Profile:
     if name.startswith(("c", "s")) and name[1:].isdigit():
         power = int(name[1:])
     return Profile(scale=1.0, power=power, envelope_power=1, offset=0.0, coeff=None)
-
-
-def _is_default_shape_profile(name: str, profile: Profile) -> bool:
-    default = _build_default_shape_profile(name)
-    coeff = None if profile.coeff is None else np.asarray(profile.coeff, dtype=np.float64)
-    coeff_is_zero = coeff is None or coeff.size == 0 or np.allclose(coeff, 0.0, atol=1e-14, rtol=0.0)
-    return (
-        np.isclose(profile.scale, default.scale)
-        and int(profile.power) == int(default.power)
-        and int(profile.envelope_power) == int(default.envelope_power)
-        and np.isclose(profile.offset, default.offset)
-        and coeff_is_zero
-    )
-
-
-def _minimize_shape_profiles(profiles: dict[str, Profile]) -> dict[str, Profile]:
-    minimized: dict[str, Profile] = {}
-    for name, profile in profiles.items():
-        copied = profile.copy()
-        if copied.coeff is not None:
-            coeff = np.asarray(copied.coeff, dtype=np.float64)
-            copied.coeff = None if coeff.size == 0 or np.allclose(coeff, 0.0, atol=1e-14, rtol=0.0) else coeff.copy()
-        if _is_default_shape_profile(name, copied):
-            continue
-        minimized[name] = copied
-    return minimized
 
 
 def _unique_profiles(profiles) -> list[Profile]:
@@ -560,24 +569,17 @@ def _shape_profile_plot_meta(name: str) -> dict[str, str | None]:
     return {"color": color, "label": label, **style}
 
 
-def plot_equilibrium(
+def _plot_equilibrium(
     equilibrium: Equilibrium,
     outpath: str | Path | None = None,
     *,
     show: bool = False,
-    target_grid: Grid | None = None,
-    profile_degree: int | None = None,
-    native_grid: bool = False,
+    plot_residual: bool = False,
+    grid: Grid | None = None,
 ):
     """Render the legacy 6-panel equilibrium summary for one model-side equilibrium."""
-
-    surface_eq = _build_resampled_equilibrium(
-        target_grid=target_grid,
-        profile_degree=profile_degree,
-        native_grid=native_grid,
-        equilibrium=equilibrium,
-    )
-    fig = _render_equilibrium_summary(surface_equilibrium=surface_eq, profile_equilibrium=equilibrium)
+    plot_eq = _build_resampled_equilibrium(equilibrium, grid=grid)
+    fig = _render_equilibrium_summary(equilibrium=plot_eq, plot_residual=plot_residual)
 
     if outpath is not None:
         fig.savefig(Path(outpath), dpi=300, facecolor="white")
@@ -589,7 +591,7 @@ def plot_equilibrium(
     return fig
 
 
-def plot_comparison(
+def _compare_equilibrium(
     reference: Equilibrium,
     other: Equilibrium,
     outpath: str | Path | None = None,
@@ -597,47 +599,27 @@ def plot_comparison(
     show: bool = False,
     label_ref: str = "reference",
     label_other: str = "current",
-    target_grid: Grid | None = None,
-    profile_degree: int | None = None,
-    native_grid: bool = False,
+    grid: Grid | None = None,
 ) -> dict[str, float]:
     """Render a compact 3-column comparison figure with shared surface overlay."""
-    ref_plot = reference
-    other_plot = other
+    compare_grid = grid or Grid(
+        Nr=64,
+        Nt=64,
+        scheme="uniform",
+        L_max=max(reference.grid.L_max, other.grid.L_max),
+        M_max=max(reference.grid.M_max, other.grid.M_max),
+    )
+    ref_plot = _build_resampled_equilibrium(reference, grid=compare_grid)
+    other_plot = _build_resampled_equilibrium(other, grid=compare_grid)
 
-    shape_keys = ["h", "k", "s1"]
+    shape_keys = [key for key in ["h", "k", "s1"] if key in ref_plot.shape_profiles or key in other_plot.shape_profiles]
     source_groups = [
         ("psi_r", r"$\psi_\rho$", None),
         ("FF_psi", r"$FF_\psi$", None),
         ("mu0_P_psi", r"$\mu_0 P_\psi$", None),
     ]
-
-    def _extract(eq: Equilibrium) -> dict[str, np.ndarray]:
-        data = {
-            "rho": np.asarray(eq.rho, dtype=np.float64),
-            "psi_r": np.asarray(eq.alpha2 * eq.psin_r, dtype=np.float64),
-            "FF_psi": np.asarray(eq.alpha1 * eq.FFn_psin, dtype=np.float64),
-            "mu0_P_psi": np.asarray(eq.alpha1 * eq.Pn_psin, dtype=np.float64),
-        }
-        profiles = _shape_profiles(eq)
-        for key in shape_keys:
-            profile = profiles.get(key)
-            if profile is None:
-                data[key] = np.zeros_like(eq.rho, dtype=np.float64)
-            else:
-                data[key] = np.asarray(profile.u, dtype=np.float64)
-        return data
-
-    d1, d2 = _extract(ref_plot), _extract(other_plot)
-
-    def _aligned_reference(key: str) -> tuple[np.ndarray, np.ndarray]:
-        rho1 = np.asarray(d1["rho"], dtype=np.float64)
-        rho2 = np.asarray(d2["rho"], dtype=np.float64)
-        y1 = np.asarray(d1[key], dtype=np.float64)
-        y2 = np.asarray(d2[key], dtype=np.float64)
-        if rho1.shape == rho2.shape and np.allclose(rho1, rho2):
-            return y1, y2
-        return np.interp(rho2, rho1, y1), y2
+    d1 = _build_comparison_profile_data(ref_plot, shape_keys=shape_keys)
+    d2 = _build_comparison_profile_data(other_plot, shape_keys=shape_keys)
 
     errors: dict[str, float] = {}
     fig = plt.figure(figsize=(14, 8))
@@ -654,27 +636,8 @@ def plot_comparison(
         right=0.98,
     )
 
-    surface_grid = target_grid or Grid(
-        Nr=64,
-        Nt=64,
-        scheme="uniform",
-        L_max=max(reference.grid.L_max, other.grid.L_max),
-        M_max=max(reference.grid.M_max, other.grid.M_max),
-    )
-    ref_surface = _build_resampled_equilibrium(
-        target_grid=surface_grid,
-        profile_degree=profile_degree,
-        native_grid=native_grid,
-        equilibrium=ref_plot,
-    )
-    other_surface = _build_resampled_equilibrium(
-        target_grid=surface_grid,
-        profile_degree=profile_degree,
-        native_grid=native_grid,
-        equilibrium=other_plot,
-    )
-    ref_surface_data = _build_surface_panel_data(ref_surface)
-    other_surface_data = _build_surface_panel_data(other_surface)
+    ref_surface_data = _build_surface_panel_data(ref_plot)
+    other_surface_data = _build_surface_panel_data(other_plot)
     shared_boundary = _merge_surface_boundaries(ref_surface_data["boundary"], other_surface_data["boundary"])
     surface_ax = fig.add_subplot(gs[:, 0])
     _render_comparison_surface_overlay_panel(
@@ -691,14 +654,15 @@ def plot_comparison(
 
     for i, (ax, key) in enumerate(zip(shape_axes, shape_keys, strict=True)):
         ylabel = _shape_profile_plot_meta(key)["label"]
-        ref_values, cur_values = _aligned_reference(key)
+        ref_values = np.asarray(d1[key], dtype=np.float64)
+        cur_values = np.asarray(d2[key], dtype=np.float64)
         scale_ref = float(np.max(np.abs(ref_values))) or 1.0
         diff = cur_values - ref_values
         errors[f"rel_{key}_max"] = float(np.max(np.abs(diff)) / scale_ref)
         errors[f"rel_{key}_rms"] = float(np.sqrt(np.mean(diff**2)) / scale_ref)
 
         ax.plot(d1["rho"], d1[key], color=BLACK, linestyle="-", label=label_ref)
-        ax.plot(d2["rho"], d2[key], color=RED, linestyle="--", marker="o", markersize=4, zorder=5, label=label_other)
+        ax.plot(d2["rho"], d2[key], color=RED, linestyle="--", label=label_other)
         ax.set_ylabel(ylabel)
         ax.grid(True, linestyle=":", alpha=0.5)
         _add_top_headroom(ax, 0.15)
@@ -713,14 +677,15 @@ def plot_comparison(
 
     for i, (ax, (key, ylabel, scale)) in enumerate(zip(source_axes, source_groups, strict=True)):
         s = scale or 1.0
-        ref_values, cur_values = _aligned_reference(key)
+        ref_values = np.asarray(d1[key], dtype=np.float64)
+        cur_values = np.asarray(d2[key], dtype=np.float64)
         scale_ref = float(np.max(np.abs(ref_values))) or 1.0
         diff = cur_values - ref_values
         errors[f"rel_{key}_max"] = float(np.max(np.abs(diff)) / scale_ref)
         errors[f"rel_{key}_rms"] = float(np.sqrt(np.mean(diff**2)) / scale_ref)
 
         ax.plot(d1["rho"], d1[key] / s, color=BLACK, linestyle="-", label=label_ref)
-        ax.plot(d2["rho"], d2[key] / s, color=RED, linestyle="--", marker="o", markersize=4, zorder=5, label=label_other)
+        ax.plot(d2["rho"], d2[key] / s, color=RED, linestyle="--", label=label_other)
         ax.set_ylabel(ylabel)
         ax.grid(True, linestyle=":", alpha=0.5)
         _add_top_headroom(ax, 0.15)
@@ -745,62 +710,40 @@ def plot_comparison(
 def _build_resampled_equilibrium(
     equilibrium: Equilibrium,
     *,
-    target_grid: Grid | None,
-    profile_degree: int | None,
-    native_grid: bool,
+    grid: Grid | None,
 ) -> Equilibrium:
-    if native_grid:
-        return equilibrium
-
     source_grid = equilibrium.grid
-    plot_grid = target_grid or Grid(Nr=64, Nt=64, scheme="uniform", L_max=source_grid.L_max, M_max=source_grid.M_max)
-    degree = min(source_grid.Nr - 1, 16) if profile_degree is None else int(profile_degree)
+    plot_grid = grid or Grid(Nr=64, Nt=64, scheme="uniform", L_max=source_grid.L_max, M_max=source_grid.M_max)
 
-    def resample_vector(y_src: np.ndarray) -> np.ndarray:
-        return _resample_profile_spline(
-            source_grid.rho, np.asarray(y_src, dtype=np.float64), plot_grid.rho, degree=degree, strict=True
-        )
-
-    def _resample_profile_triplet(profile: Profile) -> Profile:
-        out = profile.copy()
-        out.update(grid=plot_grid)
-        return out
-
-    psin_r = _resample_profile_spline(
+    psin_r = _resample_profile_linear(
         source_grid.rho,
         np.asarray(equilibrium.psin_r, dtype=np.float64),
         plot_grid.rho,
         left=0.0,
-        degree=degree,
-        strict=True,
     )
-    psin = _resample_profile_spline(
+    psin = _resample_profile_linear(
         source_grid.rho,
         np.asarray(equilibrium.psin, dtype=np.float64),
         plot_grid.rho,
-        left=0.0,
-        right=1.0,
-        degree=degree,
-        strict=True,
     )
-    FFn_psin = _resample_profile_spline(
+    FFn_psin = _resample_profile_linear(
         source_grid.rho,
         np.asarray(equilibrium.FFn_psin, dtype=np.float64),
         plot_grid.rho,
-        left=0.0,
         right=0.0,
-        degree=degree,
-        strict=True,
     )
-    Pn_psin = _resample_profile_spline(
+    Pn_psin = _resample_profile_linear(
         source_grid.rho,
         np.asarray(equilibrium.Pn_psin, dtype=np.float64),
         plot_grid.rho,
-        left=0.0,
         right=0.0,
-        degree=degree,
-        strict=True,
     )
+
+    shape_profiles: dict[str, Profile] = {}
+    for name, profile in equilibrium.shape_profiles.items():
+        copied = profile.copy()
+        copied.update(grid=plot_grid)
+        shape_profiles[name] = copied
 
     return Equilibrium(
         R0=equilibrium.R0,
@@ -808,9 +751,7 @@ def _build_resampled_equilibrium(
         B0=equilibrium.B0,
         a=equilibrium.a,
         grid=plot_grid,
-        **_shape_profile_payload(
-            {name: _resample_profile_triplet(profile) for name, profile in _shape_profiles(equilibrium).items()}
-        ),
+        shape_profiles=shape_profiles,
         psin=psin,
         FFn_psin=FFn_psin,
         Pn_psin=Pn_psin,
@@ -821,37 +762,77 @@ def _build_resampled_equilibrium(
     )
 
 
-def _render_equilibrium_summary(*, surface_equilibrium: Equilibrium, profile_equilibrium: Equilibrium):
-    fig = plt.figure(figsize=(22, 6.5))
-    gs = GridSpec(
-        2,
-        9,
-        figure=fig,
-        width_ratios=[1.05, 0.35, 1.28, 0.25, 1.05, 0.35, 1.28, 0.25, 1.05],
-        height_ratios=[1, 1],
-        hspace=0.42,
-        wspace=0.0,
-        top=0.95,
-        bottom=0.1,
-        left=0.025,
-        right=0.975,
-    )
+def _build_comparison_profile_data(
+    equilibrium: Equilibrium,
+    *,
+    shape_keys: list[str],
+) -> dict[str, np.ndarray]:
+    data = {
+        "rho": np.asarray(equilibrium.rho, dtype=np.float64),
+        "psi_r": np.asarray(equilibrium.alpha2 * equilibrium.psin_r, dtype=np.float64),
+        "FF_psi": np.asarray(equilibrium.alpha1 * equilibrium.FFn_psin, dtype=np.float64),
+        "mu0_P_psi": np.asarray(equilibrium.alpha1 * equilibrium.Pn_psin, dtype=np.float64),
+    }
+    for key in shape_keys:
+        profile = equilibrium.shape_profiles.get(key)
+        if profile is None:
+            data[key] = np.zeros_like(equilibrium.rho, dtype=np.float64)
+        else:
+            data[key] = np.asarray(profile.u, dtype=np.float64)
+    return data
 
-    panel_a = _build_surface_panel_data(surface_equilibrium)
-    panel_b = _build_shape_panel_data(profile_equilibrium)
-    panel_c = _build_source_panel_data(profile_equilibrium)
-    panel_d = _build_jphi_panel_data(surface_equilibrium)
-    panel_e = _build_current_panel_data(profile_equilibrium)
-    panel_f = _build_safety_panel_data(profile_equilibrium)
-    panel_g = _build_gs_residual_panel_data(surface_equilibrium)
 
+def _render_equilibrium_summary(
+    *,
+    equilibrium: Equilibrium,
+    plot_residual: bool = False,
+):
+    if plot_residual:
+        fig = plt.figure(figsize=(22, 6.5))
+        gs = GridSpec(
+            2,
+            9,
+            figure=fig,
+            width_ratios=[1.05, 0.35, 1.28, 0.25, 1.05, 0.35, 1.28, 0.25, 1.05],
+            height_ratios=[1, 1],
+            hspace=0.42,
+            wspace=0.0,
+            top=0.95,
+            bottom=0.1,
+            left=0.025,
+            right=0.975,
+        )
+    else:
+        fig = plt.figure(figsize=(19.5, 6.5))
+        gs = GridSpec(
+            2,
+            7,
+            figure=fig,
+            width_ratios=[1.05, 0.35, 1.28, 0.25, 1.05, 0.35, 1.28],
+            height_ratios=[1, 1],
+            hspace=0.42,
+            wspace=0.0,
+            top=0.95,
+            bottom=0.1,
+            left=0.025,
+            right=0.975,
+        )
+
+    panel_a = _build_surface_panel_data(equilibrium)
+    panel_b = _build_shape_panel_data(equilibrium)
+    panel_c = _build_source_panel_data(equilibrium)
+    panel_d = _build_jphi_panel_data(equilibrium)
+    panel_e = _build_current_panel_data(equilibrium)
+    panel_f = _build_safety_panel_data(equilibrium)
     _render_panel_a_surfaces(fig.add_subplot(gs[:, 0]), fig, panel_a)
     _render_panel_b_shapes(fig.add_subplot(gs[0, 2]), panel_b)
     _render_panel_c_sources(fig.add_subplot(gs[1, 2]), panel_c)
     _render_panel_d_jphi(fig.add_subplot(gs[:, 4]), fig, panel_d, panel_a["boundary"])
     _render_panel_e_current_1d(fig.add_subplot(gs[0, 6]), panel_e)
     _render_panel_f_safety(fig.add_subplot(gs[1, 6]), panel_f)
-    _render_panel_g_gs_residual(fig.add_subplot(gs[:, 8]), fig, panel_g, panel_a["boundary"])
+    if plot_residual:
+        panel_g = _build_gs_residual_panel_data(equilibrium)
+        _render_panel_g_gs_residual(fig.add_subplot(gs[:, 8]), fig, panel_g, panel_a["boundary"])
     return fig
 
 
@@ -896,6 +877,13 @@ def _build_surface_panel_data(equilibrium: Equilibrium) -> dict:
     }
 
 
+def _close_periodic_curve(values: np.ndarray) -> np.ndarray:
+    arr = np.asarray(values, dtype=np.float64)
+    if arr.ndim != 1:
+        raise ValueError(f"Expected a 1D periodic curve, got {arr.shape}")
+    return np.concatenate([arr, arr[:1]])
+
+
 def _merge_surface_boundaries(*boundaries: dict) -> dict:
     if not boundaries:
         raise ValueError("At least one boundary must be provided")
@@ -905,18 +893,28 @@ def _merge_surface_boundaries(*boundaries: dict) -> dict:
 
 
 def _build_shape_panel_data(equilibrium: Equilibrium) -> dict:
-    profiles = _shape_profiles(equilibrium)
-
-    values = {key: profile.u for key, profile in profiles.items()}
+    values = {
+        key: profile.u for key, profile in equilibrium.shape_profiles.items() if _include_shape_panel_profile(key)
+    }
     return {"shape": {"rho": equilibrium.rho, "values": values}}
+
+
+def _include_shape_panel_profile(name: str) -> bool:
+    if name in SHAPE_PROFILE_PLOT_META:
+        return True
+    if name.startswith("c") and name[1:].isdigit():
+        return int(name[1:]) <= 2
+    if name.startswith("s") and name[1:].isdigit():
+        return int(name[1:]) <= 3
+    return False
 
 
 def _build_source_panel_data(equilibrium: Equilibrium) -> dict:
     return {
         "rho": equilibrium.rho,
         "psi_r": equilibrium.alpha2 * equilibrium.psin_r.copy(),
-        "FF_r": equilibrium.FF_r.copy(),
-        "mu0_P_r": MU0 * equilibrium.P_r.copy(),
+        "FF_psi": equilibrium.alpha1 * equilibrium.FFn_psin.copy(),
+        "mu0_P_psi": equilibrium.alpha1 * equilibrium.Pn_psin.copy(),
     }
 
 
@@ -950,22 +948,6 @@ def _build_safety_panel_data(equilibrium: Equilibrium) -> dict:
     return {"rho": equilibrium.rho, "q": equilibrium.q.copy(), "s": equilibrium.s.copy()}
 
 
-def _comparison_profile_values(equilibrium: Equilibrium, key: str) -> np.ndarray:
-    if key == "psi_r":
-        return equilibrium.alpha2 * equilibrium.psin_r.copy()
-    if key == "FF_r":
-        return equilibrium.FF_r.copy()
-    if key == "P_r":
-        return equilibrium.P_r.copy()
-    if key == "Itor":
-        return equilibrium.Itor.copy()
-    if key == "jtor":
-        return equilibrium.jtor.copy()
-    if key == "jpara":
-        return equilibrium.jpara.copy()
-    raise KeyError(f"Unsupported comparison profile {key!r}")
-
-
 def _resample_profile_linear(
     rho_src: np.ndarray,
     y_src: np.ndarray,
@@ -982,11 +964,6 @@ def _resample_profile_linear(
     left_val = float(y_src[0]) if left is None else float(left)
     right_val = float(y_src[-1]) if right is None else float(right)
     return np.interp(rho_eval, rho_src, y_src, left=left_val, right=right_val)
-
-
-def _active_shape_keys(reference: Equilibrium, other: Equilibrium) -> list[str]:
-    names = list(dict.fromkeys([*_shape_profiles(reference), *_shape_profiles(other)]))
-    return [key for key in names if key in _shape_profiles(reference) or key in _shape_profiles(other)]
 
 
 def _apply_rz_limits(ax: plt.Axes, boundary_data: dict):
@@ -1143,16 +1120,16 @@ def _render_panel_c_sources(ax: plt.Axes, data: dict):
     rho = data["rho"]
     if len(rho) < 32:
         ax.plot(rho, data["psi_r"], "--o", color=BLACK, label=r"$\psi_\rho$")
-        ax.plot(rho, data["FF_r"], "-o", color=RED, label=r"$FF_\rho$")
-        ax.plot(rho, data["mu0_P_r"], "-o", color=PURPLE, label=r"$\mu_0 P_\rho$")
+        ax.plot(rho, data["FF_psi"], "-o", color=RED, label=r"$FF_\psi$")
+        ax.plot(rho, data["mu0_P_psi"], "-o", color=PURPLE, label=r"$\mu_0 P_\psi$")
     else:
         ax.plot(rho, data["psi_r"], "--", color=BLACK, label=r"$\psi_\rho$")
-        ax.plot(rho, data["FF_r"], "-", color=RED, label=r"$FF_\rho$")
-        ax.plot(rho, data["mu0_P_r"], "-", color=PURPLE, label=r"$\mu_0 P_\rho$")
+        ax.plot(rho, data["FF_psi"], "-", color=RED, label=r"$FF_\psi$")
+        ax.plot(rho, data["mu0_P_psi"], "-", color=PURPLE, label=r"$\mu_0 P_\psi$")
 
     ax.set(xlabel=r"$\rho$", ylabel="Profile")
-    _add_top_headroom(ax, ratio=-0.15)
-    ax.legend(loc="lower left")
+    _add_top_headroom(ax, ratio=0.35)
+    ax.legend(loc="upper left")
     ax.grid(True)
 
 
@@ -1232,150 +1209,3 @@ def _render_panel_f_safety(ax: plt.Axes, data: dict):
     ax.set(xlabel=r"$\rho$", ylabel="Profile")
     ax.legend(loc="upper left")
     ax.grid(True)
-
-
-def _close_periodic_curve(values: np.ndarray) -> np.ndarray:
-    arr = np.asarray(values, dtype=np.float64)
-    if arr.ndim != 1:
-        raise ValueError(f"Expected a 1D periodic curve, got {arr.shape}")
-    return np.concatenate([arr, arr[:1]])
-
-
-def _resample_profile(
-    rho_src: np.ndarray,
-    y_src: np.ndarray,
-    rho_eval: np.ndarray,
-    *,
-    left: float | None = None,
-    right: float | None = None,
-    degree: int | None = None,
-    strict: bool = False,
-    atol: float = 1e-4,
-    even: bool = False,
-) -> np.ndarray:
-    """Resample one profile with a constrained Legendre fit for plotting."""
-
-    rho_src, y_src, rho_eval = map(lambda x: np.asarray(x, dtype=np.float64), (rho_src, y_src, rho_eval))
-    if rho_src.ndim != 1 or y_src.ndim != 1 or len(rho_src) != len(y_src):
-        raise ValueError("rho_src and y_src must be 1D arrays with equal length")
-
-    r_src = rho_src**2 if even else rho_src
-    r_eval = rho_eval**2 if even else rho_eval
-
-    if left is not None and right is not None:
-        base_src = left * (1.0 - r_src) + right * r_src
-        base_eval = left * (1.0 - r_eval) + right * r_eval
-        factor_src, factor_eval = r_src * (1.0 - r_src), r_eval * (1.0 - r_eval)
-    elif left is not None:
-        base_src, base_eval = np.full_like(r_src, left), np.full_like(r_eval, left)
-        factor_src, factor_eval = r_src, r_eval
-    elif right is not None:
-        base_src, base_eval = np.full_like(r_src, right), np.full_like(r_eval, right)
-        factor_src, factor_eval = 1.0 - r_src, 1.0 - r_eval
-    else:
-        base_src, base_eval = np.zeros_like(r_src), np.zeros_like(r_eval)
-        factor_src, factor_eval = np.ones_like(r_src), np.ones_like(r_eval)
-
-    q_src = np.zeros_like(y_src)
-    mask = np.abs(factor_src) > 1e-14
-    if np.any(mask):
-        q_src[mask] = (y_src[mask] - base_src[mask]) / factor_src[mask]
-
-    m = int(np.count_nonzero(mask))
-    if m == 0:
-        y_eval = base_eval
-    else:
-        x_src, x_eval = 2.0 * rho_src[mask] - 1.0, 2.0 * rho_eval - 1.0
-        deg = (m - 1) if degree is None else int(max(0, min(degree, m - 1)))
-        V_src = np.polynomial.legendre.legvander(x_src, deg)
-
-        if deg == m - 1:
-            coeffs = np.linalg.solve(V_src, q_src[mask])
-        else:
-            coeffs, *_ = np.linalg.lstsq(V_src, q_src[mask], rcond=None)
-
-        q_eval = np.polynomial.legendre.legval(x_eval, coeffs)
-        y_eval = base_eval + factor_eval * q_eval
-
-    if strict and degree is None:
-        y_back = _resample_profile(rho_src, y_src, rho_src, left=left, right=right, degree=None, strict=False)
-        err = float(np.max(np.abs(y_back - y_src)))
-        if err > atol:
-            raise RuntimeError(f"Legendre resample lost nodal interpolation: max err={err:.3e}")
-
-    return y_eval
-
-
-def _resample_profile_spline(
-    rho_src: np.ndarray,
-    y_src: np.ndarray,
-    rho_eval: np.ndarray,
-    *,
-    left: float | None = None,
-    right: float | None = None,
-    degree: int | None = None,
-    strict: bool = False,
-    atol: float = 1e-4,
-    even: bool = False,
-) -> np.ndarray:
-    """Resample one profile with a natural cubic spline for smooth plotting."""
-
-    rho_src, y_src, rho_eval = map(lambda x: np.asarray(x, dtype=np.float64), (rho_src, y_src, rho_eval))
-    if rho_src.ndim != 1 or y_src.ndim != 1 or len(rho_src) != len(y_src):
-        raise ValueError("rho_src and y_src must be 1D arrays with equal length")
-
-    x_src = rho_src**2 if even else rho_src
-    x_eval = rho_eval**2 if even else rho_eval
-    y_fit = y_src.copy()
-    if left is not None:
-        y_fit[0] = float(left)
-    if right is not None:
-        y_fit[-1] = float(right)
-
-    spline = CubicSpline(x_src, y_fit, bc_type="natural", extrapolate=True)
-    y_eval = np.asarray(spline(x_eval), dtype=np.float64)
-
-    if left is not None:
-        y_eval[0] = float(left)
-    if right is not None:
-        y_eval[-1] = float(right)
-
-    if strict:
-        y_back = np.asarray(spline(x_src), dtype=np.float64)
-        if left is not None:
-            y_back[0] = float(left)
-        if right is not None:
-            y_back[-1] = float(right)
-        err = float(np.max(np.abs(y_back - y_fit)))
-        if err > atol:
-            raise RuntimeError(f"Spline resample lost nodal interpolation: max err={err:.3e}")
-
-    return y_eval
-
-
-def _integrate_profile_spline(rho: np.ndarray, values: np.ndarray) -> np.ndarray:
-    rho = np.asarray(rho, dtype=np.float64)
-    values = np.asarray(values, dtype=np.float64)
-    if rho.ndim != 1 or values.ndim != 1 or rho.shape != values.shape:
-        raise ValueError(f"Expected rho/values to share a 1D shape, got {rho.shape} and {values.shape}")
-    if rho.size == 0:
-        return values.copy()
-    if rho.size == 1:
-        return np.zeros_like(values)
-
-    spline = CubicSpline(rho, values, bc_type="natural", extrapolate=True)
-    anti = spline.antiderivative()
-    out = np.asarray(anti(rho) - anti(rho[0]), dtype=np.float64)
-    out[0] = 0.0
-    return out
-
-
-def _recover_psin_from_psin_r(grid: Grid, psin_r: np.ndarray) -> np.ndarray:
-    psin = grid.integrate(psin_r, p=1)
-    scale = float(psin[-1] - psin[0])
-    if abs(scale) < 1e-12:
-        raise ValueError("psin_r does not span a valid normalized flux interval")
-    psin = (psin - psin[0]) / scale
-    psin[0] = 0.0
-    psin[-1] = 1.0
-    return psin

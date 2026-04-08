@@ -9,6 +9,7 @@ from veqpy.model import equilibrium as equilibrium_module
 from veqpy.model.equilibrium import Equilibrium
 from veqpy.model.geqdsk import Geqdsk
 from veqpy.model.grid import Grid
+from veqpy.model.reactive import Reactive
 from veqpy.operator import (
     ExecutionState,
     FieldRuntimeState,
@@ -261,14 +262,20 @@ def test_boundary_from_geqdsk_requires_instance_source():
     assert boundary_from_instance.ka > 1.0
 
 
-def test_equilibrium_roundtrips_canonical_active_profiles():
+def test_equilibrium_roundtrips_canonical_shape_profiles():
     equilibrium, _ = _build_high_order_equilibrium()
+    expected_profiles = set(equilibrium.shape_profiles)
 
-    assert set(equilibrium.active_profiles) == {"k", "c3", "s4"}
+    assert {"k", "c3", "s4"}.issubset(expected_profiles)
     assert equilibrium.geometry.tb.shape == (equilibrium.grid.Nr, equilibrium.grid.Nt)
 
-    resampled = equilibrium.resample(target_grid=Grid(Nr=10, Nt=12, scheme="uniform", M_max=4))
-    assert set(resampled.active_profiles) == {"k", "c3", "s4"}
+    target_grid = Grid(Nr=10, Nt=12, scheme="uniform", M_max=4)
+    resampled = equilibrium.resample(target_grid)
+    resampled_positional = equilibrium.resample(target_grid)
+    assert set(resampled.shape_profiles) == expected_profiles
+    assert np.allclose(resampled.rho, target_grid.rho)
+    assert np.allclose(resampled_positional.rho, target_grid.rho)
+    assert np.allclose(resampled.psin_r, resampled_positional.psin_r)
 
     outpath = Path("tests/.tmp-equilibrium-k4.json")
     try:
@@ -276,12 +283,38 @@ def test_equilibrium_roundtrips_canonical_active_profiles():
         payload = orjson.loads(outpath.read_bytes())["Equilibrium"]
         loaded = type(equilibrium).load(str(outpath))
 
-        assert set(payload["active_profiles"]) == {"k", "c3", "s4"}
-        assert set(loaded.active_profiles) == set(equilibrium.active_profiles)
-        assert np.allclose(loaded.active_profiles["c3"].u, equilibrium.active_profiles["c3"].u)
-        assert np.allclose(loaded.active_profiles["s4"].u, equilibrium.active_profiles["s4"].u)
+        assert set(payload["shape_profiles"]) == expected_profiles
+        assert set(loaded.shape_profiles) == expected_profiles
+        assert np.allclose(loaded.shape_profiles["c3"].u, equilibrium.shape_profiles["c3"].u)
+        assert np.allclose(loaded.shape_profiles["s4"].u, equilibrium.shape_profiles["s4"].u)
     finally:
         outpath.unlink(missing_ok=True)
+
+
+def test_equilibrium_declares_reactive_roots_explicitly():
+    assert Equilibrium.root_properties == {
+        "R0",
+        "Z0",
+        "B0",
+        "a",
+        "grid",
+        "shape_profiles",
+        "FFn_psin",
+        "Pn_psin",
+        "psin",
+        "psin_r",
+        "psin_rr",
+        "alpha1",
+        "alpha2",
+    }
+
+
+def test_reactive_requires_explicit_root_properties():
+    with pytest.raises(TypeError, match="must define root_properties explicitly"):
+        class _BadReactive(Reactive):
+            @property
+            def value(self):
+                return 1
 
 
 def test_equilibrium_exposes_gs_operator_residual_terms():
@@ -307,22 +340,20 @@ def test_equilibrium_exposes_gs_operator_residual_terms():
     assert np.allclose(equilibrium.G, equilibrium.alpha1 * equilibrium.Gn1 + equilibrium.alpha2 * equilibrium.Gn2)
 
 
-def test_resampled_equilibrium_uses_spline_profile_reconstruction(monkeypatch):
+def test_resampled_equilibrium_uses_linear_profile_reconstruction(monkeypatch):
     profile_equilibrium, _ = _build_high_order_equilibrium()
     sentinel = np.linspace(0.0, 1.0, 12, dtype=np.float64)
     called = {"value": False}
 
-    def _fake_resample_profile_spline(rho_src, y_src, rho_eval, **kwargs):
+    def _fake_resample_profile_linear(rho_src, y_src, rho_eval, **kwargs):
         called["value"] = True
         return sentinel
 
-    monkeypatch.setattr(equilibrium_module, "_resample_profile_spline", _fake_resample_profile_spline)
+    monkeypatch.setattr(equilibrium_module, "_resample_profile_linear", _fake_resample_profile_linear)
 
     resampled = equilibrium_module._build_resampled_equilibrium(
         profile_equilibrium,
-        target_grid=Grid(Nr=12, Nt=24, scheme="uniform", M_max=4),
-        profile_degree=None,
-        native_grid=False,
+        grid=Grid(Nr=12, Nt=24, scheme="uniform", M_max=4),
     )
 
     assert called["value"] is True
@@ -362,7 +393,7 @@ def test_equilibrium_diagnostics_use_grid_corrected_calculus(monkeypatch):
     assert equilibrium.jpara.shape == equilibrium.rho.shape
     assert np.all(np.isfinite(equilibrium.Psi))
     assert np.all(np.isfinite(equilibrium.Phi))
-    equilibrium.resample(target_grid=Grid(Nr=12, Nt=24, scheme="uniform", M_max=4))
+    equilibrium.resample(Grid(Nr=12, Nt=24, scheme="uniform", M_max=4))
     assert calls["integrate"] >= 2
     assert calls["corrected_even_derivative"] >= 1
     assert calls["corrected_linear_derivative"] >= 1
@@ -512,9 +543,8 @@ def test_equilibrium_load_rejects_legacy_shape_payload():
             "grid": {
                 "Grid": {"Nr": grid.Nr, "Nt": grid.Nt, "scheme": grid.scheme, "L_max": grid.L_max, "M_max": grid.M_max}
             },
-            "active_profiles": ["h", "k", "c3", "s4"],
-            "shape_profile_names": list(operator.shape_profile_names),
             "shape_profiles": [],
+            "shape_profile_names": list(operator.shape_profile_names),
             "FFn_r": equilibrium.FFn_r.tolist(),
             "Pn_r": equilibrium.Pn_r.tolist(),
             "psin_r": equilibrium.psin_r.tolist(),

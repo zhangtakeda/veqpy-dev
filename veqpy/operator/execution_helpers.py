@@ -40,7 +40,7 @@ def snapshot_equilibrium_from_runtime(
     alpha2: float,
 ) -> Equilibrium:
     coeff_blocks = decode_packed_blocks(x, profile_L, coeff_index, profile_names=profile_names)
-    active_profiles = snapshot_equilibrium_profiles(
+    shape_profiles = snapshot_equilibrium_profiles(
         coeff_blocks,
         shape_profile_names=shape_profile_names,
         profile_index=profile_index,
@@ -57,7 +57,7 @@ def snapshot_equilibrium_from_runtime(
         B0=case.B0,
         a=case.a,
         grid=grid,
-        active_profiles=active_profiles,
+        shape_profiles=shape_profiles,
         psin=psin.copy(),
         FFn_psin=ffn_psin_snapshot,
         Pn_psin=Pn_psin.copy(),

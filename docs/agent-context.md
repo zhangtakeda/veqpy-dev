@@ -34,7 +34,6 @@
 - `tests/demo.py`
 - `tests/benchmark.py`
 - `tests/test_model_core_regression.py`
-- `tests/test_operator_core_regression.py`
 - `tests/test_engine_core_regression.py`
 - `tests/test_solver_core_regression.py`
 
@@ -290,15 +289,6 @@ source route 通过 bound runner 绑定.
 - legacy payload rejection
 - `compare()` 的主 shape 误差语义
 
-### `tests/test_operator_core_regression.py`
-
-守住:
-
-- `OperatorCase` 归一化
-- layout naming/order
-- active profile metadata
-- effective Fourier order 行为
-
 ### `tests/test_engine_core_regression.py`
 
 守住:
@@ -306,6 +296,7 @@ source route 通过 bound runner 绑定.
 - `numpy` / `numba` geometry 一致性
 - `numpy` / `numba` residual 一致性
 - high-order runtime propagation
+- operator-facing engine contracts
 
 ### `tests/test_solver_core_regression.py`
 
@@ -315,6 +306,7 @@ source route 通过 bound runner 绑定.
 - history
 - reset / clear
 - solver state lifecycle and fallback behavior
+- `Solver` / `Operator` 协作语义
 
 隐含规则:
 
@@ -344,7 +336,6 @@ source route 通过 bound runner 绑定.
 
 至少联动检查:
 
-- `tests/test_operator_core_regression.py`
 - `tests/test_engine_core_regression.py`
 - `tests/test_solver_core_regression.py`
 
@@ -379,7 +370,6 @@ source route 通过 bound runner 绑定.
 至少联动检查:
 
 - `tests/test_engine_core_regression.py`
-- `tests/test_operator_core_regression.py`
 - `tests/benchmark.py`
 
 ### 改 `veqpy/solver/*`
@@ -430,7 +420,7 @@ uv run python -m pytest tests\test_model_core_regression.py -q
 
 ```powershell
 uv run python -m compileall veqpy tests
-uv run python -m pytest tests\test_model_core_regression.py tests\test_operator_core_regression.py tests\test_engine_core_regression.py tests\test_solver_core_regression.py -q
+uv run python -m pytest tests\test_model_core_regression.py tests\test_engine_core_regression.py tests\test_solver_core_regression.py -q
 uv run python tests/demo.py
 uv run python tests/benchmark.py
 ```
@@ -469,9 +459,7 @@ uv run python tests/benchmark.py
   - benchmark 和多模式比较
 - `tests/test_model_core_regression.py`
   - `model` 核心回归
-- `tests/test_operator_core_regression.py`
-  - `operator` 核心回归
 - `tests/test_engine_core_regression.py`
-  - `engine` 核心回归
+  - `engine` 核心回归与 operator-facing engine contract 回归
 - `tests/test_solver_core_regression.py`
-  - `solver` 核心回归
+  - `solver` 核心回归与 solver/operator 生命周期回归

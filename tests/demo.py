@@ -50,6 +50,10 @@ LOWER_COEFFS = {
 HIGHER_COEFFS = {
     "h": [0.0] * 10,
     "k": [0.0] * 10,
+    "v": [0.0] * 10,
+    "c0": [0.0] * 10,
+    "c1": [0.0] * 5,
+    "c2": [0.0] * 5,
     "s1": [0.0] * 10,
     "s2": [0.0] * 5,
     "s3": [0.0] * 5,
@@ -471,6 +475,7 @@ if __name__ == "__main__":
     eq1 = solver_1.build_equilibrium()
     eq1.write("tests/demo/demo-1.json")
     eq1.plot("tests/demo/demo-1.svg")
+    eq1.plot("tests/demo/demo-1.png")
     print(eq1)
 
     print("\n\n=== High Precision Coefficients + High Precision Grid ===")
@@ -478,6 +483,7 @@ if __name__ == "__main__":
     eq2 = solver_2.build_equilibrium()
     eq2.write("tests/demo/demo-2.json")
     eq2.plot("tests/demo/demo-2.svg")
+    eq2.plot("tests/demo/demo-2.png")
     eq2.compare(
         eq1,
         "tests/demo/demo-comparison.svg",

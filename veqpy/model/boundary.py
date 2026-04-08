@@ -181,54 +181,20 @@ def _fit_boundary_for_orders(
     if initial_a <= 0.0:
         raise ValueError("Boundary width must be positive")
     ka0 = max(float(ka) if ka is not None else float(0.5 * span_z / initial_a), 1.0e-6)
-
-    def ordered_boundary_variants():
-        start = int(np.argmin(Z))
-        r_ordered = np.roll(R, -start)
-        z_ordered = np.roll(Z, -start)
-        yield r_ordered, z_ordered
-        yield np.concatenate(([r_ordered[0]], r_ordered[:0:-1])), np.concatenate(([z_ordered[0]], z_ordered[:0:-1]))
-
-    lower_bounds = [r_min - 0.25 * span_r, z_min - 0.25 * span_z, max(1.0e-6, 0.25 * initial_a), 1.0e-6]
-    upper_bounds = [r_max + 0.25 * span_r, z_max + 0.25 * span_z, max(4.0 * initial_a, span_z, 1.0), 10.0]
-    lower_bounds.extend([-10.0] * (M + 1))
-    upper_bounds.extend([10.0] * (M + 1))
-    lower_bounds.extend([-10.0] * N)
-    upper_bounds.extend([10.0] * N)
-    bounds = (np.asarray(lower_bounds, dtype=np.float64), np.asarray(upper_bounds, dtype=np.float64))
-
-    def pack_params(params: dict[str, float | np.ndarray]) -> np.ndarray:
-        vector = [
-            float(params["R0"]),
-            float(params["Z0"]),
-            float(params["a"]),
-            float(params["ka"]),
-        ]
-        vector.extend(np.asarray(params["c_offsets"], dtype=np.float64).tolist())
-        if N > 0:
-            vector.extend(np.asarray(params["s_offsets"], dtype=np.float64)[1:].tolist())
-        return np.asarray(vector, dtype=np.float64)
-
-    def unpack_params(vector: np.ndarray) -> dict[str, float | np.ndarray]:
-        idx = 0
-        params = {
-            "R0": float(vector[idx]),
-            "Z0": float(vector[idx + 1]),
-            "a": float(vector[idx + 2]),
-            "ka": float(vector[idx + 3]),
-        }
-        idx += 4
-        c_offsets = np.asarray(vector[idx : idx + M + 1], dtype=np.float64).copy()
-        idx += M + 1
-        s_offsets = np.zeros(N + 1, dtype=np.float64)
-        if N > 0:
-            s_offsets[1:] = np.asarray(vector[idx : idx + N], dtype=np.float64)
-        params["c_offsets"] = c_offsets
-        params["s_offsets"] = s_offsets
-        return params
+    bounds = _build_fit_bounds(
+        r_min=r_min,
+        r_max=r_max,
+        z_min=z_min,
+        z_max=z_max,
+        initial_a=initial_a,
+        span_r=span_r,
+        span_z=span_z,
+        M=M,
+        N=N,
+    )
 
     best_fit = None
-    for r_points, z_points in ordered_boundary_variants():
+    for r_points, z_points in _ordered_boundary_variants(R, Z):
         start = {
             "R0": initial_R0,
             "Z0": initial_Z0,
@@ -237,53 +203,15 @@ def _fit_boundary_for_orders(
             "c_offsets": np.zeros(M + 1, dtype=np.float64),
             "s_offsets": np.zeros(N + 1, dtype=np.float64),
         }
-
-        def residual(vector: np.ndarray) -> np.ndarray:
-            params = unpack_params(vector)
-            theta = _infer_theta(z_points, float(params["Z0"]), float(params["a"]), float(params["ka"]))
-            fitted_boundary = _build_boundary(
-                R0=float(params["R0"]),
-                Z0=float(params["Z0"]),
-                a=float(params["a"]),
-                ka=float(params["ka"]),
-                c_offsets=np.asarray(params["c_offsets"], dtype=np.float64),
-                s_offsets=np.asarray(params["s_offsets"], dtype=np.float64),
-                theta=theta,
-            )
-            r_res = r_points - fitted_boundary[:, 0]
-            z_res = z_points - fitted_boundary[:, 1]
-            return np.concatenate((r_res, z_res))
-
-        start["a"] = max(float(start["a"]), bounds[0][2])
-        start["ka"] = max(float(start["ka"]), bounds[0][3])
-        fit = least_squares(
-            residual,
-            x0=np.clip(pack_params(start), bounds[0], bounds[1]),
-            bounds=bounds,
-            method="trf",
-        )
-        params = unpack_params(fit.x)
-        theta = _infer_theta(z_points, float(params["Z0"]), float(params["a"]), float(params["ka"]))
-        fitted_boundary = _build_boundary(
-            R0=float(params["R0"]),
-            Z0=float(params["Z0"]),
-            a=float(params["a"]),
-            ka=float(params["ka"]),
-            c_offsets=np.asarray(params["c_offsets"], dtype=np.float64),
-            s_offsets=np.asarray(params["s_offsets"], dtype=np.float64),
-            theta=theta,
-        )
-        rms = float(np.sqrt(np.mean(fit.fun**2)))
+        fit = _fit_boundary_variant(r_points, z_points, start=start, bounds=bounds, M=M, N=N)
+        fitted_boundary = _evaluate_boundary_fit(r_points, z_points, fit["params"])
+        rms = float(fit["rms"])
         max_curve_error = _max_bidirectional_distance(np.column_stack((r_points, z_points)), fitted_boundary)
         if best_fit is None or rms < best_fit["rms"]:
-            best_fit = {"rms": rms, "params": params, "max_curve_error": max_curve_error}
+            best_fit = {"rms": rms, "params": fit["params"], "max_curve_error": max_curve_error}
 
     fitted = best_fit["params"]
-    c_offsets = np.asarray(fitted["c_offsets"], dtype=np.float64).copy()
-    s_offsets = np.asarray(fitted["s_offsets"], dtype=np.float64).copy()
-    c_offsets[0] = float((c_offsets[0] + np.pi) % (2.0 * np.pi) - np.pi)
-    if s_offsets.size > 0:
-        s_offsets[0] = 0.0
+    c_offsets, s_offsets = _normalize_fitted_offsets(fitted["c_offsets"], fitted["s_offsets"])
 
     return {
         "R0": float(fitted["R0"]),
@@ -314,20 +242,149 @@ def _as_1d_array(value: np.ndarray | list[float], *, name: str) -> np.ndarray:
 
 
 def _normalize_offset_array(value, *, name: str) -> np.ndarray:
+    if name not in {"c_offsets", "s_offsets"}:
+        raise KeyError(f"Unknown offset array {name!r}")
     if value is None:
-        return _default_offset_array(name)
-    arr = _as_1d_array(value, name=name).copy()
-    if arr.size == 0:
-        raise ValueError(f"{name} must have at least one entry")
+        arr = np.zeros(1, dtype=np.float64)
+    else:
+        arr = _as_1d_array(value, name=name).copy()
+        if arr.size == 0:
+            raise ValueError(f"{name} must have at least one entry")
     if name == "s_offsets":
         arr[0] = 0.0
     return arr
 
 
-def _default_offset_array(name: str) -> np.ndarray:
-    if name in {"c_offsets", "s_offsets"}:
-        return np.zeros(1, dtype=np.float64)
-    raise KeyError(f"Unknown offset array {name!r}")
+def _ordered_boundary_variants(R: np.ndarray, Z: np.ndarray) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
+    start = int(np.argmin(Z))
+    r_ordered = np.roll(R, -start)
+    z_ordered = np.roll(Z, -start)
+    return (
+        (r_ordered, z_ordered),
+        (np.concatenate(([r_ordered[0]], r_ordered[:0:-1])), np.concatenate(([z_ordered[0]], z_ordered[:0:-1]))),
+    )
+
+
+def _build_fit_bounds(
+    *,
+    r_min: float,
+    r_max: float,
+    z_min: float,
+    z_max: float,
+    initial_a: float,
+    span_r: float,
+    span_z: float,
+    M: int,
+    N: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    lower_bounds = [r_min - 0.25 * span_r, z_min - 0.25 * span_z, max(1.0e-6, 0.25 * initial_a), 1.0e-6]
+    upper_bounds = [r_max + 0.25 * span_r, z_max + 0.25 * span_z, max(4.0 * initial_a, span_z, 1.0), 10.0]
+    lower_bounds.extend([-10.0] * (M + 1))
+    upper_bounds.extend([10.0] * (M + 1))
+    lower_bounds.extend([-10.0] * N)
+    upper_bounds.extend([10.0] * N)
+    return np.asarray(lower_bounds, dtype=np.float64), np.asarray(upper_bounds, dtype=np.float64)
+
+
+def _pack_boundary_fit_params(params: dict[str, float | np.ndarray], *, N: int) -> np.ndarray:
+    vector = [
+        float(params["R0"]),
+        float(params["Z0"]),
+        float(params["a"]),
+        float(params["ka"]),
+    ]
+    vector.extend(np.asarray(params["c_offsets"], dtype=np.float64).tolist())
+    if N > 0:
+        vector.extend(np.asarray(params["s_offsets"], dtype=np.float64)[1:].tolist())
+    return np.asarray(vector, dtype=np.float64)
+
+
+def _unpack_boundary_fit_params(vector: np.ndarray, *, M: int, N: int) -> dict[str, float | np.ndarray]:
+    idx = 0
+    params = {
+        "R0": float(vector[idx]),
+        "Z0": float(vector[idx + 1]),
+        "a": float(vector[idx + 2]),
+        "ka": float(vector[idx + 3]),
+    }
+    idx += 4
+    c_offsets = np.asarray(vector[idx : idx + M + 1], dtype=np.float64).copy()
+    idx += M + 1
+    s_offsets = np.zeros(N + 1, dtype=np.float64)
+    if N > 0:
+        s_offsets[1:] = np.asarray(vector[idx : idx + N], dtype=np.float64)
+    params["c_offsets"] = c_offsets
+    params["s_offsets"] = s_offsets
+    return params
+
+
+def _evaluate_boundary_fit(
+    r_points: np.ndarray,
+    z_points: np.ndarray,
+    params: dict[str, float | np.ndarray],
+) -> np.ndarray:
+    theta = _infer_theta(z_points, float(params["Z0"]), float(params["a"]), float(params["ka"]))
+    return _build_boundary(
+        R0=float(params["R0"]),
+        Z0=float(params["Z0"]),
+        a=float(params["a"]),
+        ka=float(params["ka"]),
+        c_offsets=np.asarray(params["c_offsets"], dtype=np.float64),
+        s_offsets=np.asarray(params["s_offsets"], dtype=np.float64),
+        theta=theta,
+    )
+
+
+def _boundary_fit_residual(
+    vector: np.ndarray,
+    *,
+    r_points: np.ndarray,
+    z_points: np.ndarray,
+    M: int,
+    N: int,
+) -> np.ndarray:
+    params = _unpack_boundary_fit_params(vector, M=M, N=N)
+    fitted_boundary = _evaluate_boundary_fit(r_points, z_points, params)
+    r_res = r_points - fitted_boundary[:, 0]
+    z_res = z_points - fitted_boundary[:, 1]
+    return np.concatenate((r_res, z_res))
+
+
+def _fit_boundary_variant(
+    r_points: np.ndarray,
+    z_points: np.ndarray,
+    *,
+    start: dict[str, float | np.ndarray],
+    bounds: tuple[np.ndarray, np.ndarray],
+    M: int,
+    N: int,
+) -> dict[str, float | dict[str, float | np.ndarray]]:
+    start = dict(start)
+    start["a"] = max(float(start["a"]), float(bounds[0][2]))
+    start["ka"] = max(float(start["ka"]), float(bounds[0][3]))
+    fit = least_squares(
+        _boundary_fit_residual,
+        x0=np.clip(_pack_boundary_fit_params(start, N=N), bounds[0], bounds[1]),
+        bounds=bounds,
+        method="trf",
+        kwargs={"r_points": r_points, "z_points": z_points, "M": M, "N": N},
+    )
+    return {
+        "rms": float(np.sqrt(np.mean(fit.fun**2))),
+        "params": _unpack_boundary_fit_params(fit.x, M=M, N=N),
+    }
+
+
+def _normalize_fitted_offsets(
+    c_offsets: np.ndarray | list[float],
+    s_offsets: np.ndarray | list[float],
+) -> tuple[np.ndarray, np.ndarray]:
+    c_out = np.asarray(c_offsets, dtype=np.float64).copy()
+    s_out = np.asarray(s_offsets, dtype=np.float64).copy()
+    c_out[0] = float((c_out[0] + np.pi) % (2.0 * np.pi) - np.pi)
+    if s_out.size > 0:
+        s_out[0] = 0.0
+    return c_out, s_out
 
 
 def _infer_theta(z_points: np.ndarray, z0: float, a_value: float, ka: float) -> np.ndarray:
