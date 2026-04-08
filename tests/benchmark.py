@@ -24,8 +24,9 @@ REFERENCE_SOURCE_SAMPLE_COUNT = 51
 TEST_SOURCE_SAMPLE_COUNT = 51
 BENCHMARK_REPEAT_COUNT = 100
 SHAPE_MATCH_TOL = 1e-2
-REFERENCE_CACHE_VERSION = 1
+REFERENCE_CACHE_VERSION = 2
 DIAGNOSTIC_SIGN_CHANGE_WINDOW = 12
+MU0 = 4.0e-7 * np.pi
 
 REFERENCE_GRID = Grid(Nr=64, Nt=32, scheme="legendre")
 TEST_GRID = Grid(Nr=16, Nt=16, scheme="legendre", L_max=REFERENCE_GRID.L_max)
@@ -63,6 +64,7 @@ BOUNDARY = Boundary(
 )
 
 REFERENCE_IP = 3.0e6
+REFERENCE_MU0_IP = MU0 * REFERENCE_IP
 SHAPE_PROFILE_NAMES = build_shape_profile_names(REFERENCE_GRID.M_max)
 BENCHMARK_MODES = ("PF", "PP", "PI", "PJ1", "PJ2", "PQ")
 BENCHMARK_INPUT_KINDS = ("uniform", "grid")
@@ -285,7 +287,11 @@ def build_pf_reference_profiles(equilibrium) -> dict[str, np.ndarray | float]:
     jtor = _as_float64_array(equilibrium.jtor, copy=True)
     jpara = _as_float64_array(equilibrium.jpara, copy=True)
     q = _as_float64_array(equilibrium.q, copy=True)
-    mu0 = 4e-7 * np.pi
+    mu0_P_r = MU0 * P_r
+    mu0_P_psi = mu0_P_r / psi_r_safe
+    mu0_Itor = MU0 * Itor
+    mu0_jtor = MU0 * jtor
+    mu0_jpara = MU0 * jpara
 
     return {
         "psin_r": psin_r,
@@ -296,16 +302,22 @@ def build_pf_reference_profiles(equilibrium) -> dict[str, np.ndarray | float]:
         "Pn_psin": Pn_r / psin_r_safe,
         "FF_r": FF_r,
         "P_r": P_r,
+        "mu0_P_r": mu0_P_r,
         "FF_psi": FF_r / psi_r_safe,
         "P_psi": P_r / psi_r_safe,
-        "Itorn": Itor * mu0,
+        "mu0_P_psi": mu0_P_psi,
+        "Itorn": mu0_Itor,
         "Itor": Itor,
-        "jtorn": jtor * mu0,
+        "mu0_Itor": mu0_Itor,
+        "jtorn": mu0_jtor,
         "jtor": jtor,
-        "jparan": jpara.copy(),
+        "mu0_jtor": mu0_jtor,
+        "jparan": mu0_jpara,
         "jpara": jpara,
+        "mu0_jpara": mu0_jpara,
         "qn": q * 0.1,
         "q": q,
+        "mu0_Ip": float(MU0 * equilibrium.Ip),
         "beta_constraint": float(equilibrium.beta_t),
     }
 
@@ -324,7 +336,7 @@ def _reference_pf_case() -> OperatorCase:
         boundary=BOUNDARY,
         heat_input=Pn_r_src,
         current_input=FFn_r_src,
-        Ip=REFERENCE_IP,
+        Ip=REFERENCE_MU0_IP,
     )
 
 
@@ -333,7 +345,7 @@ def _reference_cache_signature() -> dict[str, object]:
         "version": REFERENCE_CACHE_VERSION,
         "backend": BACKEND,
         "reference_source_sample_count": int(REFERENCE_SOURCE_SAMPLE_COUNT),
-        "reference_ip": float(REFERENCE_IP),
+        "reference_mu0_ip": float(REFERENCE_MU0_IP),
         "reference_grid": {
             "Nr": int(REFERENCE_GRID.Nr),
             "Nt": int(REFERENCE_GRID.Nt),
@@ -459,8 +471,8 @@ def _constraint_route_domains(constraint: str) -> tuple[str, str]:
 
 def _pressure_keys_for_coordinate(coordinate: str) -> tuple[str, str]:
     if coordinate == "rho":
-        return "Pn_r", "P_r"
-    return "Pn_psin", "P_psi"
+        return "Pn_r", "mu0_P_r"
+    return "Pn_psin", "mu0_P_psi"
 
 
 def _pick_ref_profile(
@@ -485,47 +497,31 @@ def _build_mode_init_kwargs(
         use_normalized = constraint in {"Ip", "beta"}
         driver_keys = ("FFn_r", "FF_r") if coordinate == "rho" else ("FFn_psin", "FF_psi")
         return {
-            driver_keys[0] if use_normalized else driver_keys[1]: _pick_ref_profile(
-                ref, driver_keys[0], driver_keys[1], use_normalized
-            ),
-            pressure_keys[0] if use_normalized else pressure_keys[1]: _pick_ref_profile(
-                ref, pressure_keys[0], pressure_keys[1], use_normalized
-            ),
+            "current_input": _pick_ref_profile(ref, driver_keys[0], driver_keys[1], use_normalized),
+            "heat_input": _pick_ref_profile(ref, pressure_keys[0], pressure_keys[1], use_normalized),
         }
 
     if mode == "PP":
         driver_normalized = constraint in {"Ip_beta", "Ip"}
         pressure_normalized = constraint in {"Ip_beta", "beta"}
         return {
-            "psin_r" if driver_normalized else "psi_r": _pick_ref_profile(ref, "psin_r", "psi_r", driver_normalized),
-            pressure_keys[0] if pressure_normalized else pressure_keys[1]: _pick_ref_profile(
-                ref, pressure_keys[0], pressure_keys[1], pressure_normalized
-            ),
+            "current_input": _pick_ref_profile(ref, "psin_r", "psi_r", driver_normalized),
+            "heat_input": _pick_ref_profile(ref, pressure_keys[0], pressure_keys[1], pressure_normalized),
         }
 
     driver_domain, pressure_domain = _constraint_route_domains(constraint)
     driver_keys = {
-        "PI": ("Itorn", "Itor"),
-        "PJ1": ("jtorn", "jtor"),
-        "PJ2": ("jparan", "jpara"),
+        "PI": ("Itorn", "mu0_Itor"),
+        "PJ1": ("jtorn", "mu0_jtor"),
+        "PJ2": ("jparan", "mu0_jpara"),
         "PQ": ("qn", "q"),
     }[mode]
     driver_normalized = driver_domain == "normalized"
     pressure_normalized = pressure_domain == "normalized"
     return {
-        driver_keys[0] if driver_normalized else driver_keys[1]: _pick_ref_profile(
-            ref, driver_keys[0], driver_keys[1], driver_normalized
-        ),
-        pressure_keys[0] if pressure_normalized else pressure_keys[1]: _pick_ref_profile(
-            ref, pressure_keys[0], pressure_keys[1], pressure_normalized
-        ),
+        "current_input": _pick_ref_profile(ref, driver_keys[0], driver_keys[1], driver_normalized),
+        "heat_input": _pick_ref_profile(ref, pressure_keys[0], pressure_keys[1], pressure_normalized),
     }
-
-
-def _split_benchmark_inputs(init_kwargs: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
-    heat_key = next(name for name in init_kwargs if name.startswith("P"))
-    current_key = next(name for name in init_kwargs if not name.startswith("P"))
-    return init_kwargs[heat_key], init_kwargs[current_key]
 
 
 def _uniform_source_axis(spec: BenchmarkCaseSpec) -> np.ndarray:
@@ -572,7 +568,8 @@ def _profile_coeffs_for_case(
 
 def _make_benchmark_case(spec: BenchmarkCaseSpec, reference: ReferenceBundle) -> OperatorCase:
     init_kwargs = _build_mode_init_kwargs(spec.mode, spec.coordinate, spec.constraint, reference.ref_profiles)
-    heat_profile, current_profile = _split_benchmark_inputs(init_kwargs)
+    heat_profile = init_kwargs["heat_input"]
+    current_profile = init_kwargs["current_input"]
     if spec.input_kind == "grid":
         if spec.coordinate == "rho":
             grid_axis = _TEST_GRID_RHO_AXIS
@@ -588,7 +585,7 @@ def _make_benchmark_case(spec: BenchmarkCaseSpec, reference: ReferenceBundle) ->
         heat_input = _resample_reference_input(heat_profile, source_axis, spec)
         current_input = _resample_reference_input(current_profile, source_axis, spec)
         nodes = "uniform"
-    Ip = REFERENCE_IP if spec.constraint in {"Ip", "Ip_beta"} else None
+    Ip = float(reference.ref_profiles["mu0_Ip"]) if spec.constraint in {"Ip", "Ip_beta"} else None
     beta = float(reference.ref_profiles["beta_constraint"]) if spec.constraint in {"beta", "Ip_beta"} else None
     return OperatorCase(
         route=spec.mode,
@@ -736,7 +733,7 @@ def _benchmark_case_result(spec: BenchmarkCaseSpec, reference: ReferenceBundle) 
     mu0_p_psi_rel_rms_error, mu0_p_psi_rel_max_error, mu0_p_psi_head_sign_changes, mu0_p_psi_tail_sign_changes = (
         _diagnostic_profile_metrics(
             reference.rho_interp_axis,
-            (4.0e-7 * np.pi) * reference.ref_profiles["P_psi"],
+            reference.ref_profiles["mu0_P_psi"],
             equilibrium.rho,
             equilibrium.alpha1 * equilibrium.Pn_psin,
         )

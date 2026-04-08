@@ -43,7 +43,7 @@ class Grid(Serial):
     Nr: int
     Nt: int
     scheme: Literal["legendre", "chebyshev", "lobatto", "radau", "uniform"]
-    M_max: int = 10
+    M_max: int = 20
     L_max: int = 20
 
     rho: np.ndarray = field(init=False)

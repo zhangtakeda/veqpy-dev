@@ -14,6 +14,7 @@ Notes:
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
@@ -53,6 +54,7 @@ class OperatorCase:
                 f"heat_input and current_input must share the same shape, "
                 f"got {self.heat_input.shape} and {self.current_input.shape}"
             )
+        _autoscale_legacy_mu0_inputs(self)
 
     def __setattr__(self, name: str, value) -> None:
         if name in _CASE_FIELD_NAMES:
@@ -73,7 +75,7 @@ class OperatorCase:
             f"min={float(np.min(self.current_input)):.3f}, max={float(np.max(self.current_input)):.3f}"
         )
         if np.isfinite(self.Ip):
-            tree.add(f"Ip: {self.Ip:.3e} [A]")
+            tree.add(f"Ip(mu0-scaled): {self.Ip:.3e}")
         if np.isfinite(self.beta):
             tree.add(f"beta: {self.beta:.3e}")
         tree.add(self.boundary)
@@ -200,8 +202,39 @@ def _normalize_case_value(name: str, value):
     return value
 
 
+def _autoscale_legacy_mu0_inputs(case: OperatorCase) -> None:
+    warnings_needed: list[str] = []
+
+    max_abs = float(np.max(np.abs(case.heat_input))) if case.heat_input.size else 0.0
+    if max_abs > _LEGACY_UNSCALED_ABS_LIMIT:
+        case.heat_input *= _MU0
+        warnings_needed.append("heat_input")
+
+    if case.route in {"PI", "PJ1", "PJ2"}:
+        max_abs = float(np.max(np.abs(case.current_input))) if case.current_input.size else 0.0
+        if max_abs > _LEGACY_UNSCALED_ABS_LIMIT:
+            case.current_input *= _MU0
+            warnings_needed.append("current_input")
+
+    if np.isfinite(case.Ip):
+        ip_value = float(case.Ip)
+        if abs(ip_value) > _LEGACY_UNSCALED_ABS_LIMIT:
+            object.__setattr__(case, "Ip", ip_value * _MU0)
+            warnings_needed.append("Ip")
+
+    if warnings_needed:
+        fields = ", ".join(warnings_needed)
+        warnings.warn(
+            f"Auto-scaled legacy inputs for {fields}; canonical OperatorCase inputs are mu0-scaled.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+
+
 _OPTIONAL_FLOAT_FIELD_NAMES = {"Ip", "beta"}
 _ARRAY_FIELD_NAMES = {"heat_input", "current_input"}
+_MU0 = 4.0e-7 * np.pi
+_LEGACY_UNSCALED_ABS_LIMIT = 1.0e4
 _COORDINATE_FIELD_VALUES = ("rho", "psin")
 _NODE_FIELD_VALUES = ("uniform", "grid")
 _ORDERED_OPTIONAL_FLOAT_FIELD_NAMES = ("Ip", "beta")

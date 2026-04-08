@@ -21,15 +21,10 @@ from rich.tree import Tree
 
 ROOT_METHODS = (
     "hybr",
-    "krylov",
-    "root-lm",
-    "broyden1",
-    "broyden2",
 )
 
 LEAST_SQUARES_METHODS = (
     "trf",
-    "dogbox",
     "lm",
 )
 
@@ -69,8 +64,8 @@ class SolverConfig:
             raise ValueError(
                 f"Unsupported solver method {method!r}. "
                 f"Supported methods are: {supported}. "
-                f"Use a root method such as 'hybr', 'krylov', or 'root-lm', "
-                f"or use 'lm'/'trf'/'dogbox' to call scipy.optimize.least_squares directly."
+                f"Use root method 'hybr', "
+                f"or use 'lm'/'trf' to call scipy.optimize.least_squares directly."
             )
         unsupported_fallbacks = [
             method_name for method_name in deduped_fallback_methods if method_name not in SUPPORTED_METHODS

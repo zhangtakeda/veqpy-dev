@@ -1,20 +1,26 @@
 import warnings
+from types import SimpleNamespace
 
 import numpy as np
 
+import veqpy.solver.solver as solver_module
 from veqpy.solver import Solver, SolverConfig
 
 
 class _DummyCase:
+    def __init__(self, *, Ip=np.nan):
+        self.Ip = Ip
+
     def copy(self):
-        return _DummyCase()
+        return _DummyCase(Ip=self.Ip)
 
 
 class _DummyOperator:
-    def __init__(self, *, x_size: int = 3):
+    def __init__(self, *, x_size: int = 3, case: _DummyCase | None = None):
         self.x_size = x_size
-        self.case = _DummyCase()
+        self.case = _DummyCase() if case is None else case
         self.source_state_invalidations = 0
+        self.active_lengths = np.full(x_size, 1, dtype=np.int64)
 
     def encode_initial_state(self) -> np.ndarray:
         return np.zeros(self.x_size, dtype=np.float64)
@@ -85,7 +91,7 @@ def test_solver_explicit_guess_retries_same_method_after_reset(monkeypatch):
         x_final = solver.solve(
             x0=warm_guess,
             enable_history=False,
-            fallback_methods=("root-lm", "trf"),
+            fallback_methods=("lm", "trf"),
         )
 
     assert [method for method, _ in calls] == ["hybr", "hybr"]
@@ -107,7 +113,7 @@ def test_solver_warmstart_failure_falls_back_from_cold_reset_state(monkeypatch):
         [
             _attempt_result(warm_guess, success=False, message="warm attempt failed", residual_norm=5.0),
             _attempt_result(cold_guess, success=False, message="reset attempt failed", residual_norm=4.0),
-            _attempt_result(cold_guess, success=False, message="root-lm failed", residual_norm=3.0),
+            _attempt_result(cold_guess, success=False, message="lm failed", residual_norm=3.0),
             _attempt_result(
                 np.array([3.0, 2.0, 1.0], dtype=np.float64),
                 success=True,
@@ -121,10 +127,10 @@ def test_solver_warmstart_failure_falls_back_from_cold_reset_state(monkeypatch):
         warnings.simplefilter("ignore", RuntimeWarning)
         x_final = solver.solve(
             enable_history=False,
-            fallback_methods=("root-lm", "trf"),
+            fallback_methods=("lm", "trf"),
         )
 
-    assert [method for method, _ in calls] == ["hybr", "hybr", "root-lm", "trf"]
+    assert [method for method, _ in calls] == ["hybr", "hybr", "lm", "trf"]
     assert np.allclose(calls[0][1], warm_guess)
     for _, guess in calls[1:]:
         assert np.allclose(guess, cold_guess)
@@ -141,14 +147,286 @@ def test_solver_cold_start_skips_reset_retry(monkeypatch):
         solver,
         [
             _attempt_result(cold_guess, success=False, message="cold attempt failed", residual_norm=2.0),
-            _attempt_result(cold_guess, success=True, message="root-lm converged", residual_norm=0.0),
+            _attempt_result(cold_guess, success=True, message="lm converged", residual_norm=0.0),
         ],
     )
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
-        solver.solve(enable_history=False, fallback_methods=("root-lm",))
+        solver.solve(enable_history=False, fallback_methods=("lm",))
 
-    assert [method for method, _ in calls] == ["hybr", "root-lm"]
+    assert [method for method, _ in calls] == ["hybr", "lm"]
     for _, guess in calls:
         assert np.allclose(guess, cold_guess)
+
+
+class _ScaledResidualOperator(_DummyOperator):
+    def __init__(self):
+        super().__init__(x_size=5)
+        self.active_lengths = np.array([2, 3], dtype=np.int64)
+        self.call_count = 0
+
+    def __call__(self, x: np.ndarray) -> np.ndarray:
+        del x
+        self.call_count += 1
+        return np.array([10.0, 30.0, 4.0, 5.0, 6.0], dtype=np.float64)
+
+
+def test_hybr_uses_block_scaled_residual_with_unit_factor(monkeypatch):
+    solver = Solver(
+        operator=_ScaledResidualOperator(),
+        config=SolverConfig(
+            method="hybr",
+            enable_fallback=False,
+            enable_warmstart=False,
+            enable_history=False,
+        ),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_root(fun, x0, *, method, tol, options):
+        captured["fun0"] = np.asarray(fun(np.asarray(x0, dtype=np.float64)), dtype=np.float64)
+        captured["method"] = method
+        captured["tol"] = tol
+        captured["options"] = dict(options)
+        return SimpleNamespace(
+            x=np.asarray(x0, dtype=np.float64).copy(),
+            success=False,
+            message="mock failure",
+            nfev=1,
+            njev=0,
+            nit=1,
+            fun=np.asarray(captured["fun0"], dtype=np.float64),
+        )
+
+    monkeypatch.setattr(solver_module, "root", fake_root)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        solver.solve(enable_fallback=False, enable_history=False, enable_warmstart=False)
+
+    expected = np.array(
+        [
+            10.0 / np.sqrt((10.0**2 + 30.0**2) / 2.0),
+            30.0 / np.sqrt((10.0**2 + 30.0**2) / 2.0),
+            4.0 / np.sqrt((4.0**2 + 5.0**2 + 6.0**2) / 3.0),
+            5.0 / np.sqrt((4.0**2 + 5.0**2 + 6.0**2) / 3.0),
+            6.0 / np.sqrt((4.0**2 + 5.0**2 + 6.0**2) / 3.0),
+        ],
+        dtype=np.float64,
+    )
+    assert captured["method"] == "hybr"
+    assert captured["tol"] == solver.config.atol
+    assert np.allclose(captured["fun0"], expected)
+    assert captured["options"]["factor"] == 1.0
+    assert solver.operator.call_count == 1
+
+
+def test_hybr_scaled_root_reports_raw_residual_norm(monkeypatch):
+    solver = Solver(
+        operator=_ScaledResidualOperator(),
+        config=SolverConfig(
+            method="hybr",
+            enable_fallback=False,
+            enable_warmstart=False,
+            enable_history=False,
+        ),
+    )
+
+    def fake_root(fun, x0, *, method, tol, options):
+        scaled_fun = np.asarray(fun(np.asarray(x0, dtype=np.float64)), dtype=np.float64)
+        return SimpleNamespace(
+            x=np.asarray(x0, dtype=np.float64).copy(),
+            success=True,
+            message="mock success",
+            nfev=1,
+            njev=0,
+            nit=1,
+            fun=scaled_fun,
+        )
+
+    monkeypatch.setattr(solver_module, "root", fake_root)
+
+    x_opt, success, _, _, _, _, residual_norm = solver._solve_opt_problem(
+        np.zeros(5, dtype=np.float64),
+        solve_config=solver.config,
+    )
+
+    expected_raw_norm = float(np.linalg.norm(np.array([10.0, 30.0, 4.0, 5.0, 6.0], dtype=np.float64)))
+    assert success is True
+    assert np.allclose(x_opt, 0.0)
+    assert residual_norm == expected_raw_norm
+
+
+def test_lm_uses_asinh_block_scaled_residual(monkeypatch):
+    solver = Solver(
+        operator=_ScaledResidualOperator(),
+        config=SolverConfig(
+            method="lm",
+            enable_fallback=False,
+            enable_warmstart=False,
+            enable_history=False,
+        ),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_least_squares(fun, x0, **kwargs):
+        captured["fun0"] = np.asarray(fun(np.asarray(x0, dtype=np.float64)), dtype=np.float64)
+        captured["kwargs"] = dict(kwargs)
+        return SimpleNamespace(
+            x=np.asarray(x0, dtype=np.float64).copy(),
+            success=False,
+            message="mock failure",
+            nfev=1,
+            njev=0,
+            nit=1,
+            fun=np.asarray(captured["fun0"], dtype=np.float64),
+        )
+
+    monkeypatch.setattr(solver_module, "least_squares", fake_least_squares)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        solver.solve(enable_fallback=False, enable_history=False, enable_warmstart=False)
+
+    expected_linear = np.array(
+        [
+            10.0 / np.sqrt((10.0**2 + 30.0**2) / 2.0),
+            30.0 / np.sqrt((10.0**2 + 30.0**2) / 2.0),
+            4.0 / np.sqrt((4.0**2 + 5.0**2 + 6.0**2) / 3.0),
+            5.0 / np.sqrt((4.0**2 + 5.0**2 + 6.0**2) / 3.0),
+            6.0 / np.sqrt((4.0**2 + 5.0**2 + 6.0**2) / 3.0),
+        ],
+        dtype=np.float64,
+    )
+    assert np.allclose(captured["fun0"], np.arcsinh(expected_linear))
+    assert captured["kwargs"]["method"] == "lm"
+    assert captured["kwargs"]["x_scale"] == 1.0
+
+
+def test_lm_requires_raw_residual_acceptance(monkeypatch):
+    solver = Solver(
+        operator=_ScaledResidualOperator(),
+        config=SolverConfig(
+            method="lm",
+            enable_fallback=False,
+            enable_warmstart=False,
+            enable_history=False,
+        ),
+    )
+
+    def fake_least_squares(fun, x0, **kwargs):
+        transformed = np.asarray(fun(np.asarray(x0, dtype=np.float64)), dtype=np.float64)
+        return SimpleNamespace(
+            x=np.asarray(x0, dtype=np.float64).copy(),
+            success=True,
+            message="mock success",
+            nfev=1,
+            njev=0,
+            nit=1,
+            fun=transformed,
+        )
+
+    monkeypatch.setattr(solver_module, "least_squares", fake_least_squares)
+
+    x_opt, success, message, _, _, _, residual_norm = solver._solve_opt_problem(
+        np.zeros(5, dtype=np.float64),
+        solve_config=solver.config,
+    )
+
+    expected_raw_norm = float(np.linalg.norm(np.array([10.0, 30.0, 4.0, 5.0, 6.0], dtype=np.float64)))
+    assert np.allclose(x_opt, 0.0)
+    assert success is False
+    assert residual_norm == expected_raw_norm
+    assert "rejected by residual" in message
+
+
+def test_trf_robust_loss_depends_on_residual_scale_not_ip(monkeypatch):
+    operator = _ScaledResidualOperator()
+    operator.case = _DummyCase(Ip=1.0)
+    solver = Solver(
+        operator=operator,
+        config=SolverConfig(
+            method="trf",
+            enable_fallback=False,
+            enable_warmstart=False,
+            enable_history=False,
+        ),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_least_squares(fun, x0, **kwargs):
+        captured["fun0"] = np.asarray(fun(np.asarray(x0, dtype=np.float64)), dtype=np.float64)
+        captured["kwargs"] = dict(kwargs)
+        return SimpleNamespace(
+            x=np.asarray(x0, dtype=np.float64).copy(),
+            success=False,
+            message="mock failure",
+            nfev=1,
+            njev=0,
+            nit=1,
+            fun=np.asarray(captured["fun0"], dtype=np.float64),
+        )
+
+    monkeypatch.setattr(solver_module, "least_squares", fake_least_squares)
+    monkeypatch.setattr(solver_module, "_trf_robust_block_rms_threshold", lambda: 10.0)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        solver.solve(enable_fallback=False, enable_history=False, enable_warmstart=False)
+
+    assert captured["kwargs"]["loss"] == "cauchy"
+    assert np.isclose(
+        captured["kwargs"]["f_scale"],
+        np.linalg.norm(np.array([10.0, 30.0, 4.0, 5.0, 6.0], dtype=np.float64)) / np.sqrt(5.0),
+    )
+
+
+def test_solver_config_rejects_root_lm():
+    try:
+        SolverConfig(method="root-lm")
+    except ValueError as exc:
+        assert "Unsupported solver method" in str(exc)
+        assert "root-lm" in str(exc)
+    else:
+        raise AssertionError("root-lm should no longer be supported")
+
+
+def test_solver_config_rejects_krylov():
+    try:
+        SolverConfig(method="krylov")
+    except ValueError as exc:
+        assert "Unsupported solver method" in str(exc)
+        assert "krylov" in str(exc)
+    else:
+        raise AssertionError("krylov should no longer be supported")
+
+
+def test_solver_config_rejects_broyden1():
+    try:
+        SolverConfig(method="broyden1")
+    except ValueError as exc:
+        assert "Unsupported solver method" in str(exc)
+        assert "broyden1" in str(exc)
+    else:
+        raise AssertionError("broyden1 should no longer be supported")
+
+
+def test_solver_config_rejects_broyden2():
+    try:
+        SolverConfig(method="broyden2")
+    except ValueError as exc:
+        assert "Unsupported solver method" in str(exc)
+        assert "broyden2" in str(exc)
+    else:
+        raise AssertionError("broyden2 should no longer be supported")
+
+
+def test_solver_config_rejects_dogbox():
+    try:
+        SolverConfig(method="dogbox")
+    except ValueError as exc:
+        assert "Unsupported solver method" in str(exc)
+        assert "dogbox" in str(exc)
+    else:
+        raise AssertionError("dogbox should no longer be supported")

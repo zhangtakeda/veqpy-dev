@@ -15,7 +15,7 @@ from scipy.optimize import least_squares
 
 from veqpy.model.geqdsk import Geqdsk
 
-MAX_FOURIER_ORDER = 10
+MAX_FOURIER_ORDER = 20
 
 
 @dataclass(slots=True, frozen=True)
@@ -51,7 +51,13 @@ class Boundary:
         return tree
 
     def __str__(self) -> str:
-        console = Console(color_system=None, force_terminal=False, width=120, record=True, soft_wrap=False)
+        console = Console(
+            color_system=None,
+            force_terminal=False,
+            width=120,
+            record=True,
+            soft_wrap=False,
+        )
         with console.capture() as capture:
             console.print(self.__rich__())
         return capture.get().rstrip()
@@ -208,7 +214,11 @@ def _fit_boundary_for_orders(
         rms = float(fit["rms"])
         max_curve_error = _max_bidirectional_distance(np.column_stack((r_points, z_points)), fitted_boundary)
         if best_fit is None or rms < best_fit["rms"]:
-            best_fit = {"rms": rms, "params": fit["params"], "max_curve_error": max_curve_error}
+            best_fit = {
+                "rms": rms,
+                "params": fit["params"],
+                "max_curve_error": max_curve_error,
+            }
 
     fitted = best_fit["params"]
     c_offsets, s_offsets = _normalize_fitted_offsets(fitted["c_offsets"], fitted["s_offsets"])
@@ -261,7 +271,10 @@ def _ordered_boundary_variants(R: np.ndarray, Z: np.ndarray) -> tuple[tuple[np.n
     z_ordered = np.roll(Z, -start)
     return (
         (r_ordered, z_ordered),
-        (np.concatenate(([r_ordered[0]], r_ordered[:0:-1])), np.concatenate(([z_ordered[0]], z_ordered[:0:-1]))),
+        (
+            np.concatenate(([r_ordered[0]], r_ordered[:0:-1])),
+            np.concatenate(([z_ordered[0]], z_ordered[:0:-1])),
+        ),
     )
 
 
@@ -277,8 +290,18 @@ def _build_fit_bounds(
     M: int,
     N: int,
 ) -> tuple[np.ndarray, np.ndarray]:
-    lower_bounds = [r_min - 0.25 * span_r, z_min - 0.25 * span_z, max(1.0e-6, 0.25 * initial_a), 1.0e-6]
-    upper_bounds = [r_max + 0.25 * span_r, z_max + 0.25 * span_z, max(4.0 * initial_a, span_z, 1.0), 10.0]
+    lower_bounds = [
+        r_min - 0.25 * span_r,
+        z_min - 0.25 * span_z,
+        max(1.0e-6, 0.25 * initial_a),
+        1.0e-6,
+    ]
+    upper_bounds = [
+        r_max + 0.25 * span_r,
+        z_max + 0.25 * span_z,
+        max(4.0 * initial_a, span_z, 1.0),
+        10.0,
+    ]
     lower_bounds.extend([-10.0] * (M + 1))
     upper_bounds.extend([10.0] * (M + 1))
     lower_bounds.extend([-10.0] * N)

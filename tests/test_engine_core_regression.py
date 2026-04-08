@@ -873,7 +873,7 @@ def test_pq_psin_uniform_benchmark_successful_fallback_is_silent():
         benchmark.BENCHMARK_REPEAT_COUNT = original_repeat
 
 
-def test_pq_psin_uniform_ip_beta_benchmark_prefers_dogbox_fallback():
+def test_pq_psin_uniform_ip_beta_benchmark_uses_supported_fallback():
     benchmark_path = Path(__file__).with_name("benchmark.py")
     spec = importlib.util.spec_from_file_location("veqpy_tests_benchmark", benchmark_path)
     if spec is None or spec.loader is None:
@@ -889,7 +889,10 @@ def test_pq_psin_uniform_ip_beta_benchmark_prefers_dogbox_fallback():
         row = benchmark._benchmark_case_result(benchmark.BenchmarkCaseSpec("PQ", "psin", "Ip_beta", "uniform"), reference)
         assert row.result.success, row.result.message
         if "selected method=" in row.result.message:
-            assert "selected method=least_squares/dogbox [cold-fallback]" in row.result.message, row.result.message
+            assert (
+                "selected method=least_squares/lm [cold-fallback]" in row.result.message
+                or "selected method=least_squares/trf [cold-fallback]" in row.result.message
+            ), row.result.message
         assert int(row.result.nfev) < 300, row.result.nfev
         assert row.shape_error <= benchmark.SHAPE_MATCH_TOL, row.shape_error
     finally:

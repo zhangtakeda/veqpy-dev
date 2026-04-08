@@ -38,6 +38,36 @@ class _SolveAttemptPlan:
     solve_config: SolverConfig
 
 
+@dataclass(slots=True)
+class _ResidualTransformWrapper:
+    operator: object
+    block_lengths: np.ndarray
+    transform: str = "linear"
+    scale: np.ndarray | None = None
+    last_x: np.ndarray | None = None
+    last_raw_residual: np.ndarray | None = None
+
+    def __call__(self, x: np.ndarray) -> np.ndarray:
+        x_eval = self.operator.coerce_x(x)
+        raw_residual = np.asarray(self.operator(x_eval), dtype=np.float64)
+        self.last_x = x_eval.copy()
+        self.last_raw_residual = raw_residual.copy()
+        if self.scale is None:
+            self.scale = _build_block_rms_scale(raw_residual, self.block_lengths)
+            if self.scale is None:
+                self.scale = np.ones_like(raw_residual)
+        scaled_residual = raw_residual / self.scale
+        if self.transform == "asinh":
+            return np.arcsinh(scaled_residual)
+        return scaled_residual
+
+    def get_raw_residual(self, x: np.ndarray) -> np.ndarray:
+        x_eval = self.operator.coerce_x(x)
+        if self.last_x is not None and self.last_raw_residual is not None and np.array_equal(self.last_x, x_eval):
+            return self.last_raw_residual.copy()
+        return np.asarray(self.operator(x_eval), dtype=np.float64)
+
+
 class Solver:
     """固定 packed layout 的求解 facade."""
 
@@ -309,36 +339,7 @@ class Solver:
     def _ordered_fallback_methods(self, solve_config: SolverConfig) -> tuple[str, ...]:
         if not solve_config.enable_fallback:
             return ()
-
-        fallback_methods = tuple(solve_config.fallback_methods)
-        if not self._prefers_dogbox_fallback(solve_config):
-            return fallback_methods
-
-        ordered: list[str] = []
-        if solve_config.method != "dogbox":
-            ordered.append("dogbox")
-        ordered.extend(fallback_methods)
-        return tuple(ordered)
-
-    def _prefers_dogbox_fallback(self, solve_config: SolverConfig) -> bool:
-        if solve_config.method != "hybr":
-            return False
-
-        case = getattr(self.operator, "case", None)
-        if case is None:
-            return False
-        if (
-            getattr(case, "route", None) != "PQ"
-            or getattr(case, "coordinate", None) != "psin"
-            or getattr(case, "nodes", None) != "uniform"
-        ):
-            return False
-        Ip = getattr(case, "Ip", np.nan)
-        beta = getattr(case, "beta", np.nan)
-        if not (np.isfinite(Ip) and np.isfinite(beta)):
-            return False
-        source_plan = getattr(self.operator, "source_plan", None)
-        return bool(source_plan is not None and getattr(source_plan, "strategy", None) == "fixed_point_psin")
+        return tuple(solve_config.fallback_methods)
 
     def _try_solve_attempt(
         self,
@@ -504,13 +505,21 @@ class Solver:
         residual_norm = _opt_residual_norm(opt)
         if residual_norm is None or not np.isfinite(residual_norm):
             residual_norm, _ = self._safe_residual_norm(x_opt)
+        accepted_by_residual = _residual_within_acceptance(residual_norm, solve_config)
         accepted = bool(
-            (bool(opt.success) and residual_norm is not None and np.isfinite(residual_norm))
-            or _residual_within_acceptance(residual_norm, solve_config)
+            accepted_by_residual
+            or (
+                bool(opt.success)
+                and residual_norm is not None
+                and np.isfinite(residual_norm)
+                and not _requires_strict_residual_acceptance(solve_config)
+            )
         )
         message = str(opt.message)
         if not bool(opt.success) and accepted:
             message = f"{message} [accepted by residual]"
+        if bool(opt.success) and not accepted and _requires_strict_residual_acceptance(solve_config):
+            message = f"{message} [rejected by residual={residual_norm:.6e}]"
         return (
             x_opt,
             accepted,
@@ -531,6 +540,27 @@ class Solver:
             return self._run_least_squares_full(x_guess, solve_config=solve_config)
         return self._run_root_full(x_guess, solve_config=solve_config)
 
+    def _run_root_once(
+        self,
+        root_fun,
+        x_guess: np.ndarray,
+        *,
+        solve_config: SolverConfig,
+        options: dict[str, object],
+        wrapper: _ResidualTransformWrapper | None = None,
+    ):
+        opt = root(
+            root_fun,
+            x_guess,
+            method=_root_method_name_for(solve_config),
+            tol=solve_config.atol,
+            options=options,
+        )
+        if wrapper is not None:
+            x_opt = self.operator.coerce_x(opt.x)
+            opt.fun = wrapper.get_raw_residual(x_opt)
+        return opt
+
     def _run_root_full(
         self,
         x_guess: np.ndarray,
@@ -539,13 +569,55 @@ class Solver:
     ):
         """在完整 packed x 上调用一次 `scipy.optimize.root`."""
 
-        return root(
-            self.operator,
+        root_fun = self.operator
+        scaled_wrapper: _ResidualTransformWrapper | None = None
+        options = _root_options_for(solve_config)
+        scaled_fun = self._build_residual_transform_wrapper(
             x_guess,
-            method=_root_method_name_for(solve_config),
-            tol=solve_config.atol,
-            options=_root_options_for(solve_config),
+            transform="linear",
         )
+        if scaled_fun is not None:
+            scaled_wrapper = scaled_fun
+            root_fun = scaled_wrapper
+            if solve_config.method == "hybr":
+                options = {**options, "factor": 1.0}
+
+        return self._run_root_once(
+            root_fun,
+            x_guess,
+            solve_config=solve_config,
+            options=options,
+            wrapper=scaled_wrapper,
+        )
+
+    def _build_residual_transform_wrapper(
+        self,
+        x_guess: np.ndarray,
+        *,
+        transform: str,
+    ) -> _ResidualTransformWrapper | None:
+        """为 solver 层构造带 block scaling 的残差变换 wrapper."""
+
+        block_lengths = getattr(self.operator, "active_lengths", None)
+        if block_lengths is None:
+            return None
+
+        try:
+            self.operator.coerce_x(x_guess)
+        except Exception:
+            return None
+        return _ResidualTransformWrapper(
+            operator=self.operator,
+            block_lengths=np.asarray(block_lengths, dtype=np.int64),
+            transform=transform,
+        )
+
+    def _initial_residual_stats(self, x_guess: np.ndarray) -> tuple[np.ndarray | None, float | None]:
+        try:
+            residual = np.asarray(self.operator(self.operator.coerce_x(x_guess)), dtype=np.float64)
+        except Exception:
+            return None, None
+        return residual, float(np.linalg.norm(residual))
 
     def _run_least_squares_full(
         self,
@@ -555,11 +627,32 @@ class Solver:
     ):
         """在完整 packed x 上调用一次 `scipy.optimize.least_squares`."""
 
-        return least_squares(
-            self.operator,
+        least_squares_fun = self.operator
+        wrapper: _ResidualTransformWrapper | None = None
+        kwargs = _least_squares_kwargs_for(solve_config)
+        if solve_config.method == "lm":
+            wrapper = self._build_residual_transform_wrapper(x_guess, transform="asinh")
+            if wrapper is not None:
+                least_squares_fun = wrapper
+                kwargs["x_scale"] = 1.0
+        elif solve_config.method == "trf":
+            residual0, _ = self._initial_residual_stats(x_guess)
+            if _should_use_robust_trf_loss(
+                residual0,
+                getattr(self.operator, "active_lengths", None),
+            ):
+                kwargs["loss"] = "cauchy"
+                kwargs["f_scale"] = max(_residual_rms(residual0), 1.0)
+
+        opt = least_squares(
+            least_squares_fun,
             x_guess,
-            **_least_squares_kwargs_for(solve_config),
+            **kwargs,
         )
+        if wrapper is not None:
+            x_opt = self.operator.coerce_x(opt.x)
+            opt.fun = wrapper.get_raw_residual(x_opt)
+        return opt
 
 
 def _root_options_for(solve_config: SolverConfig) -> dict[str, object]:
@@ -625,6 +718,74 @@ def _residual_within_acceptance(residual_norm: float | None, solve_config: Solve
 
 
 def _root_method_name_for(solve_config: SolverConfig) -> str:
-    if solve_config.method == "root-lm":
-        return "lm"
     return solve_config.method
+
+
+def _requires_strict_residual_acceptance(solve_config: SolverConfig) -> bool:
+    return solve_config.method in {"lm", "trf"}
+
+
+def _hard_residual_norm_threshold() -> float:
+    return 1.0e3
+
+
+def _trf_robust_block_rms_threshold() -> float:
+    return 2.0e40
+
+
+def _residual_rms(residual: np.ndarray) -> float:
+    residual_eval = np.asarray(residual, dtype=np.float64)
+    if residual_eval.ndim != 1 or residual_eval.size == 0:
+        return 1.0
+    return float(np.linalg.norm(residual_eval) / np.sqrt(residual_eval.size))
+
+
+def _block_rms_values(residual: np.ndarray, block_lengths: np.ndarray) -> np.ndarray | None:
+    residual_eval = np.asarray(residual, dtype=np.float64)
+    lengths_eval = np.asarray(block_lengths, dtype=np.int64)
+    if residual_eval.ndim != 1 or lengths_eval.ndim != 1 or residual_eval.size == 0 or lengths_eval.size == 0:
+        return None
+    if int(np.sum(lengths_eval)) != int(residual_eval.size):
+        return None
+
+    values = np.empty_like(lengths_eval, dtype=np.float64)
+    offset = 0
+    for idx, length in enumerate(lengths_eval):
+        block_size = int(length)
+        if block_size <= 0:
+            return None
+        block = residual_eval[offset : offset + block_size]
+        block_rms = float(np.linalg.norm(block) / np.sqrt(block_size))
+        if not np.isfinite(block_rms):
+            return None
+        values[idx] = block_rms
+        offset += block_size
+    return values
+
+
+def _should_use_robust_trf_loss(
+    residual: np.ndarray | None,
+    block_lengths: np.ndarray | None,
+) -> bool:
+    if residual is None or block_lengths is None:
+        return False
+    block_rms = _block_rms_values(residual, np.asarray(block_lengths, dtype=np.int64))
+    if block_rms is None or block_rms.size == 0:
+        return False
+    return bool(np.median(block_rms) >= _trf_robust_block_rms_threshold())
+
+
+def _build_block_rms_scale(residual: np.ndarray, block_lengths: np.ndarray) -> np.ndarray | None:
+    residual_eval = np.asarray(residual, dtype=np.float64)
+    lengths_eval = np.asarray(block_lengths, dtype=np.int64)
+    block_rms = _block_rms_values(residual_eval, lengths_eval)
+    if block_rms is None:
+        return None
+
+    scale = np.empty_like(residual_eval)
+    offset = 0
+    for value, length in zip(block_rms, lengths_eval, strict=False):
+        block_scale = max(float(value), 1.0)
+        scale[offset : offset + int(length)] = block_scale
+        offset += int(length)
+    return scale

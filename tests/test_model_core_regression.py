@@ -135,6 +135,79 @@ def _make_geqdsk_with_boundary() -> Geqdsk:
     return geqdsk
 
 
+def test_operator_case_autoscales_legacy_unscaled_heat_input():
+    _, case = _build_operator_case(mode="PP", coordinate="rho", nodes="uniform")
+    source = np.full(TEST_SOURCE_SAMPLE_COUNT, 1.0e5)
+
+    with pytest.warns(RuntimeWarning, match="canonical OperatorCase inputs are mu0-scaled"):
+        probe = OperatorCase(
+            route=case.route,
+            coordinate=case.coordinate,
+            nodes=case.nodes,
+            profile_coeffs=case.profile_coeffs,
+            boundary=case.boundary,
+            heat_input=source,
+            current_input=case.current_input,
+        )
+
+    assert np.allclose(probe.heat_input, source * (4.0e-7 * np.pi))
+
+
+def test_operator_case_autoscales_legacy_unscaled_current_input():
+    _, case = _build_operator_case(mode="PI", coordinate="rho", nodes="uniform")
+    source = np.full(TEST_SOURCE_SAMPLE_COUNT, 1.0e5)
+
+    with pytest.warns(RuntimeWarning, match="canonical OperatorCase inputs are mu0-scaled"):
+        probe = OperatorCase(
+            route=case.route,
+            coordinate=case.coordinate,
+            nodes=case.nodes,
+            profile_coeffs=case.profile_coeffs,
+            boundary=case.boundary,
+            heat_input=case.heat_input,
+            current_input=source,
+        )
+
+    assert np.allclose(probe.current_input, source * (4.0e-7 * np.pi))
+
+
+def test_operator_case_autoscales_legacy_unscaled_ip_constraint():
+    _, case = _build_operator_case(mode="PI", coordinate="rho", nodes="uniform")
+
+    with pytest.warns(RuntimeWarning, match="canonical OperatorCase inputs are mu0-scaled"):
+        probe = OperatorCase(
+            route=case.route,
+            coordinate=case.coordinate,
+            nodes=case.nodes,
+            profile_coeffs=case.profile_coeffs,
+            boundary=case.boundary,
+            heat_input=case.heat_input,
+            current_input=np.ones(TEST_SOURCE_SAMPLE_COUNT),
+            Ip=3.0e6,
+        )
+
+    assert probe.Ip == pytest.approx(3.0e6 * (4.0e-7 * np.pi))
+
+
+def test_operator_case_skips_mu0_current_check_for_pq_driver():
+    _, case = _build_operator_case(mode="PQ", coordinate="rho", nodes="uniform")
+    source = np.full(TEST_SOURCE_SAMPLE_COUNT, 1.0e5)
+
+    with pytest.warns(RuntimeWarning, match="canonical OperatorCase inputs are mu0-scaled"):
+        probe = OperatorCase(
+            route=case.route,
+            coordinate=case.coordinate,
+            nodes=case.nodes,
+            profile_coeffs=case.profile_coeffs,
+            boundary=case.boundary,
+            heat_input=source,
+            current_input=source,
+        )
+
+    assert np.allclose(probe.current_input, source)
+    assert np.allclose(probe.heat_input, source * (4.0e-7 * np.pi))
+
+
 def test_grid_precomputes_fourier_tables_and_rho_powers():
     grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=5)
 

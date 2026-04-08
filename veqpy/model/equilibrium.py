@@ -41,7 +41,7 @@ from veqpy.model.serial import Serial
 plt.style.use("seaborn-v0_8-paper")
 plt.rcParams.update(
     {
-        "font.size": 12,
+        "font.size": 10,
         "axes.titlesize": 12,
         "axes.labelsize": 12,
         "xtick.labelsize": 12,

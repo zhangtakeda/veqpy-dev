@@ -210,9 +210,9 @@ backend control surface 只有 [`veqpy/engine/__init__.py`](../veqpy/engine/__in
 当前 `SolverConfig.method` 支持:
 
 - root 路径:
-  - `hybr`, `krylov`, `root-lm`, `broyden1`, `broyden2`
+  - `hybr`
 - least-squares 路径:
-  - `trf`, `dogbox`, `lm`
+  - `trf`, `lm`
 
 ## Snapshot Surface
 
