@@ -20,7 +20,7 @@ SHOW_PROGRESS = True
 
 REFERENCE_SOURCE_SAMPLE_COUNT = 51
 TEST_SOURCE_SAMPLE_COUNT = 51
-BENCHMARK_REPEAT_COUNT = 100
+BENCHMARK_REPEAT_COUNT = 10
 SHAPE_MATCH_TOL = 1e-2
 REFERENCE_CACHE_VERSION = 2
 DIAGNOSTIC_SIGN_CHANGE_WINDOW = 12
@@ -1167,10 +1167,7 @@ def run_full_benchmark(*, show_progress: bool = SHOW_PROGRESS) -> tuple[Referenc
                 f"[{index:02d}/{len(specs)}] {row.case_name}: "
                 f"time={row.avg_ms:.3f}+/-{row.std_ms:.3f} ms | "
                 f"shape={row.shape_error:.3e} | "
-                f"psi_r={row.psi_r_rel_rms_error:.2e} ({row.psi_r_head_sign_changes}/{row.psi_r_tail_sign_changes}) | "
-                f"FF_psi={row.ff_psi_rel_rms_error:.2e} ({row.ff_psi_head_sign_changes}/{row.ff_psi_tail_sign_changes}) | "
-                f"mu0P_psi={row.mu0_p_psi_rel_rms_error:.2e} "
-                f"({row.mu0_p_psi_head_sign_changes}/{row.mu0_p_psi_tail_sign_changes})"
+                f"psi_r={row.psi_r_rel_rms_error:.2e}"
             )
         if plot_dir is not None:
             try:
