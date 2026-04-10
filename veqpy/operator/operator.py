@@ -72,7 +72,7 @@ from veqpy.operator.source_setup import (
     validate_source_inputs,
 )
 from veqpy.operator.stage_helpers import build_geometry_stage_runner
-from veqpy.residual_blocks import build_residual_block_metadata
+from veqpy.residual_blocks import F2_BLOCK_CODE, build_residual_block_metadata
 
 _PROFILE_STATIC_KWARGS: dict[str, dict[str, int]] = {
     "psin": {"power": 2},
@@ -160,6 +160,10 @@ class Operator:
     packed_residual: np.ndarray = field(init=False, repr=False)
     source_vector_slab: np.ndarray = field(init=False, repr=False)
     _source_projection_policy: SourceProjectionPolicy | None = field(init=False, repr=False)
+    f_parameterization: str = field(init=False, repr=False)
+    profile_static_kwargs_by_name: dict[str, dict[str, int]] = field(init=False, repr=False)
+    profile_offset_specs: dict[str, float | str] = field(init=False, repr=False)
+    profile_scale_specs: dict[str, tuple[str, ...]] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         """完成 layout 构造, 运行时缓冲区分配和 case 绑定."""
@@ -183,11 +187,13 @@ class Operator:
             profile_names=self.profile_names,
         )
         self.x_size = packed_size(self.coeff_index)
+        self._refresh_profile_parameterization_config()
         self.residual_binding_layout = self._build_residual_binding_layout()
         self._validate_runtime_profile_support()
 
         self.execution_state = ExecutionState(
             profile_stage_runner=lambda x: None,
+            profile_postprocess_runner=lambda: None,
             geometry_stage_runner=lambda: None,
             source_stage_runner=lambda: (0.0, 0.0),
             residual_pack_stage_runner=lambda: np.zeros(self.x_size, dtype=np.float64),
@@ -337,6 +343,7 @@ class Operator:
     def stage_a_profile(self, x: np.ndarray) -> None:
         """执行 profile 阶段并刷新 active profile fields."""
         self.execution_state.profile_stage_runner(x)
+        self.execution_state.profile_postprocess_runner()
 
     def stage_b_geometry(self) -> None:
         """执行 geometry 阶段并刷新 geometry fields."""
@@ -386,6 +393,10 @@ class Operator:
         active_residual_block_codes, active_residual_block_orders = build_residual_block_metadata(
             active_profile_names
         )
+        if self.f_parameterization == "F2_linear":
+            for i, name in enumerate(active_profile_names):
+                if name == "F":
+                    active_residual_block_codes[i] = F2_BLOCK_CODE
         return ResidualBindingLayout(
             active_profile_names=active_profile_names,
             active_residual_block_codes=active_residual_block_codes,
@@ -445,9 +456,9 @@ class Operator:
                 profile_L=self.profile_L,
                 profile_names=self.profile_names,
                 profile_index=self.profile_index,
-                profile_static_kwargs_by_name=_PROFILE_STATIC_KWARGS,
-                profile_offset_specs=_PROFILE_OFFSET_SPECS,
-                profile_scale_specs=_PROFILE_SCALE_SPECS,
+                profile_static_kwargs_by_name=self.profile_static_kwargs_by_name,
+                profile_offset_specs=self.profile_offset_specs,
+                profile_scale_specs=self.profile_scale_specs,
             ),
         )
         self.geometry = bundle.geometry
@@ -491,6 +502,7 @@ class Operator:
 
     def _refresh_runtime_state(self) -> None:
         self._refresh_operator_identity()
+        self._refresh_profile_parameterization_config()
         self.residual_binding_layout = self._build_residual_binding_layout()
         self._validate_runtime_profile_support()
         self._refresh_profile_runtime()
@@ -520,6 +532,45 @@ class Operator:
         )
         self.source_plan = self._build_source_plan()
 
+    def _refresh_profile_parameterization_config(self) -> None:
+        self.f_parameterization = self._resolve_F_parameterization()
+        self.profile_static_kwargs_by_name = {
+            name: dict(kwargs) for name, kwargs in _PROFILE_STATIC_KWARGS.items()
+        }
+        self.profile_offset_specs = dict(_PROFILE_OFFSET_SPECS)
+        self.profile_scale_specs = dict(_PROFILE_SCALE_SPECS)
+        if self.f_parameterization == "F2_linear":
+            self.profile_static_kwargs_by_name["F"] = {"envelope_power": 1}
+            self.profile_offset_specs["F"] = 0.0
+            self.profile_scale_specs.pop("F", None)
+
+    def _resolve_F_parameterization(self) -> str:
+        if self.case.route == "PJ2" and self.case.coordinate == "psin":
+            return "F2_linear"
+        return "direct_F"
+
+    def _build_profile_postprocess_runner(self) -> Callable[[], None]:
+        if self.f_parameterization != "F2_linear":
+            return lambda: None
+
+        F_fields = self.F_profile.u_fields
+        scale = float(self.case.R0 * self.case.B0)
+        eps = 1.0e-10
+
+        def runner() -> None:
+            H = F_fields[0].copy()
+            H_r = F_fields[1].copy()
+            H_rr = F_fields[2].copy()
+            q = np.maximum(1.0 + H, eps)
+            sqrt_q = np.sqrt(q)
+            inv_sqrt_q = 1.0 / sqrt_q
+            inv_q_sqrt_q = inv_sqrt_q / q
+            F_fields[0] = scale * sqrt_q
+            F_fields[1] = scale * 0.5 * H_r * inv_sqrt_q
+            F_fields[2] = scale * (0.5 * H_rr * inv_sqrt_q - 0.25 * H_r * H_r * inv_q_sqrt_q)
+
+        return runner
+
     def _refresh_profile_runtime(self) -> None:
         refresh_profile_runtime(
             case=self.case,
@@ -528,8 +579,9 @@ class Operator:
             profile_index=self.profile_index,
             profile_L=self.profile_L,
             profiles_by_name=self.profiles_by_name,
-            profile_offset_specs=_PROFILE_OFFSET_SPECS,
-            profile_scale_specs=_PROFILE_SCALE_SPECS,
+            profile_static_kwargs_by_name=self.profile_static_kwargs_by_name,
+            profile_offset_specs=self.profile_offset_specs,
+            profile_scale_specs=self.profile_scale_specs,
             refresh_fourier_family_base_fields=lambda: refresh_fourier_family_base_fields(
                 M_max=self.grid.M_max,
                 profile_index=self.profile_index,
@@ -541,6 +593,7 @@ class Operator:
 
     def _refresh_runtime_bindings(self) -> None:
         self.execution_state.profile_stage_runner = self._build_profile_stage_runner()
+        self.execution_state.profile_postprocess_runner = self._build_profile_postprocess_runner()
         self.execution_state.geometry_stage_runner = self._build_geometry_stage_runner()
         self.execution_state.source_stage_runner = self._build_bound_source_stage_runner()
         self.execution_state.residual_pack_runner = self._build_residual_pack_runner()
@@ -551,6 +604,9 @@ class Operator:
         fixed_profile_ids = np.flatnonzero(~self.active_profile_mask).astype(np.int64, copy=False)
         for p in fixed_profile_ids:
             self.profiles_by_name[self.profile_names[int(p)]].update()
+        f_profile_id = self.profile_index.get("F", -1)
+        if f_profile_id >= 0 and not bool(self.active_profile_mask[f_profile_id]):
+            self.execution_state.profile_postprocess_runner()
 
     def _refresh_stage_a_runtime(self) -> None:
         refresh_stage_a_runtime(
@@ -751,6 +807,10 @@ class Operator:
             return self._evaluate_residual
         if not self.source_plan.supports_fused_residual:
             return self._evaluate_residual
+        if self.f_parameterization != "direct_F":
+            # F2-linear is currently staged-only until fused hot paths reach
+            # numerical parity with the reference stage pipeline.
+            return self._evaluate_residual
         return bind_fused_residual_runner(
             source_plan=self.source_plan,
             static_layout=self.static_layout,
@@ -763,6 +823,7 @@ class Operator:
             R0=float(self.case.R0),
             Z0=float(self.case.Z0),
             B0=float(self.case.B0),
+            f_parameterization=self.f_parameterization,
         )
 
     def _snapshot_equilibrium_from_runtime(self, x: np.ndarray) -> Equilibrium:

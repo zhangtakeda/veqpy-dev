@@ -26,13 +26,7 @@ Notes:
 
 import numpy as np
 
-from veqpy.residual_blocks import BLOCK_CODE_BY_NAME
-
-_BLOCK_CODE_FAMILY_ORDER = tuple(
-    "c0" if name == "c0" else "c" if name == "c_family" else "s" if name == "s_family" else name
-    for name in BLOCK_CODE_BY_NAME
-)
-PACKED_PROFILE_FAMILY_ORDER = _BLOCK_CODE_FAMILY_ORDER
+PACKED_PROFILE_FAMILY_ORDER = ("h", "v", "k", "c0", "c", "s", "psin", "F")
 INTERLEAVE_SHAPE_COEFFS_BY_ORDER = True
 
 _PREFIX_PROFILE_FAMILIES = ("psin", "F")

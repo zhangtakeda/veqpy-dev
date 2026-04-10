@@ -125,6 +125,7 @@ class ExecutionState:
     """绑定到 operator 执行策略的可变 runner/state 容器."""
 
     profile_stage_runner: Callable
+    profile_postprocess_runner: Callable
     geometry_stage_runner: Callable
     source_stage_runner: Callable
     residual_pack_stage_runner: Callable

@@ -23,6 +23,7 @@ from veqpy.operator import layout as layout_module
 from veqpy.operator.codec import encode_packed_state
 from veqpy.operator.layout import build_profile_layout, build_profile_names
 from veqpy.operator.operator_case import OperatorCase
+from veqpy.residual_blocks import F2_BLOCK_CODE
 
 GEQDSK_PATH = Path("tests/fitting/geqdsk.txt")
 TEST_SOURCE_SAMPLE_COUNT = 21
@@ -498,6 +499,7 @@ def test_operator_exposes_explicit_layout_and_execution_layers():
     assert operator.field_runtime_state.residual_fields is operator.residual_fields
     assert operator.execution_state.fused_alpha_state.shape == (2,)
     assert callable(operator.execution_state.fused_residual_runner)
+    assert callable(operator.execution_state.profile_postprocess_runner)
     assert operator.runtime_layout.source_psin_query is operator.source_runtime_state.psin_query
     assert operator.runtime_layout.materialized_heat_input is operator.source_runtime_state.materialized_heat_input
     assert operator.active_u_fields.base is operator.active_profile_slab
@@ -575,6 +577,71 @@ def test_source_plan_uses_both_endpoint_policy_when_ip_constraint_is_active(mode
 
     assert operator.source_plan.has_projection_policy is True
     assert operator.source_plan.endpoint_policy_code == 2
+
+
+def test_pq_psin_uniform_ip_beta_uses_lower_degree_projection_policy():
+    grid, case = _build_operator_case(mode="PQ", coordinate="psin", nodes="uniform")
+    case.profile_coeffs["psin"] = None
+    case.Ip = 3.0e6
+    case.beta = 0.02
+    operator = Operator(grid=grid, case=case)
+
+    assert operator.source_plan.strategy == "fixed_point_psin"
+    assert operator.source_plan.has_projection_policy is True
+    assert operator.source_plan.projection_domain == "sqrt_psin"
+    assert operator.source_plan.heat_projection_degree == 7
+    assert operator.source_plan.current_projection_degree == 7
+    assert operator.source_plan.endpoint_policy_code == 3
+    assert operator.source_plan.use_projected_finalize is True
+
+
+def test_pj2_psin_route_uses_f2_linear_parameterization_for_f_profile():
+    grid, case = _build_operator_case(mode="PJ2", coordinate="psin", nodes="uniform")
+    case.profile_coeffs["psin"] = None
+    operator = Operator(grid=grid, case=case)
+    x = operator.encode_initial_state()
+    operator.stage_a_profile(x)
+
+    latent_H = grid.y * case.profile_coeffs["F"][0]
+    scale = case.R0 * case.B0
+    expected_F = scale * np.sqrt(1.0 + latent_H)
+    expected_F_r = scale * (-grid.rho) / np.sqrt(1.0 + latent_H)
+    expected_F_rr = scale * (
+        -1.0 / np.sqrt(1.0 + latent_H) - (grid.rho * grid.rho) / np.power(1.0 + latent_H, 1.5)
+    )
+
+    assert operator.f_parameterization == "F2_linear"
+    assert operator.F_profile.offset == pytest.approx(0.0)
+    assert operator.F_profile.scale == pytest.approx(1.0)
+    assert operator.F_profile.envelope_power == 1
+    f_slot = operator.residual_binding_layout.active_profile_names.index("F")
+    assert operator.residual_binding_layout.active_residual_block_codes[f_slot] == F2_BLOCK_CODE
+    assert np.allclose(operator.F_profile.u, expected_F)
+    assert np.allclose(operator.F_profile.u_r, expected_F_r)
+    assert np.allclose(operator.F_profile.u_rr, expected_F_rr)
+
+
+def test_pq_psin_route_keeps_direct_f_parameterization():
+    grid, case = _build_operator_case(mode="PQ", coordinate="psin", nodes="uniform")
+    case.profile_coeffs["psin"] = None
+    operator = Operator(grid=grid, case=case)
+
+    assert operator.f_parameterization == "direct_F"
+    assert operator.F_profile.offset == pytest.approx(1.0)
+    assert operator.F_profile.scale == pytest.approx(case.R0 * case.B0)
+    assert operator.F_profile.envelope_power == 2
+    f_slot = operator.residual_binding_layout.active_profile_names.index("F")
+    assert operator.residual_binding_layout.active_residual_block_codes[f_slot] != F2_BLOCK_CODE
+
+
+def test_pj2_psin_f2_linear_uses_staged_residual_runner_until_fused_matches():
+    grid, case = _build_operator_case(mode="PJ2", coordinate="psin", nodes="uniform")
+    case.profile_coeffs["psin"] = None
+    operator = Operator(grid=grid, case=case)
+
+    fused_runner = operator.execution_state.fused_residual_runner
+    assert getattr(fused_runner, "__self__", None) is operator
+    assert getattr(fused_runner, "__func__", None) is Operator._evaluate_residual
 
 
 def test_build_profile_names_respects_module_family_order(monkeypatch):

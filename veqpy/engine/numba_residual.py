@@ -57,13 +57,15 @@ def bind_residual_runner(
     lengths: np.ndarray,
     residual_size: int,
     *,
+    block_names: tuple[str, ...] | None = None,
     block_codes: np.ndarray | None = None,
     block_orders: np.ndarray | None = None,
 ) -> Callable:
     if block_codes is None or block_orders is None:
+        names_for_decode = profile_names if block_names is None else block_names
         block_codes = np.empty(len(profile_names), dtype=np.int64)
         block_orders = np.zeros(len(profile_names), dtype=np.int64)
-        for i, name in enumerate(profile_names):
+        for i, name in enumerate(names_for_decode):
             block_codes[i], block_orders[i] = _decode_residual_block_code(name)
     else:
         block_codes = np.asarray(block_codes, dtype=np.int64)
@@ -122,13 +124,15 @@ def bind_residual_stage_runner(
     lengths: np.ndarray,
     residual_size: int,
     *,
+    block_names: tuple[str, ...] | None = None,
     block_codes: np.ndarray | None = None,
     block_orders: np.ndarray | None = None,
 ) -> Callable:
     if block_codes is None or block_orders is None:
+        names_for_decode = profile_names if block_names is None else block_names
         block_codes = np.empty(len(profile_names), dtype=np.int64)
         block_orders = np.zeros(len(profile_names), dtype=np.int64)
-        for i, name in enumerate(profile_names):
+        for i, name in enumerate(names_for_decode):
             block_codes[i], block_orders[i] = _decode_residual_block_code(name)
     else:
         block_codes = np.asarray(block_codes, dtype=np.int64)
@@ -547,6 +551,42 @@ def assemble_F_residual_block(
     _scale_and_project_rows_three(out_packed, coeff_indices, T, scratch, y, y, weights, (2.0 * np.pi / nt) * (R0 * B0))
 
 
+@register_residual_block("F2")
+@njit(cache=True, fastmath=True, nogil=True)
+def assemble_F2_residual_block(
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
+    G: np.ndarray,
+    psin_R: np.ndarray,
+    psin_Z: np.ndarray,
+    sin_tb: np.ndarray,
+    sin_theta: np.ndarray,
+    cos_theta: np.ndarray,
+    sin_2theta: np.ndarray,
+    rho: np.ndarray,
+    rho2: np.ndarray,
+    y: np.ndarray,
+    T: np.ndarray,
+    weights: np.ndarray,
+    a: float,
+    R0: float,
+    B0: float,
+    scratch: np.ndarray,
+) -> None:
+    """组装 F2-linear 通道 residual block."""
+    nt = G.shape[1]
+    _collapse_g(scratch, G)
+    _scale_and_project_rows_two(
+        out_packed,
+        coeff_indices,
+        T,
+        scratch,
+        y,
+        weights,
+        (2.0 * np.pi / nt) * (R0 * B0) * (R0 * B0),
+    )
+
+
 @njit(cache=True, fastmath=True, nogil=True)
 def _collapse_g(out: np.ndarray, G: np.ndarray) -> None:
     nr, nt = G.shape
@@ -835,8 +875,29 @@ def _run_residual_blocks_packed(
                 B0,
                 scratch,
             )
-        else:
+        elif code == 7:
             assemble_F_residual_block(
+                out_packed,
+                coeff_indices,
+                G,
+                psin_R,
+                psin_Z,
+                sin_tb,
+                sin_theta,
+                cos_theta,
+                sin_2theta,
+                rho,
+                rho2,
+                y,
+                T,
+                weights,
+                a,
+                R0,
+                B0,
+                scratch,
+            )
+        else:
+            assemble_F2_residual_block(
                 out_packed,
                 coeff_indices,
                 G,

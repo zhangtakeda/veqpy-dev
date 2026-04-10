@@ -26,6 +26,7 @@ BLOCK_CODE_BY_NAME = {
     "psin": 6,
     "F": 7,
 }
+F2_BLOCK_CODE = 8
 
 
 def decode_residual_block_code(name: str) -> tuple[int, int]:

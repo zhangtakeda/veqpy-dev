@@ -115,12 +115,16 @@ def refresh_profile_runtime(
     profile_index: dict[str, int],
     profile_L: np.ndarray,
     profiles_by_name: dict[str, Profile],
+    profile_static_kwargs_by_name: dict[str, dict[str, int]],
     profile_offset_specs: dict[str, float | str],
     profile_scale_specs: dict[str, tuple[str, ...]],
     refresh_fourier_family_base_fields: Callable[[], None],
 ) -> None:
     for name in profile_names:
         profile = profiles_by_name[name]
+        static_kwargs = profile_static_kwargs(name, profile_static_kwargs_by_name=profile_static_kwargs_by_name)
+        profile.power = int(static_kwargs.get("power", 0))
+        profile.envelope_power = int(static_kwargs.get("envelope_power", 1))
         profile.offset = profile_offset_from_case(case, name, profile_offset_specs=profile_offset_specs)
         profile.scale = profile_scale_from_case(case, name, profile_scale_specs=profile_scale_specs)
         profile.coeff = profile_coeff_from_case(

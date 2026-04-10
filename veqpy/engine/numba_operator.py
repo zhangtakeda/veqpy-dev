@@ -42,6 +42,24 @@ if TYPE_CHECKING:
     from veqpy.operator.source_setup import SourcePlan
 
 
+@njit(cache=True, fastmath=True, nogil=True)
+def _apply_f2_linear_fields_impl(fields: np.ndarray, scale: float, eps: float = 1.0e-10) -> None:
+    nr = fields.shape[1]
+    for i in range(nr):
+        H = fields[0, i]
+        H_r = fields[1, i]
+        H_rr = fields[2, i]
+        q = 1.0 + H
+        if q < eps:
+            q = eps
+        sqrt_q = np.sqrt(q)
+        inv_sqrt_q = 1.0 / sqrt_q
+        inv_q_sqrt_q = inv_sqrt_q / q
+        fields[0, i] = scale * sqrt_q
+        fields[1, i] = scale * 0.5 * H_r * inv_sqrt_q
+        fields[2, i] = scale * (0.5 * H_rr * inv_sqrt_q - 0.25 * H_r * H_r * inv_q_sqrt_q)
+
+
 def _normalize_psin_query(out: np.ndarray, source: np.ndarray) -> None:
     np.copyto(out, np.asarray(source, dtype=np.float64))
     offset = float(out[0])
@@ -292,6 +310,7 @@ def bind_fused_residual_runner(
     R0: float,
     Z0: float,
     B0: float,
+    f_parameterization: str = "direct_F",
 ) -> Callable[[np.ndarray], np.ndarray]:
     if source_plan.is_single_pass:
         return bind_fused_single_pass_residual_runner(
@@ -306,6 +325,7 @@ def bind_fused_residual_runner(
             R0=R0,
             Z0=Z0,
             B0=B0,
+            f_parameterization=f_parameterization,
         )
     if source_plan.is_profile_owned_psin:
         return bind_fused_profile_owned_psin_residual_runner(
@@ -320,6 +340,7 @@ def bind_fused_residual_runner(
             R0=R0,
             Z0=Z0,
             B0=B0,
+            f_parameterization=f_parameterization,
         )
     if source_plan.is_fixed_point_psin:
         return bind_fused_fixed_point_psin_residual_runner(
@@ -334,6 +355,7 @@ def bind_fused_residual_runner(
             R0=R0,
             Z0=Z0,
             B0=B0,
+            f_parameterization=f_parameterization,
         )
     raise ValueError(f"Unsupported source strategy {source_plan.strategy!r}")
 
@@ -351,6 +373,7 @@ def bind_fused_single_pass_residual_runner(
     R0: float,
     Z0: float,
     B0: float,
+    f_parameterization: str = "direct_F",
 ) -> Callable[[np.ndarray], np.ndarray]:
     coeff_index_rows = runtime_layout.active_coeff_index_rows
     lengths = runtime_layout.active_lengths
@@ -401,6 +424,8 @@ def bind_fused_single_pass_residual_runner(
     v_fields = profiles_by_name["v"].u_fields
     k_fields = profiles_by_name["k"].u_fields
     F_profile_u = profiles_by_name["F"].u
+    F_profile_fields = profiles_by_name["F"].u_fields
+    apply_f2_linear = f_parameterization == "F2_linear"
     source_kernel = source_plan.kernel
     source_kernel_name = getattr(source_kernel, "__name__", "")
     enforce_source_psin_consistency = source_kernel_name == "update_PJ2_PSIN"
@@ -429,6 +454,8 @@ def bind_fused_single_pass_residual_runner(
             coeff_index_rows,
             lengths,
         )
+        if apply_f2_linear:
+            _apply_f2_linear_fields_impl(F_profile_fields, R0 * B0)
         _update_fourier_family_fields_impl(
             c_family_fields,
             s_family_fields,
@@ -583,6 +610,7 @@ def bind_fused_profile_owned_psin_residual_runner(
     R0: float,
     Z0: float,
     B0: float,
+    f_parameterization: str = "direct_F",
 ) -> Callable[[np.ndarray], np.ndarray]:
     coeff_index_rows = runtime_layout.active_coeff_index_rows
     lengths = runtime_layout.active_lengths
@@ -640,6 +668,8 @@ def bind_fused_profile_owned_psin_residual_runner(
     v_fields = profiles_by_name["v"].u_fields
     k_fields = profiles_by_name["k"].u_fields
     F_profile_u = profiles_by_name["F"].u
+    F_profile_fields = profiles_by_name["F"].u_fields
+    apply_f2_linear = f_parameterization == "F2_linear"
     source_kernel = source_plan.kernel
     coordinate_code = int(source_plan.coordinate_code)
     parameterization_code = int(source_plan.parameterization_code)
@@ -674,6 +704,8 @@ def bind_fused_profile_owned_psin_residual_runner(
             coeff_index_rows,
             lengths,
         )
+        if apply_f2_linear:
+            _apply_f2_linear_fields_impl(F_profile_fields, R0 * B0)
         _update_fourier_family_fields_impl(
             c_family_fields,
             s_family_fields,
@@ -855,6 +887,7 @@ def bind_fused_fixed_point_psin_residual_runner(
     R0: float,
     Z0: float,
     B0: float,
+    f_parameterization: str = "direct_F",
     max_iter: int | None = None,
     tolerance: float | None = None,
 ) -> Callable[[np.ndarray], np.ndarray]:
@@ -911,6 +944,8 @@ def bind_fused_fixed_point_psin_residual_runner(
     v_fields = profiles_by_name["v"].u_fields
     k_fields = profiles_by_name["k"].u_fields
     F_profile_u = profiles_by_name["F"].u
+    F_profile_fields = profiles_by_name["F"].u_fields
+    apply_f2_linear = f_parameterization == "F2_linear"
     source_kernel = source_plan.kernel
     coordinate_code = int(source_plan.coordinate_code)
     heat_input = source_plan.heat_input
@@ -1176,6 +1211,8 @@ def bind_fused_fixed_point_psin_residual_runner(
             coeff_index_rows,
             lengths,
         )
+        if apply_f2_linear:
+            _apply_f2_linear_fields_impl(F_profile_fields, R0 * B0)
         _update_fourier_family_fields_impl(
             c_family_fields,
             s_family_fields,

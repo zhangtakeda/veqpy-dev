@@ -50,6 +50,19 @@ def _normalize_psin_query(out: np.ndarray, source: np.ndarray) -> None:
     out[-1] = 1.0
 
 
+def _apply_f2_linear_fields(fields: np.ndarray, scale: float, *, eps: float = 1.0e-10) -> None:
+    H = fields[0].copy()
+    H_r = fields[1].copy()
+    H_rr = fields[2].copy()
+    q = np.maximum(1.0 + H, eps)
+    sqrt_q = np.sqrt(q)
+    inv_sqrt_q = 1.0 / sqrt_q
+    inv_q_sqrt_q = inv_sqrt_q / q
+    fields[0] = scale * sqrt_q
+    fields[1] = scale * 0.5 * H_r * inv_sqrt_q
+    fields[2] = scale * (0.5 * H_rr * inv_sqrt_q - 0.25 * H_r * H_r * inv_q_sqrt_q)
+
+
 def bind_fused_residual_runner(
     *,
     source_plan: SourcePlan,
@@ -63,6 +76,7 @@ def bind_fused_residual_runner(
     R0: float,
     Z0: float,
     B0: float,
+    f_parameterization: str = "direct_F",
 ) -> Callable[[np.ndarray], np.ndarray]:
     if source_plan.is_single_pass:
         return bind_fused_single_pass_residual_runner(
@@ -77,6 +91,7 @@ def bind_fused_residual_runner(
             R0=R0,
             Z0=Z0,
             B0=B0,
+            f_parameterization=f_parameterization,
         )
     if source_plan.is_profile_owned_psin:
         return bind_fused_profile_owned_psin_residual_runner(
@@ -91,6 +106,7 @@ def bind_fused_residual_runner(
             R0=R0,
             Z0=Z0,
             B0=B0,
+            f_parameterization=f_parameterization,
         )
     if source_plan.is_fixed_point_psin:
         return bind_fused_fixed_point_psin_residual_runner(
@@ -105,6 +121,7 @@ def bind_fused_residual_runner(
             R0=R0,
             Z0=Z0,
             B0=B0,
+            f_parameterization=f_parameterization,
         )
     raise ValueError(f"Unsupported source strategy {source_plan.strategy!r}")
 
@@ -122,8 +139,11 @@ def bind_fused_single_pass_residual_runner(
     R0: float,
     Z0: float,
     B0: float,
+    f_parameterization: str = "direct_F",
 ) -> Callable[[np.ndarray], np.ndarray]:
     profile_names = residual_binding_layout.active_profile_names
+    block_codes = residual_binding_layout.active_residual_block_codes
+    block_orders = residual_binding_layout.active_residual_block_orders
     coeff_index_rows = runtime_layout.active_coeff_index_rows
     lengths = runtime_layout.active_lengths
     residual_stage_runner = bind_residual_stage_runner(
@@ -131,6 +151,8 @@ def bind_fused_single_pass_residual_runner(
         coeff_index_rows,
         lengths,
         int(runtime_layout.packed_residual.shape[0]),
+        block_codes=block_codes,
+        block_orders=block_orders,
     )
     active_u_fields = runtime_layout.active_u_fields
     active_rp_fields = runtime_layout.active_rp_fields
@@ -178,6 +200,8 @@ def bind_fused_single_pass_residual_runner(
     v_fields = profiles_by_name["v"].u_fields
     k_fields = profiles_by_name["k"].u_fields
     F_profile_u = profiles_by_name["F"].u
+    F_profile_fields = profiles_by_name["F"].u_fields
+    apply_f2_linear = f_parameterization == "F2_linear"
     source_kernel = source_plan.kernel
     coordinate_code = int(source_plan.coordinate_code)
     Ip = float(source_plan.Ip)
@@ -200,6 +224,8 @@ def bind_fused_single_pass_residual_runner(
             coeff_index_rows,
             lengths,
         )
+        if apply_f2_linear:
+            _apply_f2_linear_fields(F_profile_fields, R0 * B0)
         update_fourier_family_fields(
             c_family_fields,
             s_family_fields,
@@ -309,8 +335,11 @@ def bind_fused_profile_owned_psin_residual_runner(
     R0: float,
     Z0: float,
     B0: float,
+    f_parameterization: str = "direct_F",
 ) -> Callable[[np.ndarray], np.ndarray]:
     profile_names = residual_binding_layout.active_profile_names
+    block_codes = residual_binding_layout.active_residual_block_codes
+    block_orders = residual_binding_layout.active_residual_block_orders
     coeff_index_rows = runtime_layout.active_coeff_index_rows
     lengths = runtime_layout.active_lengths
     residual_stage_runner = bind_residual_stage_runner(
@@ -318,6 +347,8 @@ def bind_fused_profile_owned_psin_residual_runner(
         coeff_index_rows,
         lengths,
         int(runtime_layout.packed_residual.shape[0]),
+        block_codes=block_codes,
+        block_orders=block_orders,
     )
     active_u_fields = runtime_layout.active_u_fields
     active_rp_fields = runtime_layout.active_rp_fields
@@ -372,6 +403,8 @@ def bind_fused_profile_owned_psin_residual_runner(
     v_fields = profiles_by_name["v"].u_fields
     k_fields = profiles_by_name["k"].u_fields
     F_profile_u = profiles_by_name["F"].u
+    F_profile_fields = profiles_by_name["F"].u_fields
+    apply_f2_linear = f_parameterization == "F2_linear"
     source_kernel = source_plan.kernel
     coordinate_code = int(source_plan.coordinate_code)
     parameterization_code = int(source_plan.parameterization_code)
@@ -401,6 +434,8 @@ def bind_fused_profile_owned_psin_residual_runner(
             coeff_index_rows,
             lengths,
         )
+        if apply_f2_linear:
+            _apply_f2_linear_fields(F_profile_fields, R0 * B0)
         update_fourier_family_fields(
             c_family_fields,
             s_family_fields,
@@ -537,10 +572,13 @@ def bind_fused_fixed_point_psin_residual_runner(
     R0: float,
     Z0: float,
     B0: float,
+    f_parameterization: str = "direct_F",
     max_iter: int | None = None,
     tolerance: float | None = None,
 ) -> Callable[[np.ndarray], np.ndarray]:
     profile_names = residual_binding_layout.active_profile_names
+    block_codes = residual_binding_layout.active_residual_block_codes
+    block_orders = residual_binding_layout.active_residual_block_orders
     coeff_index_rows = runtime_layout.active_coeff_index_rows
     lengths = runtime_layout.active_lengths
     residual_stage_runner = bind_residual_stage_runner(
@@ -548,6 +586,8 @@ def bind_fused_fixed_point_psin_residual_runner(
         coeff_index_rows,
         lengths,
         int(runtime_layout.packed_residual.shape[0]),
+        block_codes=block_codes,
+        block_orders=block_orders,
     )
     active_u_fields = runtime_layout.active_u_fields
     active_rp_fields = runtime_layout.active_rp_fields
@@ -601,6 +641,8 @@ def bind_fused_fixed_point_psin_residual_runner(
     v_fields = profiles_by_name["v"].u_fields
     k_fields = profiles_by_name["k"].u_fields
     F_profile_u = profiles_by_name["F"].u
+    F_profile_fields = profiles_by_name["F"].u_fields
+    apply_f2_linear = f_parameterization == "F2_linear"
     source_kernel = source_plan.kernel
     coordinate_code = int(source_plan.coordinate_code)
     heat_input = source_plan.heat_input
@@ -628,6 +670,8 @@ def bind_fused_fixed_point_psin_residual_runner(
             coeff_index_rows,
             lengths,
         )
+        if apply_f2_linear:
+            _apply_f2_linear_fields(F_profile_fields, R0 * B0)
         update_fourier_family_fields(
             c_family_fields,
             s_family_fields,

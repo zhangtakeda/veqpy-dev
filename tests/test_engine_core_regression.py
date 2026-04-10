@@ -22,6 +22,7 @@ from veqpy.model.equilibrium import MU0
 from veqpy.operator import Operator
 from veqpy.operator.layout import build_profile_names
 from veqpy.operator.operator_case import OperatorCase
+from veqpy.residual_blocks import F2_BLOCK_CODE
 
 TEST_SOURCE_SAMPLE_COUNT = 21
 
@@ -265,6 +266,72 @@ def test_numpy_and_numba_residual_runners_match_for_high_order_blocks():
     )
 
     assert np.allclose(numpy_out, numba_out, atol=1e-11, rtol=1e-11)
+
+
+def test_numpy_and_numba_residual_runners_match_for_f2_block():
+    grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=4)
+    rng = np.random.default_rng(1)
+    profile_names = ("F",)
+    coeff_index_rows = np.array([[0, 1]], dtype=np.int64)
+    lengths = np.array([2], dtype=np.int64)
+    residual_size = 2
+    block_codes = np.array([F2_BLOCK_CODE], dtype=np.int64)
+    block_orders = np.array([0], dtype=np.int64)
+
+    G = rng.normal(size=(grid.Nr, grid.Nt))
+    psin_R = rng.normal(size=(grid.Nr, grid.Nt))
+    psin_Z = rng.normal(size=(grid.Nr, grid.Nt))
+    sin_tb = rng.normal(size=(grid.Nr, grid.Nt))
+
+    numpy_runner = bind_numpy_residual_runner(
+        profile_names,
+        coeff_index_rows,
+        lengths,
+        residual_size,
+        block_codes=block_codes,
+        block_orders=block_orders,
+    )
+    numba_runner = bind_numba_residual_runner(
+        profile_names,
+        coeff_index_rows,
+        lengths,
+        residual_size,
+        block_codes=block_codes,
+        block_orders=block_orders,
+    )
+
+    numpy_out = numpy_runner(
+        G,
+        psin_R,
+        psin_Z,
+        sin_tb,
+        grid.sin_ktheta,
+        grid.cos_ktheta,
+        grid.rho_powers,
+        grid.y,
+        grid.T_fields[0],
+        grid.weights,
+        1.2,
+        1.8,
+        3.0,
+    )
+    numba_out = numba_runner(
+        G,
+        psin_R,
+        psin_Z,
+        sin_tb,
+        grid.sin_ktheta,
+        grid.cos_ktheta,
+        grid.rho_powers,
+        grid.y,
+        grid.T_fields[0],
+        grid.weights,
+        1.2,
+        1.8,
+        3.0,
+    )
+
+    assert np.allclose(numpy_out, numba_out, atol=1.0e-11, rtol=1.0e-11)
 
 
 def test_operator_runtime_propagates_high_order_geometry_and_residual():

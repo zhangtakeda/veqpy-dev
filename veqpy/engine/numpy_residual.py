@@ -19,7 +19,7 @@ from typing import Callable
 
 import numpy as np
 
-from veqpy.residual_blocks import decode_residual_block_kind
+from veqpy.residual_blocks import F2_BLOCK_CODE, decode_residual_block_kind
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,18 +55,47 @@ def _decode_residual_block(name: str) -> tuple[str, int, Callable | None]:
         raise KeyError(f"Unknown residual block {name!r}. Supported blocks: {supported}, c<k>, s<k>") from exc
 
 
+def _decode_residual_block_code(code: int, order: int) -> tuple[str, int, Callable | None]:
+    code_int = int(code)
+    if code_int == 0:
+        return ("fixed", 0, RESIDUAL_BLOCK_REGISTRY["h"].implementation)
+    if code_int == 1:
+        return ("fixed", 0, RESIDUAL_BLOCK_REGISTRY["v"].implementation)
+    if code_int == 2:
+        return ("fixed", 0, RESIDUAL_BLOCK_REGISTRY["k"].implementation)
+    if code_int == 3:
+        return ("fixed", 0, RESIDUAL_BLOCK_REGISTRY["c0"].implementation)
+    if code_int == 4:
+        return ("c_family", int(order), None)
+    if code_int == 5:
+        return ("s_family", int(order), None)
+    if code_int == 6:
+        return ("fixed", 0, RESIDUAL_BLOCK_REGISTRY["psin"].implementation)
+    if code_int == 7:
+        return ("fixed", 0, RESIDUAL_BLOCK_REGISTRY["F"].implementation)
+    if code_int == F2_BLOCK_CODE:
+        return ("fixed", 0, RESIDUAL_BLOCK_REGISTRY["F2"].implementation)
+    raise KeyError(f"Unknown residual block code {code_int}")
+
+
 def bind_residual_runner(
     profile_names: tuple[str, ...],
     coeff_index_rows: np.ndarray,
     lengths: np.ndarray,
     residual_size: int,
     *,
+    block_names: tuple[str, ...] | None = None,
     block_codes: np.ndarray | None = None,
     block_orders: np.ndarray | None = None,
 ) -> Callable:
     specs: list[tuple[str, int, Callable | None]] = []
-    for name in profile_names:
-        specs.append(_decode_residual_block(name))
+    if block_codes is not None and block_orders is not None:
+        for code, order in zip(block_codes, block_orders, strict=True):
+            specs.append(_decode_residual_block_code(int(code), int(order)))
+    else:
+        names_for_decode = profile_names if block_names is None else block_names
+        for name in names_for_decode:
+            specs.append(_decode_residual_block(name))
     bound_specs = tuple(specs)
 
     def runner(
@@ -147,12 +176,18 @@ def bind_residual_stage_runner(
     lengths: np.ndarray,
     residual_size: int,
     *,
+    block_names: tuple[str, ...] | None = None,
     block_codes: np.ndarray | None = None,
     block_orders: np.ndarray | None = None,
 ) -> Callable:
     specs: list[tuple[str, int, Callable | None]] = []
-    for name in profile_names:
-        specs.append(_decode_residual_block(name))
+    if block_codes is not None and block_orders is not None:
+        for code, order in zip(block_codes, block_orders, strict=True):
+            specs.append(_decode_residual_block_code(int(code), int(order)))
+    else:
+        names_for_decode = profile_names if block_names is None else block_names
+        for name in names_for_decode:
+            specs.append(_decode_residual_block(name))
     bound_specs = tuple(specs)
 
     def runner(
@@ -559,6 +594,38 @@ def assemble_F_residual_block(
     collapsed = _collapse_g(G)
     _scale_and_project_rows_three(
         out_packed, coeff_indices, T, collapsed, y, y, weights, (2.0 * np.pi / G.shape[1]) * (R0 * B0)
+    )
+
+
+@register_residual_block("F2")
+def assemble_F2_residual_block(
+    out_packed: np.ndarray,
+    coeff_indices: np.ndarray,
+    G: np.ndarray,
+    psin_R: np.ndarray,
+    psin_Z: np.ndarray,
+    sin_tb: np.ndarray,
+    sin_ktheta: np.ndarray,
+    cos_ktheta: np.ndarray,
+    rho_powers: np.ndarray,
+    y: np.ndarray,
+    T: np.ndarray,
+    weights: np.ndarray,
+    a: float,
+    R0: float,
+    B0: float,
+) -> None:
+    """组装 F2-linear 通道 residual block."""
+    del psin_R, psin_Z, sin_tb, sin_ktheta, cos_ktheta, rho_powers, a
+    collapsed = _collapse_g(G)
+    _scale_and_project_rows_two(
+        out_packed,
+        coeff_indices,
+        T,
+        collapsed,
+        y,
+        weights,
+        (2.0 * np.pi / G.shape[1]) * (R0 * B0) * (R0 * B0),
     )
 
 
