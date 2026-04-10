@@ -427,7 +427,15 @@ def build_bound_source_stage_runner(operator_core: Any) -> Callable:
     source_scratch_1d = source_runtime_state.scratch_1d
     source_target_root_fields = source_runtime_state.target_root_fields
     grid = operator_core.grid
-    geometry = operator_core.geometry
+    surface_workspace = operator_core.runtime_layout.geometry_surface_workspace
+    radial_workspace = operator_core.runtime_layout.geometry_radial_workspace
+    V_r = radial_workspace[1]
+    Kn = radial_workspace[2]
+    Kn_r = radial_workspace[3]
+    Ln_r = radial_workspace[4]
+    S_r = radial_workspace[0]
+    R_surface = surface_workspace[1]
+    JdivR = surface_workspace[5]
     F_profile_u = operator_core.F_profile.u
     case_R0 = float(operator_core.case.R0)
     case_B0 = float(operator_core.case.B0)
@@ -481,13 +489,13 @@ def build_bound_source_stage_runner(operator_core: Any) -> Callable:
                     grid.differentiation_matrix,
                     grid.integration_matrix,
                     grid.rho,
-                    geometry.V_r,
-                    geometry.Kn,
-                    geometry.Kn_r,
-                    geometry.Ln_r,
-                    geometry.S_r,
-                    geometry.R,
-                    geometry.JdivR,
+                    V_r,
+                    Kn,
+                    Kn_r,
+                    Ln_r,
+                    S_r,
+                    R_surface,
+                    JdivR,
                     F_profile_u,
                     case_Ip,
                     case_beta,
@@ -521,13 +529,13 @@ def build_bound_source_stage_runner(operator_core: Any) -> Callable:
                 grid.differentiation_matrix,
                 grid.integration_matrix,
                 grid.rho,
-                geometry.V_r,
-                geometry.Kn,
-                geometry.Kn_r,
-                geometry.Ln_r,
-                geometry.S_r,
-                geometry.R,
-                geometry.JdivR,
+                V_r,
+                Kn,
+                Kn_r,
+                Ln_r,
+                S_r,
+                R_surface,
+                JdivR,
                 F_profile_u,
                 case_Ip,
                 case_beta,
@@ -559,13 +567,13 @@ def build_bound_source_stage_runner(operator_core: Any) -> Callable:
             grid.differentiation_matrix,
             grid.integration_matrix,
             grid.rho,
-            geometry.V_r,
-            geometry.Kn,
-            geometry.Kn_r,
-            geometry.Ln_r,
-            geometry.S_r,
-            geometry.R,
-            geometry.JdivR,
+            V_r,
+            Kn,
+            Kn_r,
+            Ln_r,
+            S_r,
+            R_surface,
+            JdivR,
             F_profile_u,
             case_Ip,
             case_beta,
@@ -622,6 +630,8 @@ def run_psin_source_fixed_point(operator_core: Any) -> tuple[float, float]:
 
 def _run_source_kernel_from_operator(operator_core: Any) -> tuple[float, float]:
     source_runtime_state = operator_core.source_runtime_state
+    surface_workspace = operator_core.runtime_layout.geometry_surface_workspace
+    radial_workspace = operator_core.runtime_layout.geometry_radial_workspace
     return _run_source_kernel(
         operator_core,
         source_runtime_state.target_root_fields[0],
@@ -637,13 +647,13 @@ def _run_source_kernel_from_operator(operator_core: Any) -> tuple[float, float]:
         operator_core.grid.differentiation_matrix,
         operator_core.grid.integration_matrix,
         operator_core.grid.rho,
-        operator_core.geometry.V_r,
-        operator_core.geometry.Kn,
-        operator_core.geometry.Kn_r,
-        operator_core.geometry.Ln_r,
-        operator_core.geometry.S_r,
-        operator_core.geometry.R,
-        operator_core.geometry.JdivR,
+        radial_workspace[1],
+        radial_workspace[2],
+        radial_workspace[3],
+        radial_workspace[4],
+        radial_workspace[0],
+        surface_workspace[1],
+        surface_workspace[5],
         operator_core.F_profile.u,
         float(operator_core.case.Ip),
         float(operator_core.case.beta),

@@ -2,7 +2,7 @@
 Module: engine.numba_source
 
 Role:
-- 负责在 numba backend 下注册 source operators.
+- 负责注册 source operators.
 - 负责校验 operator/coordinate/nodes 组合并执行 source kernels.
 
 Public API:
@@ -2643,7 +2643,7 @@ _SOURCE_SCRATCH_KERNELS: dict[str, Callable] = {
 
 
 def resolve_source_scratch_kernel(operator_kernel: Callable) -> Callable | None:
-    """返回 numba backend 中支持显式 scratch 的 source kernel 实现."""
+    """返回支持显式 scratch 的 source kernel 实现."""
     if getattr(operator_kernel, "__module__", "") != __name__:
         return None
     return _SOURCE_SCRATCH_KERNELS.get(getattr(operator_kernel, "__name__", ""))

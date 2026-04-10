@@ -17,8 +17,6 @@ from veqpy.solver import Solver, SolverConfig
 
 PLOT = False
 SHOW_PROGRESS = True
-BACKEND = os.environ.get("VEQPY_BACKEND", "numba")
-os.environ["VEQPY_BACKEND"] = BACKEND
 
 REFERENCE_SOURCE_SAMPLE_COUNT = 51
 TEST_SOURCE_SAMPLE_COUNT = 51
@@ -67,14 +65,22 @@ REFERENCE_IP = 3.0e6
 REFERENCE_MU0_IP = MU0 * REFERENCE_IP
 SHAPE_PROFILE_NAMES = build_shape_profile_names(REFERENCE_GRID.M_max)
 BENCHMARK_MODES = ("PF", "PP", "PI", "PJ1", "PJ2", "PQ")
-BENCHMARK_INPUT_KINDS = ("uniform", "grid")
+BENCHMARK_INPUT_KINDS = ("uniform",)
+# BENCHMARK_MODE_CONSTRAINTS = {
+#     "PF": ("null", "Ip", "beta"),
+#     "PP": ("Ip_beta", "Ip", "beta", "null"),
+#     "PI": ("Ip_beta", "Ip", "beta", "null"),
+#     "PJ1": ("Ip_beta", "Ip", "beta", "null"),
+#     "PJ2": ("Ip_beta", "Ip", "beta", "null"),
+#     "PQ": ("Ip_beta", "Ip", "beta", "null"),
+# }
 BENCHMARK_MODE_CONSTRAINTS = {
-    "PF": ("null", "Ip", "beta"),
-    "PP": ("Ip_beta", "Ip", "beta", "null"),
-    "PI": ("Ip_beta", "Ip", "beta", "null"),
-    "PJ1": ("Ip_beta", "Ip", "beta", "null"),
-    "PJ2": ("Ip_beta", "Ip", "beta", "null"),
-    "PQ": ("Ip_beta", "Ip", "beta", "null"),
+    "PF": ("null",),
+    "PP": ("null",),
+    "PI": ("null",),
+    "PJ1": ("null",),
+    "PJ2": ("null",),
+    "PQ": ("null",),
 }
 
 
@@ -174,7 +180,7 @@ def _render_ranking_section(
 
 
 def _artifact_dir() -> Path:
-    outdir = Path(__file__).resolve().parent / f"benchmark-{BACKEND}"
+    outdir = Path(__file__).resolve().parent / "benchmark"
     outdir.mkdir(parents=True, exist_ok=True)
     return outdir
 
@@ -343,7 +349,6 @@ def _reference_pf_case() -> OperatorCase:
 def _reference_cache_signature() -> dict[str, object]:
     return {
         "version": REFERENCE_CACHE_VERSION,
-        "backend": BACKEND,
         "reference_source_sample_count": int(REFERENCE_SOURCE_SAMPLE_COUNT),
         "reference_mu0_ip": float(REFERENCE_MU0_IP),
         "reference_grid": {
@@ -425,7 +430,7 @@ def _solve_reference(*, show_progress: bool = False) -> ReferenceBundle:
     cached = _load_reference_cache()
     if cached is not None:
         if show_progress:
-            print(f"[{BACKEND}] reference cache hit: {_reference_cache_path().name}")
+            print(f"reference cache hit: {_reference_cache_path().name}")
         return cached
 
     solver = Solver(operator=Operator(REFERENCE_GRID, _reference_pf_case()), config=CONFIG)
@@ -455,7 +460,7 @@ def _solve_reference(*, show_progress: bool = False) -> ReferenceBundle:
     )
     _write_reference_cache(reference)
     if show_progress:
-        print(f"[{BACKEND}] reference cache saved: {_reference_cache_path().name}")
+        print(f"reference cache saved: {_reference_cache_path().name}")
     return reference
 
 
@@ -799,7 +804,6 @@ def _write_report(
     lines.extend(
         _render_pairs(
             [
-                ("backend", BACKEND),
                 ("reference_case", "PF_RHO + Ip"),
                 ("reference_grid", f"{REFERENCE_GRID.Nr}x{REFERENCE_GRID.Nt} ({REFERENCE_GRID.scheme})"),
                 ("reference_source_samples", str(REFERENCE_SOURCE_SAMPLE_COUNT)),
@@ -1160,7 +1164,7 @@ def run_full_benchmark(*, show_progress: bool = SHOW_PROGRESS) -> tuple[Referenc
         rows.append(row)
         if show_progress:
             print(
-                f"[{BACKEND}] [{index:02d}/{len(specs)}] {row.case_name}: "
+                f"[{index:02d}/{len(specs)}] {row.case_name}: "
                 f"time={row.avg_ms:.3f}+/-{row.std_ms:.3f} ms | "
                 f"shape={row.shape_error:.3e} | "
                 f"psi_r={row.psi_r_rel_rms_error:.2e} ({row.psi_r_head_sign_changes}/{row.psi_r_tail_sign_changes}) | "
@@ -1181,7 +1185,7 @@ def run_full_benchmark(*, show_progress: bool = SHOW_PROGRESS) -> tuple[Referenc
                 message = f"{row.case_name}: {type(exc).__name__}: {exc}"
                 plot_failures.append(message)
                 if show_progress:
-                    print(f"[{BACKEND}] plot warning: {message}")
+                    print(f"plot warning: {message}")
 
     _write_report(reference, rows, plot_failures)
     _write_reference_summary_json(reference)
@@ -1193,7 +1197,7 @@ def run_full_benchmark(*, show_progress: bool = SHOW_PROGRESS) -> tuple[Referenc
             message = f"reference_summary: {type(exc).__name__}: {exc}"
             plot_failures.append(message)
             if show_progress:
-                print(f"[{BACKEND}] plot warning: {message}")
+                print(f"plot warning: {message}")
             _write_report(reference, rows, plot_failures)
 
     return reference, rows

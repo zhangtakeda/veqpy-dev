@@ -9,20 +9,16 @@ import pytest
 import veqpy._numba as veqpy_numba
 from veqpy.engine import PSIN_COORDINATE, RHO_COORDINATE
 from veqpy.engine.numba_geometry import update_geometry as numba_update_geometry
+from veqpy.engine.numba_geometry import update_geometry_hot as numba_update_geometry_hot
 from veqpy.engine.numba_residual import bind_residual_runner as bind_numba_residual_runner
 from veqpy.engine.numba_source import build_source_remap_cache as build_numba_source_remap_cache
 from veqpy.engine.numba_source import resolve_source_inputs as numba_resolve_source_inputs
-from veqpy.engine.numpy_geometry import update_geometry as numpy_update_geometry
-from veqpy.engine.numpy_residual import bind_residual_runner as bind_numpy_residual_runner
-from veqpy.engine.numpy_source import build_source_remap_cache as build_numpy_source_remap_cache
-from veqpy.engine.numpy_source import resolve_source_inputs as numpy_resolve_source_inputs
 from veqpy.model import Boundary, Geometry, Grid
 from veqpy.model import equilibrium as equilibrium_module
 from veqpy.model.equilibrium import MU0
 from veqpy.operator import Operator
 from veqpy.operator.layout import build_profile_names
 from veqpy.operator.operator_case import OperatorCase
-from veqpy.residual_blocks import F2_BLOCK_CODE
 
 TEST_SOURCE_SAMPLE_COUNT = 21
 
@@ -153,36 +149,22 @@ def test_geometry_update_uses_high_order_fourier_family_terms():
     assert not np.allclose(geometry.tb, grid.theta[None, :] + c_fields[0, 0][:, None])
 
 
-def test_numpy_and_numba_geometry_match_for_high_order_terms():
+def test_numba_hot_geometry_matches_full_geometry_subset():
     grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=4)
     h_fields, v_fields, k_fields, c_fields, s_fields = _build_family_fields(grid)
-    numpy_outputs = _allocate_outputs(grid)
-    numba_outputs = _allocate_outputs(grid)
+    tb_fields, R_fields, Z_fields, J_fields, g_fields, S_r, V_r, Kn, Kn_r, Ln_r = _allocate_outputs(grid)
 
-    numpy_update_geometry(
-        *numpy_outputs,
-        1.2,
-        1.8,
-        -0.1,
-        grid.rho,
-        grid.theta,
-        grid.cos_ktheta,
-        grid.sin_ktheta,
-        grid.k_cos_ktheta,
-        grid.k_sin_ktheta,
-        grid.k2_cos_ktheta,
-        grid.k2_sin_ktheta,
-        grid.weights,
-        h_fields,
-        v_fields,
-        k_fields,
-        c_fields,
-        s_fields,
-        grid.M_max,
-        grid.M_max,
-    )
     numba_update_geometry(
-        *numba_outputs,
+        tb_fields,
+        R_fields,
+        Z_fields,
+        J_fields,
+        g_fields,
+        S_r,
+        V_r,
+        Kn,
+        Kn_r,
+        Ln_r,
         1.2,
         1.8,
         -0.1,
@@ -204,134 +186,70 @@ def test_numpy_and_numba_geometry_match_for_high_order_terms():
         grid.M_max,
     )
 
-    for numpy_arr, numba_arr in zip(numpy_outputs, numba_outputs, strict=True):
-        assert np.allclose(numpy_arr, numba_arr, atol=1e-11, rtol=1e-11)
+    hot_sin_tb = np.empty((grid.Nr, grid.Nt), dtype=np.float64)
+    hot_R = np.empty((grid.Nr, grid.Nt), dtype=np.float64)
+    hot_R_t = np.empty((grid.Nr, grid.Nt), dtype=np.float64)
+    hot_Z_t = np.empty((grid.Nr, grid.Nt), dtype=np.float64)
+    hot_J = np.empty((grid.Nr, grid.Nt), dtype=np.float64)
+    hot_JdivR = np.empty((grid.Nr, grid.Nt), dtype=np.float64)
+    hot_grtdivJR_t = np.empty((grid.Nr, grid.Nt), dtype=np.float64)
+    hot_gttdivJR = np.empty((grid.Nr, grid.Nt), dtype=np.float64)
+    hot_gttdivJR_r = np.empty((grid.Nr, grid.Nt), dtype=np.float64)
+    hot_S_r = np.empty(grid.Nr, dtype=np.float64)
+    hot_V_r = np.empty(grid.Nr, dtype=np.float64)
+    hot_Kn = np.empty(grid.Nr, dtype=np.float64)
+    hot_Kn_r = np.empty(grid.Nr, dtype=np.float64)
+    hot_Ln_r = np.empty(grid.Nr, dtype=np.float64)
 
-
-def test_numpy_and_numba_residual_runners_match_for_high_order_blocks():
-    grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=4)
-    rng = np.random.default_rng(0)
-    profile_names = ("c3", "s4", "k", "c0", "psin", "F")
-    coeff_index_rows = np.array(
-        [
-            [0, -1],
-            [1, -1],
-            [2, 3],
-            [4, -1],
-            [5, 6],
-            [7, -1],
-        ],
-        dtype=np.int64,
-    )
-    lengths = np.array([1, 1, 2, 1, 2, 1], dtype=np.int64)
-    residual_size = 8
-
-    G = rng.normal(size=(grid.Nr, grid.Nt))
-    psin_R = rng.normal(size=(grid.Nr, grid.Nt))
-    psin_Z = rng.normal(size=(grid.Nr, grid.Nt))
-    sin_tb = rng.normal(size=(grid.Nr, grid.Nt))
-
-    numpy_runner = bind_numpy_residual_runner(profile_names, coeff_index_rows, lengths, residual_size)
-    numba_runner = bind_numba_residual_runner(profile_names, coeff_index_rows, lengths, residual_size)
-
-    numpy_out = numpy_runner(
-        G,
-        psin_R,
-        psin_Z,
-        sin_tb,
-        grid.sin_ktheta,
-        grid.cos_ktheta,
-        grid.rho_powers,
-        grid.y,
-        grid.T_fields[0],
-        grid.weights,
+    numba_update_geometry_hot(
+        hot_sin_tb,
+        hot_R,
+        hot_R_t,
+        hot_Z_t,
+        hot_J,
+        hot_JdivR,
+        hot_grtdivJR_t,
+        hot_gttdivJR,
+        hot_gttdivJR_r,
+        hot_S_r,
+        hot_V_r,
+        hot_Kn,
+        hot_Kn_r,
+        hot_Ln_r,
         1.2,
         1.8,
-        3.0,
-    )
-    numba_out = numba_runner(
-        G,
-        psin_R,
-        psin_Z,
-        sin_tb,
-        grid.sin_ktheta,
+        -0.1,
+        grid.rho,
+        grid.theta,
         grid.cos_ktheta,
-        grid.rho_powers,
-        grid.y,
-        grid.T_fields[0],
-        grid.weights,
-        1.2,
-        1.8,
-        3.0,
-    )
-
-    assert np.allclose(numpy_out, numba_out, atol=1e-11, rtol=1e-11)
-
-
-def test_numpy_and_numba_residual_runners_match_for_f2_block():
-    grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=4)
-    rng = np.random.default_rng(1)
-    profile_names = ("F",)
-    coeff_index_rows = np.array([[0, 1]], dtype=np.int64)
-    lengths = np.array([2], dtype=np.int64)
-    residual_size = 2
-    block_codes = np.array([F2_BLOCK_CODE], dtype=np.int64)
-    block_orders = np.array([0], dtype=np.int64)
-
-    G = rng.normal(size=(grid.Nr, grid.Nt))
-    psin_R = rng.normal(size=(grid.Nr, grid.Nt))
-    psin_Z = rng.normal(size=(grid.Nr, grid.Nt))
-    sin_tb = rng.normal(size=(grid.Nr, grid.Nt))
-
-    numpy_runner = bind_numpy_residual_runner(
-        profile_names,
-        coeff_index_rows,
-        lengths,
-        residual_size,
-        block_codes=block_codes,
-        block_orders=block_orders,
-    )
-    numba_runner = bind_numba_residual_runner(
-        profile_names,
-        coeff_index_rows,
-        lengths,
-        residual_size,
-        block_codes=block_codes,
-        block_orders=block_orders,
-    )
-
-    numpy_out = numpy_runner(
-        G,
-        psin_R,
-        psin_Z,
-        sin_tb,
         grid.sin_ktheta,
-        grid.cos_ktheta,
-        grid.rho_powers,
-        grid.y,
-        grid.T_fields[0],
-        grid.weights,
-        1.2,
-        1.8,
-        3.0,
-    )
-    numba_out = numba_runner(
-        G,
-        psin_R,
-        psin_Z,
-        sin_tb,
-        grid.sin_ktheta,
-        grid.cos_ktheta,
-        grid.rho_powers,
-        grid.y,
-        grid.T_fields[0],
-        grid.weights,
-        1.2,
-        1.8,
-        3.0,
+        grid.k_cos_ktheta,
+        grid.k_sin_ktheta,
+        grid.k2_cos_ktheta,
+        grid.k2_sin_ktheta,
+        h_fields,
+        v_fields,
+        k_fields,
+        c_fields,
+        s_fields,
+        grid.M_max,
+        grid.M_max,
     )
 
-    assert np.allclose(numpy_out, numba_out, atol=1.0e-11, rtol=1.0e-11)
+    assert np.allclose(hot_sin_tb, tb_fields[7], atol=1e-11, rtol=1e-11)
+    assert np.allclose(hot_R, R_fields[0], atol=1e-11, rtol=1e-11)
+    assert np.allclose(hot_R_t, R_fields[2], atol=1e-11, rtol=1e-11)
+    assert np.allclose(hot_Z_t, Z_fields[2], atol=1e-11, rtol=1e-11)
+    assert np.allclose(hot_J, J_fields[0], atol=1e-11, rtol=1e-11)
+    assert np.allclose(hot_JdivR, J_fields[6], atol=1e-11, rtol=1e-11)
+    assert np.allclose(hot_grtdivJR_t, g_fields[2], atol=1e-11, rtol=1e-11)
+    assert np.allclose(hot_gttdivJR, g_fields[5], atol=1e-11, rtol=1e-11)
+    assert np.allclose(hot_gttdivJR_r, g_fields[6], atol=1e-11, rtol=1e-11)
+    assert np.allclose(hot_S_r, S_r, atol=1e-11, rtol=1e-11)
+    assert np.allclose(hot_V_r, V_r, atol=1e-11, rtol=1e-11)
+    assert np.allclose(hot_Kn, Kn, atol=1e-11, rtol=1e-11)
+    assert np.allclose(hot_Kn_r, Kn_r, atol=1e-11, rtol=1e-11)
+    assert np.allclose(hot_Ln_r, Ln_r, atol=1e-11, rtol=1e-11)
 
 
 def test_operator_runtime_propagates_high_order_geometry_and_residual():
@@ -389,88 +307,6 @@ def test_operator_residual_returns_independent_arrays_between_calls():
     assert np.allclose(residual_first, residual_first_snapshot)
 
 
-def test_numpy_and_numba_source_resolution_match_for_rho_and_psin_coordinates():
-    grid = Grid(Nr=8, Nt=8, scheme="uniform")
-    heat_input = np.linspace(-1.0, 2.0, TEST_SOURCE_SAMPLE_COUNT)
-    current_input = np.linspace(0.5, -0.25, TEST_SOURCE_SAMPLE_COUNT)
-    psin_query = np.clip(grid.rho * grid.rho + 0.02, 0.0, 1.0)
-    numpy_rho_plan = build_numpy_source_remap_cache("rho", TEST_SOURCE_SAMPLE_COUNT, rho=grid.rho)
-    numba_rho_plan = build_numba_source_remap_cache("rho", TEST_SOURCE_SAMPLE_COUNT, rho=grid.rho)
-    numpy_psin_plan = build_numpy_source_remap_cache("psin", TEST_SOURCE_SAMPLE_COUNT)
-    numba_psin_plan = build_numba_source_remap_cache("psin", TEST_SOURCE_SAMPLE_COUNT)
-    numpy_rho_stencil, numpy_rho_weights, numpy_rho_matrix = numpy_rho_plan
-    numba_rho_stencil, numba_rho_weights, numba_rho_matrix = numba_rho_plan
-    numpy_psin_stencil, numpy_psin_weights, numpy_psin_matrix = numpy_psin_plan
-    numba_psin_stencil, numba_psin_weights, numba_psin_matrix = numba_psin_plan
-
-    numpy_heat_rho = np.empty(grid.Nr, dtype=np.float64)
-    numpy_current_rho = np.empty(grid.Nr, dtype=np.float64)
-    numba_heat_rho = np.empty(grid.Nr, dtype=np.float64)
-    numba_current_rho = np.empty(grid.Nr, dtype=np.float64)
-    numpy_heat_psin = np.empty(grid.Nr, dtype=np.float64)
-    numpy_current_psin = np.empty(grid.Nr, dtype=np.float64)
-    numba_heat_psin = np.empty(grid.Nr, dtype=np.float64)
-    numba_current_psin = np.empty(grid.Nr, dtype=np.float64)
-
-    numpy_resolve_source_inputs(
-        numpy_heat_rho,
-        numpy_current_rho,
-        heat_input,
-        current_input,
-        RHO_COORDINATE,
-        TEST_SOURCE_SAMPLE_COUNT,
-        numpy_rho_weights,
-        numpy_rho_matrix,
-        psin_query,
-    )
-    numba_resolve_source_inputs(
-        numba_heat_rho,
-        numba_current_rho,
-        heat_input,
-        current_input,
-        RHO_COORDINATE,
-        TEST_SOURCE_SAMPLE_COUNT,
-        numba_rho_weights,
-        numba_rho_matrix,
-        psin_query,
-    )
-    numpy_resolve_source_inputs(
-        numpy_heat_psin,
-        numpy_current_psin,
-        heat_input,
-        current_input,
-        PSIN_COORDINATE,
-        TEST_SOURCE_SAMPLE_COUNT,
-        numpy_psin_weights,
-        numpy_psin_matrix,
-        psin_query,
-    )
-    numba_resolve_source_inputs(
-        numba_heat_psin,
-        numba_current_psin,
-        heat_input,
-        current_input,
-        PSIN_COORDINATE,
-        TEST_SOURCE_SAMPLE_COUNT,
-        numba_psin_weights,
-        numba_psin_matrix,
-        psin_query,
-    )
-
-    assert numpy_rho_stencil > 0
-    assert numba_rho_stencil > 0
-    assert numpy_rho_matrix.shape == (grid.Nr, TEST_SOURCE_SAMPLE_COUNT)
-    assert numba_rho_matrix.shape == (grid.Nr, TEST_SOURCE_SAMPLE_COUNT)
-    assert numpy_psin_stencil > 0
-    assert numba_psin_stencil > 0
-    assert numpy_psin_matrix.shape == (0, 0)
-    assert numba_psin_matrix.shape == (0, 0)
-    assert np.allclose(numpy_heat_rho, numba_heat_rho, atol=1e-12, rtol=1e-12)
-    assert np.allclose(numpy_current_rho, numba_current_rho, atol=1e-12, rtol=1e-12)
-    assert np.allclose(numpy_heat_psin, numba_heat_psin, atol=1e-12, rtol=1e-12)
-    assert np.allclose(numpy_current_psin, numba_current_psin, atol=1e-12, rtol=1e-12)
-
-
 def test_psin_source_resolution_uses_monotone_linear_remap_without_axis_overshoot():
     n_src = 9
     psin_query = np.array([0.0, 0.002, 0.01, 0.04, 0.16, 0.36, 0.64, 1.0], dtype=np.float64)
@@ -478,27 +314,12 @@ def test_psin_source_resolution_uses_monotone_linear_remap_without_axis_overshoo
     heat_input = np.linspace(1.0, 3.0, n_src, dtype=np.float64)
     current_input = np.linspace(0.2, 2.0, n_src, dtype=np.float64)
 
-    numpy_plan = build_numpy_source_remap_cache("psin", n_src)
     numba_plan = build_numba_source_remap_cache("psin", n_src)
-    _, numpy_weights, numpy_matrix = numpy_plan
     _, numba_weights, numba_matrix = numba_plan
 
-    numpy_heat = np.empty(psin_query.shape[0], dtype=np.float64)
-    numpy_current = np.empty(psin_query.shape[0], dtype=np.float64)
     numba_heat = np.empty(psin_query.shape[0], dtype=np.float64)
     numba_current = np.empty(psin_query.shape[0], dtype=np.float64)
 
-    numpy_resolve_source_inputs(
-        numpy_heat,
-        numpy_current,
-        heat_input,
-        current_input,
-        PSIN_COORDINATE,
-        n_src,
-        numpy_weights,
-        numpy_matrix,
-        psin_query,
-    )
     numba_resolve_source_inputs(
         numba_heat,
         numba_current,
@@ -514,11 +335,8 @@ def test_psin_source_resolution_uses_monotone_linear_remap_without_axis_overshoo
     expected_heat = np.interp(psin_query, src_axis, heat_input)
     expected_current = np.interp(psin_query, src_axis, current_input)
 
-    assert np.allclose(numpy_heat, expected_heat, atol=1e-12, rtol=1e-12)
-    assert np.allclose(numpy_current, expected_current, atol=1e-12, rtol=1e-12)
     assert np.allclose(numba_heat, expected_heat, atol=1e-12, rtol=1e-12)
     assert np.allclose(numba_current, expected_current, atol=1e-12, rtol=1e-12)
-    assert np.all(numpy_current >= current_input[0])
     assert np.all(numba_current >= current_input[0])
 
 

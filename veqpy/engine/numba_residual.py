@@ -2,7 +2,7 @@
 Module: engine.numba_residual
 
 Role:
-- 负责在 numba backend 下生成 residual fields.
+- 负责生成 residual fields.
 - 负责把 residual blocks 组装成 packed residual.
 
 Public API:
@@ -236,6 +236,50 @@ def update_residual(
 
             G1n = JdivR[i, j] * (FFn_psin[i] + R[i, j] * R[i, j] * Pn_psin[i])
             G2n = gttdivJR[i, j] * psin_rr[i] + (gttdivJR_r[i, j] - grtdivJR_t[i, j]) * psin_r[i]
+            out_G[i, j] = alpha1 * G1n + alpha2 * G2n
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def update_residual_compact(
+    out_fields: np.ndarray,
+    alpha1: float,
+    alpha2: float,
+    root_fields: np.ndarray,
+    R_surface: np.ndarray,
+    R_t_surface: np.ndarray,
+    Z_t_surface: np.ndarray,
+    J_surface: np.ndarray,
+    JdivR_surface: np.ndarray,
+    grtdivJR_t_surface: np.ndarray,
+    gttdivJR_surface: np.ndarray,
+    gttdivJR_r_surface: np.ndarray,
+) -> None:
+    """使用 compact geometry fields 原地更新 residual 相关二维 fields."""
+    out_psin_R = out_fields[0]
+    out_psin_Z = out_fields[1]
+    out_G = out_fields[2]
+
+    psin_r = root_fields[1]
+    psin_rr = root_fields[2]
+    FFn_psin = root_fields[3]
+    Pn_psin = root_fields[4]
+
+    nr, nt = out_G.shape
+    for i in range(nr):
+        psin_r_i = psin_r[i]
+        psin_rr_i = psin_rr[i]
+        FFn_psin_i = FFn_psin[i]
+        Pn_psin_i = Pn_psin[i]
+        for j in range(nt):
+            inv_J = 1.0 / J_surface[i, j]
+            psin_R = -Z_t_surface[i, j] * inv_J * psin_r_i
+            psin_Z = R_t_surface[i, j] * inv_J * psin_r_i
+            out_psin_R[i, j] = psin_R
+            out_psin_Z[i, j] = psin_Z
+
+            R_ij = R_surface[i, j]
+            G1n = JdivR_surface[i, j] * (FFn_psin_i + R_ij * R_ij * Pn_psin_i)
+            G2n = gttdivJR_surface[i, j] * psin_rr_i + (gttdivJR_r_surface[i, j] - grtdivJR_t_surface[i, j]) * psin_r_i
             out_G[i, j] = alpha1 * G1n + alpha2 * G2n
 
 

@@ -13,15 +13,12 @@ from typing import Callable
 
 import numpy as np
 
-from veqpy.model import Geometry, Grid, Profile
+from veqpy.model import Grid, Profile
 from veqpy.operator.layouts import FieldRuntimeState, RuntimeLayout, SourceRuntimeState, StaticLayout
 
 
 @dataclass(slots=True)
 class RuntimeAllocationBundle:
-    geometry: Geometry
-    geometry_surface_slab: np.ndarray
-    geometry_radial_slab: np.ndarray
     profiles_by_name: dict[str, Profile]
     field_runtime_state: FieldRuntimeState
     source_vector_slab: np.ndarray
@@ -63,20 +60,12 @@ def allocate_runtime_state(
     if n_active > 0:
         max_active_len = max(int(profile_L[int(p)]) + 1 for p in active_profile_ids)
 
-    geometry = Geometry(grid=grid)
-    geometry_surface_slab = np.empty((35, nr, nt), dtype=np.float64)
-    geometry_radial_slab = np.empty((5, nr), dtype=np.float64)
-    compact_geometry_surface_slab = np.empty((9, nr, nt), dtype=np.float64)
-    object.__setattr__(geometry, "tb_fields", geometry_surface_slab[0:8])
-    object.__setattr__(geometry, "R_fields", geometry_surface_slab[8:14])
-    object.__setattr__(geometry, "Z_fields", geometry_surface_slab[14:20])
-    object.__setattr__(geometry, "J_fields", geometry_surface_slab[20:28])
-    object.__setattr__(geometry, "g_fields", geometry_surface_slab[28:35])
-    object.__setattr__(geometry, "S_r", geometry_radial_slab[0])
-    object.__setattr__(geometry, "V_r", geometry_radial_slab[1])
-    object.__setattr__(geometry, "Kn", geometry_radial_slab[2])
-    object.__setattr__(geometry, "Kn_r", geometry_radial_slab[3])
-    object.__setattr__(geometry, "Ln_r", geometry_radial_slab[4])
+    # solve-time surface workspace rows:
+    # 0=sin_tb, 1=R, 2=R_t, 3=Z_t, 4=J, 5=JdivR, 6=grtdivJR_t, 7=gttdivJR, 8=gttdivJR_r
+    geometry_surface_workspace = np.empty((9, nr, nt), dtype=np.float64)
+    # solve-time radial workspace rows:
+    # 0=S_r, 1=V_r, 2=Kn, 3=Kn_r, 4=Ln_r
+    geometry_radial_workspace = np.empty((5, nr), dtype=np.float64)
 
     profiles_by_name: dict[str, Profile] = {}
     for name in profile_names:
@@ -151,14 +140,12 @@ def allocate_runtime_state(
             s_family_source_slots[order] = active_slot_by_profile_id[profile_index[s_name]]
 
     runtime_layout = RuntimeLayout(
-        geometry=geometry,
         profiles_by_name=profiles_by_name,
         active_profile_slab=active_profile_slab,
         family_field_slab=family_field_slab,
         source_vector_slab=source_vector_slab,
-        geometry_surface_slab=geometry_surface_slab,
-        geometry_radial_slab=geometry_radial_slab,
-        compact_geometry_surface_slab=compact_geometry_surface_slab,
+        geometry_surface_workspace=geometry_surface_workspace,
+        geometry_radial_workspace=geometry_radial_workspace,
         residual_fields=field_runtime_state.residual_fields,
         root_fields=field_runtime_state.root_fields,
         packed_residual=field_runtime_state.packed_residual,
@@ -187,21 +174,9 @@ def allocate_runtime_state(
         materialized_current_input=source_runtime_state.materialized_current_input,
         source_scratch_1d=source_runtime_state.scratch_1d,
         source_target_root_fields=source_runtime_state.target_root_fields,
-        compact_sin_tb=compact_geometry_surface_slab[0],
-        compact_R=compact_geometry_surface_slab[1],
-        compact_R_t=compact_geometry_surface_slab[2],
-        compact_Z_t=compact_geometry_surface_slab[3],
-        compact_J=compact_geometry_surface_slab[4],
-        compact_JdivR=compact_geometry_surface_slab[5],
-        compact_grtdivJR_t=compact_geometry_surface_slab[6],
-        compact_gttdivJR=compact_geometry_surface_slab[7],
-        compact_gttdivJR_r=compact_geometry_surface_slab[8],
     )
 
     return RuntimeAllocationBundle(
-        geometry=geometry,
-        geometry_surface_slab=geometry_surface_slab,
-        geometry_radial_slab=geometry_radial_slab,
         profiles_by_name=profiles_by_name,
         field_runtime_state=field_runtime_state,
         source_vector_slab=source_vector_slab,

@@ -26,7 +26,6 @@ from typing import TYPE_CHECKING, Callable
 import numpy as np
 
 if TYPE_CHECKING:
-    from veqpy.model.geometry import Geometry
     from veqpy.model.profile import Profile
 
 
@@ -66,13 +65,12 @@ class ResidualBindingLayout:
 class RuntimeLayout:
     """绑定到 residual 热路径的可变 runtime 缓冲区."""
 
-    geometry: Geometry
     profiles_by_name: dict[str, Profile]
     active_profile_slab: np.ndarray
     family_field_slab: np.ndarray
     source_vector_slab: np.ndarray
-    geometry_surface_slab: np.ndarray
-    geometry_radial_slab: np.ndarray
+    geometry_surface_workspace: np.ndarray
+    geometry_radial_workspace: np.ndarray
     residual_fields: np.ndarray
     root_fields: np.ndarray
     packed_residual: np.ndarray
@@ -131,7 +129,6 @@ class ExecutionState:
     residual_pack_stage_runner: Callable
     residual_full_stage_runner: Callable
     residual_pack_runner: Callable
-    residual_stage_runner: Callable
     fused_residual_runner: Callable
     fused_alpha_state: np.ndarray
 

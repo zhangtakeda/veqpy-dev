@@ -2,7 +2,7 @@
 Module: engine.numba_operator
 
 Role:
-- 提供 numba backend 下的 fused x -> residual hot runner.
+- 提供 fused x -> residual hot runner.
 - 把常见 route 的 stage A/B/C/D 串成单个 engine 绑定入口.
 
 Public API:
@@ -23,9 +23,9 @@ from typing import TYPE_CHECKING, Callable
 import numpy as np
 from numba import njit
 
-from veqpy.engine.numba_geometry import update_geometry
+from veqpy.engine.numba_geometry import update_geometry_hot
 from veqpy.engine.numba_profile import update_profiles_packed_bulk
-from veqpy.engine.numba_residual import _run_residual_blocks_packed, update_residual
+from veqpy.engine.numba_residual import _run_residual_blocks_packed, update_residual_compact
 from veqpy.engine.numba_source import (
     _linear_uniform_interpolate_pair,
     _local_barycentric_interpolate_pair,
@@ -388,17 +388,22 @@ def bind_fused_single_pass_residual_runner(
     s_family_base_fields = runtime_layout.s_family_base_fields
     c_source_slots = runtime_layout.c_family_source_slots
     s_source_slots = runtime_layout.s_family_source_slots
-    geometry = runtime_layout.geometry
-    tb_fields = geometry.tb_fields
-    R_fields = geometry.R_fields
-    Z_fields = geometry.Z_fields
-    J_fields = geometry.J_fields
-    g_fields = geometry.g_fields
-    S_r = geometry.S_r
-    V_r = geometry.V_r
-    Kn = geometry.Kn
-    Kn_r = geometry.Kn_r
-    Ln_r = geometry.Ln_r
+    surface_workspace = runtime_layout.geometry_surface_workspace
+    radial_workspace = runtime_layout.geometry_radial_workspace
+    compact_sin_tb = surface_workspace[0]
+    compact_R = surface_workspace[1]
+    compact_R_t = surface_workspace[2]
+    compact_Z_t = surface_workspace[3]
+    compact_J = surface_workspace[4]
+    compact_JdivR = surface_workspace[5]
+    compact_grtdivJR_t = surface_workspace[6]
+    compact_gttdivJR = surface_workspace[7]
+    compact_gttdivJR_r = surface_workspace[8]
+    S_r = radial_workspace[0]
+    V_r = radial_workspace[1]
+    Kn = radial_workspace[2]
+    Kn_r = radial_workspace[3]
+    Ln_r = radial_workspace[4]
     T_fields = static_layout.T_fields
     rho = static_layout.rho
     theta = static_layout.theta
@@ -467,12 +472,16 @@ def bind_fused_single_pass_residual_runner(
             c_active_order,
             s_active_order,
         )
-        update_geometry(
-            tb_fields,
-            R_fields,
-            Z_fields,
-            J_fields,
-            g_fields,
+        update_geometry_hot(
+            compact_sin_tb,
+            compact_R,
+            compact_R_t,
+            compact_Z_t,
+            compact_J,
+            compact_JdivR,
+            compact_grtdivJR_t,
+            compact_gttdivJR,
+            compact_gttdivJR_r,
             S_r,
             V_r,
             Kn,
@@ -489,7 +498,6 @@ def bind_fused_single_pass_residual_runner(
             k_sin_ktheta,
             k2_cos_ktheta,
             k2_sin_ktheta,
-            weights,
             h_fields,
             v_fields,
             k_fields,
@@ -519,8 +527,8 @@ def bind_fused_single_pass_residual_runner(
                 Kn_r,
                 Ln_r,
                 S_r,
-                R_fields[0],
-                J_fields[6],
+                compact_R,
+                compact_JdivR,
                 F_profile_u,
                 Ip,
                 beta,
@@ -546,8 +554,8 @@ def bind_fused_single_pass_residual_runner(
                 Kn_r,
                 Ln_r,
                 S_r,
-                R_fields[0],
-                J_fields[6],
+                compact_R,
+                compact_JdivR,
                 F_profile_u,
                 Ip,
                 beta,
@@ -555,15 +563,19 @@ def bind_fused_single_pass_residual_runner(
             )
         alpha_state[0] = alpha1
         alpha_state[1] = alpha2
-        update_residual(
+        update_residual_compact(
             residual_fields,
             alpha1,
             alpha2,
             root_fields,
-            R_fields,
-            Z_fields,
-            J_fields,
-            g_fields,
+            compact_R,
+            compact_R_t,
+            compact_Z_t,
+            compact_J,
+            compact_JdivR,
+            compact_grtdivJR_t,
+            compact_gttdivJR,
+            compact_gttdivJR_r,
         )
         packed_residual.fill(0.0)
         scratch = scratch_holder[0]
@@ -581,7 +593,7 @@ def bind_fused_single_pass_residual_runner(
             residual_fields[2],
             residual_fields[0],
             residual_fields[1],
-            tb_fields[7],
+            compact_sin_tb,
             sin_ktheta,
             cos_ktheta,
             rho_powers,
@@ -625,17 +637,22 @@ def bind_fused_profile_owned_psin_residual_runner(
     s_family_base_fields = runtime_layout.s_family_base_fields
     c_source_slots = runtime_layout.c_family_source_slots
     s_source_slots = runtime_layout.s_family_source_slots
-    geometry = runtime_layout.geometry
-    tb_fields = geometry.tb_fields
-    R_fields = geometry.R_fields
-    Z_fields = geometry.Z_fields
-    J_fields = geometry.J_fields
-    g_fields = geometry.g_fields
-    S_r = geometry.S_r
-    V_r = geometry.V_r
-    Kn = geometry.Kn
-    Kn_r = geometry.Kn_r
-    Ln_r = geometry.Ln_r
+    surface_workspace = runtime_layout.geometry_surface_workspace
+    radial_workspace = runtime_layout.geometry_radial_workspace
+    compact_sin_tb = surface_workspace[0]
+    compact_R = surface_workspace[1]
+    compact_R_t = surface_workspace[2]
+    compact_Z_t = surface_workspace[3]
+    compact_J = surface_workspace[4]
+    compact_JdivR = surface_workspace[5]
+    compact_grtdivJR_t = surface_workspace[6]
+    compact_gttdivJR = surface_workspace[7]
+    compact_gttdivJR_r = surface_workspace[8]
+    S_r = radial_workspace[0]
+    V_r = radial_workspace[1]
+    Kn = radial_workspace[2]
+    Kn_r = radial_workspace[3]
+    Ln_r = radial_workspace[4]
     T_fields = static_layout.T_fields
     rho = static_layout.rho
     theta = static_layout.theta
@@ -717,12 +734,16 @@ def bind_fused_profile_owned_psin_residual_runner(
             c_active_order,
             s_active_order,
         )
-        update_geometry(
-            tb_fields,
-            R_fields,
-            Z_fields,
-            J_fields,
-            g_fields,
+        update_geometry_hot(
+            compact_sin_tb,
+            compact_R,
+            compact_R_t,
+            compact_Z_t,
+            compact_J,
+            compact_JdivR,
+            compact_grtdivJR_t,
+            compact_gttdivJR,
+            compact_gttdivJR_r,
             S_r,
             V_r,
             Kn,
@@ -739,7 +760,6 @@ def bind_fused_profile_owned_psin_residual_runner(
             k_sin_ktheta,
             k2_cos_ktheta,
             k2_sin_ktheta,
-            weights,
             h_fields,
             v_fields,
             k_fields,
@@ -796,8 +816,8 @@ def bind_fused_profile_owned_psin_residual_runner(
                 Kn_r,
                 Ln_r,
                 S_r,
-                R_fields[0],
-                J_fields[6],
+                compact_R,
+                compact_JdivR,
                 F_profile_u,
                 Ip,
                 beta,
@@ -823,8 +843,8 @@ def bind_fused_profile_owned_psin_residual_runner(
                 Kn_r,
                 Ln_r,
                 S_r,
-                R_fields[0],
-                J_fields[6],
+                compact_R,
+                compact_JdivR,
                 F_profile_u,
                 Ip,
                 beta,
@@ -832,15 +852,19 @@ def bind_fused_profile_owned_psin_residual_runner(
             )
         alpha_state[0] = alpha1
         alpha_state[1] = alpha2
-        update_residual(
+        update_residual_compact(
             residual_fields,
             alpha1,
             alpha2,
             root_fields,
-            R_fields,
-            Z_fields,
-            J_fields,
-            g_fields,
+            compact_R,
+            compact_R_t,
+            compact_Z_t,
+            compact_J,
+            compact_JdivR,
+            compact_grtdivJR_t,
+            compact_gttdivJR,
+            compact_gttdivJR_r,
         )
         packed_residual.fill(0.0)
         scratch = scratch_holder[0]
@@ -858,7 +882,7 @@ def bind_fused_profile_owned_psin_residual_runner(
             residual_fields[2],
             residual_fields[0],
             residual_fields[1],
-            tb_fields[7],
+            compact_sin_tb,
             sin_ktheta,
             cos_ktheta,
             rho_powers,
@@ -904,17 +928,22 @@ def bind_fused_fixed_point_psin_residual_runner(
     s_family_base_fields = runtime_layout.s_family_base_fields
     c_source_slots = runtime_layout.c_family_source_slots
     s_source_slots = runtime_layout.s_family_source_slots
-    geometry = runtime_layout.geometry
-    tb_fields = geometry.tb_fields
-    R_fields = geometry.R_fields
-    Z_fields = geometry.Z_fields
-    J_fields = geometry.J_fields
-    g_fields = geometry.g_fields
-    S_r = geometry.S_r
-    V_r = geometry.V_r
-    Kn = geometry.Kn
-    Kn_r = geometry.Kn_r
-    Ln_r = geometry.Ln_r
+    surface_workspace = runtime_layout.geometry_surface_workspace
+    radial_workspace = runtime_layout.geometry_radial_workspace
+    compact_sin_tb = surface_workspace[0]
+    compact_R = surface_workspace[1]
+    compact_R_t = surface_workspace[2]
+    compact_Z_t = surface_workspace[3]
+    compact_J = surface_workspace[4]
+    compact_JdivR = surface_workspace[5]
+    compact_grtdivJR_t = surface_workspace[6]
+    compact_gttdivJR = surface_workspace[7]
+    compact_gttdivJR_r = surface_workspace[8]
+    S_r = radial_workspace[0]
+    V_r = radial_workspace[1]
+    Kn = radial_workspace[2]
+    Kn_r = radial_workspace[3]
+    Ln_r = radial_workspace[4]
     T_fields = static_layout.T_fields
     rho = static_layout.rho
     theta = static_layout.theta
@@ -975,8 +1004,8 @@ def bind_fused_fixed_point_psin_residual_runner(
     psin_rr = root_fields[2]
     FFn_psin = root_fields[3]
     Pn_psin = root_fields[4]
-    R_surface = R_fields[0]
-    JdivR = J_fields[6]
+    R_surface = compact_R
+    JdivR = compact_JdivR
 
     if scratch_source_kernel is None:
 
@@ -1224,12 +1253,16 @@ def bind_fused_fixed_point_psin_residual_runner(
             c_active_order,
             s_active_order,
         )
-        update_geometry(
-            tb_fields,
-            R_fields,
-            Z_fields,
-            J_fields,
-            g_fields,
+        update_geometry_hot(
+            compact_sin_tb,
+            compact_R,
+            compact_R_t,
+            compact_Z_t,
+            compact_J,
+            compact_JdivR,
+            compact_grtdivJR_t,
+            compact_gttdivJR,
+            compact_gttdivJR_r,
             S_r,
             V_r,
             Kn,
@@ -1246,7 +1279,6 @@ def bind_fused_fixed_point_psin_residual_runner(
             k_sin_ktheta,
             k2_cos_ktheta,
             k2_sin_ktheta,
-            weights,
             h_fields,
             v_fields,
             k_fields,
@@ -1266,15 +1298,19 @@ def bind_fused_fixed_point_psin_residual_runner(
 
         alpha_state[0] = alpha1
         alpha_state[1] = alpha2
-        update_residual(
+        update_residual_compact(
             residual_fields,
             alpha1,
             alpha2,
             root_fields,
-            R_fields,
-            Z_fields,
-            J_fields,
-            g_fields,
+            compact_R,
+            compact_R_t,
+            compact_Z_t,
+            compact_J,
+            compact_JdivR,
+            compact_grtdivJR_t,
+            compact_gttdivJR,
+            compact_gttdivJR_r,
         )
         packed_residual.fill(0.0)
         scratch = scratch_holder[0]
@@ -1292,7 +1328,7 @@ def bind_fused_fixed_point_psin_residual_runner(
             residual_fields[2],
             residual_fields[0],
             residual_fields[1],
-            tb_fields[7],
+            compact_sin_tb,
             sin_ktheta,
             cos_ktheta,
             rho_powers,

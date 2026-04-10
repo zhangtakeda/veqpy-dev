@@ -2,7 +2,7 @@
 Module: engine.numba_profile
 
 Role:
-- 负责在 numba backend 下计算 profile fields.
+- 负责计算 profile fields.
 - 输入使用 basis tables 与 profile coefficients.
 
 Public API:

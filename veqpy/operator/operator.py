@@ -19,15 +19,15 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 import numpy as np
+from veqpy.engine.numba_residual import update_residual_compact
 
 from veqpy.engine import (
     bind_fused_residual_runner,
     bind_residual_runner,
-    bind_residual_stage_runner,
     resolve_source_scratch_kernel,
     validate_route,
 )
-from veqpy.model import Equilibrium, Geometry, Grid, Profile
+from veqpy.model import Equilibrium, Grid, Profile
 from veqpy.operator.codec import decode_packed_blocks, encode_packed_state
 from veqpy.operator.execution_helpers import snapshot_equilibrium_from_runtime
 from veqpy.operator.layout import (
@@ -97,9 +97,6 @@ class Operator:
     static_layout: StaticLayout = field(init=False, repr=False)
     residual_binding_layout: ResidualBindingLayout = field(init=False, repr=False)
     runtime_layout: RuntimeLayout = field(init=False, repr=False)
-    geometry: Geometry = field(init=False)
-    geometry_surface_slab: np.ndarray = field(init=False, repr=False)
-    geometry_radial_slab: np.ndarray = field(init=False, repr=False)
 
     h_profile: Profile = field(init=False)
     v_profile: Profile = field(init=False)
@@ -148,6 +145,8 @@ class Operator:
     active_slot_by_profile_id: np.ndarray = field(init=False, repr=False)
     c_family_source_slots: np.ndarray = field(init=False, repr=False)
     s_family_source_slots: np.ndarray = field(init=False, repr=False)
+    geometry_surface_workspace: np.ndarray = field(init=False, repr=False)
+    geometry_radial_workspace: np.ndarray = field(init=False, repr=False)
     c_effective_order: int = field(init=False, repr=False)
     s_effective_order: int = field(init=False, repr=False)
     _source_route_spec: object = field(init=False, repr=False)
@@ -199,7 +198,6 @@ class Operator:
             residual_pack_stage_runner=lambda: np.zeros(self.x_size, dtype=np.float64),
             residual_full_stage_runner=lambda: np.zeros(self.x_size, dtype=np.float64),
             residual_pack_runner=lambda *args, **kwargs: np.zeros(self.x_size, dtype=np.float64),
-            residual_stage_runner=lambda *args, **kwargs: np.zeros(self.x_size, dtype=np.float64),
             fused_residual_runner=lambda x_eval: self._evaluate_residual(x_eval),
             fused_alpha_state=np.zeros(2, dtype=np.float64),
         )
@@ -405,13 +403,10 @@ class Operator:
 
     def _refresh_runtime_layout_views(self) -> None:
         runtime = self.runtime_layout
-        runtime.geometry = self.geometry
         runtime.profiles_by_name = self.profiles_by_name
         runtime.active_profile_slab = self.active_profile_slab
         runtime.family_field_slab = self.family_field_slab
         runtime.source_vector_slab = self.source_vector_slab
-        runtime.geometry_surface_slab = self.geometry_surface_slab
-        runtime.geometry_radial_slab = self.geometry_radial_slab
         runtime.residual_fields = self.residual_fields
         runtime.root_fields = self.root_fields
         runtime.packed_residual = self.packed_residual
@@ -461,9 +456,6 @@ class Operator:
                 profile_scale_specs=self.profile_scale_specs,
             ),
         )
-        self.geometry = bundle.geometry
-        self.geometry_surface_slab = bundle.geometry_surface_slab
-        self.geometry_radial_slab = bundle.geometry_radial_slab
         self.profiles_by_name = bundle.profiles_by_name
         for name, profile in self.profiles_by_name.items():
             if hasattr(type(self), f"{name}_profile"):
@@ -499,6 +491,8 @@ class Operator:
         self.c_family_source_slots = bundle.c_family_source_slots
         self.s_family_source_slots = bundle.s_family_source_slots
         self.runtime_layout = bundle.runtime_layout
+        self.geometry_surface_workspace = bundle.runtime_layout.geometry_surface_workspace
+        self.geometry_radial_workspace = bundle.runtime_layout.geometry_radial_workspace
 
     def _refresh_runtime_state(self) -> None:
         self._refresh_operator_identity()
@@ -597,7 +591,6 @@ class Operator:
         self.execution_state.geometry_stage_runner = self._build_geometry_stage_runner()
         self.execution_state.source_stage_runner = self._build_bound_source_stage_runner()
         self.execution_state.residual_pack_runner = self._build_residual_pack_runner()
-        self.execution_state.residual_stage_runner = self._build_residual_stage_runner()
         self.execution_state.residual_pack_stage_runner = self._build_bound_residual_pack_stage_runner()
         self.execution_state.residual_full_stage_runner = self._build_bound_residual_full_stage_runner()
         self.execution_state.fused_residual_runner = self._build_fused_residual_runner()
@@ -654,16 +647,8 @@ class Operator:
             a=self.case.a,
             R0=self.case.R0,
             Z0=self.case.Z0,
-            tb_fields=self.geometry.tb_fields,
-            R_fields=self.geometry.R_fields,
-            Z_fields=self.geometry.Z_fields,
-            J_fields=self.geometry.J_fields,
-            g_fields=self.geometry.g_fields,
-            S_r=self.geometry.S_r,
-            V_r=self.geometry.V_r,
-            Kn=self.geometry.Kn,
-            Kn_r=self.geometry.Kn_r,
-            Ln_r=self.geometry.Ln_r,
+            surface_workspace=self.geometry_surface_workspace,
+            radial_workspace=self.geometry_radial_workspace,
             rho=self.grid.rho,
             theta=self.grid.theta,
             cos_ktheta=self.grid.cos_ktheta,
@@ -689,20 +674,6 @@ class Operator:
         except KeyError as exc:
             raise ValueError(f"Unsupported active residual block set {profile_names!r}") from exc
 
-    def _build_residual_stage_runner(self) -> Callable:
-        profile_names = self.residual_binding_layout.active_profile_names
-        try:
-            return bind_residual_stage_runner(
-                profile_names,
-                self.active_coeff_index_rows,
-                self.active_lengths,
-                self.x_size,
-                block_codes=self.residual_binding_layout.active_residual_block_codes,
-                block_orders=self.residual_binding_layout.active_residual_block_orders,
-            )
-        except KeyError as exc:
-            raise ValueError(f"Unsupported active residual block set {profile_names!r}") from exc
-
     def _build_bound_source_stage_runner(self) -> Callable:
         return build_bound_source_stage_runner(self)
 
@@ -711,7 +682,7 @@ class Operator:
         G = self.G
         psin_R = self.psin_R
         psin_Z = self.psin_Z
-        sin_tb = self.geometry.sin_tb
+        sin_tb = self.geometry_surface_workspace[0]
         sin_ktheta = self.grid.sin_ktheta
         cos_ktheta = self.grid.cos_ktheta
         rho_powers = self.grid.rho_powers
@@ -742,16 +713,13 @@ class Operator:
         return runner
 
     def _build_bound_residual_full_stage_runner(self) -> Callable:
-        residual_stage_runner = self.execution_state.residual_stage_runner
+        residual_pack_runner = self.execution_state.residual_pack_runner
         packed_residual = self.packed_residual
         residual_fields = self.residual_fields
         alpha_state = self.execution_state.fused_alpha_state
         root_fields = self.root_fields
-        R_fields = self.geometry.R_fields
-        Z_fields = self.geometry.Z_fields
-        J_fields = self.geometry.J_fields
-        g_fields = self.geometry.g_fields
-        sin_tb = self.geometry.sin_tb
+        surface_workspace = self.geometry_surface_workspace
+        sin_tb = surface_workspace[0]
         sin_ktheta = self.grid.sin_ktheta
         cos_ktheta = self.grid.cos_ktheta
         rho_powers = self.grid.rho_powers
@@ -763,16 +731,24 @@ class Operator:
         B0 = self.case.B0
 
         def runner() -> np.ndarray:
-            return residual_stage_runner(
-                packed_residual,
+            update_residual_compact(
                 residual_fields,
                 float(alpha_state[0]),
                 float(alpha_state[1]),
                 root_fields,
-                R_fields,
-                Z_fields,
-                J_fields,
-                g_fields,
+                surface_workspace[1],
+                surface_workspace[2],
+                surface_workspace[3],
+                surface_workspace[4],
+                surface_workspace[5],
+                surface_workspace[6],
+                surface_workspace[7],
+                surface_workspace[8],
+            )
+            return residual_pack_runner(
+                residual_fields[2],
+                residual_fields[0],
+                residual_fields[1],
                 sin_tb,
                 sin_ktheta,
                 cos_ktheta,

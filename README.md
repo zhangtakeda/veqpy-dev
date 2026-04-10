@@ -11,7 +11,7 @@ a high-performance Python wrapper for plasma equilibrium simulations in magnetic
 
 - `veqpy/engine/`
   - Array-first numerical kernels.
-  - `numpy` and `numba` backends for `profile`, `geometry`, `source`, and `residual`.
+  - `numba` kernels for `profile`, `geometry`, `source`, and `residual`.
 - `veqpy/model/`
   - Passive or snapshot-oriented objects: `Grid`, `Profile`, `Geometry`, `Equilibrium`.
 - `veqpy/operator/`
@@ -63,7 +63,7 @@ Core regressions are now organized by submodule instead of by temporary refactor
 - [tests/test_model_core_regression.py](tests/test_model_core_regression.py)
   - `Grid`, `Boundary.from_geqdsk`, `Equilibrium` snapshot/serialization/comparison semantics
 - [tests/test_engine_core_regression.py](tests/test_engine_core_regression.py)
-  - `numpy`/`numba` geometry and residual consistency, high-order runtime propagation, and operator-facing engine contracts
+  - numba geometry/residual/source regression checks, high-order runtime propagation, and operator-facing engine contracts
 - [tests/test_solver_core_regression.py](tests/test_solver_core_regression.py)
   - solve facade, fallback/reset behavior, and solver/operator state lifecycle semantics
 

@@ -12,7 +12,8 @@ from typing import Callable
 
 import numpy as np
 
-from veqpy.engine import update_fourier_family_fields, update_geometry
+from veqpy.engine import update_fourier_family_fields
+from veqpy.engine.numba_geometry import update_geometry_hot
 
 
 def build_geometry_stage_runner(
@@ -32,16 +33,8 @@ def build_geometry_stage_runner(
     a: float,
     R0: float,
     Z0: float,
-    tb_fields: np.ndarray,
-    R_fields: np.ndarray,
-    Z_fields: np.ndarray,
-    J_fields: np.ndarray,
-    g_fields: np.ndarray,
-    S_r: np.ndarray,
-    V_r: np.ndarray,
-    Kn: np.ndarray,
-    Kn_r: np.ndarray,
-    Ln_r: np.ndarray,
+    surface_workspace: np.ndarray,
+    radial_workspace: np.ndarray,
     rho: np.ndarray,
     theta: np.ndarray,
     cos_ktheta: np.ndarray,
@@ -59,6 +52,20 @@ def build_geometry_stage_runner(
     Z0 = float(Z0)
 
     def runner() -> None:
+        sin_tb = surface_workspace[0]
+        R_surface = surface_workspace[1]
+        R_t_surface = surface_workspace[2]
+        Z_t_surface = surface_workspace[3]
+        J_surface = surface_workspace[4]
+        JdivR_surface = surface_workspace[5]
+        grtdivJR_t_surface = surface_workspace[6]
+        gttdivJR_surface = surface_workspace[7]
+        gttdivJR_r_surface = surface_workspace[8]
+        S_r = radial_workspace[0]
+        V_r = radial_workspace[1]
+        Kn = radial_workspace[2]
+        Kn_r = radial_workspace[3]
+        Ln_r = radial_workspace[4]
         update_fourier_family_fields(
             c_family_fields,
             s_family_fields,
@@ -70,12 +77,16 @@ def build_geometry_stage_runner(
             c_effective_order,
             s_effective_order,
         )
-        update_geometry(
-            tb_fields,
-            R_fields,
-            Z_fields,
-            J_fields,
-            g_fields,
+        update_geometry_hot(
+            sin_tb,
+            R_surface,
+            R_t_surface,
+            Z_t_surface,
+            J_surface,
+            JdivR_surface,
+            grtdivJR_t_surface,
+            gttdivJR_surface,
+            gttdivJR_r_surface,
             S_r,
             V_r,
             Kn,
@@ -92,7 +103,6 @@ def build_geometry_stage_runner(
             k_sin_ktheta,
             k2_cos_ktheta,
             k2_sin_ktheta,
-            weights,
             h_fields,
             v_fields,
             k_fields,
