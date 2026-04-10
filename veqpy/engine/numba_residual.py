@@ -241,10 +241,11 @@ def update_residual(
 
 @njit(cache=True, fastmath=True, nogil=True)
 def update_residual_compact(
-    out_fields: np.ndarray,
+    out_workspace: np.ndarray,
     alpha1: float,
     alpha2: float,
     root_fields: np.ndarray,
+    sin_tb_surface: np.ndarray,
     R_surface: np.ndarray,
     R_t_surface: np.ndarray,
     Z_t_surface: np.ndarray,
@@ -255,9 +256,10 @@ def update_residual_compact(
     gttdivJR_r_surface: np.ndarray,
 ) -> None:
     """使用 compact geometry fields 原地更新 residual 相关二维 fields."""
-    out_psin_R = out_fields[0]
-    out_psin_Z = out_fields[1]
-    out_G = out_fields[2]
+    out_G = out_workspace[0]
+    out_Gpsin_R = out_workspace[1]
+    out_Gpsin_Z = out_workspace[2]
+    out_Gpsin_R_sin_tb = out_workspace[3]
 
     psin_r = root_fields[1]
     psin_rr = root_fields[2]
@@ -274,13 +276,16 @@ def update_residual_compact(
             inv_J = 1.0 / J_surface[i, j]
             psin_R = -Z_t_surface[i, j] * inv_J * psin_r_i
             psin_Z = R_t_surface[i, j] * inv_J * psin_r_i
-            out_psin_R[i, j] = psin_R
-            out_psin_Z[i, j] = psin_Z
 
             R_ij = R_surface[i, j]
             G1n = JdivR_surface[i, j] * (FFn_psin_i + R_ij * R_ij * Pn_psin_i)
             G2n = gttdivJR_surface[i, j] * psin_rr_i + (gttdivJR_r_surface[i, j] - grtdivJR_t_surface[i, j]) * psin_r_i
-            out_G[i, j] = alpha1 * G1n + alpha2 * G2n
+            G_ij = alpha1 * G1n + alpha2 * G2n
+            out_G[i, j] = G_ij
+            Gpsin_R = G_ij * psin_R
+            out_Gpsin_R[i, j] = Gpsin_R
+            out_Gpsin_Z[i, j] = G_ij * psin_Z
+            out_Gpsin_R_sin_tb[i, j] = Gpsin_R * sin_tb_surface[i, j]
 
 
 @register_residual_block("h")
@@ -642,6 +647,26 @@ def _collapse_g(out: np.ndarray, G: np.ndarray) -> None:
 
 
 @njit(cache=True, fastmath=True, nogil=True)
+def _collapse_field(out: np.ndarray, field: np.ndarray) -> None:
+    nr, nt = field.shape
+    for i in range(nr):
+        collapsed = 0.0
+        for j in range(nt):
+            collapsed += field[i, j]
+        out[i] = collapsed
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def _collapse_field_theta(out: np.ndarray, field: np.ndarray, theta_weight: np.ndarray) -> None:
+    nr, nt = field.shape
+    for i in range(nr):
+        collapsed = 0.0
+        for j in range(nt):
+            collapsed += field[i, j] * theta_weight[j]
+        out[i] = collapsed
+
+
+@njit(cache=True, fastmath=True, nogil=True)
 def _collapse_g_field(out: np.ndarray, G: np.ndarray, field: np.ndarray) -> None:
     nr, nt = G.shape
     for i in range(nr):
@@ -960,4 +985,72 @@ def _run_residual_blocks_packed(
                 R0,
                 B0,
                 scratch,
+            )
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def _run_residual_blocks_packed_precomputed(
+    out_packed: np.ndarray,
+    scratch: np.ndarray,
+    block_codes: np.ndarray,
+    block_orders: np.ndarray,
+    coeff_index_rows: np.ndarray,
+    lengths: np.ndarray,
+    G: np.ndarray,
+    Gpsin_R: np.ndarray,
+    Gpsin_Z: np.ndarray,
+    Gpsin_R_sin_tb: np.ndarray,
+    sin_ktheta: np.ndarray,
+    cos_ktheta: np.ndarray,
+    rho_powers: np.ndarray,
+    y: np.ndarray,
+    T: np.ndarray,
+    weights: np.ndarray,
+    a: float,
+    R0: float,
+    B0: float,
+) -> None:
+    sin_theta = sin_ktheta[1]
+    rho = rho_powers[1]
+    rho2 = rho_powers[2]
+    nt = G.shape[1]
+    base_scale = 2.0 * np.pi / nt
+    for slot in range(block_codes.shape[0]):
+        coeff_indices = coeff_index_rows[slot, : lengths[slot]]
+        code = block_codes[slot]
+        order = block_orders[slot]
+        if code == 0:
+            _collapse_field(scratch, Gpsin_R)
+            _scale_and_project_rows_two(out_packed, coeff_indices, T, scratch, y, weights, base_scale * a)
+        elif code == 1:
+            _collapse_field(scratch, Gpsin_Z)
+            _scale_and_project_rows_two(out_packed, coeff_indices, T, scratch, y, weights, base_scale * a)
+        elif code == 2:
+            _collapse_field_theta(scratch, Gpsin_Z, sin_theta)
+            _scale_and_project_rows_three(out_packed, coeff_indices, T, scratch, rho, y, weights, base_scale * (-a))
+        elif code == 3:
+            _collapse_field(scratch, Gpsin_R_sin_tb)
+            _scale_and_project_rows_three(out_packed, coeff_indices, T, scratch, rho, y, weights, base_scale * (-a))
+        elif code == 4:
+            _collapse_field_theta(scratch, Gpsin_R_sin_tb, cos_ktheta[order])
+            _scale_and_project_rows_three(
+                out_packed, coeff_indices, T, scratch, rho_powers[order + 1], y, weights, base_scale * (-a)
+            )
+        elif code == 5:
+            _collapse_field_theta(scratch, Gpsin_R_sin_tb, sin_ktheta[order])
+            _scale_and_project_rows_three(
+                out_packed, coeff_indices, T, scratch, rho_powers[order + 1], y, weights, base_scale * (-a)
+            )
+        elif code == 6:
+            _collapse_g(scratch, G)
+            _scale_and_project_rows_three(out_packed, coeff_indices, T, scratch, rho2, y, weights, base_scale)
+        elif code == 7:
+            _collapse_g(scratch, G)
+            _scale_and_project_rows_three(
+                out_packed, coeff_indices, T, scratch, y, y, weights, base_scale * (R0 * B0)
+            )
+        else:
+            _collapse_g(scratch, G)
+            _scale_and_project_rows_two(
+                out_packed, coeff_indices, T, scratch, y, weights, base_scale * (R0 * B0) * (R0 * B0)
             )

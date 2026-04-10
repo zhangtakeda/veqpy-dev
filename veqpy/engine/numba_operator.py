@@ -25,7 +25,7 @@ from numba import njit
 
 from veqpy.engine.numba_geometry import update_geometry_hot
 from veqpy.engine.numba_profile import update_profiles_packed_bulk
-from veqpy.engine.numba_residual import _run_residual_blocks_packed, update_residual_compact
+from veqpy.engine.numba_residual import _run_residual_blocks_packed_precomputed, update_residual_compact
 from veqpy.engine.numba_source import (
     _linear_uniform_interpolate_pair,
     _local_barycentric_interpolate_pair,
@@ -404,6 +404,7 @@ def bind_fused_single_pass_residual_runner(
     Kn = radial_workspace[2]
     Kn_r = radial_workspace[3]
     Ln_r = radial_workspace[4]
+    residual_workspace = runtime_layout.residual_surface_workspace
     T_fields = static_layout.T_fields
     rho = static_layout.rho
     theta = static_layout.theta
@@ -419,7 +420,6 @@ def bind_fused_single_pass_residual_runner(
     rho_powers = static_layout.rho_powers
     y = static_layout.y
     root_fields = runtime_layout.root_fields
-    residual_fields = runtime_layout.residual_fields
     packed_residual = runtime_layout.packed_residual
     materialized_heat_input = runtime_layout.materialized_heat_input
     materialized_current_input = runtime_layout.materialized_current_input
@@ -564,10 +564,11 @@ def bind_fused_single_pass_residual_runner(
         alpha_state[0] = alpha1
         alpha_state[1] = alpha2
         update_residual_compact(
-            residual_fields,
+            residual_workspace,
             alpha1,
             alpha2,
             root_fields,
+            compact_sin_tb,
             compact_R,
             compact_R_t,
             compact_Z_t,
@@ -579,21 +580,21 @@ def bind_fused_single_pass_residual_runner(
         )
         packed_residual.fill(0.0)
         scratch = scratch_holder[0]
-        nr = residual_fields.shape[1]
+        nr = residual_workspace.shape[1]
         if scratch is None or scratch.shape[0] != nr:
             scratch = np.empty(nr, dtype=np.float64)
             scratch_holder[0] = scratch
-        _run_residual_blocks_packed(
+        _run_residual_blocks_packed_precomputed(
             packed_residual,
             scratch,
             block_codes,
             block_orders,
             coeff_index_rows,
             lengths,
-            residual_fields[2],
-            residual_fields[0],
-            residual_fields[1],
-            compact_sin_tb,
+            residual_workspace[0],
+            residual_workspace[1],
+            residual_workspace[2],
+            residual_workspace[3],
             sin_ktheta,
             cos_ktheta,
             rho_powers,
@@ -653,6 +654,7 @@ def bind_fused_profile_owned_psin_residual_runner(
     Kn = radial_workspace[2]
     Kn_r = radial_workspace[3]
     Ln_r = radial_workspace[4]
+    residual_workspace = runtime_layout.residual_surface_workspace
     T_fields = static_layout.T_fields
     rho = static_layout.rho
     theta = static_layout.theta
@@ -669,7 +671,6 @@ def bind_fused_profile_owned_psin_residual_runner(
     y = static_layout.y
     root_fields = runtime_layout.root_fields
     source_target_root_fields = runtime_layout.source_target_root_fields
-    residual_fields = runtime_layout.residual_fields
     packed_residual = runtime_layout.packed_residual
     source_psin_query = runtime_layout.source_psin_query
     source_parameter_query = runtime_layout.source_parameter_query
@@ -853,10 +854,11 @@ def bind_fused_profile_owned_psin_residual_runner(
         alpha_state[0] = alpha1
         alpha_state[1] = alpha2
         update_residual_compact(
-            residual_fields,
+            residual_workspace,
             alpha1,
             alpha2,
             root_fields,
+            compact_sin_tb,
             compact_R,
             compact_R_t,
             compact_Z_t,
@@ -868,21 +870,21 @@ def bind_fused_profile_owned_psin_residual_runner(
         )
         packed_residual.fill(0.0)
         scratch = scratch_holder[0]
-        nr = residual_fields.shape[1]
+        nr = residual_workspace.shape[1]
         if scratch is None or scratch.shape[0] != nr:
             scratch = np.empty(nr, dtype=np.float64)
             scratch_holder[0] = scratch
-        _run_residual_blocks_packed(
+        _run_residual_blocks_packed_precomputed(
             packed_residual,
             scratch,
             block_codes,
             block_orders,
             coeff_index_rows,
             lengths,
-            residual_fields[2],
-            residual_fields[0],
-            residual_fields[1],
-            compact_sin_tb,
+            residual_workspace[0],
+            residual_workspace[1],
+            residual_workspace[2],
+            residual_workspace[3],
             sin_ktheta,
             cos_ktheta,
             rho_powers,
@@ -944,6 +946,7 @@ def bind_fused_fixed_point_psin_residual_runner(
     Kn = radial_workspace[2]
     Kn_r = radial_workspace[3]
     Ln_r = radial_workspace[4]
+    residual_workspace = runtime_layout.residual_surface_workspace
     T_fields = static_layout.T_fields
     rho = static_layout.rho
     theta = static_layout.theta
@@ -959,7 +962,6 @@ def bind_fused_fixed_point_psin_residual_runner(
     rho_powers = static_layout.rho_powers
     y = static_layout.y
     root_fields = runtime_layout.root_fields
-    residual_fields = runtime_layout.residual_fields
     packed_residual = runtime_layout.packed_residual
     source_psin_query = runtime_layout.source_psin_query
     materialized_heat_input = runtime_layout.materialized_heat_input
@@ -1299,10 +1301,11 @@ def bind_fused_fixed_point_psin_residual_runner(
         alpha_state[0] = alpha1
         alpha_state[1] = alpha2
         update_residual_compact(
-            residual_fields,
+            residual_workspace,
             alpha1,
             alpha2,
             root_fields,
+            compact_sin_tb,
             compact_R,
             compact_R_t,
             compact_Z_t,
@@ -1314,21 +1317,21 @@ def bind_fused_fixed_point_psin_residual_runner(
         )
         packed_residual.fill(0.0)
         scratch = scratch_holder[0]
-        nr = residual_fields.shape[1]
+        nr = residual_workspace.shape[1]
         if scratch is None or scratch.shape[0] != nr:
             scratch = np.empty(nr, dtype=np.float64)
             scratch_holder[0] = scratch
-        _run_residual_blocks_packed(
+        _run_residual_blocks_packed_precomputed(
             packed_residual,
             scratch,
             block_codes,
             block_orders,
             coeff_index_rows,
             lengths,
-            residual_fields[2],
-            residual_fields[0],
-            residual_fields[1],
-            compact_sin_tb,
+            residual_workspace[0],
+            residual_workspace[1],
+            residual_workspace[2],
+            residual_workspace[3],
             sin_ktheta,
             cos_ktheta,
             rho_powers,

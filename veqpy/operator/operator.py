@@ -19,7 +19,6 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 import numpy as np
-from veqpy.engine.numba_residual import update_residual_compact
 
 from veqpy.engine import (
     bind_fused_residual_runner,
@@ -27,6 +26,7 @@ from veqpy.engine import (
     resolve_source_scratch_kernel,
     validate_route,
 )
+from veqpy.engine.numba_residual import _run_residual_blocks_packed_precomputed, update_residual_compact
 from veqpy.model import Equilibrium, Grid, Profile
 from veqpy.operator.codec import decode_packed_blocks, encode_packed_state
 from veqpy.operator.execution_helpers import snapshot_equilibrium_from_runtime
@@ -54,8 +54,8 @@ from veqpy.operator.profile_setup import (
     make_profile,
     refresh_fourier_family_base_fields,
     refresh_fourier_family_metadata,
-    refresh_stage_a_runtime,
     refresh_profile_runtime,
+    refresh_stage_a_runtime,
     validate_case_compatibility,
 )
 from veqpy.operator.runtime_allocation import allocate_runtime_state
@@ -66,9 +66,9 @@ from veqpy.operator.source_setup import (
     SourcePlan,
     SourceProjectionPolicy,
     build_bound_source_stage_runner,
+    refresh_source_runtime,
     resolve_fixed_point_policy,
     resolve_source_projection_policy,
-    refresh_source_runtime,
     validate_source_inputs,
 )
 from veqpy.operator.stage_helpers import build_geometry_stage_runner
@@ -105,15 +105,11 @@ class Operator:
     F_profile: Profile = field(init=False)
     profiles_by_name: dict[str, Profile] = field(init=False, repr=False)
 
-    psin_R: np.ndarray = field(init=False)
-    psin_Z: np.ndarray = field(init=False)
-    G: np.ndarray = field(init=False)
     psin: np.ndarray = field(init=False)
     psin_r: np.ndarray = field(init=False)
     psin_rr: np.ndarray = field(init=False)
     FFn_psin: np.ndarray = field(init=False)
     Pn_psin: np.ndarray = field(init=False)
-    residual_fields: np.ndarray = field(init=False, repr=False)
     root_fields: np.ndarray = field(init=False, repr=False)
 
     prefix_profile_names: tuple[str, ...] = field(init=False, repr=False)
@@ -147,6 +143,7 @@ class Operator:
     s_family_source_slots: np.ndarray = field(init=False, repr=False)
     geometry_surface_workspace: np.ndarray = field(init=False, repr=False)
     geometry_radial_workspace: np.ndarray = field(init=False, repr=False)
+    residual_surface_workspace: np.ndarray = field(init=False, repr=False)
     c_effective_order: int = field(init=False, repr=False)
     s_effective_order: int = field(init=False, repr=False)
     _source_route_spec: object = field(init=False, repr=False)
@@ -197,7 +194,6 @@ class Operator:
             source_stage_runner=lambda: (0.0, 0.0),
             residual_pack_stage_runner=lambda: np.zeros(self.x_size, dtype=np.float64),
             residual_full_stage_runner=lambda: np.zeros(self.x_size, dtype=np.float64),
-            residual_pack_runner=lambda *args, **kwargs: np.zeros(self.x_size, dtype=np.float64),
             fused_residual_runner=lambda x_eval: self._evaluate_residual(x_eval),
             fused_alpha_state=np.zeros(2, dtype=np.float64),
         )
@@ -237,11 +233,15 @@ class Operator:
         endpoint_policy_code = 0
         allow_query_warmstart = True
         if policy is not None:
-            endpoint_policy = policy.current_ip_endpoint_policy if has_ip_constraint else policy.current_other_endpoint_policy
+            endpoint_policy = (
+                policy.current_ip_endpoint_policy if has_ip_constraint else policy.current_other_endpoint_policy
+            )
             projection_domain = policy.domain
             heat_projection_degree = int(policy.heat_degree)
             current_projection_degree = int(
-                policy.ip_current_degree if has_ip_constraint and policy.ip_current_degree is not None else policy.current_degree
+                policy.ip_current_degree
+                if has_ip_constraint and policy.ip_current_degree is not None
+                else policy.current_degree
             )
             endpoint_policy_code = ENDPOINT_POLICY_CODES[endpoint_policy]
             projection_domain_code = PROJECTION_DOMAIN_CODES[policy.domain]
@@ -388,9 +388,7 @@ class Operator:
 
     def _build_residual_binding_layout(self) -> ResidualBindingLayout:
         active_profile_names = tuple(self.profile_names[int(p)] for p in self.active_profile_ids)
-        active_residual_block_codes, active_residual_block_orders = build_residual_block_metadata(
-            active_profile_names
-        )
+        active_residual_block_codes, active_residual_block_orders = build_residual_block_metadata(active_profile_names)
         if self.f_parameterization == "F2_linear":
             for i, name in enumerate(active_profile_names):
                 if name == "F":
@@ -407,7 +405,6 @@ class Operator:
         runtime.active_profile_slab = self.active_profile_slab
         runtime.family_field_slab = self.family_field_slab
         runtime.source_vector_slab = self.source_vector_slab
-        runtime.residual_fields = self.residual_fields
         runtime.root_fields = self.root_fields
         runtime.packed_residual = self.packed_residual
         runtime.active_u_fields = self.active_u_fields
@@ -461,12 +458,8 @@ class Operator:
             if hasattr(type(self), f"{name}_profile"):
                 setattr(self, f"{name}_profile", profile)
         self.field_runtime_state = bundle.field_runtime_state
-        self.residual_fields = bundle.field_runtime_state.residual_fields
         self.root_fields = bundle.field_runtime_state.root_fields
         self.packed_residual = bundle.field_runtime_state.packed_residual
-        self.psin_R = bundle.field_runtime_state.psin_R
-        self.psin_Z = bundle.field_runtime_state.psin_Z
-        self.G = bundle.field_runtime_state.G
         self.psin = bundle.field_runtime_state.psin
         self.psin_r = bundle.field_runtime_state.psin_r
         self.psin_rr = bundle.field_runtime_state.psin_rr
@@ -493,6 +486,7 @@ class Operator:
         self.runtime_layout = bundle.runtime_layout
         self.geometry_surface_workspace = bundle.runtime_layout.geometry_surface_workspace
         self.geometry_radial_workspace = bundle.runtime_layout.geometry_radial_workspace
+        self.residual_surface_workspace = bundle.runtime_layout.residual_surface_workspace
 
     def _refresh_runtime_state(self) -> None:
         self._refresh_operator_identity()
@@ -528,9 +522,7 @@ class Operator:
 
     def _refresh_profile_parameterization_config(self) -> None:
         self.f_parameterization = self._resolve_F_parameterization()
-        self.profile_static_kwargs_by_name = {
-            name: dict(kwargs) for name, kwargs in _PROFILE_STATIC_KWARGS.items()
-        }
+        self.profile_static_kwargs_by_name = {name: dict(kwargs) for name, kwargs in _PROFILE_STATIC_KWARGS.items()}
         self.profile_offset_specs = dict(_PROFILE_OFFSET_SPECS)
         self.profile_scale_specs = dict(_PROFILE_SCALE_SPECS)
         if self.f_parameterization == "F2_linear":
@@ -590,7 +582,6 @@ class Operator:
         self.execution_state.profile_postprocess_runner = self._build_profile_postprocess_runner()
         self.execution_state.geometry_stage_runner = self._build_geometry_stage_runner()
         self.execution_state.source_stage_runner = self._build_bound_source_stage_runner()
-        self.execution_state.residual_pack_runner = self._build_residual_pack_runner()
         self.execution_state.residual_pack_stage_runner = self._build_bound_residual_pack_stage_runner()
         self.execution_state.residual_full_stage_runner = self._build_bound_residual_full_stage_runner()
         self.execution_state.fused_residual_runner = self._build_fused_residual_runner()
@@ -660,28 +651,15 @@ class Operator:
             weights=self.grid.weights,
         )
 
-    def _build_residual_pack_runner(self) -> Callable:
-        profile_names = self.residual_binding_layout.active_profile_names
-        try:
-            return bind_residual_runner(
-                profile_names,
-                self.active_coeff_index_rows,
-                self.active_lengths,
-                self.x_size,
-                block_codes=self.residual_binding_layout.active_residual_block_codes,
-                block_orders=self.residual_binding_layout.active_residual_block_orders,
-            )
-        except KeyError as exc:
-            raise ValueError(f"Unsupported active residual block set {profile_names!r}") from exc
-
     def _build_bound_source_stage_runner(self) -> Callable:
         return build_bound_source_stage_runner(self)
 
     def _build_bound_residual_pack_stage_runner(self) -> Callable:
-        residual_pack_runner = self.execution_state.residual_pack_runner
-        G = self.G
-        psin_R = self.psin_R
-        psin_Z = self.psin_Z
+        alpha_state = self.execution_state.fused_alpha_state
+        root_fields = self.root_fields
+        surface_workspace = self.geometry_surface_workspace
+        residual_workspace = self.residual_surface_workspace
+        G = self.residual_surface_workspace[0]
         sin_tb = self.geometry_surface_workspace[0]
         sin_ktheta = self.grid.sin_ktheta
         cos_ktheta = self.grid.cos_ktheta
@@ -694,11 +672,34 @@ class Operator:
         B0 = self.case.B0
 
         def runner() -> np.ndarray:
-            return residual_pack_runner(
-                G,
-                psin_R,
-                psin_Z,
+            update_residual_compact(
+                residual_workspace,
+                float(alpha_state[0]),
+                float(alpha_state[1]),
+                root_fields,
                 sin_tb,
+                surface_workspace[1],
+                surface_workspace[2],
+                surface_workspace[3],
+                surface_workspace[4],
+                surface_workspace[5],
+                surface_workspace[6],
+                surface_workspace[7],
+                surface_workspace[8],
+            )
+            packed = np.zeros(self.x_size, dtype=np.float64)
+            scratch = np.empty(self.grid.Nr, dtype=np.float64)
+            _run_residual_blocks_packed_precomputed(
+                packed,
+                scratch,
+                self.residual_binding_layout.active_residual_block_codes,
+                self.residual_binding_layout.active_residual_block_orders,
+                self.active_coeff_index_rows,
+                self.active_lengths,
+                G,
+                residual_workspace[1],
+                residual_workspace[2],
+                residual_workspace[3],
                 sin_ktheta,
                 cos_ktheta,
                 rho_powers,
@@ -709,16 +710,16 @@ class Operator:
                 R0,
                 B0,
             )
+            return packed
 
         return runner
 
     def _build_bound_residual_full_stage_runner(self) -> Callable:
-        residual_pack_runner = self.execution_state.residual_pack_runner
         packed_residual = self.packed_residual
-        residual_fields = self.residual_fields
         alpha_state = self.execution_state.fused_alpha_state
         root_fields = self.root_fields
         surface_workspace = self.geometry_surface_workspace
+        residual_workspace = self.residual_surface_workspace
         sin_tb = surface_workspace[0]
         sin_ktheta = self.grid.sin_ktheta
         cos_ktheta = self.grid.cos_ktheta
@@ -732,10 +733,11 @@ class Operator:
 
         def runner() -> np.ndarray:
             update_residual_compact(
-                residual_fields,
+                residual_workspace,
                 float(alpha_state[0]),
                 float(alpha_state[1]),
                 root_fields,
+                sin_tb,
                 surface_workspace[1],
                 surface_workspace[2],
                 surface_workspace[3],
@@ -745,11 +747,19 @@ class Operator:
                 surface_workspace[7],
                 surface_workspace[8],
             )
-            return residual_pack_runner(
-                residual_fields[2],
-                residual_fields[0],
-                residual_fields[1],
-                sin_tb,
+            packed_residual.fill(0.0)
+            scratch = np.empty(self.grid.Nr, dtype=np.float64)
+            _run_residual_blocks_packed_precomputed(
+                packed_residual,
+                scratch,
+                self.residual_binding_layout.active_residual_block_codes,
+                self.residual_binding_layout.active_residual_block_orders,
+                self.active_coeff_index_rows,
+                self.active_lengths,
+                residual_workspace[0],
+                residual_workspace[1],
+                residual_workspace[2],
+                residual_workspace[3],
                 sin_ktheta,
                 cos_ktheta,
                 rho_powers,
@@ -760,6 +770,7 @@ class Operator:
                 R0,
                 B0,
             )
+            return packed_residual
 
         return runner
 

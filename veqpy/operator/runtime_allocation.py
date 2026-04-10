@@ -66,20 +66,18 @@ def allocate_runtime_state(
     # solve-time radial workspace rows:
     # 0=S_r, 1=V_r, 2=Kn, 3=Kn_r, 4=Ln_r
     geometry_radial_workspace = np.empty((5, nr), dtype=np.float64)
+    # solve-time residual workspace rows:
+    # 0=G, 1=G*psin_R, 2=G*psin_Z, 3=G*psin_R*sin_tb
+    residual_surface_workspace = np.empty((4, nr, nt), dtype=np.float64)
 
     profiles_by_name: dict[str, Profile] = {}
     for name in profile_names:
         profiles_by_name[name] = make_profile(name)
 
-    residual_fields = np.zeros((3, nr, nt), dtype=np.float64)
     root_fields = np.empty((5, nr), dtype=np.float64)
     field_runtime_state = FieldRuntimeState(
-        residual_fields=residual_fields,
         root_fields=root_fields,
         packed_residual=np.empty(x_size, dtype=np.float64),
-        psin_R=residual_fields[0],
-        psin_Z=residual_fields[1],
-        G=residual_fields[2],
         psin=root_fields[0],
         psin_r=root_fields[1],
         psin_rr=root_fields[2],
@@ -146,7 +144,7 @@ def allocate_runtime_state(
         source_vector_slab=source_vector_slab,
         geometry_surface_workspace=geometry_surface_workspace,
         geometry_radial_workspace=geometry_radial_workspace,
-        residual_fields=field_runtime_state.residual_fields,
+        residual_surface_workspace=residual_surface_workspace,
         root_fields=field_runtime_state.root_fields,
         packed_residual=field_runtime_state.packed_residual,
         active_u_fields=active_u_fields,

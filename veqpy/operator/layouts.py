@@ -71,7 +71,7 @@ class RuntimeLayout:
     source_vector_slab: np.ndarray
     geometry_surface_workspace: np.ndarray
     geometry_radial_workspace: np.ndarray
-    residual_fields: np.ndarray
+    residual_surface_workspace: np.ndarray
     root_fields: np.ndarray
     packed_residual: np.ndarray
     active_u_fields: np.ndarray
@@ -105,12 +105,8 @@ class RuntimeLayout:
 class FieldRuntimeState:
     """绑定到 root/residual 场缓存的可变 runtime 状态."""
 
-    residual_fields: np.ndarray
     root_fields: np.ndarray
     packed_residual: np.ndarray
-    psin_R: np.ndarray
-    psin_Z: np.ndarray
-    G: np.ndarray
     psin: np.ndarray
     psin_r: np.ndarray
     psin_rr: np.ndarray
@@ -128,7 +124,6 @@ class ExecutionState:
     source_stage_runner: Callable
     residual_pack_stage_runner: Callable
     residual_full_stage_runner: Callable
-    residual_pack_runner: Callable
     fused_residual_runner: Callable
     fused_alpha_state: np.ndarray
 
