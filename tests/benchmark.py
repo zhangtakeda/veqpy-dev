@@ -15,7 +15,7 @@ from veqpy.operator import Operator, OperatorCase, build_profile_index, build_pr
 from veqpy.operator.layout import build_shape_profile_names
 from veqpy.solver import Solver, SolverConfig
 
-PLOT = True
+PLOT = False
 SHOW_PROGRESS = True
 BACKEND = os.environ.get("VEQPY_BACKEND", "numba")
 os.environ["VEQPY_BACKEND"] = BACKEND

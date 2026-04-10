@@ -66,6 +66,7 @@ def allocate_runtime_state(
     geometry = Geometry(grid=grid)
     geometry_surface_slab = np.empty((35, nr, nt), dtype=np.float64)
     geometry_radial_slab = np.empty((5, nr), dtype=np.float64)
+    compact_geometry_surface_slab = np.empty((9, nr, nt), dtype=np.float64)
     object.__setattr__(geometry, "tb_fields", geometry_surface_slab[0:8])
     object.__setattr__(geometry, "R_fields", geometry_surface_slab[8:14])
     object.__setattr__(geometry, "Z_fields", geometry_surface_slab[14:20])
@@ -157,6 +158,7 @@ def allocate_runtime_state(
         source_vector_slab=source_vector_slab,
         geometry_surface_slab=geometry_surface_slab,
         geometry_radial_slab=geometry_radial_slab,
+        compact_geometry_surface_slab=compact_geometry_surface_slab,
         residual_fields=field_runtime_state.residual_fields,
         root_fields=field_runtime_state.root_fields,
         packed_residual=field_runtime_state.packed_residual,
@@ -185,6 +187,15 @@ def allocate_runtime_state(
         materialized_current_input=source_runtime_state.materialized_current_input,
         source_scratch_1d=source_runtime_state.scratch_1d,
         source_target_root_fields=source_runtime_state.target_root_fields,
+        compact_sin_tb=compact_geometry_surface_slab[0],
+        compact_R=compact_geometry_surface_slab[1],
+        compact_R_t=compact_geometry_surface_slab[2],
+        compact_Z_t=compact_geometry_surface_slab[3],
+        compact_J=compact_geometry_surface_slab[4],
+        compact_JdivR=compact_geometry_surface_slab[5],
+        compact_grtdivJR_t=compact_geometry_surface_slab[6],
+        compact_gttdivJR=compact_geometry_surface_slab[7],
+        compact_gttdivJR_r=compact_geometry_surface_slab[8],
     )
 
     return RuntimeAllocationBundle(
