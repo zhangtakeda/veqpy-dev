@@ -503,9 +503,7 @@ def _build_source_stage_runner_shared(operator_core: Any) -> Callable:
                         enable_projection=True,
                     )
                 return source_eval_runner(
-                    source_target_root_fields[0],
-                    source_target_root_fields[1],
-                    source_target_root_fields[2],
+                    source_target_root_fields,
                     FFn_psin,
                     Pn_psin,
                     materialized_heat_input,
@@ -526,9 +524,7 @@ def _build_source_stage_runner_shared(operator_core: Any) -> Callable:
                 psin_query=source_psin_query,
             )
             return source_eval_runner(
-                source_target_root_fields[0],
-                source_target_root_fields[1],
-                source_target_root_fields[2],
+                source_target_root_fields,
                 FFn_psin,
                 Pn_psin,
                 materialized_heat_input,
@@ -547,9 +543,7 @@ def _build_source_stage_runner_shared(operator_core: Any) -> Callable:
 
     def runner() -> tuple[float, float]:
         return source_eval_runner(
-            psin,
-            psin_r,
-            psin_rr,
+            operator_core.root_fields,
             FFn_psin,
             Pn_psin,
             materialized_heat_input,
@@ -586,9 +580,7 @@ def run_psin_source_fixed_point(operator_core: Any) -> tuple[float, float]:
             enable_projection=not source_plan.use_projected_finalize,
         )
         alpha1, alpha2 = source_eval_runner(
-            target_root_fields[0],
-            target_root_fields[1],
-            target_root_fields[2],
+            target_root_fields,
             operator_core.FFn_psin,
             operator_core.Pn_psin,
             source_runtime_state.materialized_heat_input,
@@ -607,9 +599,7 @@ def run_psin_source_fixed_point(operator_core: Any) -> tuple[float, float]:
                 enable_projection=True,
             )
             alpha1, alpha2 = source_eval_runner(
-                target_root_fields[0],
-                target_root_fields[1],
-                target_root_fields[2],
+                target_root_fields,
                 operator_core.FFn_psin,
                 operator_core.Pn_psin,
                 source_runtime_state.materialized_heat_input,

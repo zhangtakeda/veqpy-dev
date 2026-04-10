@@ -177,10 +177,8 @@ def refresh_stage_a_runtime(
 def build_profile_stage_runner(
     *,
     active_profile_ids: np.ndarray,
-    active_u_fields: np.ndarray,
+    active_profile_slab: np.ndarray,
     T_fields: np.ndarray,
-    active_rp_fields: np.ndarray,
-    active_env_fields: np.ndarray,
     active_offsets: np.ndarray,
     active_scales: np.ndarray,
     active_coeff_index_rows: np.ndarray,
@@ -191,10 +189,8 @@ def build_profile_stage_runner(
 
     def runner(x: np.ndarray) -> None:
         update_profiles_packed_bulk(
-            active_u_fields,
+            active_profile_slab,
             T_fields,
-            active_rp_fields,
-            active_env_fields,
             active_offsets,
             active_scales,
             x,

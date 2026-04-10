@@ -42,17 +42,16 @@ class Geometry:
     def __post_init__(self, grid: Grid):
         nr = grid.Nr
         nt = grid.Nt
-        shape = (nr, nt)
         object.__setattr__(self, "S_r", np.empty(nr, dtype=np.float64))
         object.__setattr__(self, "V_r", np.empty(nr, dtype=np.float64))
         object.__setattr__(self, "Kn", np.empty(nr, dtype=np.float64))
         object.__setattr__(self, "Kn_r", np.empty(nr, dtype=np.float64))
         object.__setattr__(self, "Ln_r", np.empty(nr, dtype=np.float64))
-        object.__setattr__(self, "tb_fields", np.empty((8, *shape), dtype=np.float64))
-        object.__setattr__(self, "R_fields", np.empty((6, *shape), dtype=np.float64))
-        object.__setattr__(self, "Z_fields", np.empty((6, *shape), dtype=np.float64))
-        object.__setattr__(self, "J_fields", np.empty((8, *shape), dtype=np.float64))
-        object.__setattr__(self, "g_fields", np.empty((7, *shape), dtype=np.float64))
+        object.__setattr__(self, "tb_fields", np.empty((8, nr, nt), dtype=np.float64))
+        object.__setattr__(self, "R_fields", np.empty((6, nr, nt), dtype=np.float64))
+        object.__setattr__(self, "Z_fields", np.empty((6, nr, nt), dtype=np.float64))
+        object.__setattr__(self, "J_fields", np.empty((8, nr, nt), dtype=np.float64))
+        object.__setattr__(self, "g_fields", np.empty((7, nr, nt), dtype=np.float64))
 
     def update(
         self,

@@ -23,21 +23,22 @@ def update_residual_compact(
     alpha1: float,
     alpha2: float,
     root_fields: np.ndarray,
-    sin_tb_surface: np.ndarray,
-    R_surface: np.ndarray,
-    R_t_surface: np.ndarray,
-    Z_t_surface: np.ndarray,
-    J_surface: np.ndarray,
-    JdivR_surface: np.ndarray,
-    grtdivJR_t_surface: np.ndarray,
-    gttdivJR_surface: np.ndarray,
-    gttdivJR_r_surface: np.ndarray,
+    geometry_surface_workspace: np.ndarray,
 ) -> None:
     """使用 compact geometry fields 原地更新 residual 相关二维 fields."""
     out_G = out_workspace[0]
     out_Gpsin_R = out_workspace[1]
     out_Gpsin_Z = out_workspace[2]
     out_Gpsin_R_sin_tb = out_workspace[3]
+    sin_tb_surface = geometry_surface_workspace[0]
+    R_surface = geometry_surface_workspace[1]
+    R_t_surface = geometry_surface_workspace[2]
+    Z_t_surface = geometry_surface_workspace[3]
+    J_surface = geometry_surface_workspace[4]
+    JdivR_surface = geometry_surface_workspace[5]
+    grtdivJR_t_surface = geometry_surface_workspace[6]
+    gttdivJR_surface = geometry_surface_workspace[7]
+    gttdivJR_r_surface = geometry_surface_workspace[8]
 
     psin_r = root_fields[1]
     psin_rr = root_fields[2]
@@ -151,20 +152,22 @@ def _run_residual_blocks_packed_precomputed(
     block_orders: np.ndarray,
     coeff_index_rows: np.ndarray,
     lengths: np.ndarray,
-    G: np.ndarray,
-    Gpsin_R: np.ndarray,
-    Gpsin_Z: np.ndarray,
-    Gpsin_R_sin_tb: np.ndarray,
+    residual_workspace: np.ndarray,
     sin_ktheta: np.ndarray,
     cos_ktheta: np.ndarray,
     rho_powers: np.ndarray,
     y: np.ndarray,
-    T: np.ndarray,
+    T_fields: np.ndarray,
     weights: np.ndarray,
     a: float,
     R0: float,
     B0: float,
 ) -> None:
+    G = residual_workspace[0]
+    Gpsin_R = residual_workspace[1]
+    Gpsin_Z = residual_workspace[2]
+    Gpsin_R_sin_tb = residual_workspace[3]
+    T = T_fields[0]
     sin_theta = sin_ktheta[1]
     rho = rho_powers[1]
     rho2 = rho_powers[2]

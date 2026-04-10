@@ -152,29 +152,50 @@ def validate_route(route: str, coordinate: str, nodes: str = UNIFORM_NODES) -> _
         ) from exc
 
 
+@njit(cache=True, nogil=True)
+def _source_output_root_views(out_root_fields: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    return out_root_fields[0], out_root_fields[1], out_root_fields[2]
+
+
+@njit(cache=True, nogil=True)
+def _source_geometry_workspace_views(
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    return (
+        radial_workspace[1],
+        radial_workspace[2],
+        radial_workspace[3],
+        radial_workspace[4],
+        radial_workspace[0],
+        surface_workspace[1],
+        surface_workspace[5],
+    )
+
+
 @register_operator("PF_RHO", supported_coordinates=(RHO_COORDINATE,))
 @njit(cache=True, nogil=True)
 def update_PF_rho(
-    out_psin: np.ndarray,
-    out_psin_r: np.ndarray,
-    out_psin_rr: np.ndarray,
+    out_root_fields: np.ndarray,
     out_FFn_psin: np.ndarray,
     out_Pn_psin: np.ndarray,
     heat_input: np.ndarray,
     current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
     B0: float,
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
     rho: np.ndarray,
-    V_r: np.ndarray,
-    Kn: np.ndarray,
-    Ln_r: np.ndarray,
-    R: np.ndarray,
-    JdivR: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
+    F: np.ndarray,
     Ip: float,
     beta: float,
 ) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, _, Ln_r, _, R, JdivR = _source_geometry_workspace_views(radial_workspace, surface_workspace)
     return _update_pf_from_rho_inputs(
         out_psin,
         out_psin_r,
@@ -201,26 +222,26 @@ def update_PF_rho(
 @register_operator("PF_PSIN", supported_coordinates=(PSIN_COORDINATE,))
 @njit(cache=True, nogil=True)
 def update_PF_psin(
-    out_psin: np.ndarray,
-    out_psin_r: np.ndarray,
-    out_psin_rr: np.ndarray,
+    out_root_fields: np.ndarray,
     out_FFn_psin: np.ndarray,
     out_Pn_psin: np.ndarray,
     heat_input: np.ndarray,
     current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
     B0: float,
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
     rho: np.ndarray,
-    V_r: np.ndarray,
-    Kn: np.ndarray,
-    Ln_r: np.ndarray,
-    R: np.ndarray,
-    JdivR: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
+    F: np.ndarray,
     Ip: float,
     beta: float,
 ) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, _, Ln_r, _, R, JdivR = _source_geometry_workspace_views(radial_workspace, surface_workspace)
     return _update_pf_from_psin_inputs(
         out_psin,
         out_psin_r,
@@ -558,9 +579,7 @@ def _update_pp_from_psin_inputs(
 @register_operator("PP_RHO", supported_coordinates=(RHO_COORDINATE,))
 @njit(cache=True, nogil=True)
 def update_PP_RHO(
-    out_psin: np.ndarray,
-    out_psin_r: np.ndarray,
-    out_psin_rr: np.ndarray,
+    out_root_fields: np.ndarray,
     out_FFn_psin: np.ndarray,
     out_Pn_psin: np.ndarray,
     heat_input: np.ndarray,
@@ -572,17 +591,14 @@ def update_PP_RHO(
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
     rho: np.ndarray,
-    V_r: np.ndarray,
-    Kn: np.ndarray,
-    Kn_r: np.ndarray,
-    Ln_r: np.ndarray,
-    S_r: np.ndarray,
-    R: np.ndarray,
-    JdivR: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
     F: np.ndarray,
     Ip: float,
     beta: float,
 ) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(radial_workspace, surface_workspace)
     return _update_pp_from_rho_inputs(
         out_psin,
         out_psin_r,
@@ -614,9 +630,7 @@ def update_PP_RHO(
 @register_operator("PP_PSIN", supported_coordinates=(PSIN_COORDINATE,))
 @njit(cache=True, nogil=True)
 def update_PP_PSIN(
-    out_psin: np.ndarray,
-    out_psin_r: np.ndarray,
-    out_psin_rr: np.ndarray,
+    out_root_fields: np.ndarray,
     out_FFn_psin: np.ndarray,
     out_Pn_psin: np.ndarray,
     heat_input: np.ndarray,
@@ -628,17 +642,14 @@ def update_PP_PSIN(
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
     rho: np.ndarray,
-    V_r: np.ndarray,
-    Kn: np.ndarray,
-    Kn_r: np.ndarray,
-    Ln_r: np.ndarray,
-    S_r: np.ndarray,
-    R: np.ndarray,
-    JdivR: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
     F: np.ndarray,
     Ip: float,
     beta: float,
 ) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(radial_workspace, surface_workspace)
     return _update_pp_from_psin_inputs(
         out_psin,
         out_psin_r,
@@ -803,9 +814,7 @@ def _update_pi_from_psin_inputs(
 @register_operator("PI_RHO", supported_coordinates=(RHO_COORDINATE,))
 @njit(cache=True, nogil=True)
 def update_PI_RHO(
-    out_psin: np.ndarray,
-    out_psin_r: np.ndarray,
-    out_psin_rr: np.ndarray,
+    out_root_fields: np.ndarray,
     out_FFn_psin: np.ndarray,
     out_Pn_psin: np.ndarray,
     heat_input: np.ndarray,
@@ -817,17 +826,14 @@ def update_PI_RHO(
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
     rho: np.ndarray,
-    V_r: np.ndarray,
-    Kn: np.ndarray,
-    Kn_r: np.ndarray,
-    Ln_r: np.ndarray,
-    S_r: np.ndarray,
-    R: np.ndarray,
-    JdivR: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
     F: np.ndarray,
     Ip: float,
     beta: float,
 ) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(radial_workspace, surface_workspace)
     return _update_pi_from_rho_inputs(
         out_psin,
         out_psin_r,
@@ -859,9 +865,7 @@ def update_PI_RHO(
 @register_operator("PI_PSIN", supported_coordinates=(PSIN_COORDINATE,))
 @njit(cache=True, nogil=True)
 def update_PI_PSIN(
-    out_psin: np.ndarray,
-    out_psin_r: np.ndarray,
-    out_psin_rr: np.ndarray,
+    out_root_fields: np.ndarray,
     out_FFn_psin: np.ndarray,
     out_Pn_psin: np.ndarray,
     heat_input: np.ndarray,
@@ -873,17 +877,14 @@ def update_PI_PSIN(
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
     rho: np.ndarray,
-    V_r: np.ndarray,
-    Kn: np.ndarray,
-    Kn_r: np.ndarray,
-    Ln_r: np.ndarray,
-    S_r: np.ndarray,
-    R: np.ndarray,
-    JdivR: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
     F: np.ndarray,
     Ip: float,
     beta: float,
 ) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(radial_workspace, surface_workspace)
     return _update_pi_from_psin_inputs(
         out_psin,
         out_psin_r,
@@ -1083,9 +1084,7 @@ def _update_pj1_from_psin_inputs(
 @register_operator("PJ1_RHO", supported_coordinates=(RHO_COORDINATE,))
 @njit(cache=True, nogil=True)
 def update_PJ1_RHO(
-    out_psin: np.ndarray,
-    out_psin_r: np.ndarray,
-    out_psin_rr: np.ndarray,
+    out_root_fields: np.ndarray,
     out_FFn_psin: np.ndarray,
     out_Pn_psin: np.ndarray,
     heat_input: np.ndarray,
@@ -1097,17 +1096,14 @@ def update_PJ1_RHO(
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
     rho: np.ndarray,
-    V_r: np.ndarray,
-    Kn: np.ndarray,
-    Kn_r: np.ndarray,
-    Ln_r: np.ndarray,
-    S_r: np.ndarray,
-    R: np.ndarray,
-    JdivR: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
     F: np.ndarray,
     Ip: float,
     beta: float,
 ) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(radial_workspace, surface_workspace)
     return _update_pj1_from_rho_inputs(
         out_psin,
         out_psin_r,
@@ -1139,9 +1135,7 @@ def update_PJ1_RHO(
 @register_operator("PJ1_PSIN", supported_coordinates=(PSIN_COORDINATE,))
 @njit(cache=True, nogil=True)
 def update_PJ1_PSIN(
-    out_psin: np.ndarray,
-    out_psin_r: np.ndarray,
-    out_psin_rr: np.ndarray,
+    out_root_fields: np.ndarray,
     out_FFn_psin: np.ndarray,
     out_Pn_psin: np.ndarray,
     heat_input: np.ndarray,
@@ -1153,17 +1147,14 @@ def update_PJ1_PSIN(
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
     rho: np.ndarray,
-    V_r: np.ndarray,
-    Kn: np.ndarray,
-    Kn_r: np.ndarray,
-    Ln_r: np.ndarray,
-    S_r: np.ndarray,
-    R: np.ndarray,
-    JdivR: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
     F: np.ndarray,
     Ip: float,
     beta: float,
 ) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(radial_workspace, surface_workspace)
     return _update_pj1_from_psin_inputs(
         out_psin,
         out_psin_r,
@@ -1330,9 +1321,7 @@ def _update_pj2_from_psin_inputs(
 
 @njit(cache=True, nogil=True)
 def _update_pj2_from_psin_inputs_with_scratch(
-    out_psin: np.ndarray,
-    out_psin_r: np.ndarray,
-    out_psin_rr: np.ndarray,
+    out_root_fields: np.ndarray,
     out_FFn_psin: np.ndarray,
     out_Pn_psin: np.ndarray,
     heat_input: np.ndarray,
@@ -1344,18 +1333,15 @@ def _update_pj2_from_psin_inputs_with_scratch(
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
     rho: np.ndarray,
-    V_r: np.ndarray,
-    Kn: np.ndarray,
-    Kn_r: np.ndarray,
-    Ln_r: np.ndarray,
-    S_r: np.ndarray,
-    R: np.ndarray,
-    JdivR: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
     F: np.ndarray,
     Ip: float,
     beta: float,
     source_scratch_1d: np.ndarray,
 ) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(radial_workspace, surface_workspace)
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
     integrand = source_scratch_1d[0]
@@ -1409,9 +1395,7 @@ def _update_pj2_from_psin_inputs_with_scratch(
 @register_operator("PJ2_RHO", supported_coordinates=(RHO_COORDINATE,))
 @njit(cache=True, nogil=True)
 def update_PJ2_RHO(
-    out_psin: np.ndarray,
-    out_psin_r: np.ndarray,
-    out_psin_rr: np.ndarray,
+    out_root_fields: np.ndarray,
     out_FFn_psin: np.ndarray,
     out_Pn_psin: np.ndarray,
     heat_input: np.ndarray,
@@ -1423,17 +1407,14 @@ def update_PJ2_RHO(
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
     rho: np.ndarray,
-    V_r: np.ndarray,
-    Kn: np.ndarray,
-    Kn_r: np.ndarray,
-    Ln_r: np.ndarray,
-    S_r: np.ndarray,
-    R: np.ndarray,
-    JdivR: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
     F: np.ndarray,
     Ip: float,
     beta: float,
 ) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(radial_workspace, surface_workspace)
     return _update_pj2_from_rho_inputs(
         out_psin,
         out_psin_r,
@@ -1465,9 +1446,7 @@ def update_PJ2_RHO(
 @register_operator("PJ2_PSIN", supported_coordinates=(PSIN_COORDINATE,))
 @njit(cache=True, nogil=True)
 def update_PJ2_PSIN(
-    out_psin: np.ndarray,
-    out_psin_r: np.ndarray,
-    out_psin_rr: np.ndarray,
+    out_root_fields: np.ndarray,
     out_FFn_psin: np.ndarray,
     out_Pn_psin: np.ndarray,
     heat_input: np.ndarray,
@@ -1479,17 +1458,14 @@ def update_PJ2_PSIN(
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
     rho: np.ndarray,
-    V_r: np.ndarray,
-    Kn: np.ndarray,
-    Kn_r: np.ndarray,
-    Ln_r: np.ndarray,
-    S_r: np.ndarray,
-    R: np.ndarray,
-    JdivR: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
     F: np.ndarray,
     Ip: float,
     beta: float,
 ) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(radial_workspace, surface_workspace)
     return _update_pj2_from_psin_inputs(
         out_psin,
         out_psin_r,
@@ -1650,9 +1626,7 @@ def _update_pq_from_psin_inputs(
 
 @njit(cache=True, nogil=True)
 def _update_pq_from_psin_inputs_with_scratch(
-    out_psin: np.ndarray,
-    out_psin_r: np.ndarray,
-    out_psin_rr: np.ndarray,
+    out_root_fields: np.ndarray,
     out_FFn_psin: np.ndarray,
     out_Pn_psin: np.ndarray,
     heat_input: np.ndarray,
@@ -1664,18 +1638,15 @@ def _update_pq_from_psin_inputs_with_scratch(
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
     rho: np.ndarray,
-    V_r: np.ndarray,
-    Kn: np.ndarray,
-    Kn_r: np.ndarray,
-    Ln_r: np.ndarray,
-    S_r: np.ndarray,
-    R: np.ndarray,
-    JdivR: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
     F: np.ndarray,
     Ip: float,
     beta: float,
     source_scratch_1d: np.ndarray,
 ) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(radial_workspace, surface_workspace)
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
     q_prof = source_scratch_1d[0]
@@ -1725,9 +1696,7 @@ def _update_pq_from_psin_inputs_with_scratch(
 @register_operator("PQ_RHO", supported_coordinates=(RHO_COORDINATE,))
 @njit(cache=True, nogil=True)
 def update_PQ_RHO(
-    out_psin: np.ndarray,
-    out_psin_r: np.ndarray,
-    out_psin_rr: np.ndarray,
+    out_root_fields: np.ndarray,
     out_FFn_psin: np.ndarray,
     out_Pn_psin: np.ndarray,
     heat_input: np.ndarray,
@@ -1739,17 +1708,14 @@ def update_PQ_RHO(
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
     rho: np.ndarray,
-    V_r: np.ndarray,
-    Kn: np.ndarray,
-    Kn_r: np.ndarray,
-    Ln_r: np.ndarray,
-    S_r: np.ndarray,
-    R: np.ndarray,
-    JdivR: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
     F: np.ndarray,
     Ip: float,
     beta: float,
 ) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(radial_workspace, surface_workspace)
     return _update_pq_from_rho_inputs(
         out_psin,
         out_psin_r,
@@ -1781,9 +1747,7 @@ def update_PQ_RHO(
 @register_operator("PQ_PSIN", supported_coordinates=(PSIN_COORDINATE,))
 @njit(cache=True, nogil=True)
 def update_PQ_PSIN(
-    out_psin: np.ndarray,
-    out_psin_r: np.ndarray,
-    out_psin_rr: np.ndarray,
+    out_root_fields: np.ndarray,
     out_FFn_psin: np.ndarray,
     out_Pn_psin: np.ndarray,
     heat_input: np.ndarray,
@@ -1795,17 +1759,14 @@ def update_PQ_PSIN(
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
     rho: np.ndarray,
-    V_r: np.ndarray,
-    Kn: np.ndarray,
-    Kn_r: np.ndarray,
-    Ln_r: np.ndarray,
-    S_r: np.ndarray,
-    R: np.ndarray,
-    JdivR: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
     F: np.ndarray,
     Ip: float,
     beta: float,
 ) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(radial_workspace, surface_workspace)
     return _update_pq_from_psin_inputs(
         out_psin,
         out_psin_r,

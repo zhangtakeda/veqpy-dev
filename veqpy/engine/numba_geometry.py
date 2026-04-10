@@ -19,20 +19,8 @@ from numba import njit
 
 @njit(cache=True, fastmath=True, nogil=True)
 def update_geometry_hot(
-    sin_tb: np.ndarray,
-    R_surface: np.ndarray,
-    R_t_surface: np.ndarray,
-    Z_t_surface: np.ndarray,
-    J_surface: np.ndarray,
-    JdivR_surface: np.ndarray,
-    grtdivJR_t_surface: np.ndarray,
-    gttdivJR_surface: np.ndarray,
-    gttdivJR_r_surface: np.ndarray,
-    S_r: np.ndarray,
-    V_r: np.ndarray,
-    Kn: np.ndarray,
-    Kn_r: np.ndarray,
-    Ln_r: np.ndarray,
+    surface_workspace: np.ndarray,
+    radial_workspace: np.ndarray,
     a: float,
     R0: float,
     Z0: float,
@@ -53,6 +41,20 @@ def update_geometry_hot(
     s_active_order: int,
 ):
     """只物化 fused solve 热路径需要的 geometry fields 与积分量."""
+    sin_tb = surface_workspace[0]
+    R_surface = surface_workspace[1]
+    R_t_surface = surface_workspace[2]
+    Z_t_surface = surface_workspace[3]
+    J_surface = surface_workspace[4]
+    JdivR_surface = surface_workspace[5]
+    grtdivJR_t_surface = surface_workspace[6]
+    gttdivJR_surface = surface_workspace[7]
+    gttdivJR_r_surface = surface_workspace[8]
+    S_r = radial_workspace[0]
+    V_r = radial_workspace[1]
+    Kn = radial_workspace[2]
+    Kn_r = radial_workspace[3]
+    Ln_r = radial_workspace[4]
     nr = rho.shape[0]
     nt = theta.shape[0]
     theta_scale = 2.0 * np.pi / nt

@@ -614,10 +614,8 @@ class Operator:
     def _build_profile_stage_runner(self) -> Callable:
         return build_profile_stage_runner(
             active_profile_ids=self.active_profile_ids,
-            active_u_fields=self.active_u_fields,
+            active_profile_slab=self.active_profile_slab,
             T_fields=self.grid.T_fields,
-            active_rp_fields=self.active_rp_fields,
-            active_env_fields=self.active_env_fields,
             active_offsets=self.active_offsets,
             active_scales=self.active_scales,
             active_coeff_index_rows=self.active_coeff_index_rows,
@@ -671,13 +669,11 @@ class Operator:
         root_fields = self.root_fields
         surface_workspace = self.geometry_surface_workspace
         residual_workspace = self.residual_surface_workspace
-        G = self.residual_surface_workspace[0]
-        sin_tb = self.geometry_surface_workspace[0]
         sin_ktheta = self.grid.sin_ktheta
         cos_ktheta = self.grid.cos_ktheta
         rho_powers = self.grid.rho_powers
         y = self.grid.y
-        T = self.grid.T_fields[0]
+        T_fields = self.grid.T_fields
         weights = self.grid.weights
         a = self.case.a
         R0 = self.case.R0
@@ -689,15 +685,7 @@ class Operator:
                 float(alpha_state[0]),
                 float(alpha_state[1]),
                 root_fields,
-                sin_tb,
-                surface_workspace[1],
-                surface_workspace[2],
-                surface_workspace[3],
-                surface_workspace[4],
-                surface_workspace[5],
-                surface_workspace[6],
-                surface_workspace[7],
-                surface_workspace[8],
+                surface_workspace,
             )
             packed = np.zeros(self.x_size, dtype=np.float64)
             scratch = np.empty(self.grid.Nr, dtype=np.float64)
@@ -708,15 +696,12 @@ class Operator:
                 self.residual_binding_layout.active_residual_block_orders,
                 self.active_coeff_index_rows,
                 self.active_lengths,
-                G,
-                residual_workspace[1],
-                residual_workspace[2],
-                residual_workspace[3],
+                residual_workspace,
                 sin_ktheta,
                 cos_ktheta,
                 rho_powers,
                 y,
-                T,
+                T_fields,
                 weights,
                 a,
                 R0,
@@ -732,12 +717,11 @@ class Operator:
         root_fields = self.root_fields
         surface_workspace = self.geometry_surface_workspace
         residual_workspace = self.residual_surface_workspace
-        sin_tb = surface_workspace[0]
         sin_ktheta = self.grid.sin_ktheta
         cos_ktheta = self.grid.cos_ktheta
         rho_powers = self.grid.rho_powers
         y = self.grid.y
-        T = self.grid.T_fields[0]
+        T_fields = self.grid.T_fields
         weights = self.grid.weights
         a = self.case.a
         R0 = self.case.R0
@@ -749,15 +733,7 @@ class Operator:
                 float(alpha_state[0]),
                 float(alpha_state[1]),
                 root_fields,
-                sin_tb,
-                surface_workspace[1],
-                surface_workspace[2],
-                surface_workspace[3],
-                surface_workspace[4],
-                surface_workspace[5],
-                surface_workspace[6],
-                surface_workspace[7],
-                surface_workspace[8],
+                surface_workspace,
             )
             packed_residual.fill(0.0)
             scratch = np.empty(self.grid.Nr, dtype=np.float64)
@@ -768,15 +744,12 @@ class Operator:
                 self.residual_binding_layout.active_residual_block_orders,
                 self.active_coeff_index_rows,
                 self.active_lengths,
-                residual_workspace[0],
-                residual_workspace[1],
-                residual_workspace[2],
-                residual_workspace[3],
+                residual_workspace,
                 sin_ktheta,
                 cos_ktheta,
                 rho_powers,
                 y,
-                T,
+                T_fields,
                 weights,
                 a,
                 R0,

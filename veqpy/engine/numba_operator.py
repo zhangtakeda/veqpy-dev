@@ -16,6 +16,7 @@ Notes:
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable
+from dataclasses import dataclass
 
 import numpy as np
 from numba import njit
@@ -46,6 +47,41 @@ def _source_route_key(source_plan: "SourcePlan") -> tuple[str, str, str]:
         str(source_plan.coordinate).lower(),
         str(source_plan.nodes).lower(),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class _FusedRouteBindingSpec:
+    core_kind: str
+    skip_projection_finalize: bool = False
+    fixed_point_stencil_size: int = 8
+
+
+_FUSED_ROUTE_BINDINGS: dict[tuple[str, str, str], _FusedRouteBindingSpec] = {
+    ("PF", "rho", "uniform"): _FusedRouteBindingSpec("single_pass"),
+    ("PF", "rho", "grid"): _FusedRouteBindingSpec("single_pass"),
+    ("PF", "psin", "uniform"): _FusedRouteBindingSpec("profile_owned"),
+    ("PF", "psin", "grid"): _FusedRouteBindingSpec("single_pass"),
+    ("PP", "rho", "uniform"): _FusedRouteBindingSpec("single_pass"),
+    ("PP", "rho", "grid"): _FusedRouteBindingSpec("single_pass"),
+    ("PP", "psin", "uniform"): _FusedRouteBindingSpec("profile_owned"),
+    ("PP", "psin", "grid"): _FusedRouteBindingSpec("single_pass"),
+    ("PI", "rho", "uniform"): _FusedRouteBindingSpec("single_pass"),
+    ("PI", "rho", "grid"): _FusedRouteBindingSpec("single_pass"),
+    ("PI", "psin", "uniform"): _FusedRouteBindingSpec("profile_owned", skip_projection_finalize=True),
+    ("PI", "psin", "grid"): _FusedRouteBindingSpec("single_pass"),
+    ("PJ1", "rho", "uniform"): _FusedRouteBindingSpec("single_pass"),
+    ("PJ1", "rho", "grid"): _FusedRouteBindingSpec("single_pass"),
+    ("PJ1", "psin", "uniform"): _FusedRouteBindingSpec("profile_owned"),
+    ("PJ1", "psin", "grid"): _FusedRouteBindingSpec("single_pass"),
+    ("PJ2", "rho", "uniform"): _FusedRouteBindingSpec("single_pass"),
+    ("PJ2", "rho", "grid"): _FusedRouteBindingSpec("single_pass"),
+    ("PJ2", "psin", "uniform"): _FusedRouteBindingSpec("fixed_point", fixed_point_stencil_size=8),
+    ("PJ2", "psin", "grid"): _FusedRouteBindingSpec("single_pass"),
+    ("PQ", "rho", "uniform"): _FusedRouteBindingSpec("single_pass"),
+    ("PQ", "rho", "grid"): _FusedRouteBindingSpec("single_pass"),
+    ("PQ", "psin", "uniform"): _FusedRouteBindingSpec("fixed_point", fixed_point_stencil_size=4),
+    ("PQ", "psin", "grid"): _FusedRouteBindingSpec("single_pass"),
+}
 
 
 def bind_source_eval_runner(
@@ -79,64 +115,16 @@ def bind_source_eval_runner(
     source_scratch_1d = runtime_layout.source_scratch_1d
 
     def runner(
-        out_psin: np.ndarray,
-        out_psin_r: np.ndarray,
-        out_psin_rr: np.ndarray,
+        out_root_fields: np.ndarray,
         out_FFn_psin: np.ndarray,
         out_Pn_psin: np.ndarray,
         heat_input: np.ndarray,
         current_input: np.ndarray,
         R0: float,
     ) -> tuple[float, float]:
-        if route_key[0] == "PF" and route_key[1] == "rho":
-            return source_kernel(
-                out_psin,
-                out_psin_r,
-                out_psin_rr,
-                out_FFn_psin,
-                out_Pn_psin,
-                heat_input,
-                current_input,
-                B0,
-                weights,
-                differentiation_matrix,
-                integration_matrix,
-                rho,
-                V_r,
-                Kn,
-                Ln_r,
-                R_surface,
-                JdivR,
-                Ip,
-                beta,
-            )
-        if route_key[0] == "PF" and route_key[1] == "psin":
-            return source_kernel(
-                out_psin,
-                out_psin_r,
-                out_psin_rr,
-                out_FFn_psin,
-                out_Pn_psin,
-                heat_input,
-                current_input,
-                B0,
-                weights,
-                differentiation_matrix,
-                integration_matrix,
-                rho,
-                V_r,
-                Kn,
-                Ln_r,
-                R_surface,
-                JdivR,
-                Ip,
-                beta,
-            )
         if scratch_source_kernel is None:
             return source_kernel(
-                out_psin,
-                out_psin_r,
-                out_psin_rr,
+                out_root_fields,
                 out_FFn_psin,
                 out_Pn_psin,
                 heat_input,
@@ -148,21 +136,14 @@ def bind_source_eval_runner(
                 differentiation_matrix,
                 integration_matrix,
                 rho,
-                V_r,
-                Kn,
-                Kn_r,
-                Ln_r,
-                S_r,
-                R_surface,
-                JdivR,
+                radial_workspace,
+                surface_workspace,
                 F_profile_u,
                 Ip,
                 beta,
             )
         return scratch_source_kernel(
-            out_psin,
-            out_psin_r,
-            out_psin_rr,
+            out_root_fields,
             out_FFn_psin,
             out_Pn_psin,
             heat_input,
@@ -174,13 +155,8 @@ def bind_source_eval_runner(
             differentiation_matrix,
             integration_matrix,
             rho,
-            V_r,
-            Kn,
-            Kn_r,
-            Ln_r,
-            S_r,
-            R_surface,
-            JdivR,
+            radial_workspace,
+            surface_workspace,
             F_profile_u,
             Ip,
             beta,
@@ -218,6 +194,141 @@ def _normalize_psin_query(out: np.ndarray, source: np.ndarray) -> None:
     out /= scale
     out[0] = 0.0
     out[-1] = 1.0
+
+
+def _refresh_hot_runtime(
+    x: np.ndarray,
+    *,
+    runtime_layout: "RuntimeLayout",
+    static_layout: "StaticLayout",
+    apply_f2_linear: bool,
+    F_profile_fields: np.ndarray,
+    f2_scale: float,
+    c_active_order: int,
+    s_active_order: int,
+    a: float,
+    R0: float,
+    Z0: float,
+    h_fields: np.ndarray,
+    v_fields: np.ndarray,
+    k_fields: np.ndarray,
+) -> None:
+    active_profile_slab = runtime_layout.active_profile_slab
+    active_u_fields = runtime_layout.active_u_fields
+    T_fields = static_layout.T_fields
+    active_offsets = runtime_layout.active_offsets
+    active_scales = runtime_layout.active_scales
+    coeff_index_rows = runtime_layout.active_coeff_index_rows
+    lengths = runtime_layout.active_lengths
+    c_family_fields = runtime_layout.c_family_fields
+    s_family_fields = runtime_layout.s_family_fields
+    c_family_base_fields = runtime_layout.c_family_base_fields
+    s_family_base_fields = runtime_layout.s_family_base_fields
+    c_source_slots = runtime_layout.c_family_source_slots
+    s_source_slots = runtime_layout.s_family_source_slots
+    surface_workspace = runtime_layout.geometry_surface_workspace
+    radial_workspace = runtime_layout.geometry_radial_workspace
+    rho = static_layout.rho
+    theta = static_layout.theta
+    cos_ktheta = static_layout.cos_ktheta
+    sin_ktheta = static_layout.sin_ktheta
+    k_cos_ktheta = static_layout.k_cos_ktheta
+    k_sin_ktheta = static_layout.k_sin_ktheta
+    k2_cos_ktheta = static_layout.k2_cos_ktheta
+    k2_sin_ktheta = static_layout.k2_sin_ktheta
+    update_profiles_packed_bulk(
+        active_profile_slab,
+        T_fields,
+        active_offsets,
+        active_scales,
+        x,
+        coeff_index_rows,
+        lengths,
+    )
+    if apply_f2_linear:
+        _apply_f2_linear_fields_impl(F_profile_fields, f2_scale)
+    _update_fourier_family_fields_impl(
+        c_family_fields,
+        s_family_fields,
+        c_family_base_fields,
+        s_family_base_fields,
+        active_u_fields,
+        c_source_slots,
+        s_source_slots,
+        c_active_order,
+        s_active_order,
+    )
+    update_geometry_hot(
+        surface_workspace,
+        radial_workspace,
+        a,
+        R0,
+        Z0,
+        rho,
+        theta,
+        cos_ktheta,
+        sin_ktheta,
+        k_cos_ktheta,
+        k_sin_ktheta,
+        k2_cos_ktheta,
+        k2_sin_ktheta,
+        h_fields,
+        v_fields,
+        k_fields,
+        c_family_fields,
+        s_family_fields,
+        c_active_order,
+        s_active_order,
+    )
+
+
+def _pack_residual_output(
+    *,
+    runtime_layout: "RuntimeLayout",
+    residual_binding_layout: "ResidualBindingLayout",
+    static_layout: "StaticLayout",
+    scratch_holder: list[np.ndarray | None],
+    a: float,
+    R0: float,
+    B0: float,
+) -> np.ndarray:
+    packed_residual = runtime_layout.packed_residual
+    residual_workspace = runtime_layout.residual_surface_workspace
+    block_codes = residual_binding_layout.active_residual_block_codes
+    block_orders = residual_binding_layout.active_residual_block_orders
+    coeff_index_rows = runtime_layout.active_coeff_index_rows
+    lengths = runtime_layout.active_lengths
+    sin_ktheta = static_layout.sin_ktheta
+    cos_ktheta = static_layout.cos_ktheta
+    rho_powers = static_layout.rho_powers
+    y = static_layout.y
+    T_fields = static_layout.T_fields
+    weights = static_layout.weights
+    packed_residual.fill(0.0)
+    scratch = scratch_holder[0]
+    nr = residual_workspace.shape[1]
+    if scratch is None or scratch.shape[0] != nr:
+        scratch = np.empty(nr, dtype=np.float64)
+        scratch_holder[0] = scratch
+    _run_residual_blocks_packed_precomputed(
+        packed_residual,
+        scratch,
+        block_codes,
+        block_orders,
+        coeff_index_rows,
+        lengths,
+        residual_workspace,
+        sin_ktheta,
+        cos_ktheta,
+        rho_powers,
+        y,
+        T_fields,
+        weights,
+        a,
+        R0,
+        B0,
+    )
+    return packed_residual.copy()
 
 
 @njit(cache=True, nogil=True)
@@ -461,7 +572,12 @@ def bind_fused_residual_runner(
     f_parameterization: str = "direct_F",
 ) -> Callable[[np.ndarray], np.ndarray]:
     route_key = _source_route_key(source_plan)
-    if route_key == ("PF", "rho", "uniform") or route_key == ("PF", "rho", "grid"):
+    try:
+        binding = _FUSED_ROUTE_BINDINGS[route_key]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported source route key {route_key!r}") from exc
+
+    if binding.core_kind == "single_pass":
         return _bind_single_pass_residual_runner_core(
             source_plan=source_plan,
             static_layout=static_layout,
@@ -476,7 +592,7 @@ def bind_fused_residual_runner(
             B0=B0,
             f_parameterization=f_parameterization,
         )
-    if route_key == ("PF", "psin", "uniform"):
+    if binding.core_kind == "profile_owned":
         return _bind_profile_owned_psin_residual_runner_core(
             source_plan=source_plan,
             static_layout=static_layout,
@@ -490,177 +606,9 @@ def bind_fused_residual_runner(
             Z0=Z0,
             B0=B0,
             f_parameterization=f_parameterization,
-            skip_projection_finalize=False,
+            skip_projection_finalize=binding.skip_projection_finalize,
         )
-    if route_key == ("PF", "psin", "grid"):
-        return _bind_single_pass_residual_runner_core(
-            source_plan=source_plan,
-            static_layout=static_layout,
-            residual_binding_layout=residual_binding_layout,
-            runtime_layout=runtime_layout,
-            alpha_state=alpha_state,
-            c_active_order=c_active_order,
-            s_active_order=s_active_order,
-            a=a,
-            R0=R0,
-            Z0=Z0,
-            B0=B0,
-            f_parameterization=f_parameterization,
-        )
-    if route_key == ("PP", "rho", "uniform") or route_key == ("PP", "rho", "grid"):
-        return _bind_single_pass_residual_runner_core(
-            source_plan=source_plan,
-            static_layout=static_layout,
-            residual_binding_layout=residual_binding_layout,
-            runtime_layout=runtime_layout,
-            alpha_state=alpha_state,
-            c_active_order=c_active_order,
-            s_active_order=s_active_order,
-            a=a,
-            R0=R0,
-            Z0=Z0,
-            B0=B0,
-            f_parameterization=f_parameterization,
-        )
-    if route_key == ("PP", "psin", "uniform"):
-        return _bind_profile_owned_psin_residual_runner_core(
-            source_plan=source_plan,
-            static_layout=static_layout,
-            residual_binding_layout=residual_binding_layout,
-            runtime_layout=runtime_layout,
-            alpha_state=alpha_state,
-            c_active_order=c_active_order,
-            s_active_order=s_active_order,
-            a=a,
-            R0=R0,
-            Z0=Z0,
-            B0=B0,
-            f_parameterization=f_parameterization,
-            skip_projection_finalize=False,
-        )
-    if route_key == ("PP", "psin", "grid"):
-        return _bind_single_pass_residual_runner_core(
-            source_plan=source_plan,
-            static_layout=static_layout,
-            residual_binding_layout=residual_binding_layout,
-            runtime_layout=runtime_layout,
-            alpha_state=alpha_state,
-            c_active_order=c_active_order,
-            s_active_order=s_active_order,
-            a=a,
-            R0=R0,
-            Z0=Z0,
-            B0=B0,
-            f_parameterization=f_parameterization,
-        )
-    if route_key == ("PI", "rho", "uniform") or route_key == ("PI", "rho", "grid"):
-        return _bind_single_pass_residual_runner_core(
-            source_plan=source_plan,
-            static_layout=static_layout,
-            residual_binding_layout=residual_binding_layout,
-            runtime_layout=runtime_layout,
-            alpha_state=alpha_state,
-            c_active_order=c_active_order,
-            s_active_order=s_active_order,
-            a=a,
-            R0=R0,
-            Z0=Z0,
-            B0=B0,
-            f_parameterization=f_parameterization,
-        )
-    if route_key == ("PI", "psin", "uniform"):
-        return _bind_profile_owned_psin_residual_runner_core(
-            source_plan=source_plan,
-            static_layout=static_layout,
-            residual_binding_layout=residual_binding_layout,
-            runtime_layout=runtime_layout,
-            alpha_state=alpha_state,
-            c_active_order=c_active_order,
-            s_active_order=s_active_order,
-            a=a,
-            R0=R0,
-            Z0=Z0,
-            B0=B0,
-            f_parameterization=f_parameterization,
-            skip_projection_finalize=True,
-        )
-    if route_key == ("PI", "psin", "grid"):
-        return _bind_single_pass_residual_runner_core(
-            source_plan=source_plan,
-            static_layout=static_layout,
-            residual_binding_layout=residual_binding_layout,
-            runtime_layout=runtime_layout,
-            alpha_state=alpha_state,
-            c_active_order=c_active_order,
-            s_active_order=s_active_order,
-            a=a,
-            R0=R0,
-            Z0=Z0,
-            B0=B0,
-            f_parameterization=f_parameterization,
-        )
-    if route_key == ("PJ1", "rho", "uniform") or route_key == ("PJ1", "rho", "grid"):
-        return _bind_single_pass_residual_runner_core(
-            source_plan=source_plan,
-            static_layout=static_layout,
-            residual_binding_layout=residual_binding_layout,
-            runtime_layout=runtime_layout,
-            alpha_state=alpha_state,
-            c_active_order=c_active_order,
-            s_active_order=s_active_order,
-            a=a,
-            R0=R0,
-            Z0=Z0,
-            B0=B0,
-            f_parameterization=f_parameterization,
-        )
-    if route_key == ("PJ1", "psin", "uniform"):
-        return _bind_profile_owned_psin_residual_runner_core(
-            source_plan=source_plan,
-            static_layout=static_layout,
-            residual_binding_layout=residual_binding_layout,
-            runtime_layout=runtime_layout,
-            alpha_state=alpha_state,
-            c_active_order=c_active_order,
-            s_active_order=s_active_order,
-            a=a,
-            R0=R0,
-            Z0=Z0,
-            B0=B0,
-            f_parameterization=f_parameterization,
-            skip_projection_finalize=False,
-        )
-    if route_key == ("PJ1", "psin", "grid"):
-        return _bind_single_pass_residual_runner_core(
-            source_plan=source_plan,
-            static_layout=static_layout,
-            residual_binding_layout=residual_binding_layout,
-            runtime_layout=runtime_layout,
-            alpha_state=alpha_state,
-            c_active_order=c_active_order,
-            s_active_order=s_active_order,
-            a=a,
-            R0=R0,
-            Z0=Z0,
-            B0=B0,
-            f_parameterization=f_parameterization,
-        )
-    if route_key == ("PJ2", "rho", "uniform") or route_key == ("PJ2", "rho", "grid"):
-        return _bind_single_pass_residual_runner_core(
-            source_plan=source_plan,
-            static_layout=static_layout,
-            residual_binding_layout=residual_binding_layout,
-            runtime_layout=runtime_layout,
-            alpha_state=alpha_state,
-            c_active_order=c_active_order,
-            s_active_order=s_active_order,
-            a=a,
-            R0=R0,
-            Z0=Z0,
-            B0=B0,
-            f_parameterization=f_parameterization,
-        )
-    if route_key == ("PJ2", "psin", "uniform"):
+    if binding.core_kind == "fixed_point":
         return _bind_fixed_point_psin_residual_runner_core(
             source_plan=source_plan,
             static_layout=static_layout,
@@ -674,70 +622,9 @@ def bind_fused_residual_runner(
             Z0=Z0,
             B0=B0,
             f_parameterization=f_parameterization,
-            fixed_point_stencil_size=8,
+            fixed_point_stencil_size=binding.fixed_point_stencil_size,
         )
-    if route_key == ("PJ2", "psin", "grid"):
-        return _bind_single_pass_residual_runner_core(
-            source_plan=source_plan,
-            static_layout=static_layout,
-            residual_binding_layout=residual_binding_layout,
-            runtime_layout=runtime_layout,
-            alpha_state=alpha_state,
-            c_active_order=c_active_order,
-            s_active_order=s_active_order,
-            a=a,
-            R0=R0,
-            Z0=Z0,
-            B0=B0,
-            f_parameterization=f_parameterization,
-        )
-    if route_key == ("PQ", "rho", "uniform") or route_key == ("PQ", "rho", "grid"):
-        return _bind_single_pass_residual_runner_core(
-            source_plan=source_plan,
-            static_layout=static_layout,
-            residual_binding_layout=residual_binding_layout,
-            runtime_layout=runtime_layout,
-            alpha_state=alpha_state,
-            c_active_order=c_active_order,
-            s_active_order=s_active_order,
-            a=a,
-            R0=R0,
-            Z0=Z0,
-            B0=B0,
-            f_parameterization=f_parameterization,
-        )
-    if route_key == ("PQ", "psin", "uniform"):
-        return _bind_fixed_point_psin_residual_runner_core(
-            source_plan=source_plan,
-            static_layout=static_layout,
-            residual_binding_layout=residual_binding_layout,
-            runtime_layout=runtime_layout,
-            alpha_state=alpha_state,
-            c_active_order=c_active_order,
-            s_active_order=s_active_order,
-            a=a,
-            R0=R0,
-            Z0=Z0,
-            B0=B0,
-            f_parameterization=f_parameterization,
-            fixed_point_stencil_size=4,
-        )
-    if route_key == ("PQ", "psin", "grid"):
-        return _bind_single_pass_residual_runner_core(
-            source_plan=source_plan,
-            static_layout=static_layout,
-            residual_binding_layout=residual_binding_layout,
-            runtime_layout=runtime_layout,
-            alpha_state=alpha_state,
-            c_active_order=c_active_order,
-            s_active_order=s_active_order,
-            a=a,
-            R0=R0,
-            Z0=Z0,
-            B0=B0,
-            f_parameterization=f_parameterization,
-        )
-    raise ValueError(f"Unsupported source route key {route_key!r}")
+    raise ValueError(f"Unsupported fused route binding {binding!r} for key {route_key!r}")
 
 
 def _bind_single_pass_residual_runner_core(
@@ -827,68 +714,24 @@ def _bind_single_pass_residual_runner_core(
     Pn_psin = root_fields[4]
 
     def runner(x: np.ndarray) -> np.ndarray:
-        update_profiles_packed_bulk(
-            active_u_fields,
-            T_fields,
-            active_rp_fields,
-            active_env_fields,
-            active_offsets,
-            active_scales,
+        _refresh_hot_runtime(
             x,
-            coeff_index_rows,
-            lengths,
-        )
-        if apply_f2_linear:
-            _apply_f2_linear_fields_impl(F_profile_fields, R0 * B0)
-        _update_fourier_family_fields_impl(
-            c_family_fields,
-            s_family_fields,
-            c_family_base_fields,
-            s_family_base_fields,
-            active_u_fields,
-            c_source_slots,
-            s_source_slots,
-            c_active_order,
-            s_active_order,
-        )
-        update_geometry_hot(
-            compact_sin_tb,
-            compact_R,
-            compact_R_t,
-            compact_Z_t,
-            compact_J,
-            compact_JdivR,
-            compact_grtdivJR_t,
-            compact_gttdivJR,
-            compact_gttdivJR_r,
-            S_r,
-            V_r,
-            Kn,
-            Kn_r,
-            Ln_r,
-            a,
-            R0,
-            Z0,
-            rho,
-            theta,
-            cos_ktheta,
-            sin_ktheta,
-            k_cos_ktheta,
-            k_sin_ktheta,
-            k2_cos_ktheta,
-            k2_sin_ktheta,
-            h_fields,
-            v_fields,
-            k_fields,
-            c_family_fields,
-            s_family_fields,
-            c_active_order,
-            s_active_order,
+            runtime_layout=runtime_layout,
+            static_layout=static_layout,
+            apply_f2_linear=apply_f2_linear,
+            F_profile_fields=F_profile_fields,
+            f2_scale=R0 * B0,
+            c_active_order=c_active_order,
+            s_active_order=s_active_order,
+            a=a,
+            R0=R0,
+            Z0=Z0,
+            h_fields=h_fields,
+            v_fields=v_fields,
+            k_fields=k_fields,
         )
         alpha1, alpha2 = source_eval_runner(
-            psin,
-            psin_r,
-            psin_rr,
+            root_fields,
             FFn_psin,
             Pn_psin,
             materialized_heat_input,
@@ -902,44 +745,17 @@ def _bind_single_pass_residual_runner_core(
             alpha1,
             alpha2,
             root_fields,
-            compact_sin_tb,
-            compact_R,
-            compact_R_t,
-            compact_Z_t,
-            compact_J,
-            compact_JdivR,
-            compact_grtdivJR_t,
-            compact_gttdivJR,
-            compact_gttdivJR_r,
+            surface_workspace,
         )
-        packed_residual.fill(0.0)
-        scratch = scratch_holder[0]
-        nr = residual_workspace.shape[1]
-        if scratch is None or scratch.shape[0] != nr:
-            scratch = np.empty(nr, dtype=np.float64)
-            scratch_holder[0] = scratch
-        _run_residual_blocks_packed_precomputed(
-            packed_residual,
-            scratch,
-            block_codes,
-            block_orders,
-            coeff_index_rows,
-            lengths,
-            residual_workspace[0],
-            residual_workspace[1],
-            residual_workspace[2],
-            residual_workspace[3],
-            sin_ktheta,
-            cos_ktheta,
-            rho_powers,
-            y,
-            T_fields[0],
-            weights,
-            a,
-            R0,
-            B0,
+        return _pack_residual_output(
+            runtime_layout=runtime_layout,
+            residual_binding_layout=residual_binding_layout,
+            static_layout=static_layout,
+            scratch_holder=scratch_holder,
+            a=a,
+            R0=R0,
+            B0=B0,
         )
-        return packed_residual.copy()
 
     return runner
 
@@ -1045,63 +861,21 @@ def _bind_profile_owned_psin_residual_runner_core(
     Pn_psin = root_fields[4]
 
     def runner(x: np.ndarray) -> np.ndarray:
-        update_profiles_packed_bulk(
-            active_u_fields,
-            T_fields,
-            active_rp_fields,
-            active_env_fields,
-            active_offsets,
-            active_scales,
+        _refresh_hot_runtime(
             x,
-            coeff_index_rows,
-            lengths,
-        )
-        if apply_f2_linear:
-            _apply_f2_linear_fields_impl(F_profile_fields, R0 * B0)
-        _update_fourier_family_fields_impl(
-            c_family_fields,
-            s_family_fields,
-            c_family_base_fields,
-            s_family_base_fields,
-            active_u_fields,
-            c_source_slots,
-            s_source_slots,
-            c_active_order,
-            s_active_order,
-        )
-        update_geometry_hot(
-            compact_sin_tb,
-            compact_R,
-            compact_R_t,
-            compact_Z_t,
-            compact_J,
-            compact_JdivR,
-            compact_grtdivJR_t,
-            compact_gttdivJR,
-            compact_gttdivJR_r,
-            S_r,
-            V_r,
-            Kn,
-            Kn_r,
-            Ln_r,
-            a,
-            R0,
-            Z0,
-            rho,
-            theta,
-            cos_ktheta,
-            sin_ktheta,
-            k_cos_ktheta,
-            k_sin_ktheta,
-            k2_cos_ktheta,
-            k2_sin_ktheta,
-            h_fields,
-            v_fields,
-            k_fields,
-            c_family_fields,
-            s_family_fields,
-            c_active_order,
-            s_active_order,
+            runtime_layout=runtime_layout,
+            static_layout=static_layout,
+            apply_f2_linear=apply_f2_linear,
+            F_profile_fields=F_profile_fields,
+            f2_scale=R0 * B0,
+            c_active_order=c_active_order,
+            s_active_order=s_active_order,
+            a=a,
+            R0=R0,
+            Z0=Z0,
+            h_fields=h_fields,
+            v_fields=v_fields,
+            k_fields=k_fields,
         )
         _materialize_profile_owned_psin_source_impl(
             psin,
@@ -1131,9 +905,7 @@ def _bind_profile_owned_psin_residual_runner_core(
                 endpoint_blend,
             )
         alpha1, alpha2 = source_eval_runner(
-            source_target_root_fields[0],
-            source_target_root_fields[1],
-            source_target_root_fields[2],
+            source_target_root_fields,
             FFn_psin,
             Pn_psin,
             materialized_heat_input,
@@ -1147,44 +919,17 @@ def _bind_profile_owned_psin_residual_runner_core(
             alpha1,
             alpha2,
             root_fields,
-            compact_sin_tb,
-            compact_R,
-            compact_R_t,
-            compact_Z_t,
-            compact_J,
-            compact_JdivR,
-            compact_grtdivJR_t,
-            compact_gttdivJR,
-            compact_gttdivJR_r,
+            surface_workspace,
         )
-        packed_residual.fill(0.0)
-        scratch = scratch_holder[0]
-        nr = residual_workspace.shape[1]
-        if scratch is None or scratch.shape[0] != nr:
-            scratch = np.empty(nr, dtype=np.float64)
-            scratch_holder[0] = scratch
-        _run_residual_blocks_packed_precomputed(
-            packed_residual,
-            scratch,
-            block_codes,
-            block_orders,
-            coeff_index_rows,
-            lengths,
-            residual_workspace[0],
-            residual_workspace[1],
-            residual_workspace[2],
-            residual_workspace[3],
-            sin_ktheta,
-            cos_ktheta,
-            rho_powers,
-            y,
-            T_fields[0],
-            weights,
-            a,
-            R0,
-            B0,
+        return _pack_residual_output(
+            runtime_layout=runtime_layout,
+            residual_binding_layout=residual_binding_layout,
+            static_layout=static_layout,
+            scratch_holder=scratch_holder,
+            a=a,
+            R0=R0,
+            B0=B0,
         )
-        return packed_residual.copy()
 
     return runner
 
@@ -1317,9 +1062,7 @@ def _bind_fixed_point_psin_residual_runner_core(
                     source_psin_query,
                 )
             alpha1, alpha2 = source_eval_runner(
-                psin,
-                psin_r,
-                psin_rr,
+                root_fields,
                 FFn_psin,
                 Pn_psin,
                 materialized_heat_input,
@@ -1347,9 +1090,7 @@ def _bind_fixed_point_psin_residual_runner_core(
                 endpoint_blend,
             )
             alpha1, alpha2 = source_eval_runner(
-                psin,
-                psin_r,
-                psin_rr,
+                root_fields,
                 FFn_psin,
                 Pn_psin,
                 materialized_heat_input,
@@ -1361,63 +1102,21 @@ def _bind_fixed_point_psin_residual_runner_core(
         return alpha1, alpha2
 
     def runner(x: np.ndarray) -> np.ndarray:
-        update_profiles_packed_bulk(
-            active_u_fields,
-            T_fields,
-            active_rp_fields,
-            active_env_fields,
-            active_offsets,
-            active_scales,
+        _refresh_hot_runtime(
             x,
-            coeff_index_rows,
-            lengths,
-        )
-        if apply_f2_linear:
-            _apply_f2_linear_fields_impl(F_profile_fields, R0 * B0)
-        _update_fourier_family_fields_impl(
-            c_family_fields,
-            s_family_fields,
-            c_family_base_fields,
-            s_family_base_fields,
-            active_u_fields,
-            c_source_slots,
-            s_source_slots,
-            c_active_order,
-            s_active_order,
-        )
-        update_geometry_hot(
-            compact_sin_tb,
-            compact_R,
-            compact_R_t,
-            compact_Z_t,
-            compact_J,
-            compact_JdivR,
-            compact_grtdivJR_t,
-            compact_gttdivJR,
-            compact_gttdivJR_r,
-            S_r,
-            V_r,
-            Kn,
-            Kn_r,
-            Ln_r,
-            a,
-            R0,
-            Z0,
-            rho,
-            theta,
-            cos_ktheta,
-            sin_ktheta,
-            k_cos_ktheta,
-            k_sin_ktheta,
-            k2_cos_ktheta,
-            k2_sin_ktheta,
-            h_fields,
-            v_fields,
-            k_fields,
-            c_family_fields,
-            s_family_fields,
-            c_active_order,
-            s_active_order,
+            runtime_layout=runtime_layout,
+            static_layout=static_layout,
+            apply_f2_linear=apply_f2_linear,
+            F_profile_fields=F_profile_fields,
+            f2_scale=R0 * B0,
+            c_active_order=c_active_order,
+            s_active_order=s_active_order,
+            a=a,
+            R0=R0,
+            Z0=Z0,
+            h_fields=h_fields,
+            v_fields=v_fields,
+            k_fields=k_fields,
         )
 
         if (not allow_query_warmstart) or source_psin_query[0] < 0.0:
@@ -1435,43 +1134,16 @@ def _bind_fixed_point_psin_residual_runner_core(
             alpha1,
             alpha2,
             root_fields,
-            compact_sin_tb,
-            compact_R,
-            compact_R_t,
-            compact_Z_t,
-            compact_J,
-            compact_JdivR,
-            compact_grtdivJR_t,
-            compact_gttdivJR,
-            compact_gttdivJR_r,
+            surface_workspace,
         )
-        packed_residual.fill(0.0)
-        scratch = scratch_holder[0]
-        nr = residual_workspace.shape[1]
-        if scratch is None or scratch.shape[0] != nr:
-            scratch = np.empty(nr, dtype=np.float64)
-            scratch_holder[0] = scratch
-        _run_residual_blocks_packed_precomputed(
-            packed_residual,
-            scratch,
-            block_codes,
-            block_orders,
-            coeff_index_rows,
-            lengths,
-            residual_workspace[0],
-            residual_workspace[1],
-            residual_workspace[2],
-            residual_workspace[3],
-            sin_ktheta,
-            cos_ktheta,
-            rho_powers,
-            y,
-            T_fields[0],
-            weights,
-            a,
-            R0,
-            B0,
+        return _pack_residual_output(
+            runtime_layout=runtime_layout,
+            residual_binding_layout=residual_binding_layout,
+            static_layout=static_layout,
+            scratch_holder=scratch_holder,
+            a=a,
+            R0=R0,
+            B0=B0,
         )
-        return packed_residual.copy()
 
     return runner
