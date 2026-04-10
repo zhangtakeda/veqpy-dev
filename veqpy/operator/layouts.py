@@ -121,6 +121,7 @@ class ExecutionState:
     profile_stage_runner: Callable
     profile_postprocess_runner: Callable
     geometry_stage_runner: Callable
+    source_eval_runner: Callable
     source_stage_runner: Callable
     residual_pack_stage_runner: Callable
     residual_full_stage_runner: Callable

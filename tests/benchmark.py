@@ -65,23 +65,23 @@ REFERENCE_IP = 3.0e6
 REFERENCE_MU0_IP = MU0 * REFERENCE_IP
 SHAPE_PROFILE_NAMES = build_shape_profile_names(REFERENCE_GRID.M_max)
 BENCHMARK_MODES = ("PF", "PP", "PI", "PJ1", "PJ2", "PQ")
-BENCHMARK_INPUT_KINDS = ("uniform",)
-# BENCHMARK_MODE_CONSTRAINTS = {
-#     "PF": ("null", "Ip", "beta"),
-#     "PP": ("Ip_beta", "Ip", "beta", "null"),
-#     "PI": ("Ip_beta", "Ip", "beta", "null"),
-#     "PJ1": ("Ip_beta", "Ip", "beta", "null"),
-#     "PJ2": ("Ip_beta", "Ip", "beta", "null"),
-#     "PQ": ("Ip_beta", "Ip", "beta", "null"),
-# }
+BENCHMARK_INPUT_KINDS = ("uniform", "grid")
 BENCHMARK_MODE_CONSTRAINTS = {
-    "PF": ("null",),
-    "PP": ("null",),
-    "PI": ("null",),
-    "PJ1": ("null",),
-    "PJ2": ("null",),
-    "PQ": ("null",),
+    "PF": ("null", "Ip", "beta"),
+    "PP": ("Ip_beta", "Ip", "beta", "null"),
+    "PI": ("Ip_beta", "Ip", "beta", "null"),
+    "PJ1": ("Ip_beta", "Ip", "beta", "null"),
+    "PJ2": ("Ip_beta", "Ip", "beta", "null"),
+    "PQ": ("Ip_beta", "Ip", "beta", "null"),
 }
+# BENCHMARK_MODE_CONSTRAINTS = {
+#     "PF": ("null",),
+#     "PP": ("null",),
+#     "PI": ("null",),
+#     "PJ1": ("null",),
+#     "PJ2": ("null",),
+#     "PQ": ("null",),
+# }
 
 
 @dataclass(frozen=True)

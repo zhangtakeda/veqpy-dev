@@ -162,8 +162,6 @@ def update_PF_rho(
     out_Pn_psin: np.ndarray,
     heat_input: np.ndarray,
     current_input: np.ndarray,
-    coordinate_code: int,
-    R0: float,
     B0: float,
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
@@ -171,18 +169,12 @@ def update_PF_rho(
     rho: np.ndarray,
     V_r: np.ndarray,
     Kn: np.ndarray,
-    Kn_r: np.ndarray,
     Ln_r: np.ndarray,
-    S_r: np.ndarray,
     R: np.ndarray,
     JdivR: np.ndarray,
-    F: np.ndarray,
     Ip: float,
     beta: float,
 ) -> tuple[float, float]:
-    has_Ip = not np.isnan(Ip)
-    has_beta = not np.isnan(beta)
-    pressure_scale = 1.0
     return _update_pf_from_rho_inputs(
         out_psin,
         out_psin_r,
@@ -191,7 +183,6 @@ def update_PF_rho(
         out_Pn_psin,
         heat_input,
         current_input,
-        R0,
         B0,
         weights,
         differentiation_matrix,
@@ -199,15 +190,11 @@ def update_PF_rho(
         rho,
         V_r,
         Kn,
-        Kn_r,
         Ln_r,
-        S_r,
         R,
         JdivR,
-        F,
         Ip,
         beta,
-        pressure_scale,
     )
 
 
@@ -221,8 +208,6 @@ def update_PF_psin(
     out_Pn_psin: np.ndarray,
     heat_input: np.ndarray,
     current_input: np.ndarray,
-    coordinate_code: int,
-    R0: float,
     B0: float,
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
@@ -230,18 +215,12 @@ def update_PF_psin(
     rho: np.ndarray,
     V_r: np.ndarray,
     Kn: np.ndarray,
-    Kn_r: np.ndarray,
     Ln_r: np.ndarray,
-    S_r: np.ndarray,
     R: np.ndarray,
     JdivR: np.ndarray,
-    F: np.ndarray,
     Ip: float,
     beta: float,
 ) -> tuple[float, float]:
-    has_Ip = not np.isnan(Ip)
-    has_beta = not np.isnan(beta)
-    pressure_scale = 1.0
     return _update_pf_from_psin_inputs(
         out_psin,
         out_psin_r,
@@ -250,7 +229,6 @@ def update_PF_psin(
         out_Pn_psin,
         heat_input,
         current_input,
-        R0,
         B0,
         weights,
         differentiation_matrix,
@@ -258,15 +236,11 @@ def update_PF_psin(
         rho,
         V_r,
         Kn,
-        Kn_r,
         Ln_r,
-        S_r,
         R,
         JdivR,
-        F,
         Ip,
         beta,
-        pressure_scale,
     )
 
 
@@ -279,7 +253,6 @@ def _update_pf_from_rho_inputs(
     out_Pn_psin: np.ndarray,
     heat_input: np.ndarray,
     current_input: np.ndarray,
-    R0: float,
     B0: float,
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
@@ -287,15 +260,11 @@ def _update_pf_from_rho_inputs(
     rho: np.ndarray,
     V_r: np.ndarray,
     Kn: np.ndarray,
-    Kn_r: np.ndarray,
     Ln_r: np.ndarray,
-    S_r: np.ndarray,
     R: np.ndarray,
     JdivR: np.ndarray,
-    F: np.ndarray,
     Ip: float,
     beta: float,
-    pressure_scale: float,
 ) -> tuple[float, float]:
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
@@ -319,7 +288,7 @@ def _update_pf_from_rho_inputs(
                 out_Pn_psin[i] = 0.0
             return 0.0, 0.0
     integrand = np.empty_like(out_psin_r)
-    _fill_pf_rho_integrand(integrand, Kn, current_input, Ln_r, V_r, heat_input, pressure_scale)
+    _fill_pf_rho_integrand(integrand, Kn, current_input, Ln_r, V_r, heat_input)
     corrected_integration(out_psin_r, integrand, integration_matrix, 1, rho, differentiation_matrix)
     out_psin_r *= -2.0
     for i in range(out_psin_r.shape[0]):
@@ -371,7 +340,6 @@ def _update_pf_from_psin_inputs(
     out_Pn_psin: np.ndarray,
     heat_input: np.ndarray,
     current_input: np.ndarray,
-    R0: float,
     B0: float,
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
@@ -379,15 +347,11 @@ def _update_pf_from_psin_inputs(
     rho: np.ndarray,
     V_r: np.ndarray,
     Kn: np.ndarray,
-    Kn_r: np.ndarray,
     Ln_r: np.ndarray,
-    S_r: np.ndarray,
     R: np.ndarray,
     JdivR: np.ndarray,
-    F: np.ndarray,
     Ip: float,
     beta: float,
-    pressure_scale: float,
 ) -> tuple[float, float]:
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
@@ -411,7 +375,7 @@ def _update_pf_from_psin_inputs(
                 out_Pn_psin[i] = 0.0
             return 0.0, 0.0
     integrand = np.empty_like(out_psin_r)
-    _fill_pf_psin_integrand(integrand, current_input, Ln_r, V_r, heat_input, pressure_scale)
+    _fill_pf_psin_integrand(integrand, current_input, Ln_r, V_r, heat_input)
     corrected_integration(out_psin_r, integrand, integration_matrix, 1, rho, differentiation_matrix)
     out_psin_r *= -1.0
     out_psin_r /= Kn
@@ -2423,9 +2387,8 @@ def _fill_pf_rho_integrand(
     Ln_r: np.ndarray,
     V_r: np.ndarray,
     heat_input: np.ndarray,
-    pressure_scale: float,
 ) -> np.ndarray:
-    pressure_factor = pressure_scale / (4.0 * np.pi**2)
+    pressure_factor = 1.0 / (4.0 * np.pi**2)
     for i in range(out.shape[0]):
         out[i] = Kn[i] * (current_input[i] * Ln_r[i] + V_r[i] * heat_input[i] * pressure_factor)
     return out
@@ -2438,9 +2401,8 @@ def _fill_pf_psin_integrand(
     Ln_r: np.ndarray,
     V_r: np.ndarray,
     heat_input: np.ndarray,
-    pressure_scale: float,
 ) -> np.ndarray:
-    pressure_factor = pressure_scale / (4.0 * np.pi**2)
+    pressure_factor = 1.0 / (4.0 * np.pi**2)
     for i in range(out.shape[0]):
         out[i] = current_input[i] * Ln_r[i] + V_r[i] * heat_input[i] * pressure_factor
     return out

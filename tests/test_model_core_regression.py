@@ -410,7 +410,7 @@ def test_equilibrium_exposes_gs_operator_residual_terms():
 
     assert np.allclose(equilibrium.Gn1, expected_gn1)
     assert np.allclose(equilibrium.Gn2, expected_gn2)
-    assert np.allclose(equilibrium.G, operator.G)
+    assert np.allclose(equilibrium.G, operator.residual_surface_workspace[0])
     assert np.allclose(equilibrium.G, equilibrium.alpha1 * equilibrium.Gn1 + equilibrium.alpha2 * equilibrium.Gn2)
 
 
@@ -492,11 +492,12 @@ def test_operator_exposes_explicit_layout_and_execution_layers():
     assert operator.residual_binding_layout.active_profile_names == tuple(
         operator.profile_names[int(p)] for p in operator.active_profile_ids
     )
-    assert operator.runtime_layout.geometry is operator.geometry
+    assert operator.runtime_layout.geometry_surface_workspace is operator.geometry_surface_workspace
+    assert operator.runtime_layout.geometry_radial_workspace is operator.geometry_radial_workspace
+    assert operator.runtime_layout.residual_surface_workspace is operator.residual_surface_workspace
     assert operator.runtime_layout.root_fields is operator.root_fields
     assert operator.runtime_layout.packed_residual is operator.packed_residual
     assert operator.field_runtime_state.root_fields is operator.root_fields
-    assert operator.field_runtime_state.residual_fields is operator.residual_fields
     assert operator.execution_state.fused_alpha_state.shape == (2,)
     assert callable(operator.execution_state.fused_residual_runner)
     assert callable(operator.execution_state.profile_postprocess_runner)
@@ -505,8 +506,6 @@ def test_operator_exposes_explicit_layout_and_execution_layers():
     assert operator.active_u_fields.base is operator.active_profile_slab
     assert operator.c_family_fields.base is operator.family_field_slab
     assert operator.source_runtime_state.psin_query.base is operator.source_vector_slab
-    assert operator.geometry.tb_fields.base is operator.geometry_surface_slab
-    assert operator.geometry.S_r.base is operator.geometry_radial_slab
 
 def test_operator_replace_case_preserves_static_layout_and_refreshes_runtime_identity():
     grid, case = _build_operator_case()
@@ -524,7 +523,8 @@ def test_operator_replace_case_preserves_static_layout_and_refreshes_runtime_ide
     assert operator.case.nodes == next_case.nodes
     assert operator.source_plan.coordinate == next_case.coordinate
     assert operator.source_plan.nodes == next_case.nodes
-    assert operator.runtime_layout.geometry is operator.geometry
+    assert operator.runtime_layout.geometry_surface_workspace is operator.geometry_surface_workspace
+    assert operator.runtime_layout.geometry_radial_workspace is operator.geometry_radial_workspace
 
 
 @pytest.mark.parametrize(

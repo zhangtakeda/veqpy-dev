@@ -39,6 +39,7 @@ if TYPE_CHECKING:
 class SourcePlan:
     """描述 source 语义与 runner 绑定所需的只读计划."""
 
+    route: str
     kernel: Callable
     coordinate: str
     nodes: str
@@ -90,6 +91,14 @@ class SourcePlan:
     @property
     def requires_psin_profile_fields(self) -> bool:
         return self.is_profile_owned_psin
+
+
+def _source_route_key(source_plan: SourcePlan) -> tuple[str, str, str]:
+    return (
+        str(source_plan.route).upper(),
+        str(source_plan.coordinate).lower(),
+        str(source_plan.nodes).lower(),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -415,7 +424,41 @@ def refresh_source_runtime(
 
 
 def build_bound_source_stage_runner(operator_core: Any) -> Callable:
+    route_key = _source_route_key(operator_core.source_plan)
+    valid_route_keys = {
+        ("PF", "rho", "uniform"),
+        ("PF", "rho", "grid"),
+        ("PF", "psin", "uniform"),
+        ("PF", "psin", "grid"),
+        ("PP", "rho", "uniform"),
+        ("PP", "rho", "grid"),
+        ("PP", "psin", "uniform"),
+        ("PP", "psin", "grid"),
+        ("PI", "rho", "uniform"),
+        ("PI", "rho", "grid"),
+        ("PI", "psin", "uniform"),
+        ("PI", "psin", "grid"),
+        ("PJ1", "rho", "uniform"),
+        ("PJ1", "rho", "grid"),
+        ("PJ1", "psin", "uniform"),
+        ("PJ1", "psin", "grid"),
+        ("PJ2", "rho", "uniform"),
+        ("PJ2", "rho", "grid"),
+        ("PJ2", "psin", "uniform"),
+        ("PJ2", "psin", "grid"),
+        ("PQ", "rho", "uniform"),
+        ("PQ", "rho", "grid"),
+        ("PQ", "psin", "uniform"),
+        ("PQ", "psin", "grid"),
+    }
+    if route_key not in valid_route_keys:
+        raise ValueError(f"Unsupported source route key {route_key!r}")
+    return _build_source_stage_runner_shared(operator_core)
+
+
+def _build_source_stage_runner_shared(operator_core: Any) -> Callable:
     source_plan = operator_core.source_plan
+    source_eval_runner = operator_core.execution_state.source_eval_runner
     source_runtime_state = operator_core.source_runtime_state
     psin = operator_core.psin
     psin_r = operator_core.psin_r
@@ -424,23 +467,8 @@ def build_bound_source_stage_runner(operator_core: Any) -> Callable:
     Pn_psin = operator_core.Pn_psin
     materialized_heat_input = source_runtime_state.materialized_heat_input
     materialized_current_input = source_runtime_state.materialized_current_input
-    source_scratch_1d = source_runtime_state.scratch_1d
     source_target_root_fields = source_runtime_state.target_root_fields
-    grid = operator_core.grid
-    surface_workspace = operator_core.runtime_layout.geometry_surface_workspace
-    radial_workspace = operator_core.runtime_layout.geometry_radial_workspace
-    V_r = radial_workspace[1]
-    Kn = radial_workspace[2]
-    Kn_r = radial_workspace[3]
-    Ln_r = radial_workspace[4]
-    S_r = radial_workspace[0]
-    R_surface = surface_workspace[1]
-    JdivR = surface_workspace[5]
-    F_profile_u = operator_core.F_profile.u
     case_R0 = float(operator_core.case.R0)
-    case_B0 = float(operator_core.case.B0)
-    case_Ip = source_plan.Ip
-    case_beta = source_plan.beta
 
     if source_plan.strategy == "profile_owned_psin":
         if source_plan.is_psin_coordinate and not source_plan.is_grid_nodes:
@@ -474,8 +502,7 @@ def build_bound_source_stage_runner(operator_core: Any) -> Callable:
                         psin_query=source_psin_query,
                         enable_projection=True,
                     )
-                return _run_source_kernel(
-                    operator_core,
+                return source_eval_runner(
                     source_target_root_fields[0],
                     source_target_root_fields[1],
                     source_target_root_fields[2],
@@ -484,22 +511,6 @@ def build_bound_source_stage_runner(operator_core: Any) -> Callable:
                     materialized_heat_input,
                     materialized_current_input,
                     case_R0,
-                    case_B0,
-                    grid.weights,
-                    grid.differentiation_matrix,
-                    grid.integration_matrix,
-                    grid.rho,
-                    V_r,
-                    Kn,
-                    Kn_r,
-                    Ln_r,
-                    S_r,
-                    R_surface,
-                    JdivR,
-                    F_profile_u,
-                    case_Ip,
-                    case_beta,
-                    source_scratch_1d,
                 )
 
             return runner
@@ -514,8 +525,7 @@ def build_bound_source_stage_runner(operator_core: Any) -> Callable:
                 source_runtime_state=source_runtime_state,
                 psin_query=source_psin_query,
             )
-            return _run_source_kernel(
-                operator_core,
+            return source_eval_runner(
                 source_target_root_fields[0],
                 source_target_root_fields[1],
                 source_target_root_fields[2],
@@ -524,22 +534,6 @@ def build_bound_source_stage_runner(operator_core: Any) -> Callable:
                 materialized_heat_input,
                 materialized_current_input,
                 case_R0,
-                case_B0,
-                grid.weights,
-                grid.differentiation_matrix,
-                grid.integration_matrix,
-                grid.rho,
-                V_r,
-                Kn,
-                Kn_r,
-                Ln_r,
-                S_r,
-                R_surface,
-                JdivR,
-                F_profile_u,
-                case_Ip,
-                case_beta,
-                source_scratch_1d,
             )
 
         return runner
@@ -552,8 +546,7 @@ def build_bound_source_stage_runner(operator_core: Any) -> Callable:
         return runner
 
     def runner() -> tuple[float, float]:
-        return _run_source_kernel(
-            operator_core,
+        return source_eval_runner(
             psin,
             psin_r,
             psin_rr,
@@ -562,22 +555,6 @@ def build_bound_source_stage_runner(operator_core: Any) -> Callable:
             materialized_heat_input,
             materialized_current_input,
             case_R0,
-            case_B0,
-            grid.weights,
-            grid.differentiation_matrix,
-            grid.integration_matrix,
-            grid.rho,
-            V_r,
-            Kn,
-            Kn_r,
-            Ln_r,
-            S_r,
-            R_surface,
-            JdivR,
-            F_profile_u,
-            case_Ip,
-            case_beta,
-            source_scratch_1d,
         )
 
     return runner
@@ -593,6 +570,7 @@ def copy_psin_profile_to_root_fields(operator_core: Any) -> None:
 
 def run_psin_source_fixed_point(operator_core: Any) -> tuple[float, float]:
     source_plan = operator_core.source_plan
+    source_eval_runner = operator_core.execution_state.source_eval_runner
     source_runtime_state = operator_core.source_runtime_state
     target_root_fields = source_runtime_state.target_root_fields
     tolerance = float(source_plan.fixed_point_tolerance)
@@ -607,7 +585,16 @@ def run_psin_source_fixed_point(operator_core: Any) -> tuple[float, float]:
             psin_query=source_runtime_state.psin_query,
             enable_projection=not source_plan.use_projected_finalize,
         )
-        alpha1, alpha2 = _run_source_kernel_from_operator(operator_core)
+        alpha1, alpha2 = source_eval_runner(
+            target_root_fields[0],
+            target_root_fields[1],
+            target_root_fields[2],
+            operator_core.FFn_psin,
+            operator_core.Pn_psin,
+            source_runtime_state.materialized_heat_input,
+            source_runtime_state.materialized_current_input,
+            float(operator_core.case.R0),
+        )
         if update_fixed_point_psin_query(source_runtime_state.psin_query, target_root_fields[0], tolerance):
             break
     if source_plan.use_projected_finalize:
@@ -619,128 +606,19 @@ def run_psin_source_fixed_point(operator_core: Any) -> tuple[float, float]:
                 psin_query=source_runtime_state.psin_query,
                 enable_projection=True,
             )
-            alpha1, alpha2 = _run_source_kernel_from_operator(operator_core)
+            alpha1, alpha2 = source_eval_runner(
+                target_root_fields[0],
+                target_root_fields[1],
+                target_root_fields[2],
+                operator_core.FFn_psin,
+                operator_core.Pn_psin,
+                source_runtime_state.materialized_heat_input,
+                source_runtime_state.materialized_current_input,
+                float(operator_core.case.R0),
+            )
             if update_fixed_point_psin_query(source_runtime_state.psin_query, target_root_fields[0], tolerance):
                 break
     np.copyto(operator_core.psin, target_root_fields[0])
     np.copyto(operator_core.psin_r, target_root_fields[1])
     np.copyto(operator_core.psin_rr, target_root_fields[2])
     return alpha1, alpha2
-
-
-def _run_source_kernel_from_operator(operator_core: Any) -> tuple[float, float]:
-    source_runtime_state = operator_core.source_runtime_state
-    surface_workspace = operator_core.runtime_layout.geometry_surface_workspace
-    radial_workspace = operator_core.runtime_layout.geometry_radial_workspace
-    return _run_source_kernel(
-        operator_core,
-        source_runtime_state.target_root_fields[0],
-        source_runtime_state.target_root_fields[1],
-        source_runtime_state.target_root_fields[2],
-        operator_core.FFn_psin,
-        operator_core.Pn_psin,
-        source_runtime_state.materialized_heat_input,
-        source_runtime_state.materialized_current_input,
-        float(operator_core.case.R0),
-        float(operator_core.case.B0),
-        operator_core.grid.weights,
-        operator_core.grid.differentiation_matrix,
-        operator_core.grid.integration_matrix,
-        operator_core.grid.rho,
-        radial_workspace[1],
-        radial_workspace[2],
-        radial_workspace[3],
-        radial_workspace[4],
-        radial_workspace[0],
-        surface_workspace[1],
-        surface_workspace[5],
-        operator_core.F_profile.u,
-        float(operator_core.case.Ip),
-        float(operator_core.case.beta),
-        source_runtime_state.scratch_1d,
-    )
-
-
-def _run_source_kernel(
-    operator_core: Any,
-    out_psin: np.ndarray,
-    out_psin_r: np.ndarray,
-    out_psin_rr: np.ndarray,
-    out_FFn_psin: np.ndarray,
-    out_Pn_psin: np.ndarray,
-    heat_input: np.ndarray,
-    current_input: np.ndarray,
-    R0: float,
-    B0: float,
-    weights: np.ndarray,
-    differentiation_matrix: np.ndarray,
-    integration_matrix: np.ndarray,
-    rho: np.ndarray,
-    V_r: np.ndarray,
-    Kn: np.ndarray,
-    Kn_r: np.ndarray,
-    Ln_r: np.ndarray,
-    S_r: np.ndarray,
-    R: np.ndarray,
-    JdivR: np.ndarray,
-    F_profile_u: np.ndarray,
-    Ip: float,
-    beta: float,
-    source_scratch_1d: np.ndarray,
-) -> tuple[float, float]:
-    source_kernel = operator_core._source_kernel
-    source_scratch_kernel = operator_core._source_scratch_kernel
-    if source_scratch_kernel is None:
-        return source_kernel(
-            out_psin,
-            out_psin_r,
-            out_psin_rr,
-            out_FFn_psin,
-            out_Pn_psin,
-            heat_input,
-            current_input,
-            operator_core.source_plan.coordinate_code,
-            R0,
-            B0,
-            weights,
-            differentiation_matrix,
-            integration_matrix,
-            rho,
-            V_r,
-            Kn,
-            Kn_r,
-            Ln_r,
-            S_r,
-            R,
-            JdivR,
-            F_profile_u,
-            Ip,
-            beta,
-        )
-    return source_scratch_kernel(
-        out_psin,
-        out_psin_r,
-        out_psin_rr,
-        out_FFn_psin,
-        out_Pn_psin,
-        heat_input,
-        current_input,
-        operator_core.source_plan.coordinate_code,
-        R0,
-        B0,
-        weights,
-        differentiation_matrix,
-        integration_matrix,
-        rho,
-        V_r,
-        Kn,
-        Kn_r,
-        Ln_r,
-        S_r,
-        R,
-        JdivR,
-        F_profile_u,
-        Ip,
-        beta,
-        source_scratch_1d,
-    )

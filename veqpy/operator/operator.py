@@ -22,7 +22,7 @@ import numpy as np
 
 from veqpy.engine import (
     bind_fused_residual_runner,
-    bind_residual_runner,
+    bind_source_eval_runner,
     resolve_source_scratch_kernel,
     validate_route,
 )
@@ -191,6 +191,7 @@ class Operator:
             profile_stage_runner=lambda x: None,
             profile_postprocess_runner=lambda: None,
             geometry_stage_runner=lambda: None,
+            source_eval_runner=lambda *args: (0.0, 0.0),
             source_stage_runner=lambda: (0.0, 0.0),
             residual_pack_stage_runner=lambda: np.zeros(self.x_size, dtype=np.float64),
             residual_full_stage_runner=lambda: np.zeros(self.x_size, dtype=np.float64),
@@ -250,6 +251,7 @@ class Operator:
                 endpoint_policy_code != ENDPOINT_POLICY_CODES["none"]
             )
         return SourcePlan(
+            route=str(self.case.route).upper(),
             kernel=self._source_route_spec.implementation,
             coordinate=self.case.coordinate,
             nodes=self.case.nodes,
@@ -581,6 +583,7 @@ class Operator:
         self.execution_state.profile_stage_runner = self._build_profile_stage_runner()
         self.execution_state.profile_postprocess_runner = self._build_profile_postprocess_runner()
         self.execution_state.geometry_stage_runner = self._build_geometry_stage_runner()
+        self.execution_state.source_eval_runner = self._build_source_eval_runner()
         self.execution_state.source_stage_runner = self._build_bound_source_stage_runner()
         self.execution_state.residual_pack_stage_runner = self._build_bound_residual_pack_stage_runner()
         self.execution_state.residual_full_stage_runner = self._build_bound_residual_full_stage_runner()
@@ -653,6 +656,15 @@ class Operator:
 
     def _build_bound_source_stage_runner(self) -> Callable:
         return build_bound_source_stage_runner(self)
+
+    def _build_source_eval_runner(self) -> Callable:
+        return bind_source_eval_runner(
+            source_plan=self.source_plan,
+            static_layout=self.static_layout,
+            runtime_layout=self.runtime_layout,
+            profiles_by_name=self.profiles_by_name,
+            B0=self.case.B0,
+        )
 
     def _build_bound_residual_pack_stage_runner(self) -> Callable:
         alpha_state = self.execution_state.fused_alpha_state
