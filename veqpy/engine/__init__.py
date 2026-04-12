@@ -2,62 +2,50 @@
 Module: engine.__init__
 
 Role:
-- 导出 numba engine 的稳定入口.
+- 作为 engine 的唯一对外导入入口.
 
 Notes:
 - 求解后端已统一为 numba.
 - operator layout 与 solver orchestration 保留在上层.
+- 外层模块应统一 `from veqpy.engine import ...`, 不直接导入内部文件.
 """
 
-from veqpy.engine.numba_operator import (
-    bind_fused_residual_runner,
-    bind_source_eval_runner,
-)
-from veqpy.engine.numba_profile import update_profile, update_profiles_packed_bulk
+from veqpy.engine import numba_operator as operator_ops
+from veqpy.engine import numba_profile as profile_ops
+from veqpy.engine import numba_residual as residual_ops
+from veqpy.engine import numba_source as source_ops
+from veqpy.engine import orchestration
 from veqpy.engine.numba_source import (
     COORDINATE_NAMES,
     PSIN_COORDINATE,
     RHO_AXIS,
     RHO_COORDINATE,
     THETA_AXIS,
-    build_source_remap_cache,
     corrected_even_derivative,
     corrected_integration,
     corrected_linear_derivative,
     full_differentiation,
     full_integration,
-    materialize_profile_owned_psin_source,
-    materialize_projected_source_inputs,
     quadrature,
-    resolve_source_inputs,
-    resolve_source_scratch_kernel,
     theta_reduction,
-    update_fixed_point_psin_query,
-    update_fourier_family_fields,
     validate_route,
 )
 
 __all__ = [
-    "update_profile",
-    "update_profiles_packed_bulk",
-    "bind_fused_residual_runner",
-    "bind_source_eval_runner",
+    "operator_ops",
+    "profile_ops",
+    "residual_ops",
+    "source_ops",
+    "orchestration",
     "RHO_AXIS",
     "THETA_AXIS",
     "COORDINATE_NAMES",
     "PSIN_COORDINATE",
     "RHO_COORDINATE",
-    "build_source_remap_cache",
     "validate_route",
-    "materialize_profile_owned_psin_source",
-    "update_fourier_family_fields",
-    "resolve_source_inputs",
-    "resolve_source_scratch_kernel",
     "full_differentiation",
     "theta_reduction",
     "quadrature",
-    "materialize_projected_source_inputs",
-    "update_fixed_point_psin_query",
     "full_integration",
     "corrected_integration",
     "corrected_linear_derivative",

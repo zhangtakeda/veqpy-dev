@@ -23,8 +23,8 @@ import numpy as np
 from rich.console import Console
 from scipy.optimize import least_squares, root
 
-from veqpy.model import Equilibrium
-from veqpy.operator import Operator
+from veqpy.model.equilibrium import Equilibrium
+from veqpy.operator.operator import Operator
 from veqpy.operator.operator_case import OperatorCase
 from veqpy.solver.solver_config import LEAST_SQUARES_METHODS, SolverConfig
 from veqpy.solver.solver_record import SolverRecord

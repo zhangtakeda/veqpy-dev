@@ -4,7 +4,8 @@ from types import SimpleNamespace
 import numpy as np
 
 import veqpy.solver.solver as solver_module
-from veqpy.solver import Solver, SolverConfig
+from veqpy.solver.solver import Solver
+from veqpy.solver.solver_config import SolverConfig
 
 
 class _DummyCase:

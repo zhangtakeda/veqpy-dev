@@ -12,8 +12,9 @@ from typing import Callable
 
 import numpy as np
 
-from veqpy.engine import update_profiles_packed_bulk, validate_route
-from veqpy.model import Grid, Profile
+from veqpy.engine import profile_ops, validate_route
+from veqpy.model.grid import Grid
+from veqpy.model.profile import Profile
 from veqpy.operator.layout import build_profile_layout
 from veqpy.operator.operator_case import OperatorCase
 
@@ -188,7 +189,7 @@ def build_profile_stage_runner(
         return lambda x: None
 
     def runner(x: np.ndarray) -> None:
-        update_profiles_packed_bulk(
+        profile_ops.update_profiles_packed_bulk(
             active_profile_slab,
             T_fields,
             active_offsets,

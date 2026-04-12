@@ -12,7 +12,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from veqpy.model import Equilibrium, Profile
+from veqpy.model.equilibrium import Equilibrium
+from veqpy.model.profile import Profile
 from veqpy.operator.codec import decode_packed_blocks
 
 if TYPE_CHECKING:

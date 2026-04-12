@@ -21,7 +21,7 @@ import numpy as np
 from rich.console import Console
 from rich.tree import Tree
 
-from veqpy.model import Boundary
+from veqpy.model.boundary import Boundary
 
 
 @dataclass(slots=True)

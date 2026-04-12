@@ -10,10 +10,18 @@ import numpy as np
 from scipy.interpolate import PchipInterpolator, interp1d
 
 from veqpy.engine import validate_route
-from veqpy.model import Boundary, Grid
-from veqpy.operator import Operator, OperatorCase, build_profile_index, build_profile_layout, build_profile_names
-from veqpy.operator.layout import build_shape_profile_names
-from veqpy.solver import Solver, SolverConfig
+from veqpy.model.boundary import Boundary
+from veqpy.model.grid import Grid
+from veqpy.operator.layout import (
+    build_profile_index,
+    build_profile_layout,
+    build_profile_names,
+    build_shape_profile_names,
+)
+from veqpy.operator.operator import Operator
+from veqpy.operator.operator_case import OperatorCase
+from veqpy.solver.solver import Solver
+from veqpy.solver.solver_config import SolverConfig
 
 PLOT = False
 SHOW_PROGRESS = True

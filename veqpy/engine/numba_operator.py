@@ -15,8 +15,8 @@ Notes:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 from numba import njit
@@ -29,20 +29,19 @@ from veqpy.engine.numba_source import (
     _local_barycentric_interpolate_pair,
     _materialize_profile_owned_psin_source_impl,
     _materialize_projected_source_inputs_impl,
+    _uniform_barycentric_weights,
     _update_fixed_point_psin_query_and_linear_uniform_inputs_impl,
     _update_fixed_point_psin_query_and_local_barycentric_inputs_impl,
     _update_fixed_point_psin_query_and_projected_inputs_impl,
+    _update_fourier_family_fields_impl,
     _update_pj2_from_psin_inputs_with_scratch,
     _update_pq_from_psin_inputs_with_scratch,
-    _uniform_barycentric_weights,
-    _update_fourier_family_fields_impl,
     resolve_source_scratch_kernel,
 )
 
 if TYPE_CHECKING:
+    from veqpy.engine.orchestration import SourcePlan
     from veqpy.operator.layouts import ResidualBindingLayout, RuntimeLayout, StaticLayout
-    from veqpy.operator.layouts import SourceRuntimeState
-    from veqpy.operator.source_setup import SourcePlan
 
 
 def _source_route_key(source_plan: "SourcePlan") -> tuple[str, str, str]:
@@ -96,7 +95,6 @@ def bind_source_eval_runner(
     profiles_by_name: dict[str, object],
     B0: float,
 ) -> Callable:
-    route_key = _source_route_key(source_plan)
     source_kernel = source_plan.kernel
     scratch_source_kernel = resolve_source_scratch_kernel(source_kernel)
     coordinate_code = int(source_plan.coordinate_code)
@@ -107,13 +105,6 @@ def bind_source_eval_runner(
     radial_workspace = runtime_layout.geometry_radial_workspace
     surface_workspace = runtime_layout.geometry_surface_workspace
     source_runtime_state = runtime_layout.source_runtime_state
-    V_r = radial_workspace[1]
-    Kn = radial_workspace[2]
-    Kn_r = radial_workspace[3]
-    Ln_r = radial_workspace[4]
-    S_r = radial_workspace[0]
-    R_surface = surface_workspace[1]
-    JdivR = surface_workspace[5]
     F_profile_u = profiles_by_name["F"].u
     Ip = float(source_plan.Ip)
     beta = float(source_plan.beta)
@@ -719,56 +710,12 @@ def _bind_single_pass_residual_runner_core(
     B0: float,
     f_parameterization: str = "direct_F",
 ) -> Callable[[np.ndarray], np.ndarray]:
-    coeff_index_rows = runtime_layout.active_coeff_index_rows
-    lengths = runtime_layout.active_lengths
-    active_u_fields = runtime_layout.active_u_fields
-    active_rp_fields = runtime_layout.active_rp_fields
-    active_env_fields = runtime_layout.active_env_fields
-    active_offsets = runtime_layout.active_offsets
-    active_scales = runtime_layout.active_scales
-    c_family_fields = runtime_layout.c_family_fields
-    s_family_fields = runtime_layout.s_family_fields
-    c_family_base_fields = runtime_layout.c_family_base_fields
-    s_family_base_fields = runtime_layout.s_family_base_fields
-    c_source_slots = runtime_layout.c_family_source_slots
-    s_source_slots = runtime_layout.s_family_source_slots
     surface_workspace = runtime_layout.geometry_surface_workspace
-    radial_workspace = runtime_layout.geometry_radial_workspace
-    compact_sin_tb = surface_workspace[0]
-    compact_R = surface_workspace[1]
-    compact_R_t = surface_workspace[2]
-    compact_Z_t = surface_workspace[3]
-    compact_J = surface_workspace[4]
-    compact_JdivR = surface_workspace[5]
-    compact_grtdivJR_t = surface_workspace[6]
-    compact_gttdivJR = surface_workspace[7]
-    compact_gttdivJR_r = surface_workspace[8]
-    S_r = radial_workspace[0]
-    V_r = radial_workspace[1]
-    Kn = radial_workspace[2]
-    Kn_r = radial_workspace[3]
-    Ln_r = radial_workspace[4]
     residual_workspace = runtime_layout.residual_surface_workspace
-    T_fields = static_layout.T_fields
-    rho = static_layout.rho
-    theta = static_layout.theta
-    cos_ktheta = static_layout.cos_ktheta
-    sin_ktheta = static_layout.sin_ktheta
-    k_cos_ktheta = static_layout.k_cos_ktheta
-    k_sin_ktheta = static_layout.k_sin_ktheta
-    k2_cos_ktheta = static_layout.k2_cos_ktheta
-    k2_sin_ktheta = static_layout.k2_sin_ktheta
-    weights = static_layout.weights
-    differentiation_matrix = static_layout.differentiation_matrix
-    integration_matrix = static_layout.integration_matrix
-    rho_powers = static_layout.rho_powers
-    y = static_layout.y
     root_fields = runtime_layout.root_fields
-    packed_residual = runtime_layout.packed_residual
     source_runtime_state = runtime_layout.source_runtime_state
     materialized_heat_input = source_runtime_state.materialized_heat_input
     materialized_current_input = source_runtime_state.materialized_current_input
-    source_scratch_1d = source_runtime_state.scratch_1d
     profiles_by_name = runtime_layout.profiles_by_name
     h_fields = profiles_by_name["h"].u_fields
     v_fields = profiles_by_name["v"].u_fields
@@ -782,12 +729,7 @@ def _bind_single_pass_residual_runner_core(
         profiles_by_name=profiles_by_name,
         B0=B0,
     )
-    block_codes = residual_binding_layout.active_residual_block_codes
-    block_orders = residual_binding_layout.active_residual_block_orders
     scratch_holder: list[np.ndarray | None] = [None]
-    psin = root_fields[0]
-    psin_r = root_fields[1]
-    psin_rr = root_fields[2]
     FFn_psin = root_fields[3]
     Pn_psin = root_fields[4]
 
@@ -854,54 +796,11 @@ def _bind_profile_owned_psin_residual_runner_core(
     f_parameterization: str = "direct_F",
     skip_projection_finalize: bool,
 ) -> Callable[[np.ndarray], np.ndarray]:
-    coeff_index_rows = runtime_layout.active_coeff_index_rows
-    lengths = runtime_layout.active_lengths
-    active_u_fields = runtime_layout.active_u_fields
-    active_rp_fields = runtime_layout.active_rp_fields
-    active_env_fields = runtime_layout.active_env_fields
-    active_offsets = runtime_layout.active_offsets
-    active_scales = runtime_layout.active_scales
-    c_family_fields = runtime_layout.c_family_fields
-    s_family_fields = runtime_layout.s_family_fields
-    c_family_base_fields = runtime_layout.c_family_base_fields
-    s_family_base_fields = runtime_layout.s_family_base_fields
-    c_source_slots = runtime_layout.c_family_source_slots
-    s_source_slots = runtime_layout.s_family_source_slots
     surface_workspace = runtime_layout.geometry_surface_workspace
-    radial_workspace = runtime_layout.geometry_radial_workspace
-    compact_sin_tb = surface_workspace[0]
-    compact_R = surface_workspace[1]
-    compact_R_t = surface_workspace[2]
-    compact_Z_t = surface_workspace[3]
-    compact_J = surface_workspace[4]
-    compact_JdivR = surface_workspace[5]
-    compact_grtdivJR_t = surface_workspace[6]
-    compact_gttdivJR = surface_workspace[7]
-    compact_gttdivJR_r = surface_workspace[8]
-    S_r = radial_workspace[0]
-    V_r = radial_workspace[1]
-    Kn = radial_workspace[2]
-    Kn_r = radial_workspace[3]
-    Ln_r = radial_workspace[4]
     residual_workspace = runtime_layout.residual_surface_workspace
-    T_fields = static_layout.T_fields
-    rho = static_layout.rho
-    theta = static_layout.theta
-    cos_ktheta = static_layout.cos_ktheta
-    sin_ktheta = static_layout.sin_ktheta
-    k_cos_ktheta = static_layout.k_cos_ktheta
-    k_sin_ktheta = static_layout.k_sin_ktheta
-    k2_cos_ktheta = static_layout.k2_cos_ktheta
-    k2_sin_ktheta = static_layout.k2_sin_ktheta
-    weights = static_layout.weights
-    differentiation_matrix = static_layout.differentiation_matrix
-    integration_matrix = static_layout.integration_matrix
-    rho_powers = static_layout.rho_powers
-    y = static_layout.y
     root_fields = runtime_layout.root_fields
     source_runtime_state = runtime_layout.source_runtime_state
     source_target_root_fields = source_runtime_state.target_root_fields
-    packed_residual = runtime_layout.packed_residual
     source_psin_query = source_runtime_state.psin_query
     source_parameter_query = source_runtime_state.parameter_query
     heat_projection_coeff = source_runtime_state.heat_projection_coeff
@@ -909,7 +808,6 @@ def _bind_profile_owned_psin_residual_runner_core(
     endpoint_blend = source_runtime_state.endpoint_blend
     materialized_heat_input = source_runtime_state.materialized_heat_input
     materialized_current_input = source_runtime_state.materialized_current_input
-    source_scratch_1d = source_runtime_state.scratch_1d
     profiles_by_name = runtime_layout.profiles_by_name
     psin_profile_fields = profiles_by_name["psin"].u_fields
     h_fields = profiles_by_name["h"].u_fields
@@ -923,8 +821,6 @@ def _bind_profile_owned_psin_residual_runner_core(
     endpoint_policy_code = int(source_plan.endpoint_policy_code)
     heat_input = source_plan.heat_input
     current_input = source_plan.current_input
-    block_codes = residual_binding_layout.active_residual_block_codes
-    block_orders = residual_binding_layout.active_residual_block_orders
     source_eval_runner = bind_source_eval_runner(
         source_plan=source_plan,
         static_layout=static_layout,
@@ -1108,52 +1004,14 @@ def _bind_fixed_point_psin_residual_runner_core(
     max_iter: int | None = None,
     tolerance: float | None = None,
 ) -> Callable[[np.ndarray], np.ndarray]:
-    coeff_index_rows = runtime_layout.active_coeff_index_rows
-    lengths = runtime_layout.active_lengths
-    active_u_fields = runtime_layout.active_u_fields
-    active_rp_fields = runtime_layout.active_rp_fields
-    active_env_fields = runtime_layout.active_env_fields
-    active_offsets = runtime_layout.active_offsets
-    active_scales = runtime_layout.active_scales
-    c_family_fields = runtime_layout.c_family_fields
-    s_family_fields = runtime_layout.s_family_fields
-    c_family_base_fields = runtime_layout.c_family_base_fields
-    s_family_base_fields = runtime_layout.s_family_base_fields
-    c_source_slots = runtime_layout.c_family_source_slots
-    s_source_slots = runtime_layout.s_family_source_slots
     surface_workspace = runtime_layout.geometry_surface_workspace
     radial_workspace = runtime_layout.geometry_radial_workspace
-    compact_sin_tb = surface_workspace[0]
-    compact_R = surface_workspace[1]
-    compact_R_t = surface_workspace[2]
-    compact_Z_t = surface_workspace[3]
-    compact_J = surface_workspace[4]
-    compact_JdivR = surface_workspace[5]
-    compact_grtdivJR_t = surface_workspace[6]
-    compact_gttdivJR = surface_workspace[7]
-    compact_gttdivJR_r = surface_workspace[8]
-    S_r = radial_workspace[0]
-    V_r = radial_workspace[1]
-    Kn = radial_workspace[2]
-    Kn_r = radial_workspace[3]
-    Ln_r = radial_workspace[4]
     residual_workspace = runtime_layout.residual_surface_workspace
-    T_fields = static_layout.T_fields
     rho = static_layout.rho
-    theta = static_layout.theta
-    cos_ktheta = static_layout.cos_ktheta
-    sin_ktheta = static_layout.sin_ktheta
-    k_cos_ktheta = static_layout.k_cos_ktheta
-    k_sin_ktheta = static_layout.k_sin_ktheta
-    k2_cos_ktheta = static_layout.k2_cos_ktheta
-    k2_sin_ktheta = static_layout.k2_sin_ktheta
     weights = static_layout.weights
     differentiation_matrix = static_layout.differentiation_matrix
     integration_matrix = static_layout.integration_matrix
-    rho_powers = static_layout.rho_powers
-    y = static_layout.y
     root_fields = runtime_layout.root_fields
-    packed_residual = runtime_layout.packed_residual
     source_runtime_state = runtime_layout.source_runtime_state
     source_psin_query = source_runtime_state.psin_query
     materialized_heat_input = source_runtime_state.materialized_heat_input
@@ -1185,8 +1043,6 @@ def _bind_fixed_point_psin_residual_runner_core(
     fixed_point_barycentric_weights = _uniform_barycentric_weights(
         min(fixed_point_stencil_size, int(source_plan.n_src))
     )
-    block_codes = residual_binding_layout.active_residual_block_codes
-    block_orders = residual_binding_layout.active_residual_block_orders
     scratch_holder: list[np.ndarray | None] = [None]
     psin = root_fields[0]
     FFn_psin = root_fields[3]

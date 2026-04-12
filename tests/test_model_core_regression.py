@@ -4,24 +4,24 @@ import numpy as np
 import orjson
 import pytest
 
-from veqpy.model import Boundary
-from veqpy.model import equilibrium as equilibrium_module
+import veqpy.model.equilibrium as equilibrium_module
+import veqpy.operator.layout as layout_module
+from veqpy.model.boundary import Boundary
 from veqpy.model.equilibrium import Equilibrium
 from veqpy.model.geqdsk import Geqdsk
 from veqpy.model.grid import Grid
 from veqpy.model.reactive import Reactive
-from veqpy.operator import (
+from veqpy.operator.codec import encode_packed_state
+from veqpy.operator.layout import build_profile_layout, build_profile_names
+from veqpy.operator.layouts import (
     ExecutionState,
     FieldRuntimeState,
-    Operator,
     ResidualBindingLayout,
     RuntimeLayout,
     SourceRuntimeState,
     StaticLayout,
 )
-from veqpy.operator import layout as layout_module
-from veqpy.operator.codec import encode_packed_state
-from veqpy.operator.layout import build_profile_layout, build_profile_names
+from veqpy.operator.operator import Operator
 from veqpy.operator.operator_case import OperatorCase
 from veqpy.residual_blocks import F2_BLOCK_CODE
 
@@ -501,11 +501,13 @@ def test_operator_exposes_explicit_layout_and_execution_layers():
     assert operator.execution_state.fused_alpha_state.shape == (2,)
     assert callable(operator.execution_state.fused_residual_runner)
     assert callable(operator.execution_state.profile_postprocess_runner)
-    assert operator.runtime_layout.source_psin_query is operator.source_runtime_state.psin_query
-    assert operator.runtime_layout.materialized_heat_input is operator.source_runtime_state.materialized_heat_input
     assert operator.active_u_fields.base is operator.active_profile_slab
     assert operator.c_family_fields.base is operator.family_field_slab
-    assert operator.source_runtime_state.psin_query.base is operator.source_vector_slab
+    expected_psin_query_shape = (
+        (grid.Nr,) if (operator.source_plan.is_profile_owned_psin or operator.source_plan.is_fixed_point_psin) else (0,)
+    )
+    assert operator.source_runtime_state.psin_query.shape == expected_psin_query_shape
+    assert operator.source_runtime_state.materialized_heat_input.shape == (grid.Nr,)
 
 def test_operator_replace_case_preserves_static_layout_and_refreshes_runtime_identity():
     grid, case = _build_operator_case()

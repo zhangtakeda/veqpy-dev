@@ -20,14 +20,10 @@ from typing import Callable
 
 import numpy as np
 
-from veqpy.engine import (
-    bind_fused_residual_runner,
-    bind_source_eval_runner,
-    resolve_source_scratch_kernel,
-    validate_route,
-)
-from veqpy.engine.numba_residual import _run_residual_blocks_packed_precomputed, update_residual_compact
-from veqpy.model import Equilibrium, Grid, Profile
+from veqpy.engine import operator_ops, orchestration, residual_ops, source_ops, validate_route
+from veqpy.model.equilibrium import Equilibrium
+from veqpy.model.grid import Grid
+from veqpy.model.profile import Profile
 from veqpy.operator.codec import decode_packed_blocks, encode_packed_state
 from veqpy.operator.execution_helpers import snapshot_equilibrium_from_runtime
 from veqpy.operator.layout import (
@@ -59,19 +55,6 @@ from veqpy.operator.profile_setup import (
     validate_case_compatibility,
 )
 from veqpy.operator.runtime_allocation import allocate_runtime_state
-from veqpy.operator.source_setup import (
-    ENDPOINT_POLICY_CODES,
-    PROJECTION_DOMAIN_CODES,
-    SOURCE_PARAMETERIZATION_CODES,
-    SourcePlan,
-    SourceProjectionPolicy,
-    build_bound_source_stage_runner,
-    refresh_source_runtime,
-    resolve_fixed_point_policy,
-    resolve_source_projection_policy,
-    validate_source_inputs,
-)
-from veqpy.operator.stage_helpers import build_geometry_stage_runner
 from veqpy.residual_blocks import F2_BLOCK_CODE, build_residual_block_metadata
 
 _PROFILE_STATIC_KWARGS: dict[str, dict[str, int]] = {
@@ -149,12 +132,12 @@ class Operator:
     _source_route_spec: object = field(init=False, repr=False)
     _source_kernel: Callable = field(init=False, repr=False)
     _source_scratch_kernel: Callable | None = field(init=False, repr=False)
-    source_plan: SourcePlan = field(init=False, repr=False)
+    source_plan: orchestration.SourcePlan = field(init=False, repr=False)
     field_runtime_state: FieldRuntimeState = field(init=False, repr=False)
     execution_state: ExecutionState = field(init=False, repr=False)
     source_runtime_state: SourceRuntimeState = field(init=False, repr=False)
     packed_residual: np.ndarray = field(init=False, repr=False)
-    _source_projection_policy: SourceProjectionPolicy | None = field(init=False, repr=False)
+    _source_projection_policy: orchestration.SourceProjectionPolicy | None = field(init=False, repr=False)
     f_parameterization: str = field(init=False, repr=False)
     profile_static_kwargs_by_name: dict[str, dict[str, int]] = field(init=False, repr=False)
     profile_offset_specs: dict[str, float | str] = field(init=False, repr=False)
@@ -220,9 +203,11 @@ class Operator:
     def alpha2(self, value: float) -> None:
         self.execution_state.fused_alpha_state[1] = float(value)
 
-    def _build_source_plan(self) -> SourcePlan:
+    def _build_source_plan(self) -> orchestration.SourcePlan:
         policy = self._source_projection_policy
-        fixed_point_policy = resolve_fixed_point_policy(self.case.route, self.case.coordinate, self.case.nodes)
+        fixed_point_policy = orchestration.resolve_fixed_point_policy(
+            self.case.route, self.case.coordinate, self.case.nodes
+        )
         use_projected_finalize = False
         has_projection_policy = policy is not None
         has_ip_constraint = bool(np.isfinite(self.case.Ip))
@@ -243,13 +228,13 @@ class Operator:
                 if has_ip_constraint and policy.ip_current_degree is not None
                 else policy.current_degree
             )
-            endpoint_policy_code = ENDPOINT_POLICY_CODES[endpoint_policy]
-            projection_domain_code = PROJECTION_DOMAIN_CODES[policy.domain]
+            endpoint_policy_code = orchestration.ENDPOINT_POLICY_CODES[endpoint_policy]
+            projection_domain_code = orchestration.PROJECTION_DOMAIN_CODES[policy.domain]
             use_projected_finalize = self.case.coordinate == "psin"
             allow_query_warmstart = (not use_projected_finalize) or (
-                endpoint_policy_code != ENDPOINT_POLICY_CODES["none"]
+                endpoint_policy_code != orchestration.ENDPOINT_POLICY_CODES["none"]
             )
-        return SourcePlan(
+        return orchestration.SourcePlan(
             route=str(self.case.route).upper(),
             kernel=self._source_route_spec.implementation,
             coordinate=self.case.coordinate,
@@ -257,7 +242,9 @@ class Operator:
             coordinate_code=int(self._source_route_spec.coordinate_code),
             strategy=self._source_route_spec.source_strategy,
             parameterization=self._source_route_spec.source_parameterization,
-            parameterization_code=SOURCE_PARAMETERIZATION_CODES[self._source_route_spec.source_parameterization],
+            parameterization_code=orchestration.SOURCE_PARAMETERIZATION_CODES[
+                self._source_route_spec.source_parameterization
+            ],
             n_src=int(self.case.heat_input.shape[0]),
             heat_input=self.case.heat_input,
             current_input=self.case.current_input,
@@ -294,7 +281,7 @@ class Operator:
             profile_L=self.profile_L,
             coeff_index=self.coeff_index,
             order_offsets=self.order_offsets,
-            validate_source_inputs=lambda next_case: validate_source_inputs(next_case, self.grid.Nr),
+            validate_source_inputs=lambda next_case: orchestration.validate_source_inputs(next_case, self.grid.Nr),
         )
         self.case = case
         self._refresh_runtime_state()
@@ -485,7 +472,7 @@ class Operator:
         self._validate_runtime_profile_support()
         self._refresh_profile_runtime()
         self._refresh_fourier_family_metadata()
-        refresh_source_runtime(
+        orchestration.refresh_source_runtime(
             case=self.case,
             grid_rho=self.grid.rho,
             source_plan=self.source_plan,
@@ -500,8 +487,8 @@ class Operator:
         spec = validate_route(self.case.route, self.case.coordinate, self.case.nodes)
         self._source_route_spec = spec
         self._source_kernel = spec.implementation
-        self._source_scratch_kernel = resolve_source_scratch_kernel(spec.implementation)
-        self._source_projection_policy = resolve_source_projection_policy(
+        self._source_scratch_kernel = source_ops.resolve_source_scratch_kernel(spec.implementation)
+        self._source_projection_policy = orchestration.resolve_source_projection_policy(
             self.case.route,
             self.case.coordinate,
             self.case.nodes,
@@ -611,7 +598,7 @@ class Operator:
         )
 
     def _build_geometry_stage_runner(self) -> Callable:
-        return build_geometry_stage_runner(
+        return orchestration.build_geometry_stage_runner(
             c_family_fields=self.c_family_fields,
             s_family_fields=self.s_family_fields,
             c_family_base_fields=self.c_family_base_fields,
@@ -637,14 +624,13 @@ class Operator:
             k_sin_ktheta=self.grid.k_sin_ktheta,
             k2_cos_ktheta=self.grid.k2_cos_ktheta,
             k2_sin_ktheta=self.grid.k2_sin_ktheta,
-            weights=self.grid.weights,
         )
 
     def _build_bound_source_stage_runner(self) -> Callable:
-        return build_bound_source_stage_runner(self)
+        return orchestration.build_bound_source_stage_runner(self)
 
     def _build_source_eval_runner(self) -> Callable:
-        return bind_source_eval_runner(
+        return operator_ops.bind_source_eval_runner(
             source_plan=self.source_plan,
             static_layout=self.static_layout,
             runtime_layout=self.runtime_layout,
@@ -668,7 +654,7 @@ class Operator:
         B0 = self.case.B0
 
         def runner() -> np.ndarray:
-            update_residual_compact(
+            residual_ops.update_residual_compact(
                 residual_workspace,
                 float(alpha_state[0]),
                 float(alpha_state[1]),
@@ -677,7 +663,7 @@ class Operator:
             )
             packed = np.zeros(self.x_size, dtype=np.float64)
             scratch = np.empty(self.grid.Nr, dtype=np.float64)
-            _run_residual_blocks_packed_precomputed(
+            residual_ops._run_residual_blocks_packed_precomputed(
                 packed,
                 scratch,
                 self.residual_binding_layout.active_residual_block_codes,
@@ -716,7 +702,7 @@ class Operator:
         B0 = self.case.B0
 
         def runner() -> np.ndarray:
-            update_residual_compact(
+            residual_ops.update_residual_compact(
                 residual_workspace,
                 float(alpha_state[0]),
                 float(alpha_state[1]),
@@ -725,7 +711,7 @@ class Operator:
             )
             packed_residual.fill(0.0)
             scratch = np.empty(self.grid.Nr, dtype=np.float64)
-            _run_residual_blocks_packed_precomputed(
+            residual_ops._run_residual_blocks_packed_precomputed(
                 packed_residual,
                 scratch,
                 self.residual_binding_layout.active_residual_block_codes,
@@ -771,7 +757,7 @@ class Operator:
             # F2-linear is currently staged-only until fused hot paths reach
             # numerical parity with the reference stage pipeline.
             return self._evaluate_residual
-        return bind_fused_residual_runner(
+        return operator_ops.bind_fused_residual_runner(
             source_plan=self.source_plan,
             static_layout=self.static_layout,
             residual_binding_layout=self.residual_binding_layout,

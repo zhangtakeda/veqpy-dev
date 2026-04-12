@@ -67,7 +67,6 @@ def update_geometry_hot(
         h_i = h_fields[0, i]
         h_r_i = h_fields[1, i]
         h_rr_i = h_fields[2, i]
-        v_i = v_fields[0, i]
         v_r_i = v_fields[1, i]
         v_rr_i = v_fields[2, i]
         k_i = k_fields[0, i]

@@ -1,17 +1,13 @@
 """
-Module: operator.source_setup
+Module: engine.orchestration
 
 Role:
-- 收敛 source plan/runtime/orchestration 的共享 Python 规则.
-- 避免 operator.py 混入过多 source/fixed-point/projection 细节.
+- 收敛 operator stage orchestration 的 engine 内部实现.
+- 避免 source/geometry/materialization 逻辑泄露到 operator 层.
 
-Public API:
-- SourcePlan
-- SourceProjectionPolicy
-- resolve_source_projection_policy
-- validate_source_inputs
-- refresh_source_runtime
-- build_bound_source_stage_runner
+Notes:
+- 这里承接的是 Python orchestration, 不改 numba kernel 本体.
+- operator 层应只保留 case/layout/runtime 接线.
 """
 
 from __future__ import annotations
@@ -22,12 +18,14 @@ from typing import TYPE_CHECKING, Any, Callable
 import numpy as np
 from numpy.polynomial.chebyshev import chebvander
 
-from veqpy.engine import (
+from veqpy.engine.numba_geometry import update_geometry_hot
+from veqpy.engine.numba_source import (
     build_source_remap_cache,
     materialize_profile_owned_psin_source,
     materialize_projected_source_inputs,
     resolve_source_inputs,
     update_fixed_point_psin_query,
+    update_fourier_family_fields,
 )
 
 if TYPE_CHECKING:
@@ -93,7 +91,7 @@ class SourcePlan:
         return self.is_profile_owned_psin
 
 
-def _source_route_key(source_plan: SourcePlan) -> tuple[str, str, str]:
+def source_route_key(source_plan: SourcePlan) -> tuple[str, str, str]:
     return (
         str(source_plan.route).upper(),
         str(source_plan.coordinate).lower(),
@@ -157,6 +155,24 @@ FIXED_POINT_POLICIES: dict[tuple[str, str, str], FixedPointPolicy] = {
 }
 
 
+PROJECTION_DOMAIN_CODES = {
+    "psin": 0,
+    "sqrt_psin": 1,
+}
+
+ENDPOINT_POLICY_CODES = {
+    "none": 0,
+    "right": 1,
+    "both": 2,
+    "affine_both": 3,
+}
+
+SOURCE_PARAMETERIZATION_CODES = {
+    "identity": 0,
+    "sqrt_psin": 1,
+}
+
+
 def resolve_source_projection_policy(
     route: str,
     coordinate: str,
@@ -212,24 +228,6 @@ def resolve_fixed_point_policy(route: str, coordinate: str, nodes: str) -> Fixed
         (str(route).upper(), str(coordinate).lower(), str(nodes).lower()),
         FixedPointPolicy(max_iter=8, finalize_max_iter=4, tolerance=1.0e-10),
     )
-
-
-PROJECTION_DOMAIN_CODES = {
-    "psin": 0,
-    "sqrt_psin": 1,
-}
-
-ENDPOINT_POLICY_CODES = {
-    "none": 0,
-    "right": 1,
-    "both": 2,
-    "affine_both": 3,
-}
-
-SOURCE_PARAMETERIZATION_CODES = {
-    "identity": 0,
-    "sqrt_psin": 1,
-}
 
 
 def normalize_psin_query_inplace(out: np.ndarray, source: np.ndarray | None) -> np.ndarray:
@@ -291,7 +289,8 @@ def build_source_projection_fit_matrix(n_src: int, *, degree: int, domain: str) 
 def validate_source_inputs(case: "OperatorCase", nr: int) -> None:
     if case.heat_input.shape != case.current_input.shape:
         raise ValueError(
-            f"Expected heat_input/current_input to share a shape, got {case.heat_input.shape} and {case.current_input.shape}"
+            "Expected heat_input/current_input to share a shape, "
+            f"got {case.heat_input.shape} and {case.current_input.shape}"
         )
     if case.nodes == "grid" and case.heat_input.shape[0] != nr:
         raise ValueError(f"Expected grid inputs to have shape ({nr},), got {case.heat_input.shape}")
@@ -410,8 +409,8 @@ def refresh_source_runtime(
             source_plan.heat_input,
             dtype=np.float64,
         )
-        source_runtime_state.current_projection_coeff = (
-            source_runtime_state.current_projection_fit_matrix @ np.asarray(source_plan.current_input, dtype=np.float64)
+        source_runtime_state.current_projection_coeff = source_runtime_state.current_projection_fit_matrix @ np.asarray(
+            source_plan.current_input, dtype=np.float64
         )
     if source_plan.is_grid_nodes or not source_plan.is_psin_coordinate:
         materialize_source_inputs(
@@ -424,7 +423,7 @@ def refresh_source_runtime(
 
 
 def build_bound_source_stage_runner(operator_core: Any) -> Callable:
-    route_key = _source_route_key(operator_core.source_plan)
+    route_key = source_route_key(operator_core.source_plan)
     valid_route_keys = {
         ("PF", "rho", "uniform"),
         ("PF", "rho", "grid"),
@@ -612,3 +611,91 @@ def run_psin_source_fixed_point(operator_core: Any) -> tuple[float, float]:
     np.copyto(operator_core.psin_r, target_root_fields[1])
     np.copyto(operator_core.psin_rr, target_root_fields[2])
     return alpha1, alpha2
+
+
+def build_geometry_stage_runner(
+    *,
+    c_family_fields: np.ndarray,
+    s_family_fields: np.ndarray,
+    c_family_base_fields: np.ndarray,
+    s_family_base_fields: np.ndarray,
+    active_u_fields: np.ndarray,
+    c_family_source_slots: np.ndarray,
+    s_family_source_slots: np.ndarray,
+    c_effective_order: int,
+    s_effective_order: int,
+    h_fields: np.ndarray,
+    v_fields: np.ndarray,
+    k_fields: np.ndarray,
+    a: float,
+    R0: float,
+    Z0: float,
+    surface_workspace: np.ndarray,
+    radial_workspace: np.ndarray,
+    rho: np.ndarray,
+    theta: np.ndarray,
+    cos_ktheta: np.ndarray,
+    sin_ktheta: np.ndarray,
+    k_cos_ktheta: np.ndarray,
+    k_sin_ktheta: np.ndarray,
+    k2_cos_ktheta: np.ndarray,
+    k2_sin_ktheta: np.ndarray,
+) -> Callable[[], None]:
+    c_effective_order = int(c_effective_order)
+    s_effective_order = int(s_effective_order)
+    a = float(a)
+    R0 = float(R0)
+    Z0 = float(Z0)
+
+    def runner() -> None:
+        update_fourier_family_fields(
+            c_family_fields,
+            s_family_fields,
+            c_family_base_fields,
+            s_family_base_fields,
+            active_u_fields,
+            c_family_source_slots,
+            s_family_source_slots,
+            c_effective_order,
+            s_effective_order,
+        )
+        update_geometry_hot(
+            surface_workspace,
+            radial_workspace,
+            a,
+            R0,
+            Z0,
+            rho,
+            theta,
+            cos_ktheta,
+            sin_ktheta,
+            k_cos_ktheta,
+            k_sin_ktheta,
+            k2_cos_ktheta,
+            k2_sin_ktheta,
+            h_fields,
+            v_fields,
+            k_fields,
+            c_family_fields,
+            s_family_fields,
+            c_effective_order,
+            s_effective_order,
+        )
+
+    return runner
+
+
+__all__ = [
+    "ENDPOINT_POLICY_CODES",
+    "PROJECTION_DOMAIN_CODES",
+    "SOURCE_PARAMETERIZATION_CODES",
+    "FixedPointPolicy",
+    "SourcePlan",
+    "SourceProjectionPolicy",
+    "build_bound_source_stage_runner",
+    "build_geometry_stage_runner",
+    "refresh_source_runtime",
+    "resolve_fixed_point_policy",
+    "resolve_source_projection_policy",
+    "validate_source_inputs",
+]

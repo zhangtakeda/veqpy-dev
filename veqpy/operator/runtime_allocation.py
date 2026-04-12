@@ -13,7 +13,8 @@ from typing import Callable
 
 import numpy as np
 
-from veqpy.model import Grid, Profile
+from veqpy.model.grid import Grid
+from veqpy.model.profile import Profile
 from veqpy.operator.layouts import FieldRuntimeState, RuntimeLayout, SourceRuntimeState, StaticLayout
 
 
