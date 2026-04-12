@@ -20,6 +20,7 @@ from numpy.polynomial.chebyshev import chebvander
 
 from veqpy.engine.numba_geometry import update_geometry_hot
 from veqpy.engine.numba_source import (
+    COORDINATE_CODES,
     build_source_remap_cache,
     materialize_profile_owned_psin_source,
     materialize_projected_source_inputs,
@@ -33,6 +34,45 @@ if TYPE_CHECKING:
     from veqpy.operator.operator_case import OperatorCase
 
 
+_RESIDUAL_BLOCK_CODE_BY_NAME = {
+    "h": 0,
+    "v": 1,
+    "k": 2,
+    "c0": 3,
+    "c_family": 4,
+    "s_family": 5,
+    "psin": 6,
+    "F": 7,
+}
+F2_BLOCK_CODE = 8
+
+
+def _decode_residual_block_code(name: str) -> tuple[int, int]:
+    if name.startswith("c") and name[1:].isdigit():
+        order = int(name[1:])
+        if order == 0:
+            return (_RESIDUAL_BLOCK_CODE_BY_NAME["c0"], 0)
+        return (_RESIDUAL_BLOCK_CODE_BY_NAME["c_family"], order)
+    if name.startswith("s") and name[1:].isdigit():
+        order = int(name[1:])
+        if order == 0:
+            raise KeyError("s0 is not a valid residual block")
+        return (_RESIDUAL_BLOCK_CODE_BY_NAME["s_family"], order)
+    try:
+        return (_RESIDUAL_BLOCK_CODE_BY_NAME[name], 0)
+    except KeyError as exc:
+        supported = ", ".join(_RESIDUAL_BLOCK_CODE_BY_NAME)
+        raise KeyError(f"Unknown residual block {name!r}. Supported blocks: {supported}") from exc
+
+
+def build_residual_block_metadata(profile_names: tuple[str, ...]) -> tuple[np.ndarray, np.ndarray]:
+    block_codes = np.empty(len(profile_names), dtype=np.int64)
+    block_orders = np.zeros(len(profile_names), dtype=np.int64)
+    for i, name in enumerate(profile_names):
+        block_codes[i], block_orders[i] = _decode_residual_block_code(name)
+    return block_codes, block_orders
+
+
 @dataclass(frozen=True, slots=True)
 class SourcePlan:
     """描述 source 语义与 runner 绑定所需的只读计划."""
@@ -41,10 +81,8 @@ class SourcePlan:
     kernel: Callable
     coordinate: str
     nodes: str
-    coordinate_code: int
     strategy: str
     parameterization: str
-    parameterization_code: int
     n_src: int
     heat_input: np.ndarray
     current_input: np.ndarray
@@ -52,11 +90,10 @@ class SourcePlan:
     beta: float
     has_projection_policy: bool
     projection_domain: str
+    endpoint_policy: str
     use_projected_finalize: bool
     heat_projection_degree: int
     current_projection_degree: int
-    projection_domain_code: int
-    endpoint_policy_code: int
     allow_query_warmstart: bool
     fixed_point_max_iter: int
     fixed_point_finalize_max_iter: int
@@ -69,10 +106,6 @@ class SourcePlan:
     @property
     def is_psin_coordinate(self) -> bool:
         return self.coordinate == "psin"
-
-    @property
-    def is_single_pass(self) -> bool:
-        return self.strategy == "single_pass"
 
     @property
     def is_profile_owned_psin(self) -> bool:
@@ -90,17 +123,29 @@ class SourcePlan:
     def requires_psin_profile_fields(self) -> bool:
         return self.is_profile_owned_psin
 
+    @property
+    def coordinate_code(self) -> int:
+        return int(COORDINATE_CODES[self.coordinate])
 
-def source_route_key(source_plan: SourcePlan) -> tuple[str, str, str]:
-    return (
-        str(source_plan.route).upper(),
-        str(source_plan.coordinate).lower(),
-        str(source_plan.nodes).lower(),
-    )
+    @property
+    def parameterization_code(self) -> int:
+        return int(_SOURCE_PARAMETERIZATION_CODES[self.parameterization])
+
+    @property
+    def projection_domain_code(self) -> int:
+        return int(_PROJECTION_DOMAIN_CODES[self.projection_domain])
+
+    @property
+    def endpoint_policy_code(self) -> int:
+        return int(_ENDPOINT_POLICY_CODES[self.endpoint_policy])
+
+
+def _source_route_key(source_plan: SourcePlan) -> tuple[str, str, str]:
+    return (source_plan.route, source_plan.coordinate, source_plan.nodes)
 
 
 @dataclass(frozen=True, slots=True)
-class SourceProjectionPolicy:
+class _SourceProjectionPolicy:
     domain: str
     heat_degree: int
     current_degree: int
@@ -110,35 +155,35 @@ class SourceProjectionPolicy:
 
 
 @dataclass(frozen=True, slots=True)
-class FixedPointPolicy:
+class _FixedPointPolicy:
     max_iter: int
     finalize_max_iter: int
     tolerance: float
 
 
-SOURCE_PROJECTION_POLICIES: dict[tuple[str, str, str], SourceProjectionPolicy] = {
-    ("PI", "psin", "uniform"): SourceProjectionPolicy(
+_SOURCE_PROJECTION_POLICIES: dict[tuple[str, str, str], _SourceProjectionPolicy] = {
+    ("PI", "psin", "uniform"): _SourceProjectionPolicy(
         domain="psin",
         heat_degree=7,
         current_degree=8,
         current_ip_endpoint_policy="both",
         current_other_endpoint_policy="none",
     ),
-    ("PJ1", "psin", "uniform"): SourceProjectionPolicy(
+    ("PJ1", "psin", "uniform"): _SourceProjectionPolicy(
         domain="psin",
         heat_degree=7,
         current_degree=8,
         current_ip_endpoint_policy="both",
         current_other_endpoint_policy="none",
     ),
-    ("PJ2", "psin", "uniform"): SourceProjectionPolicy(
+    ("PJ2", "psin", "uniform"): _SourceProjectionPolicy(
         domain="psin",
         heat_degree=5,
         current_degree=6,
         current_ip_endpoint_policy="none",
         current_other_endpoint_policy="none",
     ),
-    ("PQ", "psin", "uniform"): SourceProjectionPolicy(
+    ("PQ", "psin", "uniform"): _SourceProjectionPolicy(
         domain="sqrt_psin",
         heat_degree=8,
         current_degree=10,
@@ -149,45 +194,45 @@ SOURCE_PROJECTION_POLICIES: dict[tuple[str, str, str], SourceProjectionPolicy] =
 }
 
 
-FIXED_POINT_POLICIES: dict[tuple[str, str, str], FixedPointPolicy] = {
-    ("PJ2", "psin", "uniform"): FixedPointPolicy(max_iter=16, finalize_max_iter=8, tolerance=1.0e-10),
-    ("PQ", "psin", "uniform"): FixedPointPolicy(max_iter=16, finalize_max_iter=16, tolerance=1.0e-10),
+_FIXED_POINT_POLICIES: dict[tuple[str, str, str], _FixedPointPolicy] = {
+    ("PJ2", "psin", "uniform"): _FixedPointPolicy(max_iter=16, finalize_max_iter=8, tolerance=1.0e-10),
+    ("PQ", "psin", "uniform"): _FixedPointPolicy(max_iter=16, finalize_max_iter=16, tolerance=1.0e-10),
 }
 
 
-PROJECTION_DOMAIN_CODES = {
+_PROJECTION_DOMAIN_CODES = {
     "psin": 0,
     "sqrt_psin": 1,
 }
 
-ENDPOINT_POLICY_CODES = {
+_ENDPOINT_POLICY_CODES = {
     "none": 0,
     "right": 1,
     "both": 2,
     "affine_both": 3,
 }
 
-SOURCE_PARAMETERIZATION_CODES = {
+_SOURCE_PARAMETERIZATION_CODES = {
     "identity": 0,
     "sqrt_psin": 1,
 }
 
 
-def resolve_source_projection_policy(
+def _resolve_source_projection_policy(
     route: str,
     coordinate: str,
     nodes: str,
     *,
     has_ip_constraint: bool,
     has_beta_constraint: bool,
-) -> SourceProjectionPolicy | None:
-    policy = SOURCE_PROJECTION_POLICIES.get((route, coordinate, nodes))
+) -> _SourceProjectionPolicy | None:
+    policy = _SOURCE_PROJECTION_POLICIES.get((route, coordinate, nodes))
     if policy is None:
         return None
     if route != "PQ" or coordinate != "psin" or nodes != "uniform":
         return policy
     if has_ip_constraint and has_beta_constraint:
-        return SourceProjectionPolicy(
+        return _SourceProjectionPolicy(
             domain="sqrt_psin",
             heat_degree=7,
             current_degree=7,
@@ -196,7 +241,7 @@ def resolve_source_projection_policy(
             current_other_endpoint_policy="none",
         )
     if has_ip_constraint:
-        return SourceProjectionPolicy(
+        return _SourceProjectionPolicy(
             domain="sqrt_psin",
             heat_degree=7,
             current_degree=9,
@@ -205,7 +250,7 @@ def resolve_source_projection_policy(
             current_other_endpoint_policy="none",
         )
     if has_beta_constraint:
-        return SourceProjectionPolicy(
+        return _SourceProjectionPolicy(
             domain="sqrt_psin",
             heat_degree=7,
             current_degree=9,
@@ -213,7 +258,7 @@ def resolve_source_projection_policy(
             current_ip_endpoint_policy="affine_both",
             current_other_endpoint_policy="both",
         )
-    return SourceProjectionPolicy(
+    return _SourceProjectionPolicy(
         domain="sqrt_psin",
         heat_degree=7,
         current_degree=10,
@@ -223,11 +268,88 @@ def resolve_source_projection_policy(
     )
 
 
-def resolve_fixed_point_policy(route: str, coordinate: str, nodes: str) -> FixedPointPolicy:
-    return FIXED_POINT_POLICIES.get(
+def _resolve_fixed_point_policy(route: str, coordinate: str, nodes: str) -> _FixedPointPolicy:
+    return _FIXED_POINT_POLICIES.get(
         (str(route).upper(), str(coordinate).lower(), str(nodes).lower()),
-        FixedPointPolicy(max_iter=8, finalize_max_iter=4, tolerance=1.0e-10),
+        _FixedPointPolicy(max_iter=8, finalize_max_iter=4, tolerance=1.0e-10),
     )
+
+
+def build_source_plan(
+    *,
+    case: "OperatorCase",
+    source_route_spec: object,
+) -> SourcePlan:
+    policy = _resolve_source_projection_policy(
+        case.route,
+        case.coordinate,
+        case.nodes,
+        has_ip_constraint=bool(np.isfinite(case.Ip)),
+        has_beta_constraint=bool(np.isfinite(case.beta)),
+    )
+    fixed_point_policy = _resolve_fixed_point_policy(case.route, case.coordinate, case.nodes)
+    has_projection_policy = policy is not None
+    has_ip_constraint = bool(np.isfinite(case.Ip))
+    projection_domain = "psin"
+    heat_projection_degree = 0
+    current_projection_degree = 0
+    endpoint_policy = "none"
+    use_projected_finalize = False
+    allow_query_warmstart = True
+
+    if policy is not None:
+        endpoint_policy = (
+            policy.current_ip_endpoint_policy if has_ip_constraint else policy.current_other_endpoint_policy
+        )
+        projection_domain = policy.domain
+        heat_projection_degree = int(policy.heat_degree)
+        current_projection_degree = int(
+            policy.ip_current_degree
+            if has_ip_constraint and policy.ip_current_degree is not None
+            else policy.current_degree
+        )
+        use_projected_finalize = case.coordinate == "psin"
+        allow_query_warmstart = (not use_projected_finalize) or (
+            endpoint_policy != "none"
+        )
+
+    return SourcePlan(
+        route=str(case.route).upper(),
+        kernel=source_route_spec.implementation,
+        coordinate=str(case.coordinate).lower(),
+        nodes=str(case.nodes).lower(),
+        strategy=str(source_route_spec.source_strategy).lower(),
+        parameterization=str(source_route_spec.source_parameterization).lower(),
+        n_src=int(case.heat_input.shape[0]),
+        heat_input=case.heat_input,
+        current_input=case.current_input,
+        Ip=float(case.Ip),
+        beta=float(case.beta),
+        has_projection_policy=has_projection_policy,
+        projection_domain=str(projection_domain).lower(),
+        endpoint_policy=str(endpoint_policy).lower(),
+        use_projected_finalize=use_projected_finalize,
+        heat_projection_degree=heat_projection_degree,
+        current_projection_degree=current_projection_degree,
+        allow_query_warmstart=allow_query_warmstart,
+        fixed_point_max_iter=int(fixed_point_policy.max_iter),
+        fixed_point_finalize_max_iter=int(fixed_point_policy.finalize_max_iter),
+        fixed_point_tolerance=float(fixed_point_policy.tolerance),
+    )
+
+
+def validate_source_plan_profile_support(
+    *,
+    source_plan: SourcePlan,
+    profile_L: np.ndarray,
+    profile_index: dict[str, int],
+    case: "OperatorCase",
+) -> None:
+    has_active_psin = int(profile_L[profile_index["psin"]]) >= 0
+    if source_plan.strategy == "profile_owned_psin" and not has_active_psin:
+        raise ValueError(f"{case.route} requires an active psin profile because psin is optimized externally")
+    if case.coordinate == "psin" and source_plan.strategy != "profile_owned_psin" and has_active_psin:
+        raise ValueError(f"{case.route} does not accept an active psin profile because psin is source-owned")
 
 
 def normalize_psin_query_inplace(out: np.ndarray, source: np.ndarray | None) -> np.ndarray:
@@ -276,7 +398,7 @@ def _parameterize_projection_query_inplace(out: np.ndarray, source: np.ndarray, 
     raise ValueError(f"Unsupported source projection domain {domain!r}")
 
 
-def build_source_projection_fit_matrix(n_src: int, *, degree: int, domain: str) -> np.ndarray:
+def _build_source_projection_fit_matrix(n_src: int, *, degree: int, domain: str) -> np.ndarray:
     if degree < 0:
         raise ValueError(f"Projection degree must be non-negative, got {degree}")
     source_axis = np.linspace(0.0, 1.0, int(n_src), dtype=np.float64)
@@ -390,12 +512,12 @@ def refresh_source_runtime(
                 source_runtime_state.heat_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
                 source_runtime_state.current_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
             else:
-                source_runtime_state.heat_projection_fit_matrix = build_source_projection_fit_matrix(
+                source_runtime_state.heat_projection_fit_matrix = _build_source_projection_fit_matrix(
                     source_plan.n_src,
                     degree=source_plan.heat_projection_degree,
                     domain=source_plan.projection_domain,
                 )
-                source_runtime_state.current_projection_fit_matrix = build_source_projection_fit_matrix(
+                source_runtime_state.current_projection_fit_matrix = _build_source_projection_fit_matrix(
                     source_plan.n_src,
                     degree=source_plan.current_projection_degree,
                     domain=source_plan.projection_domain,
@@ -423,7 +545,7 @@ def refresh_source_runtime(
 
 
 def build_bound_source_stage_runner(operator_core: Any) -> Callable:
-    route_key = source_route_key(operator_core.source_plan)
+    route_key = _source_route_key(operator_core.source_plan)
     valid_route_keys = {
         ("PF", "rho", "uniform"),
         ("PF", "rho", "grid"),
@@ -686,16 +808,13 @@ def build_geometry_stage_runner(
 
 
 __all__ = [
-    "ENDPOINT_POLICY_CODES",
-    "PROJECTION_DOMAIN_CODES",
-    "SOURCE_PARAMETERIZATION_CODES",
-    "FixedPointPolicy",
+    "F2_BLOCK_CODE",
     "SourcePlan",
-    "SourceProjectionPolicy",
     "build_bound_source_stage_runner",
+    "build_residual_block_metadata",
+    "build_source_plan",
     "build_geometry_stage_runner",
     "refresh_source_runtime",
-    "resolve_fixed_point_policy",
-    "resolve_source_projection_policy",
+    "validate_source_plan_profile_support",
     "validate_source_inputs",
 ]

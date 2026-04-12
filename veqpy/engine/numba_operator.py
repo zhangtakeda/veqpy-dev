@@ -45,11 +45,7 @@ if TYPE_CHECKING:
 
 
 def _source_route_key(source_plan: "SourcePlan") -> tuple[str, str, str]:
-    return (
-        str(source_plan.route).upper(),
-        str(source_plan.coordinate).lower(),
-        str(source_plan.nodes).lower(),
-    )
+    return (source_plan.route, source_plan.coordinate, source_plan.nodes)
 
 
 @dataclass(frozen=True, slots=True)

@@ -20,7 +20,7 @@ from typing import Callable
 
 import numpy as np
 
-from veqpy.engine import operator_ops, orchestration, residual_ops, source_ops, validate_route
+from veqpy.engine import operator_ops, orchestration, residual_ops, validate_route
 from veqpy.model.equilibrium import Equilibrium
 from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile
@@ -55,7 +55,6 @@ from veqpy.operator.profile_setup import (
     validate_case_compatibility,
 )
 from veqpy.operator.runtime_allocation import allocate_runtime_state
-from veqpy.residual_blocks import F2_BLOCK_CODE, build_residual_block_metadata
 
 _PROFILE_STATIC_KWARGS: dict[str, dict[str, int]] = {
     "psin": {"power": 2},
@@ -130,14 +129,11 @@ class Operator:
     c_effective_order: int = field(init=False, repr=False)
     s_effective_order: int = field(init=False, repr=False)
     _source_route_spec: object = field(init=False, repr=False)
-    _source_kernel: Callable = field(init=False, repr=False)
-    _source_scratch_kernel: Callable | None = field(init=False, repr=False)
     source_plan: orchestration.SourcePlan = field(init=False, repr=False)
     field_runtime_state: FieldRuntimeState = field(init=False, repr=False)
     execution_state: ExecutionState = field(init=False, repr=False)
     source_runtime_state: SourceRuntimeState = field(init=False, repr=False)
     packed_residual: np.ndarray = field(init=False, repr=False)
-    _source_projection_policy: orchestration.SourceProjectionPolicy | None = field(init=False, repr=False)
     f_parameterization: str = field(init=False, repr=False)
     profile_static_kwargs_by_name: dict[str, dict[str, int]] = field(init=False, repr=False)
     profile_offset_specs: dict[str, float | str] = field(init=False, repr=False)
@@ -203,73 +199,14 @@ class Operator:
     def alpha2(self, value: float) -> None:
         self.execution_state.fused_alpha_state[1] = float(value)
 
-    def _build_source_plan(self) -> orchestration.SourcePlan:
-        policy = self._source_projection_policy
-        fixed_point_policy = orchestration.resolve_fixed_point_policy(
-            self.case.route, self.case.coordinate, self.case.nodes
-        )
-        use_projected_finalize = False
-        has_projection_policy = policy is not None
-        has_ip_constraint = bool(np.isfinite(self.case.Ip))
-        projection_domain = "psin"
-        heat_projection_degree = 0
-        current_projection_degree = 0
-        projection_domain_code = 0
-        endpoint_policy_code = 0
-        allow_query_warmstart = True
-        if policy is not None:
-            endpoint_policy = (
-                policy.current_ip_endpoint_policy if has_ip_constraint else policy.current_other_endpoint_policy
-            )
-            projection_domain = policy.domain
-            heat_projection_degree = int(policy.heat_degree)
-            current_projection_degree = int(
-                policy.ip_current_degree
-                if has_ip_constraint and policy.ip_current_degree is not None
-                else policy.current_degree
-            )
-            endpoint_policy_code = orchestration.ENDPOINT_POLICY_CODES[endpoint_policy]
-            projection_domain_code = orchestration.PROJECTION_DOMAIN_CODES[policy.domain]
-            use_projected_finalize = self.case.coordinate == "psin"
-            allow_query_warmstart = (not use_projected_finalize) or (
-                endpoint_policy_code != orchestration.ENDPOINT_POLICY_CODES["none"]
-            )
-        return orchestration.SourcePlan(
-            route=str(self.case.route).upper(),
-            kernel=self._source_route_spec.implementation,
-            coordinate=self.case.coordinate,
-            nodes=self.case.nodes,
-            coordinate_code=int(self._source_route_spec.coordinate_code),
-            strategy=self._source_route_spec.source_strategy,
-            parameterization=self._source_route_spec.source_parameterization,
-            parameterization_code=orchestration.SOURCE_PARAMETERIZATION_CODES[
-                self._source_route_spec.source_parameterization
-            ],
-            n_src=int(self.case.heat_input.shape[0]),
-            heat_input=self.case.heat_input,
-            current_input=self.case.current_input,
-            Ip=float(self.case.Ip),
-            beta=float(self.case.beta),
-            has_projection_policy=has_projection_policy,
-            projection_domain=projection_domain,
-            use_projected_finalize=use_projected_finalize,
-            heat_projection_degree=heat_projection_degree,
-            current_projection_degree=current_projection_degree,
-            projection_domain_code=projection_domain_code,
-            endpoint_policy_code=endpoint_policy_code,
-            allow_query_warmstart=allow_query_warmstart,
-            fixed_point_max_iter=int(fixed_point_policy.max_iter),
-            fixed_point_finalize_max_iter=int(fixed_point_policy.finalize_max_iter),
-            fixed_point_tolerance=float(fixed_point_policy.tolerance),
-        )
-
     def _validate_runtime_profile_support(self) -> None:
         """校验当前 source route 对 psin profile ownership 的要求."""
-        has_active_psin = int(self.profile_L[self.profile_index["psin"]]) >= 0
-        if self.source_plan.strategy == "profile_owned_psin" and not has_active_psin:
-            raise ValueError(f"{self.case.route} requires an active psin profile because psin is optimized externally")
-        if self.case.coordinate == "psin" and self.source_plan.strategy != "profile_owned_psin" and has_active_psin:
-            raise ValueError(f"{self.case.route} does not accept an active psin profile because psin is source-owned")
+        orchestration.validate_source_plan_profile_support(
+            source_plan=self.source_plan,
+            profile_L=self.profile_L,
+            profile_index=self.profile_index,
+            case=self.case,
+        )
         return None
 
     def replace_case(self, case: OperatorCase) -> None:
@@ -376,11 +313,13 @@ class Operator:
 
     def _build_residual_binding_layout(self) -> ResidualBindingLayout:
         active_profile_names = tuple(self.profile_names[int(p)] for p in self.active_profile_ids)
-        active_residual_block_codes, active_residual_block_orders = build_residual_block_metadata(active_profile_names)
+        active_residual_block_codes, active_residual_block_orders = orchestration.build_residual_block_metadata(
+            active_profile_names
+        )
         if self.f_parameterization == "F2_linear":
             for i, name in enumerate(active_profile_names):
                 if name == "F":
-                    active_residual_block_codes[i] = F2_BLOCK_CODE
+                    active_residual_block_codes[i] = orchestration.F2_BLOCK_CODE
         return ResidualBindingLayout(
             active_profile_names=active_profile_names,
             active_residual_block_codes=active_residual_block_codes,
@@ -486,16 +425,10 @@ class Operator:
     def _refresh_operator_identity(self) -> None:
         spec = validate_route(self.case.route, self.case.coordinate, self.case.nodes)
         self._source_route_spec = spec
-        self._source_kernel = spec.implementation
-        self._source_scratch_kernel = source_ops.resolve_source_scratch_kernel(spec.implementation)
-        self._source_projection_policy = orchestration.resolve_source_projection_policy(
-            self.case.route,
-            self.case.coordinate,
-            self.case.nodes,
-            has_ip_constraint=bool(np.isfinite(self.case.Ip)),
-            has_beta_constraint=bool(np.isfinite(self.case.beta)),
+        self.source_plan = orchestration.build_source_plan(
+            case=self.case,
+            source_route_spec=self._source_route_spec,
         )
-        self.source_plan = self._build_source_plan()
 
     def _refresh_profile_parameterization_config(self) -> None:
         self.f_parameterization = self._resolve_F_parameterization()

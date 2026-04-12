@@ -6,6 +6,7 @@ import pytest
 
 import veqpy.model.equilibrium as equilibrium_module
 import veqpy.operator.layout as layout_module
+from veqpy.engine import orchestration
 from veqpy.model.boundary import Boundary
 from veqpy.model.equilibrium import Equilibrium
 from veqpy.model.geqdsk import Geqdsk
@@ -23,7 +24,6 @@ from veqpy.operator.layouts import (
 )
 from veqpy.operator.operator import Operator
 from veqpy.operator.operator_case import OperatorCase
-from veqpy.residual_blocks import F2_BLOCK_CODE
 
 GEQDSK_PATH = Path("tests/fitting/geqdsk.txt")
 TEST_SOURCE_SAMPLE_COUNT = 21
@@ -617,7 +617,7 @@ def test_pj2_psin_route_uses_f2_linear_parameterization_for_f_profile():
     assert operator.F_profile.scale == pytest.approx(1.0)
     assert operator.F_profile.envelope_power == 1
     f_slot = operator.residual_binding_layout.active_profile_names.index("F")
-    assert operator.residual_binding_layout.active_residual_block_codes[f_slot] == F2_BLOCK_CODE
+    assert operator.residual_binding_layout.active_residual_block_codes[f_slot] == orchestration.F2_BLOCK_CODE
     assert np.allclose(operator.F_profile.u, expected_F)
     assert np.allclose(operator.F_profile.u_r, expected_F_r)
     assert np.allclose(operator.F_profile.u_rr, expected_F_rr)
@@ -633,7 +633,7 @@ def test_pq_psin_route_keeps_direct_f_parameterization():
     assert operator.F_profile.scale == pytest.approx(case.R0 * case.B0)
     assert operator.F_profile.envelope_power == 2
     f_slot = operator.residual_binding_layout.active_profile_names.index("F")
-    assert operator.residual_binding_layout.active_residual_block_codes[f_slot] != F2_BLOCK_CODE
+    assert operator.residual_binding_layout.active_residual_block_codes[f_slot] != orchestration.F2_BLOCK_CODE
 
 
 def test_pj2_psin_f2_linear_uses_staged_residual_runner_until_fused_matches():
