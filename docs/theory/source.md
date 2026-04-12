@@ -345,3 +345,32 @@ $$
 \hat{FF_\rho} &= \dfrac{FF_\rho}{\alpha_1\alpha_2}
 \end{aligned}
 $$
+
+### 7. 安全因子 (PQ-Strict)
+
+- $(\hat{P}_\rho+\beta_t)+(\hat{q} +I_p)$
+- ${P}_\rho+(\hat{q} +I_p)$
+- $(\hat{P}_\rho+\beta_t)+{q}$
+- ${P}_\rho+{q}$
+
+$$
+W(\rho)=\frac{\hat{K} \hat{L}_\rho}{q}
+$$
+
+$$
+(F^2)_\rho=-\frac{2 W_\rho (F^2)+\dfrac{\mu_0 V_\rho P_\rho q}{2 \pi^2 \hat{L}_\rho}}{W+q}
+$$
+
+$$
+\color{red}
+F_\rho=-\frac{W_\rho F+\dfrac{\mu_0 V_\rho P_\psi}{4 \pi^2}}{W+q}
+$$
+
+从外向内积分.
+
+$$
+\begin{aligned}
+\alpha_2&=\int_0^1 \frac{F \hat{L}_\rho}{q} \mathrm{~d} \rho,\quad q =\hat{q} \frac{2 \pi R_0B_0 }{\mu_0 I_p }\frac{ \hat{K}(1) \hat{L}_\rho(1)}{ \hat{q}(1)} \\
+\alpha_1 & =\frac{\beta_t B_0^2}{2 \alpha_2} \frac{\displaystyle\int_0^1 V_\rho \mathrm{d} \rho}{\displaystyle\int_0^1 \hat{P} V_\rho \mathrm{d} \rho}, \quad \hat{P}=\int_1^\rho \hat{P}_\rho \mathrm{d} \rho=\color{red}\int_1^\rho \hat{P}_{\mathrm{\psi}} \hat{\psi}_\rho \mathrm{d} \rho
+\end{aligned}
+$$

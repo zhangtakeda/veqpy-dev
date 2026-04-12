@@ -62,6 +62,7 @@ Robust 方案额外有:
 $$
 \begin{aligned}
 F &= R_0 B_0\left[1+(1-\rho^2)^2\sum_{l=0}^L F_l T_l(x)\right]\\
+F^2 &= R_0^2 B_0^2\left[1+(1-\rho^2)^2\sum_{l=0}^L F_l T_l(x)\right]\\
 \hat{\psi} &=\rho^2\left[1+(1-\rho^2)\sum_{l=0}^L \hat{\psi}_l T_l(x)\right]\\
 \end{aligned}
 $$
