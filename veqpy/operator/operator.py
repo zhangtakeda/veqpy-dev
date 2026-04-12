@@ -154,7 +154,6 @@ class Operator:
     execution_state: ExecutionState = field(init=False, repr=False)
     source_runtime_state: SourceRuntimeState = field(init=False, repr=False)
     packed_residual: np.ndarray = field(init=False, repr=False)
-    source_vector_slab: np.ndarray = field(init=False, repr=False)
     _source_projection_policy: SourceProjectionPolicy | None = field(init=False, repr=False)
     f_parameterization: str = field(init=False, repr=False)
     profile_static_kwargs_by_name: dict[str, dict[str, int]] = field(init=False, repr=False)
@@ -406,7 +405,7 @@ class Operator:
         runtime.profiles_by_name = self.profiles_by_name
         runtime.active_profile_slab = self.active_profile_slab
         runtime.family_field_slab = self.family_field_slab
-        runtime.source_vector_slab = self.source_vector_slab
+        runtime.source_runtime_state = self.source_runtime_state
         runtime.root_fields = self.root_fields
         runtime.packed_residual = self.packed_residual
         runtime.active_u_fields = self.active_u_fields
@@ -423,22 +422,12 @@ class Operator:
         runtime.active_slot_by_profile_id = self.active_slot_by_profile_id
         runtime.c_family_source_slots = self.c_family_source_slots
         runtime.s_family_source_slots = self.s_family_source_slots
-        runtime.source_barycentric_weights = self.source_runtime_state.barycentric_weights
-        runtime.source_fixed_remap_matrix = self.source_runtime_state.fixed_remap_matrix
-        runtime.source_psin_query = self.source_runtime_state.psin_query
-        runtime.source_parameter_query = self.source_runtime_state.parameter_query
-        runtime.source_heat_projection_coeff = self.source_runtime_state.heat_projection_coeff
-        runtime.source_current_projection_coeff = self.source_runtime_state.current_projection_coeff
-        runtime.source_endpoint_blend = self.source_runtime_state.endpoint_blend
-        runtime.materialized_heat_input = self.source_runtime_state.materialized_heat_input
-        runtime.materialized_current_input = self.source_runtime_state.materialized_current_input
-        runtime.source_scratch_1d = self.source_runtime_state.scratch_1d
-        runtime.source_target_root_fields = self.source_runtime_state.target_root_fields
 
     def _setup_runtime_state(self) -> None:
         bundle = allocate_runtime_state(
             grid=self.grid,
             static_layout=self.static_layout,
+            source_plan=self.source_plan,
             profile_names=self.profile_names,
             profile_index=self.profile_index,
             active_profile_ids=self.active_profile_ids,
@@ -467,7 +456,6 @@ class Operator:
         self.psin_rr = bundle.field_runtime_state.psin_rr
         self.FFn_psin = bundle.field_runtime_state.FFn_psin
         self.Pn_psin = bundle.field_runtime_state.Pn_psin
-        self.source_vector_slab = bundle.source_vector_slab
         self.source_runtime_state = bundle.source_runtime_state
         self.active_profile_slab = bundle.active_profile_slab
         self.active_u_fields = bundle.active_u_fields

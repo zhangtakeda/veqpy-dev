@@ -21,7 +21,6 @@ from veqpy.operator.layouts import FieldRuntimeState, RuntimeLayout, SourceRunti
 class RuntimeAllocationBundle:
     profiles_by_name: dict[str, Profile]
     field_runtime_state: FieldRuntimeState
-    source_vector_slab: np.ndarray
     source_runtime_state: SourceRuntimeState
     active_profile_slab: np.ndarray
     active_u_fields: np.ndarray
@@ -46,6 +45,7 @@ def allocate_runtime_state(
     *,
     grid: Grid,
     static_layout: StaticLayout,
+    source_plan,
     profile_names: tuple[str, ...],
     profile_index: dict[str, int],
     active_profile_ids: np.ndarray,
@@ -85,21 +85,32 @@ def allocate_runtime_state(
         Pn_psin=root_fields[4],
     )
 
-    source_vector_slab = np.empty((7, nr), dtype=np.float64)
+    materialized_heat_input = np.empty(nr, dtype=np.float64)
+    materialized_current_input = np.empty(nr, dtype=np.float64)
+    needs_psin_query = bool(source_plan.is_profile_owned_psin or source_plan.is_fixed_point_psin)
+    psin_query = np.empty(nr, dtype=np.float64) if needs_psin_query else np.empty(0, dtype=np.float64)
+    if source_plan.is_psin_coordinate and source_plan.parameterization != "identity":
+        parameter_query = np.empty(nr, dtype=np.float64)
+    else:
+        parameter_query = psin_query
+    if source_plan.is_profile_owned_psin or source_plan.is_fixed_point_psin:
+        target_root_fields = np.empty((3, nr), dtype=np.float64)
+    else:
+        target_root_fields = np.empty((3, 0), dtype=np.float64)
     source_runtime_state = SourceRuntimeState(
         cache_key=None,
         barycentric_weights=np.empty(0, dtype=np.float64),
         fixed_remap_matrix=np.empty((0, 0), dtype=np.float64),
-        materialized_heat_input=source_vector_slab[0],
-        materialized_current_input=source_vector_slab[1],
-        psin_query=source_vector_slab[2],
-        parameter_query=source_vector_slab[3],
+        materialized_heat_input=materialized_heat_input,
+        materialized_current_input=materialized_current_input,
+        psin_query=psin_query,
+        parameter_query=parameter_query,
         heat_projection_fit_matrix=np.empty((0, 0), dtype=np.float64),
         current_projection_fit_matrix=np.empty((0, 0), dtype=np.float64),
         heat_projection_coeff=np.empty(0, dtype=np.float64),
         current_projection_coeff=np.empty(0, dtype=np.float64),
         endpoint_blend=np.linspace(0.0, 1.0, nr, dtype=np.float64),
-        target_root_fields=source_vector_slab[4:7],
+        target_root_fields=target_root_fields,
         scratch_1d=np.empty((6, nr), dtype=np.float64),
     )
 
@@ -141,7 +152,7 @@ def allocate_runtime_state(
         profiles_by_name=profiles_by_name,
         active_profile_slab=active_profile_slab,
         family_field_slab=family_field_slab,
-        source_vector_slab=source_vector_slab,
+        source_runtime_state=source_runtime_state,
         geometry_surface_workspace=geometry_surface_workspace,
         geometry_radial_workspace=geometry_radial_workspace,
         residual_surface_workspace=residual_surface_workspace,
@@ -161,23 +172,11 @@ def allocate_runtime_state(
         active_slot_by_profile_id=active_slot_by_profile_id,
         c_family_source_slots=c_family_source_slots,
         s_family_source_slots=s_family_source_slots,
-        source_barycentric_weights=source_runtime_state.barycentric_weights,
-        source_fixed_remap_matrix=source_runtime_state.fixed_remap_matrix,
-        source_psin_query=source_runtime_state.psin_query,
-        source_parameter_query=source_runtime_state.parameter_query,
-        source_heat_projection_coeff=source_runtime_state.heat_projection_coeff,
-        source_current_projection_coeff=source_runtime_state.current_projection_coeff,
-        source_endpoint_blend=source_runtime_state.endpoint_blend,
-        materialized_heat_input=source_runtime_state.materialized_heat_input,
-        materialized_current_input=source_runtime_state.materialized_current_input,
-        source_scratch_1d=source_runtime_state.scratch_1d,
-        source_target_root_fields=source_runtime_state.target_root_fields,
     )
 
     return RuntimeAllocationBundle(
         profiles_by_name=profiles_by_name,
         field_runtime_state=field_runtime_state,
-        source_vector_slab=source_vector_slab,
         source_runtime_state=source_runtime_state,
         active_profile_slab=active_profile_slab,
         active_u_fields=active_u_fields,

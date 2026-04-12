@@ -106,6 +106,7 @@ def bind_source_eval_runner(
     rho = static_layout.rho
     radial_workspace = runtime_layout.geometry_radial_workspace
     surface_workspace = runtime_layout.geometry_surface_workspace
+    source_runtime_state = runtime_layout.source_runtime_state
     V_r = radial_workspace[1]
     Kn = radial_workspace[2]
     Kn_r = radial_workspace[3]
@@ -116,7 +117,7 @@ def bind_source_eval_runner(
     F_profile_u = profiles_by_name["F"].u
     Ip = float(source_plan.Ip)
     beta = float(source_plan.beta)
-    source_scratch_1d = runtime_layout.source_scratch_1d
+    source_scratch_1d = source_runtime_state.scratch_1d
 
     def runner(
         out_root_fields: np.ndarray,
@@ -764,9 +765,10 @@ def _bind_single_pass_residual_runner_core(
     y = static_layout.y
     root_fields = runtime_layout.root_fields
     packed_residual = runtime_layout.packed_residual
-    materialized_heat_input = runtime_layout.materialized_heat_input
-    materialized_current_input = runtime_layout.materialized_current_input
-    source_scratch_1d = runtime_layout.source_scratch_1d
+    source_runtime_state = runtime_layout.source_runtime_state
+    materialized_heat_input = source_runtime_state.materialized_heat_input
+    materialized_current_input = source_runtime_state.materialized_current_input
+    source_scratch_1d = source_runtime_state.scratch_1d
     profiles_by_name = runtime_layout.profiles_by_name
     h_fields = profiles_by_name["h"].u_fields
     v_fields = profiles_by_name["v"].u_fields
@@ -897,16 +899,17 @@ def _bind_profile_owned_psin_residual_runner_core(
     rho_powers = static_layout.rho_powers
     y = static_layout.y
     root_fields = runtime_layout.root_fields
-    source_target_root_fields = runtime_layout.source_target_root_fields
+    source_runtime_state = runtime_layout.source_runtime_state
+    source_target_root_fields = source_runtime_state.target_root_fields
     packed_residual = runtime_layout.packed_residual
-    source_psin_query = runtime_layout.source_psin_query
-    source_parameter_query = runtime_layout.source_parameter_query
-    heat_projection_coeff = runtime_layout.source_heat_projection_coeff
-    current_projection_coeff = runtime_layout.source_current_projection_coeff
-    endpoint_blend = runtime_layout.source_endpoint_blend
-    materialized_heat_input = runtime_layout.materialized_heat_input
-    materialized_current_input = runtime_layout.materialized_current_input
-    source_scratch_1d = runtime_layout.source_scratch_1d
+    source_psin_query = source_runtime_state.psin_query
+    source_parameter_query = source_runtime_state.parameter_query
+    heat_projection_coeff = source_runtime_state.heat_projection_coeff
+    current_projection_coeff = source_runtime_state.current_projection_coeff
+    endpoint_blend = source_runtime_state.endpoint_blend
+    materialized_heat_input = source_runtime_state.materialized_heat_input
+    materialized_current_input = source_runtime_state.materialized_current_input
+    source_scratch_1d = source_runtime_state.scratch_1d
     profiles_by_name = runtime_layout.profiles_by_name
     psin_profile_fields = profiles_by_name["psin"].u_fields
     h_fields = profiles_by_name["h"].u_fields
@@ -1151,13 +1154,14 @@ def _bind_fixed_point_psin_residual_runner_core(
     y = static_layout.y
     root_fields = runtime_layout.root_fields
     packed_residual = runtime_layout.packed_residual
-    source_psin_query = runtime_layout.source_psin_query
-    materialized_heat_input = runtime_layout.materialized_heat_input
-    materialized_current_input = runtime_layout.materialized_current_input
-    source_scratch_1d = runtime_layout.source_scratch_1d
-    heat_projection_coeff = runtime_layout.source_heat_projection_coeff
-    current_projection_coeff = runtime_layout.source_current_projection_coeff
-    endpoint_blend = runtime_layout.source_endpoint_blend
+    source_runtime_state = runtime_layout.source_runtime_state
+    source_psin_query = source_runtime_state.psin_query
+    materialized_heat_input = source_runtime_state.materialized_heat_input
+    materialized_current_input = source_runtime_state.materialized_current_input
+    source_scratch_1d = source_runtime_state.scratch_1d
+    heat_projection_coeff = source_runtime_state.heat_projection_coeff
+    current_projection_coeff = source_runtime_state.current_projection_coeff
+    endpoint_blend = source_runtime_state.endpoint_blend
     profiles_by_name = runtime_layout.profiles_by_name
     h_fields = profiles_by_name["h"].u_fields
     v_fields = profiles_by_name["v"].u_fields

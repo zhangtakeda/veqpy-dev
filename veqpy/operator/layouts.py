@@ -68,7 +68,7 @@ class RuntimeLayout:
     profiles_by_name: dict[str, Profile]
     active_profile_slab: np.ndarray
     family_field_slab: np.ndarray
-    source_vector_slab: np.ndarray
+    source_runtime_state: SourceRuntimeState
     geometry_surface_workspace: np.ndarray
     geometry_radial_workspace: np.ndarray
     residual_surface_workspace: np.ndarray
@@ -88,17 +88,6 @@ class RuntimeLayout:
     active_slot_by_profile_id: np.ndarray
     c_family_source_slots: np.ndarray
     s_family_source_slots: np.ndarray
-    source_barycentric_weights: np.ndarray
-    source_fixed_remap_matrix: np.ndarray
-    source_psin_query: np.ndarray
-    source_parameter_query: np.ndarray
-    source_heat_projection_coeff: np.ndarray
-    source_current_projection_coeff: np.ndarray
-    source_endpoint_blend: np.ndarray
-    materialized_heat_input: np.ndarray
-    materialized_current_input: np.ndarray
-    source_scratch_1d: np.ndarray
-    source_target_root_fields: np.ndarray
 
 
 @dataclass(slots=True)

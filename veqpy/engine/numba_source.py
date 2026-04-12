@@ -2727,19 +2727,38 @@ def _materialize_projected_source_inputs_impl(
     endpoint_policy_code: int,
     blend: np.ndarray,
 ) -> None:
-    for i in range(out_heat_input.shape[0]):
-        q = psin_query[i]
-        if q < 0.0:
-            q = 0.0
-        elif q > 1.0:
-            q = 1.0
-        if projection_domain_code == PROJECTION_DOMAIN_SQRT_PSIN:
-            q = np.sqrt(q)
-        elif projection_domain_code != PROJECTION_DOMAIN_PSIN:
-            raise ValueError("Unsupported projection domain code")
-        x = 2.0 * q - 1.0
-        out_heat_input[i] = _evaluate_chebyshev_scalar(heat_coeff, x)
-        out_current_input[i] = _evaluate_chebyshev_scalar(current_coeff, x)
+    n = out_heat_input.shape[0]
+    if endpoint_policy_code == ENDPOINT_POLICY_AFFINE_BOTH:
+        _, left_current = _evaluate_chebyshev_pair(
+            heat_coeff,
+            current_coeff,
+            _project_psin_query_to_chebyshev_x(psin_query[0], projection_domain_code),
+        )
+        _, right_current = _evaluate_chebyshev_pair(
+            heat_coeff,
+            current_coeff,
+            _project_psin_query_to_chebyshev_x(psin_query[n - 1], projection_domain_code),
+        )
+        delta_left = current_source_values[0] - left_current
+        delta_right = current_source_values[-1] - right_current
+        for i in range(n):
+            heat_val, current_val = _evaluate_chebyshev_pair(
+                heat_coeff,
+                current_coeff,
+                _project_psin_query_to_chebyshev_x(psin_query[i], projection_domain_code),
+            )
+            out_heat_input[i] = heat_val
+            out_current_input[i] = current_val + (1.0 - blend[i]) * delta_left + blend[i] * delta_right
+        return
+
+    for i in range(n):
+        heat_val, current_val = _evaluate_chebyshev_pair(
+            heat_coeff,
+            current_coeff,
+            _project_psin_query_to_chebyshev_x(psin_query[i], projection_domain_code),
+        )
+        out_heat_input[i] = heat_val
+        out_current_input[i] = current_val
 
     if endpoint_policy_code == ENDPOINT_POLICY_NONE:
         return
@@ -2749,12 +2768,6 @@ def _materialize_projected_source_inputs_impl(
     if endpoint_policy_code == ENDPOINT_POLICY_BOTH:
         out_current_input[0] = current_source_values[0]
         out_current_input[-1] = current_source_values[-1]
-        return
-    if endpoint_policy_code == ENDPOINT_POLICY_AFFINE_BOTH:
-        delta_left = current_source_values[0] - out_current_input[0]
-        delta_right = current_source_values[-1] - out_current_input[-1]
-        for i in range(out_current_input.shape[0]):
-            out_current_input[i] += (1.0 - blend[i]) * delta_left + blend[i] * delta_right
         return
     raise ValueError("Unsupported endpoint policy code")
 
@@ -2908,24 +2921,49 @@ def _update_fixed_point_psin_query_and_projected_inputs_impl(
     blend: np.ndarray,
 ) -> bool:
     max_abs_diff = 0.0
-    for i in range(out_heat_input.shape[0]):
+    n = out_heat_input.shape[0]
+    if endpoint_policy_code == ENDPOINT_POLICY_AFFINE_BOTH:
+        _, left_current = _evaluate_chebyshev_pair(
+            heat_coeff,
+            current_coeff,
+            _project_psin_query_to_chebyshev_x(psin[0], projection_domain_code),
+        )
+        _, right_current = _evaluate_chebyshev_pair(
+            heat_coeff,
+            current_coeff,
+            _project_psin_query_to_chebyshev_x(psin[n - 1], projection_domain_code),
+        )
+        delta_left = current_source_values[0] - left_current
+        delta_right = current_source_values[-1] - right_current
+        for i in range(n):
+            q = psin[i]
+            diff = abs(q - query[i])
+            if diff > max_abs_diff:
+                max_abs_diff = diff
+            query[i] = q
+            heat_val, current_val = _evaluate_chebyshev_pair(
+                heat_coeff,
+                current_coeff,
+                _project_psin_query_to_chebyshev_x(q, projection_domain_code),
+            )
+            out_heat_input[i] = heat_val
+            out_current_input[i] = current_val + (1.0 - blend[i]) * delta_left + blend[i] * delta_right
+        return max_abs_diff <= tolerance
+
+    for i in range(n):
         q = psin[i]
         diff = abs(q - query[i])
         if diff > max_abs_diff:
             max_abs_diff = diff
         query[i] = q
 
-        if q < 0.0:
-            q = 0.0
-        elif q > 1.0:
-            q = 1.0
-        if projection_domain_code == PROJECTION_DOMAIN_SQRT_PSIN:
-            q = np.sqrt(q)
-        elif projection_domain_code != PROJECTION_DOMAIN_PSIN:
-            raise ValueError("Unsupported projection domain code")
-        x = 2.0 * q - 1.0
-        out_heat_input[i] = _evaluate_chebyshev_scalar(heat_coeff, x)
-        out_current_input[i] = _evaluate_chebyshev_scalar(current_coeff, x)
+        heat_val, current_val = _evaluate_chebyshev_pair(
+            heat_coeff,
+            current_coeff,
+            _project_psin_query_to_chebyshev_x(q, projection_domain_code),
+        )
+        out_heat_input[i] = heat_val
+        out_current_input[i] = current_val
 
     if endpoint_policy_code == ENDPOINT_POLICY_NONE:
         return max_abs_diff <= tolerance
@@ -2935,12 +2973,6 @@ def _update_fixed_point_psin_query_and_projected_inputs_impl(
     if endpoint_policy_code == ENDPOINT_POLICY_BOTH:
         out_current_input[0] = current_source_values[0]
         out_current_input[-1] = current_source_values[-1]
-        return max_abs_diff <= tolerance
-    if endpoint_policy_code == ENDPOINT_POLICY_AFFINE_BOTH:
-        delta_left = current_source_values[0] - out_current_input[0]
-        delta_right = current_source_values[-1] - out_current_input[-1]
-        for i in range(out_current_input.shape[0]):
-            out_current_input[i] += (1.0 - blend[i]) * delta_left + blend[i] * delta_right
         return max_abs_diff <= tolerance
     raise ValueError("Unsupported endpoint policy code")
 
@@ -3046,6 +3078,51 @@ def _evaluate_chebyshev_scalar(coeff: np.ndarray, x: float) -> float:
         b_kplus2 = b_kplus1
         b_kplus1 = b_k
     return x * b_kplus1 - b_kplus2 + coeff[0]
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def _project_psin_query_to_chebyshev_x(q: float, projection_domain_code: int) -> float:
+    if q < 0.0:
+        q = 0.0
+    elif q > 1.0:
+        q = 1.0
+    if projection_domain_code == PROJECTION_DOMAIN_SQRT_PSIN:
+        q = np.sqrt(q)
+    elif projection_domain_code != PROJECTION_DOMAIN_PSIN:
+        raise ValueError("Unsupported projection domain code")
+    return 2.0 * q - 1.0
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def _evaluate_chebyshev_pair(coeff0: np.ndarray, coeff1: np.ndarray, x: float) -> tuple[float, float]:
+    size0 = coeff0.size
+    size1 = coeff1.size
+    max_size = size0 if size0 >= size1 else size1
+    if max_size == 0:
+        return 0.0, 0.0
+    if max_size == 1:
+        return (
+            coeff0[0] if size0 > 0 else 0.0,
+            coeff1[0] if size1 > 0 else 0.0,
+        )
+
+    b0_kplus1 = 0.0
+    b0_kplus2 = 0.0
+    b1_kplus1 = 0.0
+    b1_kplus2 = 0.0
+    for idx in range(max_size - 1, 0, -1):
+        c0 = coeff0[idx] if idx < size0 else 0.0
+        c1 = coeff1[idx] if idx < size1 else 0.0
+        b0_k = 2.0 * x * b0_kplus1 - b0_kplus2 + c0
+        b1_k = 2.0 * x * b1_kplus1 - b1_kplus2 + c1
+        b0_kplus2 = b0_kplus1
+        b0_kplus1 = b0_k
+        b1_kplus2 = b1_kplus1
+        b1_kplus1 = b1_k
+    return (
+        x * b0_kplus1 - b0_kplus2 + (coeff0[0] if size0 > 0 else 0.0),
+        x * b1_kplus1 - b1_kplus2 + (coeff1[0] if size1 > 0 else 0.0),
+    )
 
 
 @njit(cache=True, fastmath=True, nogil=True)
