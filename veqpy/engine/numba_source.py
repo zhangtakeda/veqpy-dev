@@ -2775,6 +2775,177 @@ def _update_fixed_point_psin_query_impl(
 
 
 @njit(cache=True, fastmath=True, nogil=True)
+def _update_fixed_point_psin_query_and_linear_uniform_inputs_impl(
+    query: np.ndarray,
+    psin: np.ndarray,
+    tolerance: float,
+    out_heat_input: np.ndarray,
+    out_current_input: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+) -> bool:
+    max_abs_diff = 0.0
+    n_src = heat_input.shape[0]
+    if n_src == 1:
+        heat0 = heat_input[0]
+        current0 = current_input[0]
+        for i in range(query.shape[0]):
+            q = psin[i]
+            diff = abs(q - query[i])
+            if diff > max_abs_diff:
+                max_abs_diff = diff
+            query[i] = q
+            out_heat_input[i] = heat0
+            out_current_input[i] = current0
+        return max_abs_diff <= tolerance
+
+    step = 1.0 / (n_src - 1.0)
+    for i in range(query.shape[0]):
+        q = psin[i]
+        diff = abs(q - query[i])
+        if diff > max_abs_diff:
+            max_abs_diff = diff
+        query[i] = q
+
+        if q < 0.0:
+            q = 0.0
+        elif q > 1.0:
+            q = 1.0
+
+        if q >= 1.0:
+            out_heat_input[i] = heat_input[-1]
+            out_current_input[i] = current_input[-1]
+            continue
+
+        position = q / step
+        left = int(position)
+        right = left + 1
+        frac = position - left
+        out_heat_input[i] = (1.0 - frac) * heat_input[left] + frac * heat_input[right]
+        out_current_input[i] = (1.0 - frac) * current_input[left] + frac * current_input[right]
+    return max_abs_diff <= tolerance
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def _update_fixed_point_psin_query_and_local_barycentric_inputs_impl(
+    query: np.ndarray,
+    psin: np.ndarray,
+    tolerance: float,
+    out_heat_input: np.ndarray,
+    out_current_input: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    weights: np.ndarray,
+) -> bool:
+    max_abs_diff = 0.0
+    n_src = heat_input.shape[0]
+    if n_src == 1:
+        heat0 = heat_input[0]
+        current0 = current_input[0]
+        for i in range(query.shape[0]):
+            q = psin[i]
+            diff = abs(q - query[i])
+            if diff > max_abs_diff:
+                max_abs_diff = diff
+            query[i] = q
+            out_heat_input[i] = heat0
+            out_current_input[i] = current0
+        return max_abs_diff <= tolerance
+
+    local_size = weights.shape[0]
+    denom_scale = n_src - 1.0
+    for i in range(query.shape[0]):
+        q = psin[i]
+        diff = abs(q - query[i])
+        if diff > max_abs_diff:
+            max_abs_diff = diff
+        query[i] = q
+
+        if q < 0.0:
+            q = 0.0
+        elif q > 1.0:
+            q = 1.0
+
+        start = _local_uniform_stencil_start(q, n_src, local_size)
+        hit = -1
+        for local_j in range(local_size):
+            j = start + local_j
+            xj = j / denom_scale
+            if abs(q - xj) <= 1e-14:
+                hit = j
+                break
+        if hit >= 0:
+            out_heat_input[i] = heat_input[hit]
+            out_current_input[i] = current_input[hit]
+            continue
+
+        denominator = 0.0
+        numerator_heat = 0.0
+        numerator_current = 0.0
+        for local_j in range(local_size):
+            j = start + local_j
+            term = weights[local_j] / (q - j / denom_scale)
+            denominator += term
+            numerator_heat += term * heat_input[j]
+            numerator_current += term * current_input[j]
+        out_heat_input[i] = numerator_heat / denominator
+        out_current_input[i] = numerator_current / denominator
+    return max_abs_diff <= tolerance
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def _update_fixed_point_psin_query_and_projected_inputs_impl(
+    query: np.ndarray,
+    psin: np.ndarray,
+    tolerance: float,
+    out_heat_input: np.ndarray,
+    out_current_input: np.ndarray,
+    heat_coeff: np.ndarray,
+    current_coeff: np.ndarray,
+    current_source_values: np.ndarray,
+    projection_domain_code: int,
+    endpoint_policy_code: int,
+    blend: np.ndarray,
+) -> bool:
+    max_abs_diff = 0.0
+    for i in range(out_heat_input.shape[0]):
+        q = psin[i]
+        diff = abs(q - query[i])
+        if diff > max_abs_diff:
+            max_abs_diff = diff
+        query[i] = q
+
+        if q < 0.0:
+            q = 0.0
+        elif q > 1.0:
+            q = 1.0
+        if projection_domain_code == PROJECTION_DOMAIN_SQRT_PSIN:
+            q = np.sqrt(q)
+        elif projection_domain_code != PROJECTION_DOMAIN_PSIN:
+            raise ValueError("Unsupported projection domain code")
+        x = 2.0 * q - 1.0
+        out_heat_input[i] = _evaluate_chebyshev_scalar(heat_coeff, x)
+        out_current_input[i] = _evaluate_chebyshev_scalar(current_coeff, x)
+
+    if endpoint_policy_code == ENDPOINT_POLICY_NONE:
+        return max_abs_diff <= tolerance
+    if endpoint_policy_code == ENDPOINT_POLICY_RIGHT:
+        out_current_input[-1] = current_source_values[-1]
+        return max_abs_diff <= tolerance
+    if endpoint_policy_code == ENDPOINT_POLICY_BOTH:
+        out_current_input[0] = current_source_values[0]
+        out_current_input[-1] = current_source_values[-1]
+        return max_abs_diff <= tolerance
+    if endpoint_policy_code == ENDPOINT_POLICY_AFFINE_BOTH:
+        delta_left = current_source_values[0] - out_current_input[0]
+        delta_right = current_source_values[-1] - out_current_input[-1]
+        for i in range(out_current_input.shape[0]):
+            out_current_input[i] += (1.0 - blend[i]) * delta_left + blend[i] * delta_right
+        return max_abs_diff <= tolerance
+    raise ValueError("Unsupported endpoint policy code")
+
+
+@njit(cache=True, fastmath=True, nogil=True)
 def _materialize_profile_owned_psin_source_impl(
     out_psin: np.ndarray,
     out_psin_r: np.ndarray,
