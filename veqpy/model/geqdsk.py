@@ -19,16 +19,15 @@ from veqpy.model.serial import Serial, read_serializer, write_serializer
 @dataclass(slots=True)
 class Geqdsk(Serial):
     path: InitVar[str | os.PathLike[str] | None] = None
-
     header: str = ""
 
-    nr: int = 0
-    nz: int = 0
+    NR: int = 0
+    NZ: int = 0
 
     R0: float = 0.0
     Z0: float = 0.0
-    dr: float = 0.0
-    dz: float = 0.0
+    dR: float = 0.0
+    dZ: float = 0.0
     Rmin: float = 0.0
     Rmax: float = 0.0
     Zmin: float = 0.0
@@ -40,30 +39,27 @@ class Geqdsk(Serial):
     Bt0: float = 0.0
     Raxis: float = 0.0
     Zaxis: float = 0.0
-    I_total: float = 0.0
+    Ip: float = 0.0
     psi_axis: float = 0.0
     psi_bound: float = 0.0
 
-    f: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
-    p: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
-    fdf: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
-    dp: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
+    F: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
+    P: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
+    FF_psi: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
+    P_psi: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
     q: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
-    phi: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
-    rho: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
-    xi: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
     psi: np.ndarray = field(default_factory=lambda: np.empty((0, 0), dtype=np.float64))
 
     @classmethod
     def serial_attributes(cls) -> dict[str, type]:
         return {
             "header": str,
-            "nr": int,
-            "nz": int,
+            "NR": int,
+            "NZ": int,
             "R0": float,
             "Z0": float,
-            "dr": float,
-            "dz": float,
+            "dR": float,
+            "dZ": float,
             "Rmin": float,
             "Rmax": float,
             "Zmin": float,
@@ -73,30 +69,27 @@ class Geqdsk(Serial):
             "Bt0": float,
             "Raxis": float,
             "Zaxis": float,
-            "I_total": float,
+            "Ip": float,
             "psi_axis": float,
             "psi_bound": float,
-            "f": np.ndarray,
-            "p": np.ndarray,
-            "fdf": np.ndarray,
-            "dp": np.ndarray,
+            "F": np.ndarray,
+            "P": np.ndarray,
+            "FF_psi": np.ndarray,
+            "P_psi": np.ndarray,
             "q": np.ndarray,
-            "phi": np.ndarray,
-            "rho": np.ndarray,
-            "xi": np.ndarray,
             "psi": np.ndarray,
         }
 
     def __post_init__(self, path: str | os.PathLike[str] | None) -> None:
         self.header = str(self.header)
-        self.nr = int(self.nr)
-        self.nz = int(self.nz)
+        self.NR = int(self.NR)
+        self.NZ = int(self.NZ)
 
         for name in (
             "R0",
             "Z0",
-            "dr",
-            "dz",
+            "dR",
+            "dZ",
             "Rmin",
             "Rmax",
             "Zmin",
@@ -104,7 +97,7 @@ class Geqdsk(Serial):
             "Bt0",
             "Raxis",
             "Zaxis",
-            "I_total",
+            "Ip",
             "psi_axis",
             "psi_bound",
         ):
@@ -112,14 +105,11 @@ class Geqdsk(Serial):
 
         self.boundary = _coerce_point_array(self.boundary, name="boundary")
         self.limiter = _coerce_point_array(self.limiter, name="limiter")
-        self.f = _coerce_vector(self.f, name="f")
-        self.p = _coerce_vector(self.p, name="p")
-        self.fdf = _coerce_vector(self.fdf, name="fdf")
-        self.dp = _coerce_vector(self.dp, name="dp")
+        self.F = _coerce_vector(self.F, name="F")
+        self.P = _coerce_vector(self.P, name="P")
+        self.FF_psi = _coerce_vector(self.FF_psi, name="FF_psi")
+        self.P_psi = _coerce_vector(self.P_psi, name="P_psi")
         self.q = _coerce_vector(self.q, name="q")
-        self.phi = _coerce_vector(self.phi, name="phi")
-        self.rho = _coerce_vector(self.rho, name="rho")
-        self.xi = _coerce_vector(self.xi, name="xi")
         self.psi = _coerce_matrix(self.psi, name="psi")
 
         if path is not None:
@@ -127,25 +117,17 @@ class Geqdsk(Serial):
             return
 
         self._refresh_spacing()
-        if (
-            self.q.size
-            and self.q.shape[0] == self.nr
-            and self.phi.size == 0
-            and self.rho.size == 0
-            and self.xi.size == 0
-        ):
-            self.refresh_flux_coordinates()
 
     def check(self) -> None:
-        if self.nr < 0 or self.nz < 0:
-            raise ValueError("nr and nz must be non-negative")
+        if self.NR < 0 or self.NZ < 0:
+            raise ValueError("NR and NZ must be non-negative")
 
         for name in ("boundary", "limiter"):
             arr = getattr(self, name)
             if arr.ndim != 2 or arr.shape[1] != 2:
                 raise ValueError(f"{name} must have shape (N, 2), got {arr.shape}")
 
-        for name in ("f", "p", "fdf", "dp", "q", "phi", "rho", "xi"):
+        for name in ("F", "P", "FF_psi", "P_psi", "q"):
             arr = getattr(self, name)
             if arr.ndim != 1:
                 raise ValueError(f"{name} must be 1D, got {arr.shape}")
@@ -153,51 +135,18 @@ class Geqdsk(Serial):
         if self.psi.ndim != 2:
             raise ValueError(f"psi must be 2D, got {self.psi.shape}")
 
-        if self.nr == 0 or self.nz == 0:
+        if self.NR == 0 or self.NZ == 0:
             return
 
-        expected_radial = self.nr
-        expected_psi = (self.nr, self.nz)
-        for name in ("f", "p", "fdf", "dp", "q"):
+        expected_radial = self.NR
+        expected_psi = (self.NR, self.NZ)
+        for name in ("F", "P", "FF_psi", "P_psi", "q"):
             arr = getattr(self, name)
             if arr.size != expected_radial:
                 raise ValueError(f"{name} must have length {expected_radial}, got {arr.size}")
 
-        for name in ("phi", "rho", "xi"):
-            arr = getattr(self, name)
-            if arr.size not in (0, expected_radial):
-                raise ValueError(f"{name} must have length {expected_radial} or be empty, got {arr.size}")
-
         if self.psi.shape != expected_psi:
             raise ValueError(f"psi must have shape {expected_psi}, got {self.psi.shape}")
-
-    def refresh_flux_coordinates(self) -> None:
-        if self.q.size == 0:
-            self.phi = np.empty(0, dtype=np.float64)
-            self.rho = np.empty(0, dtype=np.float64)
-            self.xi = np.empty(0, dtype=np.float64)
-            return
-        if self.nr <= 0 or self.q.size != self.nr:
-            raise ValueError("q must have length nr before computing phi/rho/xi")
-
-        psi_array = np.linspace(self.psi_axis, self.psi_bound, self.nr, dtype=np.float64)
-        phi = np.zeros(self.nr, dtype=np.float64)
-        if self.nr > 1:
-            delta = np.diff(psi_array)
-            phi[1:] = 2.0 * np.pi * np.cumsum(0.5 * (self.q[:-1] + self.q[1:]) * delta)
-
-        rho = np.zeros(self.nr, dtype=np.float64)
-        if abs(self.Bt0) > 0.0:
-            scaled = np.clip(phi / (np.pi * self.Bt0), a_min=0.0, a_max=None)
-            rho[1:] = np.sqrt(scaled[1:])
-
-        xi = np.zeros(self.nr, dtype=np.float64)
-        if rho.size > 0 and abs(rho[-1]) > 0.0:
-            xi[1:] = rho[1:] / rho[-1]
-
-        self.phi = phi
-        self.rho = rho
-        self.xi = xi
 
     @read_serializer("txt", "geqdsk", "gfile")
     def read_geqdsk(self, file: str) -> Geqdsk:
@@ -207,25 +156,23 @@ class Geqdsk(Serial):
             self._read_axfig_and_current(handle)
             self._read_profiles_and_boundary(handle)
         self._refresh_spacing()
-        self.refresh_flux_coordinates()
         return self
 
     @write_serializer("txt", "geqdsk", "gfile")
     def write_geqdsk(self, file: str) -> None:
         self.check()
         with open(file, "w", encoding="utf-8") as handle:
-            handle.write(_format_header_line(self.header, self.nr, self.nz))
-            handle.write(
-                _format_float_line([self.Rmax - self.Rmin, self.Zmax - self.Zmin, self.R0, self.Rmin, self.Z0])
-            )
-            handle.write(_format_float_line([self.Raxis, self.Zaxis, self.psi_axis, self.psi_bound, self.Bt0]))
-            handle.write(_format_float_line([self.I_total, 0.0, 0.0, 0.0, 0.0]))
+            handle.write(_header_line(self.header, self.NR, self.NZ))
+            handle.write(_float_line([self.Rmax - self.Rmin, self.Zmax - self.Zmin, self.R0, self.Rmin, self.Z0]))
+            handle.write(_float_line([self.Raxis, self.Zaxis, self.psi_axis, self.psi_bound, self.Bt0]))
+            handle.write(_float_line([self.Ip, 0.0, 0.0, 0.0, 0.0]))
             handle.write("\n")
-            handle.write(_format_float_block(self.f))
-            handle.write(_format_float_block(self.p))
-            handle.write(_format_float_block(self.fdf))
-            handle.write(_format_float_block(self.dp))
-            handle.write(_format_float_block(self.psi.reshape(-1)))
+            handle.write(_format_float_block(self.F))
+            handle.write(_format_float_block(self.P))
+            handle.write(_format_float_block(self.FF_psi))
+            handle.write(_format_float_block(self.P_psi))
+            # GEQDSK stores psirz with Z as the leading dimension in file order.
+            handle.write(_format_float_block(self.psi.T.reshape(-1)))
             handle.write(_format_float_block(self.q))
             handle.write(f"{int(self.boundary.shape[0])} {int(self.limiter.shape[0])}\n")
             handle.write(_format_float_block(self.boundary.reshape(-1)))
@@ -237,8 +184,8 @@ class Geqdsk(Serial):
         if match is None:
             raise ValueError(f"Error reading header from line: {line}")
         self.header = match.group(1).rstrip()
-        self.nr = int(match.group(2))
-        self.nz = int(match.group(3))
+        self.NR = int(match.group(2))
+        self.NZ = int(match.group(3))
 
     def _read_geometry(self, file) -> None:
         line = _sanitize_line(file.readline())
@@ -258,7 +205,7 @@ class Geqdsk(Serial):
             if index == 0:
                 self.Raxis, self.Zaxis, self.psi_axis, self.psi_bound, self.Bt0 = values
             else:
-                self.I_total = values[0]
+                self.Ip = values[0]
 
     def _read_profiles_and_boundary(self, file) -> None:
         file.readline()
@@ -266,8 +213,8 @@ class Geqdsk(Serial):
         fields = re.split(r"\s+", payload.strip())
         data = np.array([_safe_float_conversion(value) for value in fields if value], dtype=np.float64)
 
-        nr = self.nr
-        nz = self.nz
+        nr = self.NR
+        nz = self.NZ
         index = 0
 
         def take(count: int, *, label: str) -> np.ndarray:
@@ -279,11 +226,12 @@ class Geqdsk(Serial):
             index = end
             return out
 
-        self.f = take(nr, label="f profile").copy()
-        self.p = take(nr, label="p profile").copy()
-        self.fdf = take(nr, label="fdf profile").copy()
-        self.dp = take(nr, label="dp profile").copy()
-        self.psi = take(nr * nz, label="psi grid").reshape(nr, nz).copy()
+        self.F = take(nr, label="F profile").copy()
+        self.P = take(nr, label="P profile").copy()
+        self.FF_psi = take(nr, label="FF_psi profile").copy()
+        self.P_psi = take(nr, label="P_psi profile").copy()
+        # GEQDSK stores psirz with Z as the leading dimension in file order.
+        self.psi = take(nr * nz, label="psi grid").reshape(nz, nr).T.copy()
         self.q = take(nr, label="q profile").copy()
 
         counts = take(2, label="boundary metadata")
@@ -296,15 +244,15 @@ class Geqdsk(Serial):
         self.limiter = limiter_flat.reshape(nlimiter, 2).copy()
 
     def _refresh_spacing(self) -> None:
-        if self.nr > 1 and np.isfinite(self.Rmax) and np.isfinite(self.Rmin):
-            self.dr = (self.Rmax - self.Rmin) / (self.nr - 1)
+        if self.NR > 1 and np.isfinite(self.Rmax) and np.isfinite(self.Rmin):
+            self.dR = (self.Rmax - self.Rmin) / (self.NR - 1)
         else:
-            self.dr = 0.0
+            self.dR = 0.0
 
-        if self.nz > 1 and np.isfinite(self.Zmax) and np.isfinite(self.Zmin):
-            self.dz = (self.Zmax - self.Zmin) / (self.nz - 1)
+        if self.NZ > 1 and np.isfinite(self.Zmax) and np.isfinite(self.Zmin):
+            self.dZ = (self.Zmax - self.Zmin) / (self.NZ - 1)
         else:
-            self.dz = 0.0
+            self.dZ = 0.0
 
 
 def _coerce_vector(value, *, name: str) -> np.ndarray:
@@ -343,12 +291,12 @@ def _safe_float_conversion(value: str) -> float:
         return np.nan
 
 
-def _format_header_line(header: str, nr: int, nz: int) -> str:
+def _header_line(header: str, nr: int, nz: int) -> str:
     title = (header or "veqpy GEQDSK").strip()
     return f"{title} {int(nr)} {int(nz)}\n"
 
 
-def _format_float_line(values: list[float] | tuple[float, ...]) -> str:
+def _float_line(values: list[float] | tuple[float, ...]) -> str:
     return "".join(f"{float(value):16.9E}" for value in values) + "\n"
 
 

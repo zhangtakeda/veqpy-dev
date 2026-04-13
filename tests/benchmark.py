@@ -23,7 +23,7 @@ from veqpy.operator.operator_case import OperatorCase
 from veqpy.solver.solver import Solver
 from veqpy.solver.solver_config import SolverConfig
 
-PLOT = True
+PLOT = False
 SHOW_PROGRESS = True
 
 REFERENCE_SOURCE_SAMPLE_COUNT = 51

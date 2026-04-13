@@ -204,9 +204,6 @@ def _run_residual_blocks_packed_precomputed(
             _project_scaled3(out_packed, coeff_indices, T, scratch, rho2, y, weights, base_scale)
         elif code == 7:
             _collapse_g(scratch, G)
-            _project_scaled3(out_packed, coeff_indices, T, scratch, y, y, weights, base_scale * (R0 * B0))
-        elif code == 8:
-            _collapse_g(scratch, G)
             _project_scaled3(
                 out_packed,
                 coeff_indices,

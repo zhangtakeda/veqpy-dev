@@ -383,6 +383,122 @@ def test_equilibrium_declares_reactive_roots_explicitly():
     }
 
 
+def test_equilibrium_to_geqdsk_exports_uniform_psin_profiles_and_marks_exterior():
+    equilibrium, _ = _build_high_order_equilibrium()
+    export_equilibrium = Equilibrium(
+        R0=equilibrium.R0,
+        Z0=equilibrium.Z0,
+        B0=equilibrium.B0,
+        a=equilibrium.a,
+        grid=equilibrium.grid,
+        shape_profiles=equilibrium.shape_profiles,
+        FFn_psin=equilibrium.FFn_psin,
+        Pn_psin=equilibrium.Pn_psin,
+        psin=equilibrium.psin,
+        psin_r=equilibrium.psin_r,
+        psin_rr=equilibrium.psin_rr,
+        alpha1=1.25,
+        alpha2=0.75,
+    )
+    boundary_R = np.asarray(export_equilibrium.geometry.R[-1], dtype=np.float64)
+    boundary_Z = np.asarray(export_equilibrium.geometry.Z[-1], dtype=np.float64)
+    psi_axis = 2.5
+    psi_scale = float(export_equilibrium.alpha2)
+
+    geqdsk = export_equilibrium.to_geqdsk(
+        R_range=(float(np.min(boundary_R)) - 0.2, float(np.max(boundary_R)) + 0.2),
+        NR=65,
+        Z_range=(float(np.min(boundary_Z)) - 0.2, float(np.max(boundary_Z)) + 0.2),
+        NZ=81,
+        psi_axis=psi_axis,
+    )
+
+    psin_uniform = np.linspace(0.0, 1.0, geqdsk.NR, dtype=np.float64)
+    expected_q = np.interp(psin_uniform, export_equilibrium.psin, export_equilibrium.q)
+
+    assert isinstance(geqdsk, Geqdsk)
+    assert geqdsk.NR == 65
+    assert geqdsk.NZ == 81
+    assert geqdsk.psi_axis == pytest.approx(psi_axis)
+    assert geqdsk.psi_bound == pytest.approx(psi_axis + psi_scale)
+    assert geqdsk.psi.shape == (65, 81)
+    assert geqdsk.q.shape == (65,)
+    assert np.array_equal(np.isfinite(geqdsk.q), np.isfinite(expected_q))
+    assert np.array_equal(np.isinf(geqdsk.q), np.isinf(expected_q))
+    finite_q = np.isfinite(expected_q)
+    assert np.allclose(geqdsk.q[finite_q], expected_q[finite_q])
+    psi_min = min(psi_axis, psi_axis + psi_scale)
+    psi_max = max(psi_axis, psi_axis + psi_scale)
+    assert np.min(geqdsk.psi) >= psi_min - 1.0e-12
+    assert np.max(geqdsk.psi) <= psi_max + 1.0e-12
+    assert geqdsk.psi[0, 0] == pytest.approx(psi_axis + psi_scale)
+    assert np.any((geqdsk.psi >= psi_min) & (geqdsk.psi <= psi_max))
+
+
+def test_geqdsk_io_uses_standard_psirz_file_order():
+    psi = np.array(
+        [
+            [11.0, 12.0],
+            [21.0, 22.0],
+            [31.0, 32.0],
+        ],
+        dtype=np.float64,
+    )
+    geqdsk = Geqdsk(
+        header="io-order",
+        NR=3,
+        NZ=2,
+        R0=1.0,
+        Z0=0.0,
+        Rmin=0.5,
+        Rmax=1.5,
+        Zmin=-0.25,
+        Zmax=0.25,
+        Bt0=2.0,
+        Raxis=1.0,
+        Zaxis=0.0,
+        Ip=1.0,
+        psi_axis=0.0,
+        psi_bound=1.0,
+        F=np.array([1.0, 2.0, 3.0], dtype=np.float64),
+        P=np.array([4.0, 5.0, 6.0], dtype=np.float64),
+        FF_psi=np.array([7.0, 8.0, 9.0], dtype=np.float64),
+        P_psi=np.array([10.0, 11.0, 12.0], dtype=np.float64),
+        q=np.array([13.0, 14.0, 15.0], dtype=np.float64),
+        psi=psi,
+    )
+
+    outpath = Path("tests/.tmp-geqdsk-io-order.geqdsk")
+    try:
+        geqdsk.write(str(outpath))
+        loaded = Geqdsk(str(outpath))
+
+        payload = outpath.read_text(encoding="utf-8").splitlines()
+        flat_values = np.fromstring(" ".join(payload[5:]), sep=" ")
+        psi_start = 4 * geqdsk.NR
+        psi_stop = psi_start + geqdsk.NR * geqdsk.NZ
+        psi_file = flat_values[psi_start:psi_stop]
+
+        assert np.allclose(loaded.psi, psi)
+        assert np.allclose(psi_file, psi.T.reshape(-1))
+    finally:
+        outpath.unlink(missing_ok=True)
+
+
+def test_equilibrium_to_geqdsk_rejects_zero_alpha2_for_physical_psi_export():
+    equilibrium, _ = _build_high_order_equilibrium()
+    boundary_R = np.asarray(equilibrium.geometry.R[-1], dtype=np.float64)
+    boundary_Z = np.asarray(equilibrium.geometry.Z[-1], dtype=np.float64)
+
+    with pytest.raises(ValueError, match="alpha2 is zero"):
+        equilibrium.to_geqdsk(
+            R_range=(float(np.min(boundary_R)) - 0.2, float(np.max(boundary_R)) + 0.2),
+            Z_range=(float(np.min(boundary_Z)) - 0.2, float(np.max(boundary_Z)) + 0.2),
+            NR=65,
+            NZ=81,
+        )
+
+
 def test_reactive_requires_explicit_root_properties():
     with pytest.raises(TypeError, match="must define root_properties explicitly"):
         class _BadReactive(Reactive):
@@ -608,22 +724,18 @@ def test_pj2_psin_route_uses_f2_profile_parameterization():
     latent_H_r = -4.0 * grid.rho * grid.y * case.profile_coeffs["F2"][0]
     latent_H_rr = (-4.0 + 12.0 * grid.rho * grid.rho) * case.profile_coeffs["F2"][0]
     scale = case.R0 * case.B0
-    expected_F = scale * np.sqrt(latent_H)
-    expected_F_r = scale * 0.5 * latent_H_r / np.sqrt(latent_H)
-    expected_F_rr = scale * (
-        0.5 * latent_H_rr / np.sqrt(latent_H)
-        - 0.25 * latent_H_r * latent_H_r / np.power(latent_H, 1.5)
-    )
+    expected_F2 = scale * scale * latent_H
+    expected_F2_r = scale * scale * latent_H_r
+    expected_F2_rr = scale * scale * latent_H_rr
 
-    assert operator.f_parameterization == "F2_profile"
     assert operator.F2_profile.offset == pytest.approx(1.0)
     assert operator.F2_profile.scale == pytest.approx((case.R0 * case.B0) ** 2)
     assert operator.F2_profile.envelope_power == 2
     f_slot = operator.residual_binding_layout.active_profile_names.index("F2")
     assert operator.residual_binding_layout.active_residual_block_codes[f_slot] == orchestration.F2_BLOCK_CODE
-    assert np.allclose(operator.F2_profile.u, expected_F)
-    assert np.allclose(operator.F2_profile.u_r, expected_F_r)
-    assert np.allclose(operator.F2_profile.u_rr, expected_F_rr)
+    assert np.allclose(operator.F2_profile.u, expected_F2)
+    assert np.allclose(operator.F2_profile.u_r, expected_F2_r)
+    assert np.allclose(operator.F2_profile.u_rr, expected_F2_rr)
 
 
 def test_pq_psin_route_uses_f2_profile_parameterization():
@@ -631,7 +743,6 @@ def test_pq_psin_route_uses_f2_profile_parameterization():
     case.profile_coeffs["psin"] = None
     operator = Operator(grid=grid, case=case)
 
-    assert operator.f_parameterization == "F2_profile"
     assert operator.F2_profile.offset == pytest.approx(1.0)
     assert operator.F2_profile.scale == pytest.approx((case.R0 * case.B0) ** 2)
     assert operator.F2_profile.envelope_power == 2

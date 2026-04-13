@@ -33,6 +33,7 @@ from rich.text import Text
 from rich.tree import Tree
 
 from veqpy.model.geometry import Geometry
+from veqpy.model.geqdsk import Geqdsk
 from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile
 from veqpy.model.reactive import Reactive
@@ -518,6 +519,75 @@ class Equilibrium(Reactive, Serial):
             grid=grid,
         )
 
+    def to_geqdsk(
+        self,
+        *,
+        R_range: tuple[float, float],
+        Z_range: tuple[float, float],
+        NR: int,
+        NZ: int | None = None,
+        header: str = "",
+        limiter: np.ndarray | None = None,
+        psi_axis: float = 0.0,
+        psi_outside: float | None = None,
+    ) -> Geqdsk:
+        """导出一个按物理 psi 写出的 Geqdsk 快照."""
+        geometry = self.geometry
+        R_nodes, Z_nodes, Rmin, Rmax, Zmin, Zmax = _build_geqdsk_rectilinear_grid(
+            geometry,
+            R_range=R_range,
+            Z_range=Z_range,
+            NR=NR,
+            NZ=NZ,
+        )
+        psin_uniform = np.linspace(0.0, 1.0, int(NR), dtype=np.float64)
+        psi_axis = float(psi_axis)
+        psi_scale = float(self.alpha2)
+        if abs(psi_scale) <= 1.0e-14:
+            raise ValueError("Cannot export physical psi when alpha2 is zero; solve a physical equilibrium first.")
+        psi_bound = psi_axis + psi_scale
+        psi_outside_value = psi_bound if psi_outside is None else float(psi_outside)
+        boundary = np.column_stack((geometry.R[-1], geometry.Z[-1])).astype(np.float64, copy=False)
+        limiter_points = _coerce_optional_point_array(limiter, name="limiter")
+
+        geqdsk = Geqdsk(
+            header=str(header),
+            NR=int(NR),
+            NZ=int(Z_nodes.size),
+            R0=float(self.R0),
+            Z0=float(self.Z0),
+            Rmin=Rmin,
+            Rmax=Rmax,
+            Zmin=Zmin,
+            Zmax=Zmax,
+            boundary=boundary.copy(),
+            limiter=limiter_points,
+            Bt0=float(self.B0),
+            Raxis=float(geometry.R[0, 0]),
+            Zaxis=float(geometry.Z[0, 0]),
+            Ip=float(self.Ip),
+            psi_axis=psi_axis,
+            psi_bound=psi_bound,
+            F=_sample_profile_on_uniform_psin(self.psin, self.F, psin_uniform),
+            P=_sample_profile_on_uniform_psin(self.psin, self.P, psin_uniform),
+            FF_psi=_sample_profile_on_uniform_psin(self.psin, self.alpha1 * self.FFn_psin, psin_uniform),
+            P_psi=_sample_profile_on_uniform_psin(self.psin, self.alpha1 * self.Pn_psin / MU0, psin_uniform),
+            q=_sample_profile_on_uniform_psin(self.psin, self.q, psin_uniform),
+            psi=_interpolate_psin_to_rectilinear_grid(
+                geometry,
+                self.psin,
+                np.square(np.asarray(self.rho, dtype=np.float64)),
+                R_nodes=R_nodes,
+                Z_nodes=Z_nodes,
+                psi_axis=psi_axis,
+                psi_scale=psi_scale,
+                psi_outside=psi_outside_value,
+            ),
+        )
+        geqdsk.dR = float(R_nodes[1] - R_nodes[0]) if R_nodes.size > 1 else 0.0
+        geqdsk.dZ = float(Z_nodes[1] - Z_nodes[0]) if Z_nodes.size > 1 else 0.0
+        return geqdsk
+
 
 def _normalize_shape_profiles(shape_profiles: dict[str, Profile]) -> dict[str, Profile]:
     if not isinstance(shape_profiles, dict):
@@ -964,6 +1034,255 @@ def _resample_profile_linear(
     left_val = float(y_src[0]) if left is None else float(left)
     right_val = float(y_src[-1]) if right is None else float(right)
     return np.interp(rho_eval, rho_src, y_src, left=left_val, right=right_val)
+
+
+def _build_geqdsk_rectilinear_grid(
+    geometry: Geometry,
+    *,
+    R_range: tuple[float, float],
+    Z_range: tuple[float, float],
+    NR: int,
+    NZ: int | None,
+) -> tuple[np.ndarray, np.ndarray, float, float, float, float]:
+    NR = int(NR)
+    if NR < 2:
+        raise ValueError(f"NR must be at least 2, got {NR}")
+
+    Zmin, Zmax = map(float, Z_range)
+    Rmin, Rmax = map(float, R_range)
+
+    if not np.isfinite(Rmin) or not np.isfinite(Rmax) or Rmax <= Rmin:
+        raise ValueError(f"R_range must be finite and increasing, got {R_range!r}")
+
+    if not np.isfinite(Zmin) or not np.isfinite(Zmax) or Zmax <= Zmin:
+        raise ValueError(f"Z_range must be finite and increasing, got {Z_range!r}")
+
+    if NZ is None:
+        NZ = NR
+
+    if NZ < 2:
+        raise ValueError(f"NZ must be at least 2, got {NZ}")
+
+    R_nodes = np.linspace(Rmin, Rmax, NR, dtype=np.float64)
+    Z_nodes = np.linspace(Zmin, Zmax, NZ, dtype=np.float64)
+    return R_nodes, Z_nodes, Rmin, Rmax, Zmin, Zmax
+
+
+def _prepare_profile_interp_axis(psin_src: np.ndarray, values_src: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    psin_arr = np.asarray(psin_src, dtype=np.float64)
+    values_arr = np.asarray(values_src, dtype=np.float64)
+    if psin_arr.ndim != 1 or values_arr.ndim != 1 or psin_arr.shape != values_arr.shape:
+        raise ValueError("psin_src and values_src must be 1D arrays with the same shape")
+
+    order = np.argsort(psin_arr)
+    psin_sorted = psin_arr[order]
+    values_sorted = values_arr[order]
+    psin_unique, unique_indices = np.unique(psin_sorted, return_index=True)
+    values_unique = values_sorted[unique_indices]
+    if psin_unique.size < 2:
+        raise ValueError("Need at least two distinct psin samples to export Geqdsk profiles")
+    return psin_unique, values_unique
+
+
+def _sample_profile_on_uniform_psin(
+    psin_src: np.ndarray,
+    values_src: np.ndarray,
+    psin_eval: np.ndarray,
+) -> np.ndarray:
+    psin_axis, values_axis = _prepare_profile_interp_axis(psin_src, values_src)
+    psin_eval = np.asarray(psin_eval, dtype=np.float64)
+    return np.interp(psin_eval, psin_axis, values_axis, left=float(values_axis[0]), right=float(values_axis[-1]))
+
+
+def _interpolate_psin_to_rectilinear_grid(
+    geometry: Geometry,
+    psin: np.ndarray,
+    rho2_src: np.ndarray,
+    *,
+    R_nodes: np.ndarray,
+    Z_nodes: np.ndarray,
+    psi_axis: float,
+    psi_scale: float,
+    psi_outside: float,
+) -> np.ndarray:
+    R_surfaces = np.asarray(geometry.R, dtype=np.float64)
+    Z_surfaces = np.asarray(geometry.Z, dtype=np.float64)
+    psin = np.asarray(psin, dtype=np.float64)
+    rho2_src = np.asarray(rho2_src, dtype=np.float64)
+    if R_surfaces.shape != Z_surfaces.shape:
+        raise ValueError(f"Geometry R/Z shape mismatch: {R_surfaces.shape} vs {Z_surfaces.shape}")
+    if psin.ndim != 1 or psin.shape[0] != R_surfaces.shape[0]:
+        raise ValueError(f"psin must have shape ({R_surfaces.shape[0]},), got {psin.shape}")
+    if rho2_src.ndim != 1 or rho2_src.shape[0] != R_surfaces.shape[0]:
+        raise ValueError(f"rho2_src must have shape ({R_surfaces.shape[0]},), got {rho2_src.shape}")
+
+    R_grid, Z_grid = np.meshgrid(R_nodes, Z_nodes, indexing="ij")
+    rho2_grid = _interpolate_rho2_to_rectilinear_grid(
+        R_surfaces,
+        Z_surfaces,
+        rho2_src,
+        R_grid,
+        Z_grid,
+    )
+
+    psi_grid = np.full(R_grid.shape, float(psi_outside), dtype=np.float64)
+    inside = np.isfinite(rho2_grid)
+    if np.any(inside):
+        psi_grid[inside] = float(psi_axis) + float(psi_scale) * np.interp(rho2_grid[inside], rho2_src, psin)
+    return psi_grid
+
+
+def _interpolate_rho2_to_rectilinear_grid(
+    R_surfaces: np.ndarray,
+    Z_surfaces: np.ndarray,
+    rho2_surfaces: np.ndarray,
+    R_grid: np.ndarray,
+    Z_grid: np.ndarray,
+) -> np.ndarray:
+    if R_surfaces.ndim != 2 or Z_surfaces.ndim != 2 or R_surfaces.shape != Z_surfaces.shape:
+        raise ValueError(
+            f"Expected R_surfaces/Z_surfaces to share a 2D shape, got {R_surfaces.shape} and {Z_surfaces.shape}"
+        )
+    if rho2_surfaces.ndim != 1 or rho2_surfaces.shape[0] != R_surfaces.shape[0]:
+        raise ValueError(f"rho2_surfaces must have shape ({R_surfaces.shape[0]},), got {rho2_surfaces.shape}")
+
+    points_R, points_Z, point_values, triangles = _build_flux_mesh_triangulation(R_surfaces, Z_surfaces, rho2_surfaces)
+    triangle_mask = _build_degenerate_triangle_mask(points_R, points_Z, triangles)
+    rho2_grid = np.full(R_grid.shape, np.nan, dtype=np.float64)
+    R_nodes = np.asarray(R_grid[:, 0], dtype=np.float64)
+    Z_nodes = np.asarray(Z_grid[0, :], dtype=np.float64)
+
+    for tri, masked in zip(triangles, triangle_mask, strict=True):
+        if bool(masked):
+            continue
+        _rasterize_triangle_to_grid(
+            rho2_grid,
+            R_grid,
+            Z_grid,
+            R_nodes,
+            Z_nodes,
+            points_R[tri],
+            points_Z[tri],
+            point_values[tri],
+        )
+    return rho2_grid
+
+
+def _build_flux_mesh_triangulation(
+    R_surfaces: np.ndarray,
+    Z_surfaces: np.ndarray,
+    rho2_surfaces: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    nr, nt = R_surfaces.shape
+    if nr < 2 or nt < 3:
+        raise ValueError(f"Need at least a 2x3 flux mesh, got {(nr, nt)}")
+
+    point_count = 1 + (nr - 1) * nt
+    points_R = np.empty(point_count, dtype=np.float64)
+    points_Z = np.empty(point_count, dtype=np.float64)
+    point_values = np.empty(point_count, dtype=np.float64)
+
+    points_R[0] = float(R_surfaces[0, 0])
+    points_Z[0] = float(Z_surfaces[0, 0])
+    point_values[0] = float(rho2_surfaces[0])
+
+    for i in range(1, nr):
+        start = 1 + (i - 1) * nt
+        end = start + nt
+        points_R[start:end] = R_surfaces[i]
+        points_Z[start:end] = Z_surfaces[i]
+        point_values[start:end] = float(rho2_surfaces[i])
+
+    triangle_count = nt + 2 * (nr - 2) * nt
+    triangles = np.empty((triangle_count, 3), dtype=np.int32)
+    cursor = 0
+
+    def vertex_index(i: int, j: int) -> int:
+        if i == 0:
+            return 0
+        return 1 + (i - 1) * nt + (j % nt)
+
+    for j in range(nt):
+        triangles[cursor] = [vertex_index(0, 0), vertex_index(1, j), vertex_index(1, j + 1)]
+        cursor += 1
+
+    for i in range(1, nr - 1):
+        for j in range(nt):
+            triangles[cursor] = [vertex_index(i, j), vertex_index(i + 1, j), vertex_index(i + 1, j + 1)]
+            cursor += 1
+            triangles[cursor] = [vertex_index(i, j), vertex_index(i + 1, j + 1), vertex_index(i, j + 1)]
+            cursor += 1
+
+    return points_R, points_Z, point_values, triangles
+
+
+def _build_degenerate_triangle_mask(
+    points_R: np.ndarray,
+    points_Z: np.ndarray,
+    triangles: np.ndarray,
+) -> np.ndarray:
+    p0 = triangles[:, 0]
+    p1 = triangles[:, 1]
+    p2 = triangles[:, 2]
+    twice_area = (points_R[p1] - points_R[p0]) * (points_Z[p2] - points_Z[p0]) - (points_R[p2] - points_R[p0]) * (
+        points_Z[p1] - points_Z[p0]
+    )
+    scale = np.maximum(
+        np.maximum(np.abs(points_R[p0]), np.abs(points_R[p1])),
+        np.maximum(np.abs(points_Z[p0]), np.abs(points_Z[p1])),
+    )
+    scale = np.maximum(scale, 1.0)
+    return np.abs(twice_area) <= 1.0e-14 * scale * scale
+
+
+def _rasterize_triangle_to_grid(
+    rho2_grid: np.ndarray,
+    R_grid: np.ndarray,
+    Z_grid: np.ndarray,
+    R_nodes: np.ndarray,
+    Z_nodes: np.ndarray,
+    tri_R: np.ndarray,
+    tri_Z: np.ndarray,
+    tri_values: np.ndarray,
+) -> None:
+    r_min = float(np.min(tri_R))
+    r_max = float(np.max(tri_R))
+    z_min = float(np.min(tri_Z))
+    z_max = float(np.max(tri_Z))
+    i0 = int(np.searchsorted(R_nodes, r_min, side="left"))
+    i1 = int(np.searchsorted(R_nodes, r_max, side="right"))
+    j0 = int(np.searchsorted(Z_nodes, z_min, side="left"))
+    j1 = int(np.searchsorted(Z_nodes, z_max, side="right"))
+    if i0 >= i1 or j0 >= j1:
+        return
+
+    x0, x1, x2 = map(float, tri_R)
+    y0, y1, y2 = map(float, tri_Z)
+    denom = (y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2)
+    if abs(denom) <= 1.0e-20:
+        return
+
+    sub_R = R_grid[i0:i1, j0:j1]
+    sub_Z = Z_grid[i0:i1, j0:j1]
+    l0 = ((y1 - y2) * (sub_R - x2) + (x2 - x1) * (sub_Z - y2)) / denom
+    l1 = ((y2 - y0) * (sub_R - x2) + (x0 - x2) * (sub_Z - y2)) / denom
+    l2 = 1.0 - l0 - l1
+    inside = (l0 >= -1.0e-12) & (l1 >= -1.0e-12) & (l2 >= -1.0e-12)
+    if not np.any(inside):
+        return
+
+    values = l0 * float(tri_values[0]) + l1 * float(tri_values[1]) + l2 * float(tri_values[2])
+    target = rho2_grid[i0:i1, j0:j1]
+    target[inside] = values[inside]
+
+
+def _coerce_optional_point_array(value, *, name: str) -> np.ndarray:
+    arr = np.asarray(value if value is not None else np.empty((0, 2), dtype=np.float64), dtype=np.float64)
+    if arr.size == 0:
+        return np.empty((0, 2), dtype=np.float64)
+    if arr.ndim != 2 or arr.shape[1] != 2:
+        raise ValueError(f"{name} must have shape (N, 2), got {arr.shape}")
+    return arr.copy()
 
 
 def _apply_rz_limits(ax: plt.Axes, boundary_data: dict):

@@ -42,8 +42,7 @@ _RESIDUAL_BLOCK_CODE_BY_NAME = {
     "c_family": 4,
     "s_family": 5,
     "psin": 6,
-    "F": 7,
-    "F2": 8,
+    "F2": 7,
 }
 F2_BLOCK_CODE = _RESIDUAL_BLOCK_CODE_BY_NAME["F2"]
 
@@ -310,9 +309,7 @@ def build_source_plan(
             else policy.current_degree
         )
         use_projected_finalize = case.coordinate == "psin"
-        allow_query_warmstart = (not use_projected_finalize) or (
-            endpoint_policy != "none"
-        )
+        allow_query_warmstart = (not use_projected_finalize) or (endpoint_policy != "none")
 
     return SourcePlan(
         route=str(case.route).upper(),

@@ -134,15 +134,9 @@ class Operator:
     execution_state: ExecutionState = field(init=False, repr=False)
     source_runtime_state: SourceRuntimeState = field(init=False, repr=False)
     packed_residual: np.ndarray = field(init=False, repr=False)
-    f_parameterization: str = field(init=False, repr=False)
     profile_static_kwargs_by_name: dict[str, dict[str, int]] = field(init=False, repr=False)
     profile_offset_specs: dict[str, float | str] = field(init=False, repr=False)
     profile_scale_specs: dict[str, tuple[str, ...]] = field(init=False, repr=False)
-
-    @property
-    def F_profile(self) -> Profile:
-        """兼容旧命名的只读别名; 新代码应使用 `F2_profile`."""
-        return self.F2_profile
 
     def __post_init__(self) -> None:
         """完成 layout 构造, 运行时缓冲区分配和 case 绑定."""
@@ -166,7 +160,7 @@ class Operator:
             profile_names=self.profile_names,
         )
         self.x_size = packed_size(self.coeff_index)
-        self._refresh_profile_parameterization_config()
+        self._refresh_profile_config()
         self.residual_binding_layout = self._build_residual_binding_layout()
         self._validate_runtime_profile_support()
 
@@ -407,7 +401,7 @@ class Operator:
 
     def _refresh_runtime_state(self) -> None:
         self._refresh_operator_identity()
-        self._refresh_profile_parameterization_config()
+        self._refresh_profile_config()
         self.residual_binding_layout = self._build_residual_binding_layout()
         self._validate_runtime_profile_support()
         self._refresh_profile_runtime()
@@ -431,31 +425,13 @@ class Operator:
             source_route_spec=self._source_route_spec,
         )
 
-    def _refresh_profile_parameterization_config(self) -> None:
-        self.f_parameterization = self._resolve_F_parameterization()
+    def _refresh_profile_config(self) -> None:
         self.profile_static_kwargs_by_name = {name: dict(kwargs) for name, kwargs in _PROFILE_STATIC_KWARGS.items()}
         self.profile_offset_specs = dict(_PROFILE_OFFSET_SPECS)
         self.profile_scale_specs = dict(_PROFILE_SCALE_SPECS)
 
-    def _resolve_F_parameterization(self) -> str:
-        return "F2_profile"
-
     def _build_profile_postprocess_runner(self) -> Callable[[], None]:
-        F2_fields = self.F2_profile.u_fields
-        eps = 1.0e-10
-
-        def runner() -> None:
-            F2 = F2_fields[0].copy()
-            F2_r = F2_fields[1].copy()
-            F2_rr = F2_fields[2].copy()
-            F = np.sqrt(np.maximum(F2, eps))
-            inv_F = 1.0 / F
-            inv_F3 = inv_F / np.maximum(F2, eps)
-            F2_fields[0] = F
-            F2_fields[1] = 0.5 * F2_r * inv_F
-            F2_fields[2] = 0.5 * F2_rr * inv_F - 0.25 * F2_r * F2_r * inv_F3
-
-        return runner
+        return lambda: None
 
     def _refresh_profile_runtime(self) -> None:
         refresh_profile_runtime(
@@ -489,9 +465,6 @@ class Operator:
         fixed_profile_ids = np.flatnonzero(~self.active_profile_mask).astype(np.int64, copy=False)
         for p in fixed_profile_ids:
             self.profiles_by_name[self.profile_names[int(p)]].update()
-        f_profile_id = self.profile_index.get("F2", -1)
-        if f_profile_id >= 0 and not bool(self.active_profile_mask[f_profile_id]):
-            self.execution_state.profile_postprocess_runner()
 
     def _refresh_stage_a_runtime(self) -> None:
         refresh_stage_a_runtime(
@@ -688,7 +661,6 @@ class Operator:
             R0=float(self.case.R0),
             Z0=float(self.case.Z0),
             B0=float(self.case.B0),
-            f_parameterization=self.f_parameterization,
         )
 
     def _snapshot_equilibrium_from_runtime(self, x: np.ndarray) -> Equilibrium:

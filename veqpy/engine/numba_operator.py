@@ -158,23 +158,6 @@ def bind_source_eval_runner(
     return runner
 
 
-@njit(cache=True, fastmath=True, nogil=True)
-def _apply_f2_profile_fields_impl(fields: np.ndarray, eps: float = 1.0e-10) -> None:
-    nr = fields.shape[1]
-    for i in range(nr):
-        F2 = fields[0, i]
-        F2_r = fields[1, i]
-        F2_rr = fields[2, i]
-        if F2 < eps:
-            F2 = eps
-        F = np.sqrt(F2)
-        inv_F = 1.0 / F
-        inv_F3 = inv_F / F2
-        fields[0, i] = F
-        fields[1, i] = 0.5 * F2_r * inv_F
-        fields[2, i] = 0.5 * F2_rr * inv_F - 0.25 * F2_r * F2_r * inv_F3
-
-
 def _normalize_psin_query(out: np.ndarray, source: np.ndarray) -> None:
     np.copyto(out, np.asarray(source, dtype=np.float64))
     offset = float(out[0])
@@ -192,8 +175,6 @@ def _refresh_hot_runtime(
     *,
     runtime_layout: "RuntimeLayout",
     static_layout: "StaticLayout",
-    apply_f2_transform: bool,
-    F_profile_fields: np.ndarray,
     c_active_order: int,
     s_active_order: int,
     a: float,
@@ -235,8 +216,6 @@ def _refresh_hot_runtime(
         coeff_index_rows,
         lengths,
     )
-    if apply_f2_transform:
-        _apply_f2_profile_fields_impl(F_profile_fields)
     _update_fourier_family_fields_impl(
         c_family_fields,
         s_family_fields,
@@ -613,7 +592,6 @@ def bind_fused_residual_runner(
     R0: float,
     Z0: float,
     B0: float,
-    f_parameterization: str = "direct_F",
 ) -> Callable[[np.ndarray], np.ndarray]:
     route_key = _source_route_key(source_plan)
     try:
@@ -634,7 +612,6 @@ def bind_fused_residual_runner(
             R0=R0,
             Z0=Z0,
             B0=B0,
-            f_parameterization=f_parameterization,
         )
     if binding.core_kind == "profile_owned":
         return _bind_profile_owned_psin_residual_runner_core(
@@ -649,7 +626,6 @@ def bind_fused_residual_runner(
             R0=R0,
             Z0=Z0,
             B0=B0,
-            f_parameterization=f_parameterization,
             skip_projection_finalize=binding.skip_projection_finalize,
         )
     if binding.core_kind == "fixed_point":
@@ -666,7 +642,6 @@ def bind_fused_residual_runner(
                 R0=R0,
                 Z0=Z0,
                 B0=B0,
-                f_parameterization=f_parameterization,
                 fixed_point_stencil_size=binding.fixed_point_stencil_size,
             )
         if route_key == ("PQ", "psin", "uniform"):
@@ -682,7 +657,6 @@ def bind_fused_residual_runner(
                 R0=R0,
                 Z0=Z0,
                 B0=B0,
-                f_parameterization=f_parameterization,
                 fixed_point_stencil_size=binding.fixed_point_stencil_size,
             )
         raise ValueError(f"Unsupported fixed-point fused route key {route_key!r}")
@@ -702,7 +676,6 @@ def _bind_single_pass_residual_runner_core(
     R0: float,
     Z0: float,
     B0: float,
-    f_parameterization: str = "direct_F",
 ) -> Callable[[np.ndarray], np.ndarray]:
     surface_workspace = runtime_layout.geometry_surface_workspace
     residual_workspace = runtime_layout.residual_surface_workspace
@@ -714,8 +687,6 @@ def _bind_single_pass_residual_runner_core(
     h_fields = profiles_by_name["h"].u_fields
     v_fields = profiles_by_name["v"].u_fields
     k_fields = profiles_by_name["k"].u_fields
-    F_profile_fields = profiles_by_name["F2"].u_fields
-    apply_f2_transform = "F2" in residual_binding_layout.active_profile_names
     source_eval_runner = bind_source_eval_runner(
         source_plan=source_plan,
         static_layout=static_layout,
@@ -732,8 +703,6 @@ def _bind_single_pass_residual_runner_core(
             x,
             runtime_layout=runtime_layout,
             static_layout=static_layout,
-            apply_f2_transform=apply_f2_transform,
-            F_profile_fields=F_profile_fields,
             c_active_order=c_active_order,
             s_active_order=s_active_order,
             a=a,
@@ -786,7 +755,6 @@ def _bind_profile_owned_psin_residual_runner_core(
     R0: float,
     Z0: float,
     B0: float,
-    f_parameterization: str = "direct_F",
     skip_projection_finalize: bool,
 ) -> Callable[[np.ndarray], np.ndarray]:
     surface_workspace = runtime_layout.geometry_surface_workspace
@@ -806,8 +774,6 @@ def _bind_profile_owned_psin_residual_runner_core(
     h_fields = profiles_by_name["h"].u_fields
     v_fields = profiles_by_name["v"].u_fields
     k_fields = profiles_by_name["k"].u_fields
-    F_profile_fields = profiles_by_name["F2"].u_fields
-    apply_f2_transform = "F2" in residual_binding_layout.active_profile_names
     parameterization_code = int(source_plan.parameterization_code)
     has_projection_policy = bool(source_plan.has_projection_policy)
     projection_domain_code = int(source_plan.projection_domain_code)
@@ -833,8 +799,6 @@ def _bind_profile_owned_psin_residual_runner_core(
             x,
             runtime_layout=runtime_layout,
             static_layout=static_layout,
-            apply_f2_transform=apply_f2_transform,
-            F_profile_fields=F_profile_fields,
             c_active_order=c_active_order,
             s_active_order=s_active_order,
             a=a,
@@ -914,7 +878,6 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
     R0: float,
     Z0: float,
     B0: float,
-    f_parameterization: str = "direct_F",
     fixed_point_stencil_size: int,
     max_iter: int | None = None,
     tolerance: float | None = None,
@@ -931,7 +894,6 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
         R0=R0,
         Z0=Z0,
         B0=B0,
-        f_parameterization=f_parameterization,
         fixed_point_stencil_size=fixed_point_stencil_size,
         scratch_source_kernel=_update_pj2_from_psin_inputs_with_scratch,
         max_iter=max_iter,
@@ -952,7 +914,6 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
     R0: float,
     Z0: float,
     B0: float,
-    f_parameterization: str = "direct_F",
     fixed_point_stencil_size: int,
     max_iter: int | None = None,
     tolerance: float | None = None,
@@ -969,7 +930,6 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
         R0=R0,
         Z0=Z0,
         B0=B0,
-        f_parameterization=f_parameterization,
         fixed_point_stencil_size=fixed_point_stencil_size,
         scratch_source_kernel=_update_pq_from_psin_inputs_with_scratch,
         max_iter=max_iter,
@@ -990,7 +950,6 @@ def _bind_fixed_point_psin_residual_runner_core(
     R0: float,
     Z0: float,
     B0: float,
-    f_parameterization: str = "direct_F",
     fixed_point_stencil_size: int,
     scratch_source_kernel,
     max_iter: int | None = None,
@@ -1017,8 +976,6 @@ def _bind_fixed_point_psin_residual_runner_core(
     v_fields = profiles_by_name["v"].u_fields
     k_fields = profiles_by_name["k"].u_fields
     F_profile_u = profiles_by_name["F2"].u
-    F_profile_fields = profiles_by_name["F2"].u_fields
-    apply_f2_transform = "F2" in residual_binding_layout.active_profile_names
     heat_input = source_plan.heat_input
     current_input = source_plan.current_input
     coordinate_code = int(source_plan.coordinate_code)
@@ -1045,8 +1002,6 @@ def _bind_fixed_point_psin_residual_runner_core(
             x,
             runtime_layout=runtime_layout,
             static_layout=static_layout,
-            apply_f2_transform=apply_f2_transform,
-            F_profile_fields=F_profile_fields,
             c_active_order=c_active_order,
             s_active_order=s_active_order,
             a=a,
