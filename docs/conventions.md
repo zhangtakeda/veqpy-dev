@@ -171,7 +171,7 @@ public 接口规则:
 - 不重新引入第二套 row-cache 协议.
 - 不重新引入 `coeff_matrix`.
 - profile 权威顺序固定为:
-  - `psin`, `F`, `h`, `v`, `k`, `c0`, `c1`, `s1`, `s2`
+  - `psin`, `F2`, `h`, `v`, `k`, `c0`, `c1`, `s1`, `s2`
 
 ## Runtime Containers
 

@@ -93,7 +93,7 @@ packed runtime 的权威定义只在 [`veqpy/operator/layout.py`](../veqpy/opera
 当前必须知道的事实:
 
 - profile 权威顺序由 `Grid.M_max` 驱动:
-  - `psin`, `F`
+  - `psin`, `F2`
   - `h`, `v`, `k`
   - `c0 .. cK`
   - `s1 .. sK`

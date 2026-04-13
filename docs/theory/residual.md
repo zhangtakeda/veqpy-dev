@@ -94,11 +94,11 @@ $$
 $$
 
 - 对于 Strict 模式, 只需要对形状参数的残差方程进行优化即可.
-- 对于 Robust 模式, 还需要同时优化代表 $\hat{\psi}$ 或 $F$ 的残差方程.
+- 对于 Robust 模式, 还需要同时优化代表 $\hat{\psi}$ 或 $F^2$ 的残差方程.
 
 当前实现对应的 packed residual 组装规则是:
 
-- `h`, `v`, `k`, `c0`, `psin`, `F` 仍然保留固定物理通道
+- `h`, `v`, `k`, `c0`, `psin`, `F2` 仍然保留固定物理通道
 - `c{k}` / `s{k}` 则统一走 Fourier family residual block
 - binder 在 runtime 中只记录:
   - family (`c` 或 `s`)

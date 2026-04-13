@@ -23,7 +23,7 @@ from veqpy.operator.operator_case import OperatorCase
 from veqpy.solver.solver import Solver
 from veqpy.solver.solver_config import SolverConfig
 
-PLOT = False
+PLOT = True
 SHOW_PROGRESS = True
 
 REFERENCE_SOURCE_SAMPLE_COUNT = 51
@@ -55,9 +55,9 @@ PSIN_ROBUST_COEFFS = {
     "psin": [0.0] * 5,
 }
 
-F_ROBUST_COEFFS = {
+F2_ROBUST_COEFFS = {
     **BASE_COEFFS,
-    "F": [0.0] * 5,
+    "F2": [0.0] * 5,
 }
 
 BOUNDARY = Boundary(
@@ -575,7 +575,7 @@ def _profile_coeffs_for_case(
         coeffs = {name: list(values) for name, values in BASE_COEFFS.items()}
     if mode in {"PJ2", "PQ"}:
         f_order = 7 if mode == "PQ" and constraint in {"Ip", "Ip_beta"} else 6
-        coeffs["F"] = [0.0] * f_order
+        coeffs["F2"] = [0.0] * f_order
     return coeffs
 
 

@@ -205,8 +205,17 @@ def _run_residual_blocks_packed_precomputed(
         elif code == 7:
             _collapse_g(scratch, G)
             _project_scaled3(out_packed, coeff_indices, T, scratch, y, y, weights, base_scale * (R0 * B0))
-        else:
+        elif code == 8:
             _collapse_g(scratch, G)
-            _project_scaled2(
-                out_packed, coeff_indices, T, scratch, y, weights, base_scale * (R0 * B0) * (R0 * B0)
+            _project_scaled3(
+                out_packed,
+                coeff_indices,
+                T,
+                scratch,
+                y,
+                y,
+                weights,
+                base_scale * (R0 * B0) * (R0 * B0),
             )
+        else:
+            raise ValueError("Unknown residual block code")

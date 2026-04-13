@@ -146,12 +146,21 @@ def _normalize_coeffs(
 ) -> dict[str, list[float] | None]:
     coeffs: dict[str, list[float] | None] = {}
     for name, coeff in profile_coeffs.items():
+        normalized_name = "F2" if name == "F" else name
+        if name == "F":
+            warnings.warn(
+                "profile_coeffs['F'] is deprecated; use profile_coeffs['F2'] for the F^2 parameterization.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+        if normalized_name in coeffs:
+            raise ValueError(f"Duplicate profile coeff entry for {normalized_name!r}")
         if coeff is None:
-            coeffs[name] = None
+            coeffs[normalized_name] = None
             continue
         if not isinstance(coeff, list):
             raise TypeError(f"{name} coeff must be list[float] or None, got {type(coeff).__name__}")
-        coeffs[name] = _as_1d_coeff_list(coeff, name=f"{name} coeff")
+        coeffs[normalized_name] = _as_1d_coeff_list(coeff, name=f"{normalized_name} coeff")
     return coeffs
 
 

@@ -43,8 +43,9 @@ _RESIDUAL_BLOCK_CODE_BY_NAME = {
     "s_family": 5,
     "psin": 6,
     "F": 7,
+    "F2": 8,
 }
-F2_BLOCK_CODE = 8
+F2_BLOCK_CODE = _RESIDUAL_BLOCK_CODE_BY_NAME["F2"]
 
 
 def _decode_residual_block_code(name: str) -> tuple[int, int]:

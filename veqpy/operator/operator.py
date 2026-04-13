@@ -58,16 +58,16 @@ from veqpy.operator.runtime_allocation import allocate_runtime_state
 
 _PROFILE_STATIC_KWARGS: dict[str, dict[str, int]] = {
     "psin": {"power": 2},
-    "F": {"envelope_power": 2},
+    "F2": {"envelope_power": 2},
 }
 _PROFILE_OFFSET_SPECS: dict[str, float | str] = {
     "h": 0.0,
     "v": 0.0,
     "k": "ka",
     "psin": 1.0,
-    "F": 1.0,
+    "F2": 1.0,
 }
-_PROFILE_SCALE_SPECS: dict[str, tuple[str, ...]] = {"F": ("R0", "B0")}
+_PROFILE_SCALE_SPECS: dict[str, tuple[str, ...]] = {"F2": ("R0", "B0", "R0", "B0")}
 
 
 @dataclass(slots=True)
@@ -84,7 +84,7 @@ class Operator:
     v_profile: Profile = field(init=False)
     k_profile: Profile = field(init=False)
     psin_profile: Profile = field(init=False)
-    F_profile: Profile = field(init=False)
+    F2_profile: Profile = field(init=False)
     profiles_by_name: dict[str, Profile] = field(init=False, repr=False)
 
     psin: np.ndarray = field(init=False)
@@ -138,6 +138,11 @@ class Operator:
     profile_static_kwargs_by_name: dict[str, dict[str, int]] = field(init=False, repr=False)
     profile_offset_specs: dict[str, float | str] = field(init=False, repr=False)
     profile_scale_specs: dict[str, tuple[str, ...]] = field(init=False, repr=False)
+
+    @property
+    def F_profile(self) -> Profile:
+        """兼容旧命名的只读别名; 新代码应使用 `F2_profile`."""
+        return self.F2_profile
 
     def __post_init__(self) -> None:
         """完成 layout 构造, 运行时缓冲区分配和 case 绑定."""
@@ -316,10 +321,6 @@ class Operator:
         active_residual_block_codes, active_residual_block_orders = orchestration.build_residual_block_metadata(
             active_profile_names
         )
-        if self.f_parameterization == "F2_linear":
-            for i, name in enumerate(active_profile_names):
-                if name == "F":
-                    active_residual_block_codes[i] = orchestration.F2_BLOCK_CODE
         return ResidualBindingLayout(
             active_profile_names=active_profile_names,
             active_residual_block_codes=active_residual_block_codes,
@@ -435,35 +436,24 @@ class Operator:
         self.profile_static_kwargs_by_name = {name: dict(kwargs) for name, kwargs in _PROFILE_STATIC_KWARGS.items()}
         self.profile_offset_specs = dict(_PROFILE_OFFSET_SPECS)
         self.profile_scale_specs = dict(_PROFILE_SCALE_SPECS)
-        if self.f_parameterization == "F2_linear":
-            self.profile_static_kwargs_by_name["F"] = {"envelope_power": 1}
-            self.profile_offset_specs["F"] = 0.0
-            self.profile_scale_specs.pop("F", None)
 
     def _resolve_F_parameterization(self) -> str:
-        if self.case.route == "PJ2" and self.case.coordinate == "psin":
-            return "F2_linear"
-        return "direct_F"
+        return "F2_profile"
 
     def _build_profile_postprocess_runner(self) -> Callable[[], None]:
-        if self.f_parameterization != "F2_linear":
-            return lambda: None
-
-        F_fields = self.F_profile.u_fields
-        scale = float(self.case.R0 * self.case.B0)
+        F2_fields = self.F2_profile.u_fields
         eps = 1.0e-10
 
         def runner() -> None:
-            H = F_fields[0].copy()
-            H_r = F_fields[1].copy()
-            H_rr = F_fields[2].copy()
-            q = np.maximum(1.0 + H, eps)
-            sqrt_q = np.sqrt(q)
-            inv_sqrt_q = 1.0 / sqrt_q
-            inv_q_sqrt_q = inv_sqrt_q / q
-            F_fields[0] = scale * sqrt_q
-            F_fields[1] = scale * 0.5 * H_r * inv_sqrt_q
-            F_fields[2] = scale * (0.5 * H_rr * inv_sqrt_q - 0.25 * H_r * H_r * inv_q_sqrt_q)
+            F2 = F2_fields[0].copy()
+            F2_r = F2_fields[1].copy()
+            F2_rr = F2_fields[2].copy()
+            F = np.sqrt(np.maximum(F2, eps))
+            inv_F = 1.0 / F
+            inv_F3 = inv_F / np.maximum(F2, eps)
+            F2_fields[0] = F
+            F2_fields[1] = 0.5 * F2_r * inv_F
+            F2_fields[2] = 0.5 * F2_rr * inv_F - 0.25 * F2_r * F2_r * inv_F3
 
         return runner
 
@@ -499,7 +489,7 @@ class Operator:
         fixed_profile_ids = np.flatnonzero(~self.active_profile_mask).astype(np.int64, copy=False)
         for p in fixed_profile_ids:
             self.profiles_by_name[self.profile_names[int(p)]].update()
-        f_profile_id = self.profile_index.get("F", -1)
+        f_profile_id = self.profile_index.get("F2", -1)
         if f_profile_id >= 0 and not bool(self.active_profile_mask[f_profile_id]):
             self.execution_state.profile_postprocess_runner()
 
@@ -685,10 +675,6 @@ class Operator:
         if self.source_plan.requires_psin_profile_fields and self.psin_profile.u_fields is None:
             return self._evaluate_residual
         if not self.source_plan.supports_fused_residual:
-            return self._evaluate_residual
-        if self.f_parameterization != "direct_F":
-            # F2-linear is currently staged-only until fused hot paths reach
-            # numerical parity with the reference stage pipeline.
             return self._evaluate_residual
         return operator_ops.bind_fused_residual_runner(
             source_plan=self.source_plan,

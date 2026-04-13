@@ -53,7 +53,7 @@ def _build_high_order_equilibrium() -> tuple[Equilibrium, Operator]:
     profile_coeffs.update(
         {
             "psin": [0.0, 1.0],
-            "F": [1.0],
+            "F2": [1.0],
             "h": [0.0],
             "c3": [0.05],
             "s4": [-0.03],
@@ -98,7 +98,7 @@ def _build_operator_case(*, mode="PF", coordinate="rho", nodes="uniform") -> Ope
     profile_coeffs.update(
         {
             "psin": [0.0, 1.0],
-            "F": [1.0],
+            "F2": [1.0],
             "h": [0.0],
             "c3": [0.05],
             "s4": [-0.03],
@@ -597,60 +597,62 @@ def test_pq_psin_uniform_ip_beta_uses_lower_degree_projection_policy():
     assert operator.source_plan.use_projected_finalize is True
 
 
-def test_pj2_psin_route_uses_f2_linear_parameterization_for_f_profile():
+def test_pj2_psin_route_uses_f2_profile_parameterization():
     grid, case = _build_operator_case(mode="PJ2", coordinate="psin", nodes="uniform")
     case.profile_coeffs["psin"] = None
     operator = Operator(grid=grid, case=case)
     x = operator.encode_initial_state()
     operator.stage_a_profile(x)
 
-    latent_H = grid.y * case.profile_coeffs["F"][0]
+    latent_H = 1.0 + grid.y * grid.y * case.profile_coeffs["F2"][0]
+    latent_H_r = -4.0 * grid.rho * grid.y * case.profile_coeffs["F2"][0]
+    latent_H_rr = (-4.0 + 12.0 * grid.rho * grid.rho) * case.profile_coeffs["F2"][0]
     scale = case.R0 * case.B0
-    expected_F = scale * np.sqrt(1.0 + latent_H)
-    expected_F_r = scale * (-grid.rho) / np.sqrt(1.0 + latent_H)
+    expected_F = scale * np.sqrt(latent_H)
+    expected_F_r = scale * 0.5 * latent_H_r / np.sqrt(latent_H)
     expected_F_rr = scale * (
-        -1.0 / np.sqrt(1.0 + latent_H) - (grid.rho * grid.rho) / np.power(1.0 + latent_H, 1.5)
+        0.5 * latent_H_rr / np.sqrt(latent_H)
+        - 0.25 * latent_H_r * latent_H_r / np.power(latent_H, 1.5)
     )
 
-    assert operator.f_parameterization == "F2_linear"
-    assert operator.F_profile.offset == pytest.approx(0.0)
-    assert operator.F_profile.scale == pytest.approx(1.0)
-    assert operator.F_profile.envelope_power == 1
-    f_slot = operator.residual_binding_layout.active_profile_names.index("F")
+    assert operator.f_parameterization == "F2_profile"
+    assert operator.F2_profile.offset == pytest.approx(1.0)
+    assert operator.F2_profile.scale == pytest.approx((case.R0 * case.B0) ** 2)
+    assert operator.F2_profile.envelope_power == 2
+    f_slot = operator.residual_binding_layout.active_profile_names.index("F2")
     assert operator.residual_binding_layout.active_residual_block_codes[f_slot] == orchestration.F2_BLOCK_CODE
-    assert np.allclose(operator.F_profile.u, expected_F)
-    assert np.allclose(operator.F_profile.u_r, expected_F_r)
-    assert np.allclose(operator.F_profile.u_rr, expected_F_rr)
+    assert np.allclose(operator.F2_profile.u, expected_F)
+    assert np.allclose(operator.F2_profile.u_r, expected_F_r)
+    assert np.allclose(operator.F2_profile.u_rr, expected_F_rr)
 
 
-def test_pq_psin_route_keeps_direct_f_parameterization():
+def test_pq_psin_route_uses_f2_profile_parameterization():
     grid, case = _build_operator_case(mode="PQ", coordinate="psin", nodes="uniform")
     case.profile_coeffs["psin"] = None
     operator = Operator(grid=grid, case=case)
 
-    assert operator.f_parameterization == "direct_F"
-    assert operator.F_profile.offset == pytest.approx(1.0)
-    assert operator.F_profile.scale == pytest.approx(case.R0 * case.B0)
-    assert operator.F_profile.envelope_power == 2
-    f_slot = operator.residual_binding_layout.active_profile_names.index("F")
-    assert operator.residual_binding_layout.active_residual_block_codes[f_slot] != orchestration.F2_BLOCK_CODE
+    assert operator.f_parameterization == "F2_profile"
+    assert operator.F2_profile.offset == pytest.approx(1.0)
+    assert operator.F2_profile.scale == pytest.approx((case.R0 * case.B0) ** 2)
+    assert operator.F2_profile.envelope_power == 2
+    f_slot = operator.residual_binding_layout.active_profile_names.index("F2")
+    assert operator.residual_binding_layout.active_residual_block_codes[f_slot] == orchestration.F2_BLOCK_CODE
 
 
-def test_pj2_psin_f2_linear_uses_staged_residual_runner_until_fused_matches():
+def test_pj2_psin_f2_profile_uses_fused_residual_runner():
     grid, case = _build_operator_case(mode="PJ2", coordinate="psin", nodes="uniform")
     case.profile_coeffs["psin"] = None
     operator = Operator(grid=grid, case=case)
 
     fused_runner = operator.execution_state.fused_residual_runner
-    assert getattr(fused_runner, "__self__", None) is operator
-    assert getattr(fused_runner, "__func__", None) is Operator._evaluate_residual
+    assert getattr(fused_runner, "__self__", None) is not operator
 
 
 def test_build_profile_names_respects_module_family_order(monkeypatch):
-    monkeypatch.setattr(layout_module, "PACKED_PROFILE_FAMILY_ORDER", ("psin", "F", "k", "h", "v", "c0", "s", "c"))
+    monkeypatch.setattr(layout_module, "PACKED_PROFILE_FAMILY_ORDER", ("psin", "F2", "k", "h", "v", "c0", "s", "c"))
     assert layout_module.build_profile_names(2) == (
         "psin",
-        "F",
+        "F2",
         "k",
         "h",
         "v",
@@ -666,7 +668,7 @@ def test_build_profile_layout_can_group_shape_coeffs_by_profile(monkeypatch):
     monkeypatch.setattr(
         layout_module,
         "PACKED_PROFILE_FAMILY_ORDER",
-        ("h", "v", "k", "c0", "c", "s", "psin", "F"),
+        ("h", "v", "k", "c0", "c", "s", "psin", "F2"),
     )
     monkeypatch.setattr(layout_module, "INTERLEAVE_SHAPE_COEFFS_BY_ORDER", False)
     profile_names = layout_module.build_profile_names(1)
@@ -674,7 +676,7 @@ def test_build_profile_layout_can_group_shape_coeffs_by_profile(monkeypatch):
     profile_coeffs.update(
         {
             "psin": [0.0, 1.0],
-            "F": [1.0, 2.0],
+            "F2": [1.0, 2.0],
             "h": [10.0, 11.0],
             "v": [20.0, 21.0],
             "k": [30.0, 31.0],
@@ -735,7 +737,7 @@ def test_equilibrium_compare_reports_only_primary_shape_errors():
     profile_coeffs.update(
         {
             "psin": [0.0, 1.0],
-            "F": [1.0],
+            "F2": [1.0],
             "h": [0.0],
             "v": [0.0],
             "k": [0.0],
