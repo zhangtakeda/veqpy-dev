@@ -658,7 +658,10 @@ class Operator:
         )
 
     def invalidate_source_state(self) -> None:
-        if self.source_plan.strategy == "fixed_point_psin":
+        if (self.source_plan.route, self.source_plan.coordinate, self.source_plan.nodes) in {
+            ("PJ2", "psin", "uniform"),
+            ("PQ", "psin", "uniform"),
+        }:
             self.source_runtime_state.psin_query.fill(-1.0)
 
     def _build_fused_residual_runner(self) -> Callable[[np.ndarray], np.ndarray]:

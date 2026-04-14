@@ -55,7 +55,6 @@ NODE_NAMES = (UNIFORM_NODES, GRID_NODES)
 
 SOURCE_STRATEGY_SINGLE_PASS = "single_pass"
 SOURCE_STRATEGY_PROFILE_OWNED_PSIN = "profile_owned_psin"
-SOURCE_STRATEGY_FIXED_POINT_PSIN = "fixed_point_psin"
 SOURCE_PARAMETERIZATION_IDENTITY = "identity"
 SOURCE_PARAMETERIZATION_SQRT_PSIN = "sqrt_psin"
 SOURCE_PARAMETERIZATION_CODE_IDENTITY = 0
@@ -1862,13 +1861,13 @@ def _register_default_source_routes() -> None:
         "PJ2",
         rho_implementation="PJ2_RHO",
         psin_implementation="PJ2_PSIN",
-        psin_uniform_strategy=SOURCE_STRATEGY_FIXED_POINT_PSIN,
+        psin_uniform_strategy=SOURCE_STRATEGY_SINGLE_PASS,
     )
     _register_standard_routes(
         "PQ",
         rho_implementation="PQ_RHO",
         psin_implementation="PQ_PSIN",
-        psin_uniform_strategy=SOURCE_STRATEGY_FIXED_POINT_PSIN,
+        psin_uniform_strategy=SOURCE_STRATEGY_SINGLE_PASS,
     )
 
 

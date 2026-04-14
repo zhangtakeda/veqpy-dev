@@ -620,7 +620,13 @@ def test_operator_exposes_explicit_layout_and_execution_layers():
     assert operator.active_u_fields.base is operator.active_profile_slab
     assert operator.c_family_fields.base is operator.family_field_slab
     expected_psin_query_shape = (
-        (grid.Nr,) if (operator.source_plan.is_profile_owned_psin or operator.source_plan.is_fixed_point_psin) else (0,)
+        (grid.Nr,)
+        if (
+            operator.source_plan.is_profile_owned_psin
+            or (operator.source_plan.route, operator.source_plan.coordinate, operator.source_plan.nodes)
+            in {("PJ2", "psin", "uniform"), ("PQ", "psin", "uniform")}
+        )
+        else (0,)
     )
     assert operator.source_runtime_state.psin_query.shape == expected_psin_query_shape
     assert operator.source_runtime_state.materialized_heat_input.shape == (grid.Nr,)
@@ -645,23 +651,16 @@ def test_operator_replace_case_preserves_static_layout_and_refreshes_runtime_ide
     assert operator.runtime_layout.geometry_radial_workspace is operator.geometry_radial_workspace
 
 
-@pytest.mark.parametrize(
-    ("mode", "heat_degree", "current_degree", "finalize_iters"),
-    [("PJ2", 5, 6, 8), ("PQ", 7, 10, 16)],
-)
-def test_source_plan_captures_fixed_point_route_metadata(mode, heat_degree, current_degree, finalize_iters):
+@pytest.mark.parametrize(("mode", "heat_degree", "current_degree"), [("PJ2", 5, 6), ("PQ", 7, 10)])
+def test_source_plan_captures_fixed_point_route_metadata(mode, heat_degree, current_degree):
     grid, case = _build_operator_case(mode=mode, coordinate="psin", nodes="uniform")
     case.profile_coeffs["psin"] = None
     operator = Operator(grid=grid, case=case)
 
-    assert operator.source_plan.strategy == "fixed_point_psin"
+    assert operator.source_plan.strategy == "single_pass"
     assert operator.source_plan.n_src == TEST_SOURCE_SAMPLE_COUNT
-    assert operator.source_plan.use_projected_finalize is True
     assert operator.source_plan.heat_projection_degree == heat_degree
     assert operator.source_plan.current_projection_degree == current_degree
-    assert operator.source_plan.fixed_point_max_iter == 16
-    assert operator.source_plan.fixed_point_finalize_max_iter == finalize_iters
-    assert operator.source_plan.fixed_point_tolerance == pytest.approx(1.0e-10)
     if mode == "PJ2":
         assert operator.source_plan.projection_domain == "psin"
         assert operator.source_plan.projection_domain_code == 0
@@ -670,7 +669,10 @@ def test_source_plan_captures_fixed_point_route_metadata(mode, heat_degree, curr
         assert operator.source_plan.projection_domain == "sqrt_psin"
         assert operator.source_plan.projection_domain_code == 1
         assert operator.source_plan.endpoint_policy_code == 2
-    assert operator.source_plan.is_fixed_point_psin is True
+    assert (operator.source_plan.route, operator.source_plan.coordinate, operator.source_plan.nodes) in {
+        ("PJ2", "psin", "uniform"),
+        ("PQ", "psin", "uniform"),
+    }
 
 
 @pytest.mark.parametrize(("mode", "heat_degree", "current_degree"), [("PI", 7, 8), ("PJ1", 7, 8)])
@@ -684,7 +686,6 @@ def test_source_plan_captures_profile_owned_projection_policy(mode, heat_degree,
     assert operator.source_plan.heat_projection_degree == heat_degree
     assert operator.source_plan.current_projection_degree == current_degree
     assert operator.source_plan.endpoint_policy_code == 0
-    assert operator.source_plan.use_projected_finalize is True
 
 
 @pytest.mark.parametrize("mode", ["PI", "PJ1"])
@@ -704,13 +705,17 @@ def test_pq_psin_uniform_ip_beta_uses_lower_degree_projection_policy():
     case.beta = 0.02
     operator = Operator(grid=grid, case=case)
 
-    assert operator.source_plan.strategy == "fixed_point_psin"
+    assert operator.source_plan.strategy == "single_pass"
     assert operator.source_plan.has_projection_policy is True
     assert operator.source_plan.projection_domain == "sqrt_psin"
     assert operator.source_plan.heat_projection_degree == 7
     assert operator.source_plan.current_projection_degree == 7
     assert operator.source_plan.endpoint_policy_code == 3
-    assert operator.source_plan.use_projected_finalize is True
+    assert (operator.source_plan.route, operator.source_plan.coordinate, operator.source_plan.nodes) == (
+        "PQ",
+        "psin",
+        "uniform",
+    )
 
 
 def test_pj2_psin_route_uses_f_profile_parameterization():

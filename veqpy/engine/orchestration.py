@@ -92,13 +92,8 @@ class SourcePlan:
     has_projection_policy: bool
     projection_domain: str
     endpoint_policy: str
-    use_projected_finalize: bool
     heat_projection_degree: int
     current_projection_degree: int
-    allow_query_warmstart: bool
-    fixed_point_max_iter: int
-    fixed_point_finalize_max_iter: int
-    fixed_point_tolerance: float
 
     @property
     def is_grid_nodes(self) -> bool:
@@ -113,12 +108,8 @@ class SourcePlan:
         return self.strategy == "profile_owned_psin"
 
     @property
-    def is_fixed_point_psin(self) -> bool:
-        return self.strategy == "fixed_point_psin"
-
-    @property
     def supports_fused_residual(self) -> bool:
-        return self.strategy in {"single_pass", "profile_owned_psin", "fixed_point_psin"}
+        return self.strategy in {"single_pass", "profile_owned_psin"}
 
     @property
     def requires_psin_profile_fields(self) -> bool:
@@ -143,8 +134,6 @@ class SourcePlan:
 
 def _source_route_key(source_plan: SourcePlan) -> tuple[str, str, str]:
     return (source_plan.route, source_plan.coordinate, source_plan.nodes)
-
-
 @dataclass(frozen=True, slots=True)
 class _SourceProjectionPolicy:
     domain: str
@@ -153,13 +142,6 @@ class _SourceProjectionPolicy:
     ip_current_degree: int | None = None
     current_ip_endpoint_policy: str = "none"
     current_other_endpoint_policy: str = "none"
-
-
-@dataclass(frozen=True, slots=True)
-class _FixedPointPolicy:
-    max_iter: int
-    finalize_max_iter: int
-    tolerance: float
 
 
 _SOURCE_PROJECTION_POLICIES: dict[tuple[str, str, str], _SourceProjectionPolicy] = {
@@ -192,12 +174,6 @@ _SOURCE_PROJECTION_POLICIES: dict[tuple[str, str, str], _SourceProjectionPolicy]
         current_ip_endpoint_policy="affine_both",
         current_other_endpoint_policy="none",
     ),
-}
-
-
-_FIXED_POINT_POLICIES: dict[tuple[str, str, str], _FixedPointPolicy] = {
-    ("PJ2", "psin", "uniform"): _FixedPointPolicy(max_iter=16, finalize_max_iter=8, tolerance=1.0e-10),
-    ("PQ", "psin", "uniform"): _FixedPointPolicy(max_iter=16, finalize_max_iter=16, tolerance=1.0e-10),
 }
 
 
@@ -267,15 +243,6 @@ def _resolve_source_projection_policy(
         current_ip_endpoint_policy="affine_both",
         current_other_endpoint_policy="both",
     )
-
-
-def _resolve_fixed_point_policy(route: str, coordinate: str, nodes: str) -> _FixedPointPolicy:
-    return _FIXED_POINT_POLICIES.get(
-        (str(route).upper(), str(coordinate).lower(), str(nodes).lower()),
-        _FixedPointPolicy(max_iter=8, finalize_max_iter=4, tolerance=1.0e-10),
-    )
-
-
 def build_source_plan(
     *,
     case: "OperatorCase",
@@ -288,15 +255,12 @@ def build_source_plan(
         has_ip_constraint=bool(np.isfinite(case.Ip)),
         has_beta_constraint=bool(np.isfinite(case.beta)),
     )
-    fixed_point_policy = _resolve_fixed_point_policy(case.route, case.coordinate, case.nodes)
     has_projection_policy = policy is not None
     has_ip_constraint = bool(np.isfinite(case.Ip))
     projection_domain = "psin"
     heat_projection_degree = 0
     current_projection_degree = 0
     endpoint_policy = "none"
-    use_projected_finalize = False
-    allow_query_warmstart = True
 
     if policy is not None:
         endpoint_policy = (
@@ -309,8 +273,6 @@ def build_source_plan(
             if has_ip_constraint and policy.ip_current_degree is not None
             else policy.current_degree
         )
-        use_projected_finalize = case.coordinate == "psin"
-        allow_query_warmstart = (not use_projected_finalize) or (endpoint_policy != "none")
 
     return SourcePlan(
         route=str(case.route).upper(),
@@ -327,13 +289,8 @@ def build_source_plan(
         has_projection_policy=has_projection_policy,
         projection_domain=str(projection_domain).lower(),
         endpoint_policy=str(endpoint_policy).lower(),
-        use_projected_finalize=use_projected_finalize,
         heat_projection_degree=heat_projection_degree,
         current_projection_degree=current_projection_degree,
-        allow_query_warmstart=allow_query_warmstart,
-        fixed_point_max_iter=int(fixed_point_policy.max_iter),
-        fixed_point_finalize_max_iter=int(fixed_point_policy.finalize_max_iter),
-        fixed_point_tolerance=float(fixed_point_policy.tolerance),
     )
 
 
@@ -539,7 +496,10 @@ def refresh_source_runtime(
             source_runtime_state=source_runtime_state,
             psin_query=psin,
         )
-    elif source_plan.strategy == "fixed_point_psin":
+    elif (source_plan.route, source_plan.coordinate, source_plan.nodes) in {
+        ("PJ2", "psin", "uniform"),
+        ("PQ", "psin", "uniform"),
+    }:
         source_runtime_state.psin_query.fill(-1.0)
 
 
@@ -573,6 +533,10 @@ def build_bound_source_stage_runner(operator_core: Any) -> Callable:
     }
     if route_key not in valid_route_keys:
         raise ValueError(f"Unsupported source route key {route_key!r}")
+    if route_key == ("PJ2", "psin", "uniform"):
+        return _build_pj2_psin_uniform_source_stage_runner(operator_core)
+    if route_key == ("PQ", "psin", "uniform"):
+        return _build_pq_psin_uniform_source_stage_runner(operator_core)
     return _build_source_stage_runner_shared(operator_core)
 
 
@@ -654,13 +618,6 @@ def _build_source_stage_runner_shared(operator_core: Any) -> Callable:
 
         return runner
 
-    if source_plan.strategy == "fixed_point_psin":
-
-        def runner() -> tuple[float, float]:
-            return run_psin_source_fixed_point(operator_core)
-
-        return runner
-
     def runner() -> tuple[float, float]:
         return source_eval_runner(
             operator_core.root_fields,
@@ -682,36 +639,37 @@ def copy_psin_profile_to_root_fields(operator_core: Any) -> None:
     np.copyto(operator_core.psin_rr, operator_core.psin_profile.u_rr)
 
 
-def run_psin_source_fixed_point(operator_core: Any) -> tuple[float, float]:
+def _build_pj2_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[[], tuple[float, float]]:
     source_plan = operator_core.source_plan
     source_eval_runner = operator_core.execution_state.source_eval_runner
     source_runtime_state = operator_core.source_runtime_state
     target_root_fields = source_runtime_state.target_root_fields
-    tolerance = float(source_plan.fixed_point_tolerance)
-    if (not source_plan.allow_query_warmstart) or source_runtime_state.psin_query[0] < 0.0:
-        normalize_psin_query_inplace(source_runtime_state.psin_query, operator_core.psin_profile.u)
-    alpha1 = float("nan")
-    alpha2 = float("nan")
-    for _ in range(int(source_plan.fixed_point_max_iter)):
-        materialize_source_inputs(
-            source_plan=source_plan,
-            source_runtime_state=source_runtime_state,
-            psin_query=source_runtime_state.psin_query,
-            enable_projection=not source_plan.use_projected_finalize,
-        )
-        alpha1, alpha2 = source_eval_runner(
-            target_root_fields,
-            operator_core.FFn_psin,
-            operator_core.Pn_psin,
-            source_runtime_state.materialized_heat_input,
-            source_runtime_state.materialized_current_input,
-            float(operator_core.case.R0),
-        )
-        if update_fixed_point_psin_query(source_runtime_state.psin_query, target_root_fields[0], tolerance):
-            break
-    if source_plan.use_projected_finalize:
+    tolerance = 1.0e-10
+
+    def runner() -> tuple[float, float]:
+        if source_runtime_state.psin_query[0] < 0.0:
+            normalize_psin_query_inplace(source_runtime_state.psin_query, operator_core.psin_profile.u)
+        alpha1 = float("nan")
+        alpha2 = float("nan")
+        for _ in range(16):
+            materialize_source_inputs(
+                source_plan=source_plan,
+                source_runtime_state=source_runtime_state,
+                psin_query=source_runtime_state.psin_query,
+                enable_projection=False,
+            )
+            alpha1, alpha2 = source_eval_runner(
+                target_root_fields,
+                operator_core.FFn_psin,
+                operator_core.Pn_psin,
+                source_runtime_state.materialized_heat_input,
+                source_runtime_state.materialized_current_input,
+                float(operator_core.case.R0),
+            )
+            if update_fixed_point_psin_query(source_runtime_state.psin_query, target_root_fields[0], tolerance):
+                break
         np.copyto(source_runtime_state.psin_query, target_root_fields[0])
-        for _ in range(int(source_plan.fixed_point_finalize_max_iter)):
+        for _ in range(8):
             materialize_source_inputs(
                 source_plan=source_plan,
                 source_runtime_state=source_runtime_state,
@@ -728,12 +686,68 @@ def run_psin_source_fixed_point(operator_core: Any) -> tuple[float, float]:
             )
             if update_fixed_point_psin_query(source_runtime_state.psin_query, target_root_fields[0], tolerance):
                 break
-    np.copyto(operator_core.psin, target_root_fields[0])
-    np.copyto(operator_core.psin_r, target_root_fields[1])
-    np.copyto(operator_core.psin_rr, target_root_fields[2])
-    return alpha1, alpha2
+        np.copyto(operator_core.psin, target_root_fields[0])
+        np.copyto(operator_core.psin_r, target_root_fields[1])
+        np.copyto(operator_core.psin_rr, target_root_fields[2])
+        return alpha1, alpha2
+
+    return runner
 
 
+def _build_pq_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[[], tuple[float, float]]:
+    source_plan = operator_core.source_plan
+    source_eval_runner = operator_core.execution_state.source_eval_runner
+    source_runtime_state = operator_core.source_runtime_state
+    target_root_fields = source_runtime_state.target_root_fields
+    tolerance = 1.0e-10
+    allow_query_warmstart = bool(source_plan.endpoint_policy_code != _ENDPOINT_POLICY_CODES["none"])
+
+    def runner() -> tuple[float, float]:
+        if (not allow_query_warmstart) or source_runtime_state.psin_query[0] < 0.0:
+            normalize_psin_query_inplace(source_runtime_state.psin_query, operator_core.psin_profile.u)
+        alpha1 = float("nan")
+        alpha2 = float("nan")
+        for _ in range(16):
+            materialize_source_inputs(
+                source_plan=source_plan,
+                source_runtime_state=source_runtime_state,
+                psin_query=source_runtime_state.psin_query,
+                enable_projection=False,
+            )
+            alpha1, alpha2 = source_eval_runner(
+                target_root_fields,
+                operator_core.FFn_psin,
+                operator_core.Pn_psin,
+                source_runtime_state.materialized_heat_input,
+                source_runtime_state.materialized_current_input,
+                float(operator_core.case.R0),
+            )
+            if update_fixed_point_psin_query(source_runtime_state.psin_query, target_root_fields[0], tolerance):
+                break
+        np.copyto(source_runtime_state.psin_query, target_root_fields[0])
+        for _ in range(16):
+            materialize_source_inputs(
+                source_plan=source_plan,
+                source_runtime_state=source_runtime_state,
+                psin_query=source_runtime_state.psin_query,
+                enable_projection=True,
+            )
+            alpha1, alpha2 = source_eval_runner(
+                target_root_fields,
+                operator_core.FFn_psin,
+                operator_core.Pn_psin,
+                source_runtime_state.materialized_heat_input,
+                source_runtime_state.materialized_current_input,
+                float(operator_core.case.R0),
+            )
+            if update_fixed_point_psin_query(source_runtime_state.psin_query, target_root_fields[0], tolerance):
+                break
+        np.copyto(operator_core.psin, target_root_fields[0])
+        np.copyto(operator_core.psin_r, target_root_fields[1])
+        np.copyto(operator_core.psin_rr, target_root_fields[2])
+        return alpha1, alpha2
+
+    return runner
 def build_geometry_stage_runner(
     *,
     c_family_fields: np.ndarray,
