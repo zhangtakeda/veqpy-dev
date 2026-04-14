@@ -42,9 +42,10 @@ _RESIDUAL_BLOCK_CODE_BY_NAME = {
     "c_family": 4,
     "s_family": 5,
     "psin": 6,
-    "F2": 7,
+    "F": 7,
 }
-F2_BLOCK_CODE = _RESIDUAL_BLOCK_CODE_BY_NAME["F2"]
+F_BLOCK_CODE = _RESIDUAL_BLOCK_CODE_BY_NAME["F"]
+F2_BLOCK_CODE = F_BLOCK_CODE
 
 
 def _decode_residual_block_code(name: str) -> tuple[int, int]:
@@ -806,6 +807,7 @@ def build_geometry_stage_runner(
 
 
 __all__ = [
+    "F_BLOCK_CODE",
     "F2_BLOCK_CODE",
     "SourcePlan",
     "build_bound_source_stage_runner",

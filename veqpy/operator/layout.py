@@ -26,10 +26,10 @@ Notes:
 
 import numpy as np
 
-PACKED_PROFILE_FAMILY_ORDER = ("h", "v", "k", "c0", "c", "s", "psin", "F2")
+PACKED_PROFILE_FAMILY_ORDER = ("h", "v", "k", "c0", "c", "s", "psin", "F")
 INTERLEAVE_SHAPE_COEFFS_BY_ORDER = True
 
-_PREFIX_PROFILE_FAMILIES = ("psin", "F2")
+_PREFIX_PROFILE_FAMILIES = ("psin", "F")
 _SHAPE_PROFILE_FAMILIES = ("h", "v", "k", "c0", "c", "s")
 _ALL_PROFILE_FAMILIES = _SHAPE_PROFILE_FAMILIES + _PREFIX_PROFILE_FAMILIES
 
@@ -51,8 +51,8 @@ def get_prefix_profile_names() -> tuple[str, ...]:
 def _expand_profile_family(family: str, M_max: int) -> tuple[str, ...]:
     if family == "psin":
         return ("psin",)
-    if family == "F2":
-        return ("F2",)
+    if family == "F":
+        return ("F",)
     if family == "h":
         return ("h",)
     if family == "v":

@@ -75,7 +75,7 @@ $$
 
 去除常数项, 矩方法可以写成:
 
-$$ 
+$$
 \begin{aligned}
 \displaystyle \int_0^1 \mathrm{d} \rho \int_0^{2 \pi} \mathrm{d} \theta  ~  \left[\hat{G} \cdot \left( \frac{\partial \hat{\psi}}{\partial R} \frac{\partial R}{\partial p_k} + \frac{\partial \hat{\psi}}{\partial Z} \frac{\partial Z}{\partial p_k} \right) \right] &= 0\\
 \end{aligned}
@@ -95,18 +95,3 @@ $$
 
 - 对于 Strict 模式, 只需要对形状参数的残差方程进行优化即可.
 - 对于 Robust 模式, 还需要同时优化代表 $\hat{\psi}$ 或 $F^2$ 的残差方程.
-
-当前实现对应的 packed residual 组装规则是:
-
-- `h`, `v`, `k`, `c0`, `psin`, `F2` 仍然保留固定物理通道
-- `c{k}` / `s{k}` 则统一走 Fourier family residual block
-- binder 在 runtime 中只记录:
-  - family (`c` 或 `s`)
-  - harmonic order `k`
-
-对应的径向权重实现为:
-
-- `c_k` block 使用 $\rho^{k+1}$
-- `s_k` block 使用 $\rho^{k+1}$
-
-这些权重现在通过 `Grid.rho_powers` 预计算提供, 不在热路径里临时做幂运算.

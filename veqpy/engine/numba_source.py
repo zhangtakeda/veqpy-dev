@@ -1212,10 +1212,6 @@ def _update_pj2_from_rho_inputs(
 ) -> tuple[float, float]:
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
-    F2 = F
-    F = np.empty_like(F2)
-    _fill_sqrt_profile(F, F2)
-
     integrand = np.empty_like(out_psin_r)
     _fill_product_ratio(integrand, Ln_r, current_input, F, 1.0)
     corrected_integration(out_psin_r, integrand, integration_matrix, 1, rho, differentiation_matrix)
@@ -1283,10 +1279,6 @@ def _update_pj2_from_psin_inputs(
 ) -> tuple[float, float]:
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
-    F2 = F
-    F = np.empty_like(F2)
-    _fill_sqrt_profile(F, F2)
-
     integrand = np.empty_like(out_psin_r)
     _fill_product_ratio(integrand, Ln_r, current_input, F, 1.0)
     corrected_integration(out_psin_r, integrand, integration_matrix, 1, rho, differentiation_matrix)
@@ -1350,9 +1342,6 @@ def _update_pj2_from_psin_inputs_with_scratch(
     V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(radial_workspace, surface_workspace)
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
-    F2 = F
-    F = np.empty_like(F2)
-    _fill_sqrt_profile(F, F2)
     integrand = source_scratch_1d[0]
     integral_val = source_scratch_1d[1]
     I_tor = source_scratch_1d[2]
@@ -1532,9 +1521,6 @@ def _update_pq_from_rho_inputs(
 ) -> tuple[float, float]:
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
-    F2 = F
-    F = np.empty_like(F2)
-    _fill_sqrt_profile(F, F2)
     q_prof = np.empty_like(current_input)
 
     if has_Ip:
@@ -1600,9 +1586,6 @@ def _update_pq_from_psin_inputs(
 ) -> tuple[float, float]:
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
-    F2 = F
-    F = np.empty_like(F2)
-    _fill_sqrt_profile(F, F2)
     q_prof = np.empty_like(current_input)
 
     if has_Ip:
@@ -1664,9 +1647,6 @@ def _update_pq_from_psin_inputs_with_scratch(
     V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(radial_workspace, surface_workspace)
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
-    F2 = F
-    F = np.empty_like(F2)
-    _fill_sqrt_profile(F, F2)
     q_prof = source_scratch_1d[0]
     scratch_Pn_r = source_scratch_1d[3]
     psin_r_safe = source_scratch_1d[4]
@@ -2342,16 +2322,6 @@ def _fill_scaled_product(out: np.ndarray, lhs: np.ndarray, rhs: np.ndarray, scal
 def _fill_scaled_ratio(out: np.ndarray, num: np.ndarray, den: np.ndarray, scale: float) -> np.ndarray:
     for i in range(out.shape[0]):
         out[i] = scale * num[i] / den[i]
-    return out
-
-
-@njit(cache=True, fastmath=True, nogil=True)
-def _fill_sqrt_profile(out: np.ndarray, src: np.ndarray, floor: float = 1.0e-10) -> np.ndarray:
-    for i in range(out.shape[0]):
-        value = src[i]
-        if value < floor:
-            value = floor
-        out[i] = np.sqrt(value)
     return out
 
 

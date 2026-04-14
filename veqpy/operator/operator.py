@@ -58,16 +58,16 @@ from veqpy.operator.runtime_allocation import allocate_runtime_state
 
 _PROFILE_STATIC_KWARGS: dict[str, dict[str, int]] = {
     "psin": {"power": 2},
-    "F2": {"envelope_power": 2},
+    "F": {"envelope_power": 2},
 }
 _PROFILE_OFFSET_SPECS: dict[str, float | str] = {
     "h": 0.0,
     "v": 0.0,
     "k": "ka",
     "psin": 1.0,
-    "F2": 1.0,
+    "F": 1.0,
 }
-_PROFILE_SCALE_SPECS: dict[str, tuple[str, ...]] = {"F2": ("R0", "B0", "R0", "B0")}
+_PROFILE_SCALE_SPECS: dict[str, tuple[str, ...]] = {"F": ("R0", "B0", "R0", "B0")}
 
 
 @dataclass(slots=True)
@@ -84,7 +84,7 @@ class Operator:
     v_profile: Profile = field(init=False)
     k_profile: Profile = field(init=False)
     psin_profile: Profile = field(init=False)
-    F2_profile: Profile = field(init=False)
+    F_profile: Profile = field(init=False)
     profiles_by_name: dict[str, Profile] = field(init=False, repr=False)
 
     psin: np.ndarray = field(init=False)
@@ -431,7 +431,21 @@ class Operator:
         self.profile_scale_specs = dict(_PROFILE_SCALE_SPECS)
 
     def _build_profile_postprocess_runner(self) -> Callable[[], None]:
-        return lambda: None
+        F_fields = self.F_profile.u_fields
+        eps = 1.0e-10
+
+        def runner() -> None:
+            F2 = F_fields[0].copy()
+            F2_r = F_fields[1].copy()
+            F2_rr = F_fields[2].copy()
+            F = np.sqrt(np.maximum(F2, eps))
+            inv_F = 1.0 / F
+            inv_F3 = inv_F / np.maximum(F2, eps)
+            F_fields[0] = F
+            F_fields[1] = 0.5 * F2_r * inv_F
+            F_fields[2] = 0.5 * F2_rr * inv_F - 0.25 * F2_r * F2_r * inv_F3
+
+        return runner
 
     def _refresh_profile_runtime(self) -> None:
         refresh_profile_runtime(
@@ -465,6 +479,9 @@ class Operator:
         fixed_profile_ids = np.flatnonzero(~self.active_profile_mask).astype(np.int64, copy=False)
         for p in fixed_profile_ids:
             self.profiles_by_name[self.profile_names[int(p)]].update()
+        f_profile_id = self.profile_index.get("F", -1)
+        if f_profile_id >= 0 and not bool(self.active_profile_mask[f_profile_id]):
+            self.execution_state.profile_postprocess_runner()
 
     def _refresh_stage_a_runtime(self) -> None:
         refresh_stage_a_runtime(
