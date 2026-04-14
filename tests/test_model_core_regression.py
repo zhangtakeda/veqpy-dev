@@ -4,6 +4,7 @@ import numpy as np
 import orjson
 import pytest
 
+import veqpy.engine.backend_abi as engine_backend_abi
 import veqpy.model.equilibrium as equilibrium_module
 import veqpy.operator.layout as layout_module
 from veqpy.engine import orchestration
@@ -693,6 +694,133 @@ def test_runtime_layout_hot_path_views_refresh_after_replace_case():
     assert h_slot >= 0
     assert np.shares_memory(operator.h_profile.u_fields, operator.active_u_fields[h_slot])
     assert np.shares_memory(operator.runtime_layout.h_fields, operator.active_u_fields[h_slot])
+
+
+def test_operator_binds_fused_runner_from_backend_state(monkeypatch):
+    grid, case = _build_operator_case()
+    captured: dict[str, object] = {}
+
+    def fake_bind_fused_residual_runner(**kwargs):
+        captured.update(kwargs)
+        return lambda x: x
+
+    monkeypatch.setattr("veqpy.engine.numba_operator.bind_fused_residual_runner", fake_bind_fused_residual_runner)
+
+    operator = Operator(grid=grid, case=case)
+
+    assert captured["backend_state"] is operator.backend_state
+    assert "static_layout" not in captured
+    assert "residual_binding_layout" not in captured
+    assert "runtime_layout" not in captured
+
+
+def test_operator_binds_source_eval_runner_from_backend_state(monkeypatch):
+    grid, case = _build_operator_case()
+    captured: dict[str, object] = {}
+
+    def fake_bind_source_eval_runner(**kwargs):
+        captured.update(kwargs)
+        return lambda *args: (0.0, 0.0)
+
+    monkeypatch.setattr("veqpy.engine.numba_operator.bind_source_eval_runner", fake_bind_source_eval_runner)
+
+    operator = Operator(grid=grid, case=case)
+
+    assert captured["backend_state"] is operator.backend_state
+    assert "static_layout" not in captured
+    assert "runtime_layout" not in captured
+
+
+def test_source_eval_binding_delegates_to_backend_abi_builder(monkeypatch):
+    grid, case = _build_operator_case()
+    captured: dict[str, object] = {}
+
+    def fake_build_fused_source_eval_abi(**kwargs):
+        captured.update(kwargs)
+
+        class DummyAbi:
+            source_kernel = None
+            scratch_source_kernel = None
+            coordinate_code = 0
+            weights = np.empty(0, dtype=np.float64)
+            differentiation_matrix = np.empty((0, 0), dtype=np.float64)
+            integration_matrix = np.empty((0, 0), dtype=np.float64)
+            rho = np.empty(0, dtype=np.float64)
+            radial_workspace = np.empty((0, 0), dtype=np.float64)
+            surface_workspace = np.empty((0, 0, 0), dtype=np.float64)
+            F_profile_u = np.empty(0, dtype=np.float64)
+            Ip = 0.0
+            beta = 0.0
+            source_scratch_1d = np.empty((0, 0), dtype=np.float64)
+            B0 = 0.0
+
+        return DummyAbi()
+
+    monkeypatch.setattr("veqpy.engine.numba_operator.backend_abi.build_fused_source_eval_abi", fake_build_fused_source_eval_abi)
+
+    operator = Operator(grid=grid, case=case)
+
+    assert captured["backend_state"] is operator.backend_state
+    assert captured["source_plan"] is operator.source_plan
+
+
+def test_backend_abi_public_builders_preserve_backend_state_views():
+    grid, case = _build_operator_case()
+    operator = Operator(grid=grid, case=case)
+
+    hot_abi = engine_backend_abi.build_fused_hot_runtime_abi(
+        backend_state=operator.backend_state,
+        apply_f2_transform=True,
+        c_active_order=operator.c_effective_order,
+        s_active_order=operator.s_effective_order,
+        a=operator.case.a,
+        R0=operator.case.R0,
+        Z0=operator.case.Z0,
+    )
+    residual_pack_abi = engine_backend_abi.build_fused_residual_pack_abi(
+        backend_state=operator.backend_state,
+        a=operator.case.a,
+        R0=operator.case.R0,
+        B0=operator.case.B0,
+    )
+    source_eval_abi = engine_backend_abi.build_fused_source_eval_abi(
+        source_plan=operator.source_plan,
+        backend_state=operator.backend_state,
+        B0=operator.case.B0,
+    )
+
+    assert hot_abi.h_fields is operator.runtime_layout.h_fields
+    assert hot_abi.active_profile_slab is operator.runtime_layout.active_profile_slab
+    assert residual_pack_abi.packed_residual is operator.runtime_layout.packed_residual
+    assert residual_pack_abi.active_residual_block_codes is operator.residual_binding_layout.active_residual_block_codes
+    assert source_eval_abi.F_profile_u is operator.runtime_layout.F_profile_u
+    assert source_eval_abi.radial_workspace is operator.runtime_layout.geometry_radial_workspace
+
+
+def test_backend_abi_fixed_point_route_builders_encode_route_local_policy():
+    grid, case = _build_operator_case(mode="PQ", coordinate="psin", nodes="uniform")
+    case.profile_coeffs["psin"] = None
+    operator = Operator(grid=grid, case=case)
+
+    pq_abi = engine_backend_abi.build_pq_fixed_point_psin_source_abi(
+        source_plan=operator.source_plan,
+        backend_state=operator.backend_state,
+    )
+
+    grid2, case2 = _build_operator_case(mode="PJ2", coordinate="psin", nodes="uniform")
+    case2.profile_coeffs["psin"] = None
+    operator2 = Operator(grid=grid2, case=case2)
+    pj2_abi = engine_backend_abi.build_pj2_fixed_point_psin_source_abi(
+        source_plan=operator2.source_plan,
+        backend_state=operator2.backend_state,
+    )
+
+    assert pq_abi.allow_query_warmstart == bool(operator.source_plan.endpoint_policy_code != 0)
+    assert pq_abi.finalize_iter == 16
+    assert pq_abi.barycentric_weights.shape[0] == min(4, int(operator.source_plan.n_src))
+    assert pj2_abi.allow_query_warmstart is False
+    assert pj2_abi.finalize_iter == 8
+    assert pj2_abi.barycentric_weights.shape[0] == min(8, int(operator2.source_plan.n_src))
 
 
 @pytest.mark.parametrize(("mode", "heat_degree", "current_degree"), [("PJ2", 5, 6), ("PQ", 7, 10)])

@@ -423,8 +423,8 @@ class Operator:
         )
         self._refresh_stage_a_runtime()
         self._refresh_runtime_layout_views()
-        self._refresh_runtime_bindings()
         self._refresh_backend_state()
+        self._refresh_runtime_bindings()
 
     def _refresh_operator_identity(self) -> None:
         spec = validate_route(self.case.route, self.case.coordinate, self.case.nodes)
@@ -554,8 +554,7 @@ class Operator:
     def _build_source_eval_runner(self) -> Callable:
         return operator_ops.bind_source_eval_runner(
             source_plan=self.source_plan,
-            static_layout=self.static_layout,
-            runtime_layout=self.runtime_layout,
+            backend_state=self.backend_state,
             B0=self.case.B0,
         )
 
@@ -679,9 +678,7 @@ class Operator:
             return self._evaluate_residual
         return operator_ops.bind_fused_residual_runner(
             source_plan=self.source_plan,
-            static_layout=self.static_layout,
-            residual_binding_layout=self.residual_binding_layout,
-            runtime_layout=self.runtime_layout,
+            backend_state=self.backend_state,
             alpha_state=self.execution_state.fused_alpha_state,
             c_active_order=int(self.c_effective_order),
             s_active_order=int(self.s_effective_order),

@@ -14,6 +14,7 @@ from veqpy.engine import numba_operator as operator_ops
 from veqpy.engine import numba_profile as profile_ops
 from veqpy.engine import numba_residual as residual_ops
 from veqpy.engine import numba_source as source_ops
+from veqpy.engine import backend_abi
 from veqpy.engine import orchestration
 from veqpy.engine.numba_source import (
     COORDINATE_NAMES,
@@ -36,6 +37,7 @@ __all__ = [
     "profile_ops",
     "residual_ops",
     "source_ops",
+    "backend_abi",
     "orchestration",
     "RHO_AXIS",
     "THETA_AXIS",

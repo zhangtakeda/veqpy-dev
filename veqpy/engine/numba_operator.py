@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Callable
 import numpy as np
 from numba import njit
 
+import veqpy.engine.backend_abi as backend_abi
 from veqpy.engine.numba_geometry import update_geometry_hot
 from veqpy.engine.numba_profile import update_profiles_packed_bulk
 from veqpy.engine.numba_residual import _run_residual_blocks_packed_precomputed, update_residual_compact
@@ -29,19 +30,17 @@ from veqpy.engine.numba_source import (
     _local_barycentric_interpolate_pair,
     _materialize_profile_owned_psin_source_impl,
     _materialize_projected_source_inputs_impl,
-    _uniform_barycentric_weights,
     _update_fixed_point_psin_query_and_linear_uniform_inputs_impl,
     _update_fixed_point_psin_query_and_local_barycentric_inputs_impl,
     _update_fixed_point_psin_query_and_projected_inputs_impl,
     _update_fourier_family_fields_impl,
     _update_pj2_from_psin_inputs_with_scratch,
     _update_pq_from_psin_inputs_with_scratch,
-    resolve_source_scratch_kernel,
 )
 
 if TYPE_CHECKING:
     from veqpy.engine.orchestration import SourcePlan
-    from veqpy.operator.layouts import ResidualBindingLayout, RuntimeLayout, StaticLayout
+    from veqpy.operator.layouts import BackendState
 
 
 def _source_route_key(source_plan: "SourcePlan") -> tuple[str, str, str]:
@@ -83,76 +82,16 @@ _FUSED_ROUTE_BINDINGS: dict[tuple[str, str, str], _FusedRouteBindingSpec] = {
 def bind_source_eval_runner(
     *,
     source_plan: "SourcePlan",
-    static_layout: "StaticLayout",
-    runtime_layout: "RuntimeLayout",
+    backend_state: "BackendState",
     B0: float,
 ) -> Callable:
-    source_kernel = source_plan.kernel
-    scratch_source_kernel = resolve_source_scratch_kernel(source_kernel)
-    coordinate_code = int(source_plan.coordinate_code)
-    weights = static_layout.weights
-    differentiation_matrix = static_layout.differentiation_matrix
-    integration_matrix = static_layout.integration_matrix
-    rho = static_layout.rho
-    radial_workspace = runtime_layout.geometry_radial_workspace
-    surface_workspace = runtime_layout.geometry_surface_workspace
-    source_runtime_state = runtime_layout.source_runtime_state
-    source_work_state = source_runtime_state.work_state
-    F_profile_u = runtime_layout.F_profile_u
-    Ip = float(source_plan.Ip)
-    beta = float(source_plan.beta)
-    source_scratch_1d = source_work_state.scratch_1d
-
-    def runner(
-        out_root_fields: np.ndarray,
-        out_FFn_psin: np.ndarray,
-        out_Pn_psin: np.ndarray,
-        heat_input: np.ndarray,
-        current_input: np.ndarray,
-        R0: float,
-    ) -> tuple[float, float]:
-        if scratch_source_kernel is None:
-            return source_kernel(
-                out_root_fields,
-                out_FFn_psin,
-                out_Pn_psin,
-                heat_input,
-                current_input,
-                coordinate_code,
-                R0,
-                B0,
-                weights,
-                differentiation_matrix,
-                integration_matrix,
-                rho,
-                radial_workspace,
-                surface_workspace,
-                F_profile_u,
-                Ip,
-                beta,
-            )
-        return scratch_source_kernel(
-            out_root_fields,
-            out_FFn_psin,
-            out_Pn_psin,
-            heat_input,
-            current_input,
-            coordinate_code,
-            R0,
-            B0,
-            weights,
-            differentiation_matrix,
-            integration_matrix,
-            rho,
-            radial_workspace,
-            surface_workspace,
-            F_profile_u,
-            Ip,
-            beta,
-            source_scratch_1d,
+    return _bind_source_eval_runner_for_fused_backend(
+        source_eval_binding=backend_abi.build_fused_source_eval_abi(
+            source_plan=source_plan,
+            backend_state=backend_state,
+            B0=B0,
         )
-
-    return runner
+    )
 
 
 @njit(cache=True, fastmath=True, nogil=True)
@@ -191,133 +130,83 @@ def _normalize_psin_query(out: np.ndarray, source: np.ndarray) -> None:
 def _refresh_hot_runtime(
     x: np.ndarray,
     *,
-    runtime_layout: "RuntimeLayout",
-    static_layout: "StaticLayout",
-    apply_f2_transform: bool,
-    F_profile_fields: np.ndarray,
-    c_active_order: int,
-    s_active_order: int,
-    a: float,
-    R0: float,
-    Z0: float,
-    h_fields: np.ndarray,
-    v_fields: np.ndarray,
-    k_fields: np.ndarray,
+    hot_runtime_binding: backend_abi.FusedHotRuntimeABI,
 ) -> None:
-    active_profile_slab = runtime_layout.active_profile_slab
-    active_u_fields = runtime_layout.active_u_fields
-    T_fields = static_layout.T_fields
-    active_offsets = runtime_layout.active_offsets
-    active_scales = runtime_layout.active_scales
-    coeff_index_rows = runtime_layout.active_coeff_index_rows
-    lengths = runtime_layout.active_lengths
-    c_family_fields = runtime_layout.c_family_fields
-    s_family_fields = runtime_layout.s_family_fields
-    c_family_base_fields = runtime_layout.c_family_base_fields
-    s_family_base_fields = runtime_layout.s_family_base_fields
-    c_source_slots = runtime_layout.c_family_source_slots
-    s_source_slots = runtime_layout.s_family_source_slots
-    surface_workspace = runtime_layout.geometry_surface_workspace
-    radial_workspace = runtime_layout.geometry_radial_workspace
-    rho = static_layout.rho
-    theta = static_layout.theta
-    cos_ktheta = static_layout.cos_ktheta
-    sin_ktheta = static_layout.sin_ktheta
-    k_cos_ktheta = static_layout.k_cos_ktheta
-    k_sin_ktheta = static_layout.k_sin_ktheta
-    k2_cos_ktheta = static_layout.k2_cos_ktheta
-    k2_sin_ktheta = static_layout.k2_sin_ktheta
     update_profiles_packed_bulk(
-        active_profile_slab,
-        T_fields,
-        active_offsets,
-        active_scales,
+        hot_runtime_binding.active_profile_slab,
+        hot_runtime_binding.T_fields,
+        hot_runtime_binding.active_offsets,
+        hot_runtime_binding.active_scales,
         x,
-        coeff_index_rows,
-        lengths,
+        hot_runtime_binding.active_coeff_index_rows,
+        hot_runtime_binding.active_lengths,
     )
-    if apply_f2_transform:
-        _apply_f2_profile_fields_impl(F_profile_fields)
+    if hot_runtime_binding.apply_f2_transform:
+        _apply_f2_profile_fields_impl(hot_runtime_binding.F_profile_fields)
     _update_fourier_family_fields_impl(
-        c_family_fields,
-        s_family_fields,
-        c_family_base_fields,
-        s_family_base_fields,
-        active_u_fields,
-        c_source_slots,
-        s_source_slots,
-        c_active_order,
-        s_active_order,
+        hot_runtime_binding.c_family_fields,
+        hot_runtime_binding.s_family_fields,
+        hot_runtime_binding.c_family_base_fields,
+        hot_runtime_binding.s_family_base_fields,
+        hot_runtime_binding.active_u_fields,
+        hot_runtime_binding.c_family_source_slots,
+        hot_runtime_binding.s_family_source_slots,
+        hot_runtime_binding.c_active_order,
+        hot_runtime_binding.s_active_order,
     )
     update_geometry_hot(
-        surface_workspace,
-        radial_workspace,
-        a,
-        R0,
-        Z0,
-        rho,
-        theta,
-        cos_ktheta,
-        sin_ktheta,
-        k_cos_ktheta,
-        k_sin_ktheta,
-        k2_cos_ktheta,
-        k2_sin_ktheta,
-        h_fields,
-        v_fields,
-        k_fields,
-        c_family_fields,
-        s_family_fields,
-        c_active_order,
-        s_active_order,
+        hot_runtime_binding.geometry_surface_workspace,
+        hot_runtime_binding.geometry_radial_workspace,
+        hot_runtime_binding.a,
+        hot_runtime_binding.R0,
+        hot_runtime_binding.Z0,
+        hot_runtime_binding.rho,
+        hot_runtime_binding.theta,
+        hot_runtime_binding.cos_ktheta,
+        hot_runtime_binding.sin_ktheta,
+        hot_runtime_binding.k_cos_ktheta,
+        hot_runtime_binding.k_sin_ktheta,
+        hot_runtime_binding.k2_cos_ktheta,
+        hot_runtime_binding.k2_sin_ktheta,
+        hot_runtime_binding.h_fields,
+        hot_runtime_binding.v_fields,
+        hot_runtime_binding.k_fields,
+        hot_runtime_binding.c_family_fields,
+        hot_runtime_binding.s_family_fields,
+        hot_runtime_binding.c_active_order,
+        hot_runtime_binding.s_active_order,
     )
 
 
 def _pack_residual_output(
     *,
-    runtime_layout: "RuntimeLayout",
-    residual_binding_layout: "ResidualBindingLayout",
-    static_layout: "StaticLayout",
+    residual_pack_binding: backend_abi.FusedResidualPackABI,
     scratch_holder: list[np.ndarray | None],
-    a: float,
-    R0: float,
-    B0: float,
 ) -> np.ndarray:
-    packed_residual = runtime_layout.packed_residual
-    residual_workspace = runtime_layout.residual_surface_workspace
-    block_codes = residual_binding_layout.active_residual_block_codes
-    block_orders = residual_binding_layout.active_residual_block_orders
-    coeff_index_rows = runtime_layout.active_coeff_index_rows
-    lengths = runtime_layout.active_lengths
-    sin_ktheta = static_layout.sin_ktheta
-    cos_ktheta = static_layout.cos_ktheta
-    rho_powers = static_layout.rho_powers
-    y = static_layout.y
-    T_fields = static_layout.T_fields
-    weights = static_layout.weights
+    packed_residual = residual_pack_binding.packed_residual
     packed_residual.fill(0.0)
     scratch = scratch_holder[0]
-    nr = residual_workspace.shape[1]
+    nr = residual_pack_binding.residual_surface_workspace.shape[1]
     if scratch is None or scratch.shape[0] != nr:
         scratch = np.empty(nr, dtype=np.float64)
         scratch_holder[0] = scratch
     _run_residual_blocks_packed_precomputed(
         packed_residual,
         scratch,
-        block_codes,
-        block_orders,
-        coeff_index_rows,
-        lengths,
-        residual_workspace,
-        sin_ktheta,
-        cos_ktheta,
-        rho_powers,
-        y,
-        T_fields,
-        weights,
-        a,
-        R0,
-        B0,
+        residual_pack_binding.active_residual_block_codes,
+        residual_pack_binding.active_residual_block_orders,
+        residual_pack_binding.active_coeff_index_rows,
+        residual_pack_binding.active_lengths,
+        residual_pack_binding.residual_surface_workspace,
+        residual_pack_binding.sin_ktheta,
+        residual_pack_binding.cos_ktheta,
+        residual_pack_binding.rho_powers,
+        residual_pack_binding.y,
+        residual_pack_binding.T_fields,
+        residual_pack_binding.weights,
+        residual_pack_binding.a,
+        residual_pack_binding.R0,
+        residual_pack_binding.B0,
     )
     return packed_residual.copy()
 
@@ -604,9 +493,7 @@ def _run_projected_finalize_with_scratch_impl(
 def bind_fused_residual_runner(
     *,
     source_plan: SourcePlan,
-    static_layout: StaticLayout,
-    residual_binding_layout: ResidualBindingLayout,
-    runtime_layout: RuntimeLayout,
+    backend_state: "BackendState",
     alpha_state: np.ndarray,
     c_active_order: int,
     s_active_order: int,
@@ -615,13 +502,13 @@ def bind_fused_residual_runner(
     Z0: float,
     B0: float,
 ) -> Callable[[np.ndarray], np.ndarray]:
+    apply_f2_transform = "F" in backend_state.residual_binding_layout.active_profile_names
     route_key = _source_route_key(source_plan)
     if route_key == ("PJ2", "psin", "uniform"):
         return _bind_pj2_psin_fixed_point_residual_runner_core(
             source_plan=source_plan,
-            static_layout=static_layout,
-            residual_binding_layout=residual_binding_layout,
-            runtime_layout=runtime_layout,
+            backend_state=backend_state,
+            apply_f2_transform=apply_f2_transform,
             alpha_state=alpha_state,
             c_active_order=c_active_order,
             s_active_order=s_active_order,
@@ -633,9 +520,8 @@ def bind_fused_residual_runner(
     if route_key == ("PQ", "psin", "uniform"):
         return _bind_pq_psin_fixed_point_residual_runner_core(
             source_plan=source_plan,
-            static_layout=static_layout,
-            residual_binding_layout=residual_binding_layout,
-            runtime_layout=runtime_layout,
+            backend_state=backend_state,
+            apply_f2_transform=apply_f2_transform,
             alpha_state=alpha_state,
             c_active_order=c_active_order,
             s_active_order=s_active_order,
@@ -652,9 +538,8 @@ def bind_fused_residual_runner(
     if binding.core_kind == "single_pass":
         return _bind_single_pass_residual_runner_core(
             source_plan=source_plan,
-            static_layout=static_layout,
-            residual_binding_layout=residual_binding_layout,
-            runtime_layout=runtime_layout,
+            backend_state=backend_state,
+            apply_f2_transform=apply_f2_transform,
             alpha_state=alpha_state,
             c_active_order=c_active_order,
             s_active_order=s_active_order,
@@ -666,9 +551,8 @@ def bind_fused_residual_runner(
     if binding.core_kind == "profile_owned":
         return _bind_profile_owned_psin_residual_runner_core(
             source_plan=source_plan,
-            static_layout=static_layout,
-            residual_binding_layout=residual_binding_layout,
-            runtime_layout=runtime_layout,
+            backend_state=backend_state,
+            apply_f2_transform=apply_f2_transform,
             alpha_state=alpha_state,
             c_active_order=c_active_order,
             s_active_order=s_active_order,
@@ -684,9 +568,8 @@ def bind_fused_residual_runner(
 def _bind_single_pass_residual_runner_core(
     *,
     source_plan: SourcePlan,
-    static_layout: StaticLayout,
-    residual_binding_layout: ResidualBindingLayout,
-    runtime_layout: RuntimeLayout,
+    backend_state: "BackendState",
+    apply_f2_transform: bool,
     alpha_state: np.ndarray,
     c_active_order: int,
     s_active_order: int,
@@ -695,22 +578,33 @@ def _bind_single_pass_residual_runner_core(
     Z0: float,
     B0: float,
 ) -> Callable[[np.ndarray], np.ndarray]:
+    runtime_layout = backend_state.runtime_layout
     surface_workspace = runtime_layout.geometry_surface_workspace
     residual_workspace = runtime_layout.residual_surface_workspace
     root_fields = runtime_layout.root_fields
-    source_runtime_state = runtime_layout.source_runtime_state
-    source_work_state = source_runtime_state.work_state
+    source_work_state = backend_state.source_runtime_state.work_state
     materialized_heat_input = source_work_state.materialized_heat_input
     materialized_current_input = source_work_state.materialized_current_input
-    h_fields = runtime_layout.h_fields
-    v_fields = runtime_layout.v_fields
-    k_fields = runtime_layout.k_fields
-    F_profile_fields = runtime_layout.F_profile_fields
-    apply_f2_transform = "F" in residual_binding_layout.active_profile_names
-    source_eval_runner = bind_source_eval_runner(
-        source_plan=source_plan,
-        static_layout=static_layout,
-        runtime_layout=runtime_layout,
+    hot_runtime_binding = backend_abi.build_fused_hot_runtime_abi(
+        backend_state=backend_state,
+        apply_f2_transform=apply_f2_transform,
+        c_active_order=c_active_order,
+        s_active_order=s_active_order,
+        a=a,
+        R0=R0,
+        Z0=Z0,
+    )
+    source_eval_runner = _bind_source_eval_runner_for_fused_backend(
+        source_eval_binding=backend_abi.build_fused_source_eval_abi(
+            source_plan=source_plan,
+            backend_state=backend_state,
+            B0=B0,
+        )
+    )
+    residual_pack_binding = backend_abi.build_fused_residual_pack_abi(
+        backend_state=backend_state,
+        a=a,
+        R0=R0,
         B0=B0,
     )
     scratch_holder: list[np.ndarray | None] = [None]
@@ -718,21 +612,7 @@ def _bind_single_pass_residual_runner_core(
     Pn_psin = root_fields[4]
 
     def runner(x: np.ndarray) -> np.ndarray:
-        _refresh_hot_runtime(
-            x,
-            runtime_layout=runtime_layout,
-            static_layout=static_layout,
-            apply_f2_transform=apply_f2_transform,
-            F_profile_fields=F_profile_fields,
-            c_active_order=c_active_order,
-            s_active_order=s_active_order,
-            a=a,
-            R0=R0,
-            Z0=Z0,
-            h_fields=h_fields,
-            v_fields=v_fields,
-            k_fields=k_fields,
-        )
+        _refresh_hot_runtime(x, hot_runtime_binding=hot_runtime_binding)
         alpha1, alpha2 = source_eval_runner(
             root_fields,
             FFn_psin,
@@ -750,15 +630,7 @@ def _bind_single_pass_residual_runner_core(
             root_fields,
             surface_workspace,
         )
-        return _pack_residual_output(
-            runtime_layout=runtime_layout,
-            residual_binding_layout=residual_binding_layout,
-            static_layout=static_layout,
-            scratch_holder=scratch_holder,
-            a=a,
-            R0=R0,
-            B0=B0,
-        )
+        return _pack_residual_output(residual_pack_binding=residual_pack_binding, scratch_holder=scratch_holder)
 
     return runner
 
@@ -766,9 +638,8 @@ def _bind_single_pass_residual_runner_core(
 def _bind_profile_owned_psin_residual_runner_core(
     *,
     source_plan: SourcePlan,
-    static_layout: StaticLayout,
-    residual_binding_layout: ResidualBindingLayout,
-    runtime_layout: RuntimeLayout,
+    backend_state: "BackendState",
+    apply_f2_transform: bool,
     alpha_state: np.ndarray,
     c_active_order: int,
     s_active_order: int,
@@ -778,38 +649,36 @@ def _bind_profile_owned_psin_residual_runner_core(
     B0: float,
     skip_projection_finalize: bool,
 ) -> Callable[[np.ndarray], np.ndarray]:
+    runtime_layout = backend_state.runtime_layout
     surface_workspace = runtime_layout.geometry_surface_workspace
     residual_workspace = runtime_layout.residual_surface_workspace
     root_fields = runtime_layout.root_fields
-    source_runtime_state = runtime_layout.source_runtime_state
-    source_const_state = source_runtime_state.const_state
-    source_work_state = source_runtime_state.work_state
-    source_aux_state = source_runtime_state.aux_state
-    source_target_root_fields = source_aux_state.target_root_fields
-    source_psin_query = source_work_state.psin_query
-    source_parameter_query = source_work_state.parameter_query
-    heat_projection_coeff = source_aux_state.heat_projection_coeff
-    current_projection_coeff = source_aux_state.current_projection_coeff
-    endpoint_blend = source_const_state.endpoint_blend
-    materialized_heat_input = source_work_state.materialized_heat_input
-    materialized_current_input = source_work_state.materialized_current_input
-    psin_profile_fields = runtime_layout.psin_profile_fields
-    h_fields = runtime_layout.h_fields
-    v_fields = runtime_layout.v_fields
-    k_fields = runtime_layout.k_fields
-    F_profile_fields = runtime_layout.F_profile_fields
-    apply_f2_transform = "F" in residual_binding_layout.active_profile_names
-    parameterization_code = int(source_plan.parameterization_code)
-    has_projection_policy = bool(source_plan.has_projection_policy)
-    projection_domain_code = int(source_plan.projection_domain_code)
-    endpoint_policy_code = int(source_plan.endpoint_policy_code)
-    heat_input = source_plan.heat_input
-    current_input = source_plan.current_input
-    source_eval_runner = bind_source_eval_runner(
-        source_plan=source_plan,
-        static_layout=static_layout,
-        runtime_layout=runtime_layout,
+    hot_runtime_binding = backend_abi.build_fused_hot_runtime_abi(
+        backend_state=backend_state,
+        apply_f2_transform=apply_f2_transform,
+        c_active_order=c_active_order,
+        s_active_order=s_active_order,
+        a=a,
+        R0=R0,
+        Z0=Z0,
+    )
+    source_eval_runner = _bind_source_eval_runner_for_fused_backend(
+        source_eval_binding=backend_abi.build_fused_source_eval_abi(
+            source_plan=source_plan,
+            backend_state=backend_state,
+            B0=B0,
+        )
+    )
+    residual_pack_binding = backend_abi.build_fused_residual_pack_abi(
+        backend_state=backend_state,
+        a=a,
+        R0=R0,
         B0=B0,
+    )
+    profile_owned_psin_binding = backend_abi.build_profile_owned_psin_source_abi(
+        source_plan=source_plan,
+        backend_state=backend_state,
+        skip_projection_finalize=skip_projection_finalize,
     )
     scratch_holder: list[np.ndarray | None] = [None]
     psin = root_fields[0]
@@ -819,54 +688,43 @@ def _bind_profile_owned_psin_residual_runner_core(
     Pn_psin = root_fields[4]
 
     def runner(x: np.ndarray) -> np.ndarray:
-        _refresh_hot_runtime(
-            x,
-            runtime_layout=runtime_layout,
-            static_layout=static_layout,
-            apply_f2_transform=apply_f2_transform,
-            F_profile_fields=F_profile_fields,
-            c_active_order=c_active_order,
-            s_active_order=s_active_order,
-            a=a,
-            R0=R0,
-            Z0=Z0,
-            h_fields=h_fields,
-            v_fields=v_fields,
-            k_fields=k_fields,
-        )
+        _refresh_hot_runtime(x, hot_runtime_binding=hot_runtime_binding)
         _materialize_profile_owned_psin_source_impl(
             psin,
             psin_r,
             psin_rr,
-            source_psin_query,
-            source_parameter_query,
-            materialized_heat_input,
-            materialized_current_input,
-            psin_profile_fields,
-            heat_input,
-            current_input,
-            parameterization_code,
+            profile_owned_psin_binding.source_psin_query,
+            profile_owned_psin_binding.source_parameter_query,
+            profile_owned_psin_binding.materialized_heat_input,
+            profile_owned_psin_binding.materialized_current_input,
+            profile_owned_psin_binding.psin_profile_fields,
+            profile_owned_psin_binding.heat_input,
+            profile_owned_psin_binding.current_input,
+            profile_owned_psin_binding.parameterization_code,
         )
         # PI psin-uniform is more accurate with the direct source-owned interpolation
         # than with the extra projected rematerialization used by other routes.
-        if has_projection_policy and not skip_projection_finalize:
+        if (
+            profile_owned_psin_binding.has_projection_policy
+            and not profile_owned_psin_binding.skip_projection_finalize
+        ):
             _materialize_projected_source_inputs_impl(
-                materialized_heat_input,
-                materialized_current_input,
-                heat_projection_coeff,
-                current_projection_coeff,
-                current_input,
-                source_psin_query,
-                projection_domain_code,
-                endpoint_policy_code,
-                endpoint_blend,
+                profile_owned_psin_binding.materialized_heat_input,
+                profile_owned_psin_binding.materialized_current_input,
+                profile_owned_psin_binding.heat_projection_coeff,
+                profile_owned_psin_binding.current_projection_coeff,
+                profile_owned_psin_binding.current_input,
+                profile_owned_psin_binding.source_psin_query,
+                profile_owned_psin_binding.projection_domain_code,
+                profile_owned_psin_binding.endpoint_policy_code,
+                profile_owned_psin_binding.endpoint_blend,
             )
         alpha1, alpha2 = source_eval_runner(
-            source_target_root_fields,
+            profile_owned_psin_binding.source_target_root_fields,
             FFn_psin,
             Pn_psin,
-            materialized_heat_input,
-            materialized_current_input,
+            profile_owned_psin_binding.materialized_heat_input,
+            profile_owned_psin_binding.materialized_current_input,
             R0,
         )
         alpha_state[0] = alpha1
@@ -878,15 +736,7 @@ def _bind_profile_owned_psin_residual_runner_core(
             root_fields,
             surface_workspace,
         )
-        return _pack_residual_output(
-            runtime_layout=runtime_layout,
-            residual_binding_layout=residual_binding_layout,
-            static_layout=static_layout,
-            scratch_holder=scratch_holder,
-            a=a,
-            R0=R0,
-            B0=B0,
-        )
+        return _pack_residual_output(residual_pack_binding=residual_pack_binding, scratch_holder=scratch_holder)
 
     return runner
 
@@ -894,9 +744,8 @@ def _bind_profile_owned_psin_residual_runner_core(
 def _bind_pj2_psin_fixed_point_residual_runner_core(
     *,
     source_plan: SourcePlan,
-    static_layout: StaticLayout,
-    residual_binding_layout: ResidualBindingLayout,
-    runtime_layout: RuntimeLayout,
+    backend_state: "BackendState",
+    apply_f2_transform: bool,
     alpha_state: np.ndarray,
     c_active_order: int,
     s_active_order: int,
@@ -905,6 +754,8 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
     Z0: float,
     B0: float,
 ) -> Callable[[np.ndarray], np.ndarray]:
+    static_layout = backend_state.static_layout
+    runtime_layout = backend_state.runtime_layout
     surface_workspace = runtime_layout.geometry_surface_workspace
     radial_workspace = runtime_layout.geometry_radial_workspace
     residual_workspace = runtime_layout.residual_surface_workspace
@@ -913,72 +764,53 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
     differentiation_matrix = static_layout.differentiation_matrix
     integration_matrix = static_layout.integration_matrix
     root_fields = runtime_layout.root_fields
-    source_runtime_state = runtime_layout.source_runtime_state
-    source_const_state = source_runtime_state.const_state
-    source_work_state = source_runtime_state.work_state
-    source_aux_state = source_runtime_state.aux_state
-    source_psin_query = source_work_state.psin_query
-    materialized_heat_input = source_work_state.materialized_heat_input
-    materialized_current_input = source_work_state.materialized_current_input
-    source_scratch_1d = source_work_state.scratch_1d
-    heat_projection_coeff = source_aux_state.heat_projection_coeff
-    current_projection_coeff = source_aux_state.current_projection_coeff
-    endpoint_blend = source_const_state.endpoint_blend
-    h_fields = runtime_layout.h_fields
-    v_fields = runtime_layout.v_fields
-    k_fields = runtime_layout.k_fields
-    F_profile_u = runtime_layout.F_profile_u
-    F_profile_fields = runtime_layout.F_profile_fields
-    psin_profile_u = runtime_layout.psin_profile_u
-    apply_f2_transform = "F" in residual_binding_layout.active_profile_names
-    heat_input = source_plan.heat_input
-    current_input = source_plan.current_input
-    coordinate_code = int(source_plan.coordinate_code)
-    Ip = float(source_plan.Ip)
-    beta = float(source_plan.beta)
-    has_Ip = bool(np.isfinite(Ip))
-    projection_domain_code = int(source_plan.projection_domain_code)
-    endpoint_policy_code = int(source_plan.endpoint_policy_code)
-    fixed_point_barycentric_weights = _uniform_barycentric_weights(min(8, int(source_plan.n_src)))
+    hot_runtime_binding = backend_abi.build_fused_hot_runtime_abi(
+        backend_state=backend_state,
+        apply_f2_transform=apply_f2_transform,
+        c_active_order=c_active_order,
+        s_active_order=s_active_order,
+        a=a,
+        R0=R0,
+        Z0=Z0,
+    )
+    residual_pack_binding = backend_abi.build_fused_residual_pack_abi(
+        backend_state=backend_state,
+        a=a,
+        R0=R0,
+        B0=B0,
+    )
+    fixed_point_psin_binding = backend_abi.build_pj2_fixed_point_psin_source_abi(
+        source_plan=source_plan,
+        backend_state=backend_state,
+    )
     scratch_holder: list[np.ndarray | None] = [None]
     psin = root_fields[0]
     FFn_psin = root_fields[3]
     Pn_psin = root_fields[4]
 
     def runner(x: np.ndarray) -> np.ndarray:
-        _refresh_hot_runtime(
-            x,
-            runtime_layout=runtime_layout,
-            static_layout=static_layout,
-            apply_f2_transform=apply_f2_transform,
-            F_profile_fields=F_profile_fields,
-            c_active_order=c_active_order,
-            s_active_order=s_active_order,
-            a=a,
-            R0=R0,
-            Z0=Z0,
-            h_fields=h_fields,
-            v_fields=v_fields,
-            k_fields=k_fields,
-        )
-        if source_psin_query[0] < 0.0:
-            _normalize_psin_query(source_psin_query, psin_profile_u)
-        if has_Ip:
+        _refresh_hot_runtime(x, hot_runtime_binding=hot_runtime_binding)
+        if fixed_point_psin_binding.source_psin_query[0] < 0.0:
+            _normalize_psin_query(
+                fixed_point_psin_binding.source_psin_query,
+                fixed_point_psin_binding.psin_profile_u,
+            )
+        if fixed_point_psin_binding.has_Ip:
             alpha1, alpha2 = _run_fixed_point_barycentric_with_scratch_impl(
                 _update_pj2_from_psin_inputs_with_scratch,
                 16,
                 1.0e-10,
-                source_psin_query,
+                fixed_point_psin_binding.source_psin_query,
                 psin,
                 root_fields,
                 FFn_psin,
                 Pn_psin,
-                materialized_heat_input,
-                materialized_current_input,
-                heat_input,
-                current_input,
-                fixed_point_barycentric_weights,
-                coordinate_code,
+                fixed_point_psin_binding.materialized_heat_input,
+                fixed_point_psin_binding.materialized_current_input,
+                fixed_point_psin_binding.heat_input,
+                fixed_point_psin_binding.current_input,
+                fixed_point_psin_binding.barycentric_weights,
+                fixed_point_psin_binding.coordinate_code,
                 R0,
                 B0,
                 weights,
@@ -987,26 +819,26 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
                 rho,
                 radial_workspace,
                 surface_workspace,
-                F_profile_u,
-                Ip,
-                beta,
-                source_scratch_1d,
+                fixed_point_psin_binding.F_profile_u,
+                fixed_point_psin_binding.Ip,
+                fixed_point_psin_binding.beta,
+                fixed_point_psin_binding.source_scratch_1d,
             )
         else:
             alpha1, alpha2 = _run_fixed_point_linear_with_scratch_impl(
                 _update_pj2_from_psin_inputs_with_scratch,
                 16,
                 1.0e-10,
-                source_psin_query,
+                fixed_point_psin_binding.source_psin_query,
                 psin,
                 root_fields,
                 FFn_psin,
                 Pn_psin,
-                materialized_heat_input,
-                materialized_current_input,
-                heat_input,
-                current_input,
-                coordinate_code,
+                fixed_point_psin_binding.materialized_heat_input,
+                fixed_point_psin_binding.materialized_current_input,
+                fixed_point_psin_binding.heat_input,
+                fixed_point_psin_binding.current_input,
+                fixed_point_psin_binding.coordinate_code,
                 R0,
                 B0,
                 weights,
@@ -1015,29 +847,29 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
                 rho,
                 radial_workspace,
                 surface_workspace,
-                F_profile_u,
-                Ip,
-                beta,
-                source_scratch_1d,
+                fixed_point_psin_binding.F_profile_u,
+                fixed_point_psin_binding.Ip,
+                fixed_point_psin_binding.beta,
+                fixed_point_psin_binding.source_scratch_1d,
             )
         alpha1, alpha2 = _run_projected_finalize_with_scratch_impl(
             _update_pj2_from_psin_inputs_with_scratch,
-            8,
+            fixed_point_psin_binding.finalize_iter,
             1.0e-10,
-            source_psin_query,
+            fixed_point_psin_binding.source_psin_query,
             psin,
             root_fields,
             FFn_psin,
             Pn_psin,
-            materialized_heat_input,
-            materialized_current_input,
-            heat_projection_coeff,
-            current_projection_coeff,
-            current_input,
-            projection_domain_code,
-            endpoint_policy_code,
-            endpoint_blend,
-            coordinate_code,
+            fixed_point_psin_binding.materialized_heat_input,
+            fixed_point_psin_binding.materialized_current_input,
+            fixed_point_psin_binding.heat_projection_coeff,
+            fixed_point_psin_binding.current_projection_coeff,
+            fixed_point_psin_binding.current_input,
+            fixed_point_psin_binding.projection_domain_code,
+            fixed_point_psin_binding.endpoint_policy_code,
+            fixed_point_psin_binding.endpoint_blend,
+            fixed_point_psin_binding.coordinate_code,
             R0,
             B0,
             weights,
@@ -1046,10 +878,10 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
             rho,
             radial_workspace,
             surface_workspace,
-            F_profile_u,
-            Ip,
-            beta,
-            source_scratch_1d,
+            fixed_point_psin_binding.F_profile_u,
+            fixed_point_psin_binding.Ip,
+            fixed_point_psin_binding.beta,
+            fixed_point_psin_binding.source_scratch_1d,
         )
         alpha_state[0] = alpha1
         alpha_state[1] = alpha2
@@ -1060,14 +892,62 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
             root_fields,
             surface_workspace,
         )
-        return _pack_residual_output(
-            runtime_layout=runtime_layout,
-            residual_binding_layout=residual_binding_layout,
-            static_layout=static_layout,
-            scratch_holder=scratch_holder,
-            a=a,
-            R0=R0,
-            B0=B0,
+        return _pack_residual_output(residual_pack_binding=residual_pack_binding, scratch_holder=scratch_holder)
+
+    return runner
+
+
+def _bind_source_eval_runner_for_fused_backend(
+    *,
+    source_eval_binding: backend_abi.FusedSourceEvalABI,
+) -> Callable:
+    def runner(
+        out_root_fields: np.ndarray,
+        out_FFn_psin: np.ndarray,
+        out_Pn_psin: np.ndarray,
+        heat_input: np.ndarray,
+        current_input: np.ndarray,
+        R0: float,
+    ) -> tuple[float, float]:
+        if source_eval_binding.scratch_source_kernel is None:
+            return source_eval_binding.source_kernel(
+                out_root_fields,
+                out_FFn_psin,
+                out_Pn_psin,
+                heat_input,
+                current_input,
+                source_eval_binding.coordinate_code,
+                R0,
+                source_eval_binding.B0,
+                source_eval_binding.weights,
+                source_eval_binding.differentiation_matrix,
+                source_eval_binding.integration_matrix,
+                source_eval_binding.rho,
+                source_eval_binding.radial_workspace,
+                source_eval_binding.surface_workspace,
+                source_eval_binding.F_profile_u,
+                source_eval_binding.Ip,
+                source_eval_binding.beta,
+            )
+        return source_eval_binding.scratch_source_kernel(
+            out_root_fields,
+            out_FFn_psin,
+            out_Pn_psin,
+            heat_input,
+            current_input,
+            source_eval_binding.coordinate_code,
+            R0,
+            source_eval_binding.B0,
+            source_eval_binding.weights,
+            source_eval_binding.differentiation_matrix,
+            source_eval_binding.integration_matrix,
+            source_eval_binding.rho,
+            source_eval_binding.radial_workspace,
+            source_eval_binding.surface_workspace,
+            source_eval_binding.F_profile_u,
+            source_eval_binding.Ip,
+            source_eval_binding.beta,
+            source_eval_binding.source_scratch_1d,
         )
 
     return runner
@@ -1076,9 +956,8 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
 def _bind_pq_psin_fixed_point_residual_runner_core(
     *,
     source_plan: SourcePlan,
-    static_layout: StaticLayout,
-    residual_binding_layout: ResidualBindingLayout,
-    runtime_layout: RuntimeLayout,
+    backend_state: "BackendState",
+    apply_f2_transform: bool,
     alpha_state: np.ndarray,
     c_active_order: int,
     s_active_order: int,
@@ -1087,6 +966,8 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
     Z0: float,
     B0: float,
 ) -> Callable[[np.ndarray], np.ndarray]:
+    static_layout = backend_state.static_layout
+    runtime_layout = backend_state.runtime_layout
     surface_workspace = runtime_layout.geometry_surface_workspace
     radial_workspace = runtime_layout.geometry_radial_workspace
     residual_workspace = runtime_layout.residual_surface_workspace
@@ -1095,73 +976,53 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
     differentiation_matrix = static_layout.differentiation_matrix
     integration_matrix = static_layout.integration_matrix
     root_fields = runtime_layout.root_fields
-    source_runtime_state = runtime_layout.source_runtime_state
-    source_const_state = source_runtime_state.const_state
-    source_work_state = source_runtime_state.work_state
-    source_aux_state = source_runtime_state.aux_state
-    source_psin_query = source_work_state.psin_query
-    materialized_heat_input = source_work_state.materialized_heat_input
-    materialized_current_input = source_work_state.materialized_current_input
-    source_scratch_1d = source_work_state.scratch_1d
-    heat_projection_coeff = source_aux_state.heat_projection_coeff
-    current_projection_coeff = source_aux_state.current_projection_coeff
-    endpoint_blend = source_const_state.endpoint_blend
-    h_fields = runtime_layout.h_fields
-    v_fields = runtime_layout.v_fields
-    k_fields = runtime_layout.k_fields
-    F_profile_u = runtime_layout.F_profile_u
-    F_profile_fields = runtime_layout.F_profile_fields
-    psin_profile_u = runtime_layout.psin_profile_u
-    apply_f2_transform = "F" in residual_binding_layout.active_profile_names
-    heat_input = source_plan.heat_input
-    current_input = source_plan.current_input
-    coordinate_code = int(source_plan.coordinate_code)
-    Ip = float(source_plan.Ip)
-    beta = float(source_plan.beta)
-    has_Ip = bool(np.isfinite(Ip))
-    projection_domain_code = int(source_plan.projection_domain_code)
-    endpoint_policy_code = int(source_plan.endpoint_policy_code)
-    allow_query_warmstart = bool(endpoint_policy_code != 0)
-    fixed_point_barycentric_weights = _uniform_barycentric_weights(min(4, int(source_plan.n_src)))
+    hot_runtime_binding = backend_abi.build_fused_hot_runtime_abi(
+        backend_state=backend_state,
+        apply_f2_transform=apply_f2_transform,
+        c_active_order=c_active_order,
+        s_active_order=s_active_order,
+        a=a,
+        R0=R0,
+        Z0=Z0,
+    )
+    residual_pack_binding = backend_abi.build_fused_residual_pack_abi(
+        backend_state=backend_state,
+        a=a,
+        R0=R0,
+        B0=B0,
+    )
+    fixed_point_psin_binding = backend_abi.build_pq_fixed_point_psin_source_abi(
+        source_plan=source_plan,
+        backend_state=backend_state,
+    )
     scratch_holder: list[np.ndarray | None] = [None]
     psin = root_fields[0]
     FFn_psin = root_fields[3]
     Pn_psin = root_fields[4]
 
     def runner(x: np.ndarray) -> np.ndarray:
-        _refresh_hot_runtime(
-            x,
-            runtime_layout=runtime_layout,
-            static_layout=static_layout,
-            apply_f2_transform=apply_f2_transform,
-            F_profile_fields=F_profile_fields,
-            c_active_order=c_active_order,
-            s_active_order=s_active_order,
-            a=a,
-            R0=R0,
-            Z0=Z0,
-            h_fields=h_fields,
-            v_fields=v_fields,
-            k_fields=k_fields,
-        )
-        if (not allow_query_warmstart) or source_psin_query[0] < 0.0:
-            _normalize_psin_query(source_psin_query, psin_profile_u)
-        if has_Ip:
+        _refresh_hot_runtime(x, hot_runtime_binding=hot_runtime_binding)
+        if (not fixed_point_psin_binding.allow_query_warmstart) or fixed_point_psin_binding.source_psin_query[0] < 0.0:
+            _normalize_psin_query(
+                fixed_point_psin_binding.source_psin_query,
+                fixed_point_psin_binding.psin_profile_u,
+            )
+        if fixed_point_psin_binding.has_Ip:
             alpha1, alpha2 = _run_fixed_point_barycentric_with_scratch_impl(
                 _update_pq_from_psin_inputs_with_scratch,
                 16,
                 1.0e-10,
-                source_psin_query,
+                fixed_point_psin_binding.source_psin_query,
                 psin,
                 root_fields,
                 FFn_psin,
                 Pn_psin,
-                materialized_heat_input,
-                materialized_current_input,
-                heat_input,
-                current_input,
-                fixed_point_barycentric_weights,
-                coordinate_code,
+                fixed_point_psin_binding.materialized_heat_input,
+                fixed_point_psin_binding.materialized_current_input,
+                fixed_point_psin_binding.heat_input,
+                fixed_point_psin_binding.current_input,
+                fixed_point_psin_binding.barycentric_weights,
+                fixed_point_psin_binding.coordinate_code,
                 R0,
                 B0,
                 weights,
@@ -1170,26 +1031,26 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
                 rho,
                 radial_workspace,
                 surface_workspace,
-                F_profile_u,
-                Ip,
-                beta,
-                source_scratch_1d,
+                fixed_point_psin_binding.F_profile_u,
+                fixed_point_psin_binding.Ip,
+                fixed_point_psin_binding.beta,
+                fixed_point_psin_binding.source_scratch_1d,
             )
         else:
             alpha1, alpha2 = _run_fixed_point_linear_with_scratch_impl(
                 _update_pq_from_psin_inputs_with_scratch,
                 16,
                 1.0e-10,
-                source_psin_query,
+                fixed_point_psin_binding.source_psin_query,
                 psin,
                 root_fields,
                 FFn_psin,
                 Pn_psin,
-                materialized_heat_input,
-                materialized_current_input,
-                heat_input,
-                current_input,
-                coordinate_code,
+                fixed_point_psin_binding.materialized_heat_input,
+                fixed_point_psin_binding.materialized_current_input,
+                fixed_point_psin_binding.heat_input,
+                fixed_point_psin_binding.current_input,
+                fixed_point_psin_binding.coordinate_code,
                 R0,
                 B0,
                 weights,
@@ -1198,29 +1059,29 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
                 rho,
                 radial_workspace,
                 surface_workspace,
-                F_profile_u,
-                Ip,
-                beta,
-                source_scratch_1d,
+                fixed_point_psin_binding.F_profile_u,
+                fixed_point_psin_binding.Ip,
+                fixed_point_psin_binding.beta,
+                fixed_point_psin_binding.source_scratch_1d,
             )
         alpha1, alpha2 = _run_projected_finalize_with_scratch_impl(
             _update_pq_from_psin_inputs_with_scratch,
-            16,
+            fixed_point_psin_binding.finalize_iter,
             1.0e-10,
-            source_psin_query,
+            fixed_point_psin_binding.source_psin_query,
             psin,
             root_fields,
             FFn_psin,
             Pn_psin,
-            materialized_heat_input,
-            materialized_current_input,
-            heat_projection_coeff,
-            current_projection_coeff,
-            current_input,
-            projection_domain_code,
-            endpoint_policy_code,
-            endpoint_blend,
-            coordinate_code,
+            fixed_point_psin_binding.materialized_heat_input,
+            fixed_point_psin_binding.materialized_current_input,
+            fixed_point_psin_binding.heat_projection_coeff,
+            fixed_point_psin_binding.current_projection_coeff,
+            fixed_point_psin_binding.current_input,
+            fixed_point_psin_binding.projection_domain_code,
+            fixed_point_psin_binding.endpoint_policy_code,
+            fixed_point_psin_binding.endpoint_blend,
+            fixed_point_psin_binding.coordinate_code,
             R0,
             B0,
             weights,
@@ -1229,10 +1090,10 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
             rho,
             radial_workspace,
             surface_workspace,
-            F_profile_u,
-            Ip,
-            beta,
-            source_scratch_1d,
+            fixed_point_psin_binding.F_profile_u,
+            fixed_point_psin_binding.Ip,
+            fixed_point_psin_binding.beta,
+            fixed_point_psin_binding.source_scratch_1d,
         )
         alpha_state[0] = alpha1
         alpha_state[1] = alpha2
@@ -1243,14 +1104,6 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
             root_fields,
             surface_workspace,
         )
-        return _pack_residual_output(
-            runtime_layout=runtime_layout,
-            residual_binding_layout=residual_binding_layout,
-            static_layout=static_layout,
-            scratch_holder=scratch_holder,
-            a=a,
-            R0=R0,
-            B0=B0,
-        )
+        return _pack_residual_output(residual_pack_binding=residual_pack_binding, scratch_holder=scratch_holder)
 
     return runner
