@@ -15,11 +15,15 @@ from veqpy.model.reactive import Reactive
 from veqpy.operator.codec import encode_packed_state
 from veqpy.operator.layout import build_profile_layout, build_profile_names
 from veqpy.operator.layouts import (
+    BackendState,
     ExecutionState,
     FieldRuntimeState,
     ResidualBindingLayout,
     RuntimeLayout,
+    SourceAuxState,
+    SourceConstState,
     SourceRuntimeState,
+    SourceWorkState,
     StaticLayout,
 )
 from veqpy.operator.operator import Operator
@@ -596,11 +600,19 @@ def test_operator_exposes_explicit_layout_and_execution_layers():
     assert isinstance(operator.static_layout, StaticLayout)
     assert isinstance(operator.residual_binding_layout, ResidualBindingLayout)
     assert isinstance(operator.runtime_layout, RuntimeLayout)
+    assert isinstance(operator.backend_state, BackendState)
     assert isinstance(operator.field_runtime_state, FieldRuntimeState)
     assert isinstance(operator.execution_state, ExecutionState)
     assert isinstance(operator.source_runtime_state, SourceRuntimeState)
+    assert isinstance(operator.source_runtime_state.const_state, SourceConstState)
+    assert isinstance(operator.source_runtime_state.work_state, SourceWorkState)
+    assert isinstance(operator.source_runtime_state.aux_state, SourceAuxState)
 
     assert operator.static_layout.rho is grid.rho
+    assert operator.backend_state.static_layout is operator.static_layout
+    assert operator.backend_state.runtime_layout is operator.runtime_layout
+    assert operator.backend_state.field_runtime_state is operator.field_runtime_state
+    assert operator.backend_state.source_runtime_state is operator.source_runtime_state
     assert operator.static_layout.T_fields is grid.T_fields
     assert operator.profile_L.shape[0] == len(operator.profile_names)
     assert operator.coeff_index.shape[0] == len(operator.profile_names)
@@ -628,8 +640,10 @@ def test_operator_exposes_explicit_layout_and_execution_layers():
         )
         else (0,)
     )
-    assert operator.source_runtime_state.psin_query.shape == expected_psin_query_shape
-    assert operator.source_runtime_state.materialized_heat_input.shape == (grid.Nr,)
+    assert operator.source_runtime_state.work_state.psin_query.shape == expected_psin_query_shape
+    assert operator.source_runtime_state.work_state.materialized_heat_input.shape == (grid.Nr,)
+    assert operator.source_runtime_state.const_state.endpoint_blend.shape == (grid.Nr,)
+    assert operator.source_runtime_state.work_state.scratch_1d.shape == (6, grid.Nr)
 
 def test_operator_replace_case_preserves_static_layout_and_refreshes_runtime_identity():
     grid, case = _build_operator_case()
@@ -649,6 +663,36 @@ def test_operator_replace_case_preserves_static_layout_and_refreshes_runtime_ide
     assert operator.source_plan.nodes == next_case.nodes
     assert operator.runtime_layout.geometry_surface_workspace is operator.geometry_surface_workspace
     assert operator.runtime_layout.geometry_radial_workspace is operator.geometry_radial_workspace
+
+
+def test_runtime_layout_exposes_array_only_hot_path_views():
+    grid, case = _build_operator_case()
+    operator = Operator(grid=grid, case=case)
+    runtime = operator.runtime_layout
+
+    assert not hasattr(runtime, "profiles_by_name")
+    assert runtime.h_fields is operator.h_profile.u_fields
+    assert runtime.v_fields is operator.v_profile.u_fields
+    assert runtime.k_fields is operator.k_profile.u_fields
+    assert runtime.F_profile_fields is operator.F_profile.u_fields
+    assert runtime.psin_profile_fields is operator.psin_profile.u_fields
+    assert np.shares_memory(runtime.F_profile_u, runtime.F_profile_fields)
+    assert np.shares_memory(runtime.psin_profile_u, runtime.psin_profile_fields)
+
+
+def test_runtime_layout_hot_path_views_refresh_after_replace_case():
+    grid, case = _build_operator_case()
+    operator = Operator(grid=grid, case=case)
+
+    next_case = case.copy()
+    next_case.beta = 0.25
+    next_case.profile_coeffs["h"] = [0.02]
+    operator.replace_case(next_case)
+
+    h_slot = int(operator.active_slot_by_profile_id[operator.profile_index["h"]])
+    assert h_slot >= 0
+    assert np.shares_memory(operator.h_profile.u_fields, operator.active_u_fields[h_slot])
+    assert np.shares_memory(operator.runtime_layout.h_fields, operator.active_u_fields[h_slot])
 
 
 @pytest.mark.parametrize(("mode", "heat_degree", "current_degree"), [("PJ2", 5, 6), ("PQ", 7, 10)])

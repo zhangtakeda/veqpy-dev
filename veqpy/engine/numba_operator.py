@@ -85,7 +85,6 @@ def bind_source_eval_runner(
     source_plan: "SourcePlan",
     static_layout: "StaticLayout",
     runtime_layout: "RuntimeLayout",
-    profiles_by_name: dict[str, object],
     B0: float,
 ) -> Callable:
     source_kernel = source_plan.kernel
@@ -98,10 +97,11 @@ def bind_source_eval_runner(
     radial_workspace = runtime_layout.geometry_radial_workspace
     surface_workspace = runtime_layout.geometry_surface_workspace
     source_runtime_state = runtime_layout.source_runtime_state
-    F_profile_u = profiles_by_name["F"].u
+    source_work_state = source_runtime_state.work_state
+    F_profile_u = runtime_layout.F_profile_u
     Ip = float(source_plan.Ip)
     beta = float(source_plan.beta)
-    source_scratch_1d = source_runtime_state.scratch_1d
+    source_scratch_1d = source_work_state.scratch_1d
 
     def runner(
         out_root_fields: np.ndarray,
@@ -170,6 +170,10 @@ def _apply_f2_profile_fields_impl(fields: np.ndarray, eps: float = 1.0e-10) -> N
         fields[0, i] = F
         fields[1, i] = 0.5 * F2_r * inv_F
         fields[2, i] = 0.5 * F2_rr * inv_F - 0.25 * F2_r * F2_r * inv_F3
+
+
+def apply_f2_profile_fields(fields: np.ndarray, eps: float = 1.0e-10) -> None:
+    _apply_f2_profile_fields_impl(fields, eps=eps)
 
 
 def _normalize_psin_query(out: np.ndarray, source: np.ndarray) -> None:
@@ -695,19 +699,18 @@ def _bind_single_pass_residual_runner_core(
     residual_workspace = runtime_layout.residual_surface_workspace
     root_fields = runtime_layout.root_fields
     source_runtime_state = runtime_layout.source_runtime_state
-    materialized_heat_input = source_runtime_state.materialized_heat_input
-    materialized_current_input = source_runtime_state.materialized_current_input
-    profiles_by_name = runtime_layout.profiles_by_name
-    h_fields = profiles_by_name["h"].u_fields
-    v_fields = profiles_by_name["v"].u_fields
-    k_fields = profiles_by_name["k"].u_fields
-    F_profile_fields = profiles_by_name["F"].u_fields
+    source_work_state = source_runtime_state.work_state
+    materialized_heat_input = source_work_state.materialized_heat_input
+    materialized_current_input = source_work_state.materialized_current_input
+    h_fields = runtime_layout.h_fields
+    v_fields = runtime_layout.v_fields
+    k_fields = runtime_layout.k_fields
+    F_profile_fields = runtime_layout.F_profile_fields
     apply_f2_transform = "F" in residual_binding_layout.active_profile_names
     source_eval_runner = bind_source_eval_runner(
         source_plan=source_plan,
         static_layout=static_layout,
         runtime_layout=runtime_layout,
-        profiles_by_name=profiles_by_name,
         B0=B0,
     )
     scratch_holder: list[np.ndarray | None] = [None]
@@ -779,20 +782,22 @@ def _bind_profile_owned_psin_residual_runner_core(
     residual_workspace = runtime_layout.residual_surface_workspace
     root_fields = runtime_layout.root_fields
     source_runtime_state = runtime_layout.source_runtime_state
-    source_target_root_fields = source_runtime_state.target_root_fields
-    source_psin_query = source_runtime_state.psin_query
-    source_parameter_query = source_runtime_state.parameter_query
-    heat_projection_coeff = source_runtime_state.heat_projection_coeff
-    current_projection_coeff = source_runtime_state.current_projection_coeff
-    endpoint_blend = source_runtime_state.endpoint_blend
-    materialized_heat_input = source_runtime_state.materialized_heat_input
-    materialized_current_input = source_runtime_state.materialized_current_input
-    profiles_by_name = runtime_layout.profiles_by_name
-    psin_profile_fields = profiles_by_name["psin"].u_fields
-    h_fields = profiles_by_name["h"].u_fields
-    v_fields = profiles_by_name["v"].u_fields
-    k_fields = profiles_by_name["k"].u_fields
-    F_profile_fields = profiles_by_name["F"].u_fields
+    source_const_state = source_runtime_state.const_state
+    source_work_state = source_runtime_state.work_state
+    source_aux_state = source_runtime_state.aux_state
+    source_target_root_fields = source_aux_state.target_root_fields
+    source_psin_query = source_work_state.psin_query
+    source_parameter_query = source_work_state.parameter_query
+    heat_projection_coeff = source_aux_state.heat_projection_coeff
+    current_projection_coeff = source_aux_state.current_projection_coeff
+    endpoint_blend = source_const_state.endpoint_blend
+    materialized_heat_input = source_work_state.materialized_heat_input
+    materialized_current_input = source_work_state.materialized_current_input
+    psin_profile_fields = runtime_layout.psin_profile_fields
+    h_fields = runtime_layout.h_fields
+    v_fields = runtime_layout.v_fields
+    k_fields = runtime_layout.k_fields
+    F_profile_fields = runtime_layout.F_profile_fields
     apply_f2_transform = "F" in residual_binding_layout.active_profile_names
     parameterization_code = int(source_plan.parameterization_code)
     has_projection_policy = bool(source_plan.has_projection_policy)
@@ -804,7 +809,6 @@ def _bind_profile_owned_psin_residual_runner_core(
         source_plan=source_plan,
         static_layout=static_layout,
         runtime_layout=runtime_layout,
-        profiles_by_name=profiles_by_name,
         B0=B0,
     )
     scratch_holder: list[np.ndarray | None] = [None]
@@ -910,19 +914,22 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
     integration_matrix = static_layout.integration_matrix
     root_fields = runtime_layout.root_fields
     source_runtime_state = runtime_layout.source_runtime_state
-    source_psin_query = source_runtime_state.psin_query
-    materialized_heat_input = source_runtime_state.materialized_heat_input
-    materialized_current_input = source_runtime_state.materialized_current_input
-    source_scratch_1d = source_runtime_state.scratch_1d
-    heat_projection_coeff = source_runtime_state.heat_projection_coeff
-    current_projection_coeff = source_runtime_state.current_projection_coeff
-    endpoint_blend = source_runtime_state.endpoint_blend
-    profiles_by_name = runtime_layout.profiles_by_name
-    h_fields = profiles_by_name["h"].u_fields
-    v_fields = profiles_by_name["v"].u_fields
-    k_fields = profiles_by_name["k"].u_fields
-    F_profile_u = profiles_by_name["F"].u
-    F_profile_fields = profiles_by_name["F"].u_fields
+    source_const_state = source_runtime_state.const_state
+    source_work_state = source_runtime_state.work_state
+    source_aux_state = source_runtime_state.aux_state
+    source_psin_query = source_work_state.psin_query
+    materialized_heat_input = source_work_state.materialized_heat_input
+    materialized_current_input = source_work_state.materialized_current_input
+    source_scratch_1d = source_work_state.scratch_1d
+    heat_projection_coeff = source_aux_state.heat_projection_coeff
+    current_projection_coeff = source_aux_state.current_projection_coeff
+    endpoint_blend = source_const_state.endpoint_blend
+    h_fields = runtime_layout.h_fields
+    v_fields = runtime_layout.v_fields
+    k_fields = runtime_layout.k_fields
+    F_profile_u = runtime_layout.F_profile_u
+    F_profile_fields = runtime_layout.F_profile_fields
+    psin_profile_u = runtime_layout.psin_profile_u
     apply_f2_transform = "F" in residual_binding_layout.active_profile_names
     heat_input = source_plan.heat_input
     current_input = source_plan.current_input
@@ -955,7 +962,7 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
             k_fields=k_fields,
         )
         if source_psin_query[0] < 0.0:
-            _normalize_psin_query(source_psin_query, profiles_by_name["psin"].u)
+            _normalize_psin_query(source_psin_query, psin_profile_u)
         if has_Ip:
             alpha1, alpha2 = _run_fixed_point_barycentric_with_scratch_impl(
                 _update_pj2_from_psin_inputs_with_scratch,
@@ -1089,19 +1096,22 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
     integration_matrix = static_layout.integration_matrix
     root_fields = runtime_layout.root_fields
     source_runtime_state = runtime_layout.source_runtime_state
-    source_psin_query = source_runtime_state.psin_query
-    materialized_heat_input = source_runtime_state.materialized_heat_input
-    materialized_current_input = source_runtime_state.materialized_current_input
-    source_scratch_1d = source_runtime_state.scratch_1d
-    heat_projection_coeff = source_runtime_state.heat_projection_coeff
-    current_projection_coeff = source_runtime_state.current_projection_coeff
-    endpoint_blend = source_runtime_state.endpoint_blend
-    profiles_by_name = runtime_layout.profiles_by_name
-    h_fields = profiles_by_name["h"].u_fields
-    v_fields = profiles_by_name["v"].u_fields
-    k_fields = profiles_by_name["k"].u_fields
-    F_profile_u = profiles_by_name["F"].u
-    F_profile_fields = profiles_by_name["F"].u_fields
+    source_const_state = source_runtime_state.const_state
+    source_work_state = source_runtime_state.work_state
+    source_aux_state = source_runtime_state.aux_state
+    source_psin_query = source_work_state.psin_query
+    materialized_heat_input = source_work_state.materialized_heat_input
+    materialized_current_input = source_work_state.materialized_current_input
+    source_scratch_1d = source_work_state.scratch_1d
+    heat_projection_coeff = source_aux_state.heat_projection_coeff
+    current_projection_coeff = source_aux_state.current_projection_coeff
+    endpoint_blend = source_const_state.endpoint_blend
+    h_fields = runtime_layout.h_fields
+    v_fields = runtime_layout.v_fields
+    k_fields = runtime_layout.k_fields
+    F_profile_u = runtime_layout.F_profile_u
+    F_profile_fields = runtime_layout.F_profile_fields
+    psin_profile_u = runtime_layout.psin_profile_u
     apply_f2_transform = "F" in residual_binding_layout.active_profile_names
     heat_input = source_plan.heat_input
     current_input = source_plan.current_input
@@ -1135,7 +1145,7 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
             k_fields=k_fields,
         )
         if (not allow_query_warmstart) or source_psin_query[0] < 0.0:
-            _normalize_psin_query(source_psin_query, profiles_by_name["psin"].u)
+            _normalize_psin_query(source_psin_query, psin_profile_u)
         if has_Ip:
             alpha1, alpha2 = _run_fixed_point_barycentric_with_scratch_impl(
                 _update_pq_from_psin_inputs_with_scratch,

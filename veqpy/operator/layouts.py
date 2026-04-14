@@ -9,9 +9,13 @@ Public API:
 - StaticLayout
 - ResidualBindingLayout
 - RuntimeLayout
+- BackendState
 - FieldRuntimeState
 - ExecutionState
 - SourceRuntimeState
+- SourceConstState
+- SourceWorkState
+- SourceAuxState
 
 Notes:
 - 这里定义的是 layout ownership 和生命周期边界.
@@ -21,12 +25,9 @@ Notes:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable
+from typing import Callable
 
 import numpy as np
-
-if TYPE_CHECKING:
-    from veqpy.model.profile import Profile
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,7 +66,6 @@ class ResidualBindingLayout:
 class RuntimeLayout:
     """绑定到 residual 热路径的可变 runtime 缓冲区."""
 
-    profiles_by_name: dict[str, Profile]
     active_profile_slab: np.ndarray
     family_field_slab: np.ndarray
     source_runtime_state: SourceRuntimeState
@@ -88,6 +88,13 @@ class RuntimeLayout:
     active_slot_by_profile_id: np.ndarray
     c_family_source_slots: np.ndarray
     s_family_source_slots: np.ndarray
+    h_fields: np.ndarray
+    v_fields: np.ndarray
+    k_fields: np.ndarray
+    F_profile_u: np.ndarray
+    F_profile_fields: np.ndarray
+    psin_profile_u: np.ndarray
+    psin_profile_fields: np.ndarray
 
 
 @dataclass(slots=True)
@@ -119,20 +126,52 @@ class ExecutionState:
 
 
 @dataclass(slots=True)
-class SourceRuntimeState:
-    """绑定到 source materialization/remap 的可变 runtime 状态."""
+class SourceConstState:
+    """绑定到 source route 的只读 const arrays."""
 
-    cache_key: tuple[str, str, int] | None
     barycentric_weights: np.ndarray
     fixed_remap_matrix: np.ndarray
-    psin_query: np.ndarray
-    parameter_query: np.ndarray
     heat_projection_fit_matrix: np.ndarray
     current_projection_fit_matrix: np.ndarray
-    heat_projection_coeff: np.ndarray
-    current_projection_coeff: np.ndarray
     endpoint_blend: np.ndarray
+
+
+@dataclass(slots=True)
+class SourceWorkState:
+    """绑定到 source materialization 的可复用 work buffers."""
+
+    psin_query: np.ndarray
+    parameter_query: np.ndarray
     materialized_heat_input: np.ndarray
     materialized_current_input: np.ndarray
     scratch_1d: np.ndarray
+
+
+@dataclass(slots=True)
+class SourceAuxState:
+    """绑定到 source refresh/stage 的 aux outputs."""
+
+    heat_projection_coeff: np.ndarray
+    current_projection_coeff: np.ndarray
     target_root_fields: np.ndarray
+
+
+@dataclass(slots=True)
+class SourceRuntimeState:
+    """绑定到 source materialization/remap 的 runtime ownership 容器."""
+
+    cache_key: tuple[str, str, int] | None
+    const_state: SourceConstState
+    work_state: SourceWorkState
+    aux_state: SourceAuxState
+
+
+@dataclass(slots=True)
+class BackendState:
+    """绑定到 backend ABI 的 arrays-only state 聚合入口."""
+
+    static_layout: StaticLayout
+    residual_binding_layout: ResidualBindingLayout
+    runtime_layout: RuntimeLayout
+    field_runtime_state: FieldRuntimeState
+    source_runtime_state: SourceRuntimeState

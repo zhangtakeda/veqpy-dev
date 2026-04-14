@@ -15,7 +15,15 @@ import numpy as np
 
 from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile
-from veqpy.operator.layouts import FieldRuntimeState, RuntimeLayout, SourceRuntimeState, StaticLayout
+from veqpy.operator.layouts import (
+    FieldRuntimeState,
+    RuntimeLayout,
+    SourceAuxState,
+    SourceConstState,
+    SourceRuntimeState,
+    SourceWorkState,
+    StaticLayout,
+)
 
 
 @dataclass(slots=True)
@@ -108,21 +116,30 @@ def allocate_runtime_state(
         target_root_fields = np.empty((3, nr), dtype=np.float64)
     else:
         target_root_fields = np.empty((3, 0), dtype=np.float64)
-    source_runtime_state = SourceRuntimeState(
-        cache_key=None,
+    source_const_state = SourceConstState(
         barycentric_weights=np.empty(0, dtype=np.float64),
         fixed_remap_matrix=np.empty((0, 0), dtype=np.float64),
-        materialized_heat_input=materialized_heat_input,
-        materialized_current_input=materialized_current_input,
-        psin_query=psin_query,
-        parameter_query=parameter_query,
         heat_projection_fit_matrix=np.empty((0, 0), dtype=np.float64),
         current_projection_fit_matrix=np.empty((0, 0), dtype=np.float64),
+        endpoint_blend=np.linspace(0.0, 1.0, nr, dtype=np.float64),
+    )
+    source_work_state = SourceWorkState(
+        psin_query=psin_query,
+        parameter_query=parameter_query,
+        materialized_heat_input=materialized_heat_input,
+        materialized_current_input=materialized_current_input,
+        scratch_1d=np.empty((6, nr), dtype=np.float64),
+    )
+    source_aux_state = SourceAuxState(
         heat_projection_coeff=np.empty(0, dtype=np.float64),
         current_projection_coeff=np.empty(0, dtype=np.float64),
-        endpoint_blend=np.linspace(0.0, 1.0, nr, dtype=np.float64),
         target_root_fields=target_root_fields,
-        scratch_1d=np.empty((6, nr), dtype=np.float64),
+    )
+    source_runtime_state = SourceRuntimeState(
+        cache_key=None,
+        const_state=source_const_state,
+        work_state=source_work_state,
+        aux_state=source_aux_state,
     )
 
     active_profile_slab = np.empty((3, n_active, 3, nr), dtype=np.float64)
@@ -160,7 +177,6 @@ def allocate_runtime_state(
             s_family_source_slots[order] = active_slot_by_profile_id[profile_index[s_name]]
 
     runtime_layout = RuntimeLayout(
-        profiles_by_name=profiles_by_name,
         active_profile_slab=active_profile_slab,
         family_field_slab=family_field_slab,
         source_runtime_state=source_runtime_state,
@@ -183,6 +199,13 @@ def allocate_runtime_state(
         active_slot_by_profile_id=active_slot_by_profile_id,
         c_family_source_slots=c_family_source_slots,
         s_family_source_slots=s_family_source_slots,
+        h_fields=np.empty((0, nr), dtype=np.float64),
+        v_fields=np.empty((0, nr), dtype=np.float64),
+        k_fields=np.empty((0, nr), dtype=np.float64),
+        F_profile_u=np.empty(0, dtype=np.float64),
+        F_profile_fields=np.empty((0, nr), dtype=np.float64),
+        psin_profile_u=np.empty(0, dtype=np.float64),
+        psin_profile_fields=np.empty((0, nr), dtype=np.float64),
     )
 
     return RuntimeAllocationBundle(

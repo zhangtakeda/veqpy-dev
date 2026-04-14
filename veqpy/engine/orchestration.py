@@ -383,9 +383,11 @@ def materialize_source_inputs(
     psin_query: np.ndarray,
     enable_projection: bool = True,
 ) -> None:
+    source_const_state = source_runtime_state.const_state
+    source_work_state = source_runtime_state.work_state
     if source_plan.is_grid_nodes:
-        np.copyto(source_runtime_state.materialized_heat_input, source_plan.heat_input)
-        np.copyto(source_runtime_state.materialized_current_input, source_plan.current_input)
+        np.copyto(source_work_state.materialized_heat_input, source_plan.heat_input)
+        np.copyto(source_work_state.materialized_current_input, source_plan.current_input)
         return
     if enable_projection and source_plan.is_psin_coordinate and source_plan.has_projection_policy:
         materialize_projected_psin_source_inputs(
@@ -397,20 +399,20 @@ def materialize_source_inputs(
     query = psin_query
     if source_plan.is_psin_coordinate:
         parameterize_psin_query_inplace(
-            source_runtime_state.parameter_query,
+            source_work_state.parameter_query,
             psin_query,
             source_plan.parameterization,
         )
-        query = source_runtime_state.parameter_query
+        query = source_work_state.parameter_query
     resolve_source_inputs(
-        source_runtime_state.materialized_heat_input,
-        source_runtime_state.materialized_current_input,
+        source_work_state.materialized_heat_input,
+        source_work_state.materialized_current_input,
         source_plan.heat_input,
         source_plan.current_input,
         source_plan.coordinate_code,
         source_plan.n_src,
-        source_runtime_state.barycentric_weights,
-        source_runtime_state.fixed_remap_matrix,
+        source_const_state.barycentric_weights,
+        source_const_state.fixed_remap_matrix,
         query,
     )
 
@@ -423,16 +425,19 @@ def materialize_projected_psin_source_inputs(
 ) -> None:
     if not source_plan.has_projection_policy:
         raise RuntimeError("Projected psin source materialization requested without a projection policy")
+    source_const_state = source_runtime_state.const_state
+    source_work_state = source_runtime_state.work_state
+    source_aux_state = source_runtime_state.aux_state
     materialize_projected_source_inputs(
-        source_runtime_state.materialized_heat_input,
-        source_runtime_state.materialized_current_input,
-        source_runtime_state.heat_projection_coeff,
-        source_runtime_state.current_projection_coeff,
+        source_work_state.materialized_heat_input,
+        source_work_state.materialized_current_input,
+        source_aux_state.heat_projection_coeff,
+        source_aux_state.current_projection_coeff,
         source_plan.current_input,
         psin_query,
         source_plan.projection_domain_code,
         source_plan.endpoint_policy_code,
-        source_runtime_state.endpoint_blend,
+        source_const_state.endpoint_blend,
     )
 
 
@@ -445,49 +450,52 @@ def refresh_source_runtime(
     psin: np.ndarray,
 ) -> None:
     validate_source_inputs(case, int(grid_rho.shape[0]))
+    source_const_state = source_runtime_state.const_state
+    source_aux_state = source_runtime_state.aux_state
+    source_work_state = source_runtime_state.work_state
     case_key = (source_plan.coordinate, source_plan.nodes, source_plan.n_src)
     if source_runtime_state.cache_key != case_key:
         if source_plan.is_grid_nodes:
-            source_runtime_state.barycentric_weights = np.empty(0, dtype=np.float64)
-            source_runtime_state.fixed_remap_matrix = np.empty((0, 0), dtype=np.float64)
-            source_runtime_state.heat_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
-            source_runtime_state.current_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
-            source_runtime_state.heat_projection_coeff = np.empty(0, dtype=np.float64)
-            source_runtime_state.current_projection_coeff = np.empty(0, dtype=np.float64)
+            source_const_state.barycentric_weights = np.empty(0, dtype=np.float64)
+            source_const_state.fixed_remap_matrix = np.empty((0, 0), dtype=np.float64)
+            source_const_state.heat_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
+            source_const_state.current_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
+            source_aux_state.heat_projection_coeff = np.empty(0, dtype=np.float64)
+            source_aux_state.current_projection_coeff = np.empty(0, dtype=np.float64)
         else:
             (
                 _,
-                source_runtime_state.barycentric_weights,
-                source_runtime_state.fixed_remap_matrix,
+                source_const_state.barycentric_weights,
+                source_const_state.fixed_remap_matrix,
             ) = build_source_remap_cache(
                 source_plan.coordinate,
                 source_plan.n_src,
                 rho=grid_rho,
             )
             if not source_plan.has_projection_policy:
-                source_runtime_state.heat_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
-                source_runtime_state.current_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
+                source_const_state.heat_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
+                source_const_state.current_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
             else:
-                source_runtime_state.heat_projection_fit_matrix = _build_source_projection_fit_matrix(
+                source_const_state.heat_projection_fit_matrix = _build_source_projection_fit_matrix(
                     source_plan.n_src,
                     degree=source_plan.heat_projection_degree,
                     domain=source_plan.projection_domain,
                 )
-                source_runtime_state.current_projection_fit_matrix = _build_source_projection_fit_matrix(
+                source_const_state.current_projection_fit_matrix = _build_source_projection_fit_matrix(
                     source_plan.n_src,
                     degree=source_plan.current_projection_degree,
                     domain=source_plan.projection_domain,
                 )
         source_runtime_state.cache_key = case_key
     if source_plan.is_grid_nodes or not source_plan.has_projection_policy:
-        source_runtime_state.heat_projection_coeff = np.empty(0, dtype=np.float64)
-        source_runtime_state.current_projection_coeff = np.empty(0, dtype=np.float64)
+        source_aux_state.heat_projection_coeff = np.empty(0, dtype=np.float64)
+        source_aux_state.current_projection_coeff = np.empty(0, dtype=np.float64)
     else:
-        source_runtime_state.heat_projection_coeff = source_runtime_state.heat_projection_fit_matrix @ np.asarray(
+        source_aux_state.heat_projection_coeff = source_const_state.heat_projection_fit_matrix @ np.asarray(
             source_plan.heat_input,
             dtype=np.float64,
         )
-        source_runtime_state.current_projection_coeff = source_runtime_state.current_projection_fit_matrix @ np.asarray(
+        source_aux_state.current_projection_coeff = source_const_state.current_projection_fit_matrix @ np.asarray(
             source_plan.current_input, dtype=np.float64
         )
     if source_plan.is_grid_nodes or not source_plan.is_psin_coordinate:
@@ -500,7 +508,7 @@ def refresh_source_runtime(
         ("PJ2", "psin", "uniform"),
         ("PQ", "psin", "uniform"),
     }:
-        source_runtime_state.psin_query.fill(-1.0)
+        source_work_state.psin_query.fill(-1.0)
 
 
 def build_bound_source_stage_runner(operator_core: Any) -> Callable:
@@ -543,28 +551,31 @@ def build_bound_source_stage_runner(operator_core: Any) -> Callable:
 def _build_source_stage_runner_shared(operator_core: Any) -> Callable:
     source_plan = operator_core.source_plan
     source_eval_runner = operator_core.execution_state.source_eval_runner
+    runtime_layout = operator_core.runtime_layout
     source_runtime_state = operator_core.source_runtime_state
+    source_work_state = source_runtime_state.work_state
+    source_aux_state = source_runtime_state.aux_state
     psin = operator_core.psin
     psin_r = operator_core.psin_r
     psin_rr = operator_core.psin_rr
     FFn_psin = operator_core.FFn_psin
     Pn_psin = operator_core.Pn_psin
-    materialized_heat_input = source_runtime_state.materialized_heat_input
-    materialized_current_input = source_runtime_state.materialized_current_input
-    source_target_root_fields = source_runtime_state.target_root_fields
+    materialized_heat_input = source_work_state.materialized_heat_input
+    materialized_current_input = source_work_state.materialized_current_input
+    source_target_root_fields = source_aux_state.target_root_fields
     case_R0 = float(operator_core.case.R0)
 
     if source_plan.strategy == "profile_owned_psin":
         if source_plan.is_psin_coordinate and not source_plan.is_grid_nodes:
-            source_psin_query = source_runtime_state.psin_query
-            source_parameter_query = source_runtime_state.parameter_query
-            psin_profile_fields = operator_core.psin_profile.u_fields
+            source_psin_query = source_work_state.psin_query
+            source_parameter_query = source_work_state.parameter_query
+            psin_profile_fields = runtime_layout.psin_profile_fields
             heat_input = source_plan.heat_input
             current_input = source_plan.current_input
             parameterization_code = source_plan.parameterization_code
 
             def runner() -> tuple[float, float]:
-                if psin_profile_fields is None:
+                if psin_profile_fields.size == 0:
                     raise RuntimeError("psin_profile runtime fields are not initialized")
                 materialize_profile_owned_psin_source(
                     psin,
@@ -597,10 +608,18 @@ def _build_source_stage_runner_shared(operator_core: Any) -> Callable:
 
             return runner
 
-        source_psin_query = source_runtime_state.psin_query
+        source_psin_query = source_work_state.psin_query
+        psin_profile_u = runtime_layout.psin_profile_u
+        psin_profile_fields = runtime_layout.psin_profile_fields
 
         def runner() -> tuple[float, float]:
-            copy_psin_profile_to_root_fields(operator_core)
+            copy_psin_profile_to_root_fields(
+                psin=psin,
+                psin_r=psin_r,
+                psin_rr=psin_rr,
+                psin_profile_u=psin_profile_u,
+                psin_profile_fields=psin_profile_fields,
+            )
             np.copyto(source_psin_query, psin)
             materialize_source_inputs(
                 source_plan=source_plan,
@@ -631,60 +650,71 @@ def _build_source_stage_runner_shared(operator_core: Any) -> Callable:
     return runner
 
 
-def copy_psin_profile_to_root_fields(operator_core: Any) -> None:
-    if operator_core.psin_profile.u_fields is None:
+def copy_psin_profile_to_root_fields(
+    *,
+    psin: np.ndarray,
+    psin_r: np.ndarray,
+    psin_rr: np.ndarray,
+    psin_profile_u: np.ndarray,
+    psin_profile_fields: np.ndarray,
+) -> None:
+    if psin_profile_fields.size == 0:
         raise RuntimeError("psin_profile runtime fields are not initialized")
-    np.copyto(operator_core.psin, operator_core.psin_profile.u)
-    np.copyto(operator_core.psin_r, operator_core.psin_profile.u_r)
-    np.copyto(operator_core.psin_rr, operator_core.psin_profile.u_rr)
+    np.copyto(psin, psin_profile_u)
+    np.copyto(psin_r, psin_profile_fields[1])
+    np.copyto(psin_rr, psin_profile_fields[2])
 
 
 def _build_pj2_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[[], tuple[float, float]]:
     source_plan = operator_core.source_plan
     source_eval_runner = operator_core.execution_state.source_eval_runner
+    runtime_layout = operator_core.runtime_layout
     source_runtime_state = operator_core.source_runtime_state
-    target_root_fields = source_runtime_state.target_root_fields
+    source_work_state = source_runtime_state.work_state
+    source_aux_state = source_runtime_state.aux_state
+    target_root_fields = source_aux_state.target_root_fields
+    psin_profile_u = runtime_layout.psin_profile_u
     tolerance = 1.0e-10
 
     def runner() -> tuple[float, float]:
-        if source_runtime_state.psin_query[0] < 0.0:
-            normalize_psin_query_inplace(source_runtime_state.psin_query, operator_core.psin_profile.u)
+        if source_work_state.psin_query[0] < 0.0:
+            normalize_psin_query_inplace(source_work_state.psin_query, psin_profile_u)
         alpha1 = float("nan")
         alpha2 = float("nan")
         for _ in range(16):
             materialize_source_inputs(
                 source_plan=source_plan,
                 source_runtime_state=source_runtime_state,
-                psin_query=source_runtime_state.psin_query,
+                psin_query=source_work_state.psin_query,
                 enable_projection=False,
             )
             alpha1, alpha2 = source_eval_runner(
                 target_root_fields,
                 operator_core.FFn_psin,
                 operator_core.Pn_psin,
-                source_runtime_state.materialized_heat_input,
-                source_runtime_state.materialized_current_input,
+                source_work_state.materialized_heat_input,
+                source_work_state.materialized_current_input,
                 float(operator_core.case.R0),
             )
-            if update_fixed_point_psin_query(source_runtime_state.psin_query, target_root_fields[0], tolerance):
+            if update_fixed_point_psin_query(source_work_state.psin_query, target_root_fields[0], tolerance):
                 break
-        np.copyto(source_runtime_state.psin_query, target_root_fields[0])
+        np.copyto(source_work_state.psin_query, target_root_fields[0])
         for _ in range(8):
             materialize_source_inputs(
                 source_plan=source_plan,
                 source_runtime_state=source_runtime_state,
-                psin_query=source_runtime_state.psin_query,
+                psin_query=source_work_state.psin_query,
                 enable_projection=True,
             )
             alpha1, alpha2 = source_eval_runner(
                 target_root_fields,
                 operator_core.FFn_psin,
                 operator_core.Pn_psin,
-                source_runtime_state.materialized_heat_input,
-                source_runtime_state.materialized_current_input,
+                source_work_state.materialized_heat_input,
+                source_work_state.materialized_current_input,
                 float(operator_core.case.R0),
             )
-            if update_fixed_point_psin_query(source_runtime_state.psin_query, target_root_fields[0], tolerance):
+            if update_fixed_point_psin_query(source_work_state.psin_query, target_root_fields[0], tolerance):
                 break
         np.copyto(operator_core.psin, target_root_fields[0])
         np.copyto(operator_core.psin_r, target_root_fields[1])
@@ -697,50 +727,54 @@ def _build_pj2_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[
 def _build_pq_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[[], tuple[float, float]]:
     source_plan = operator_core.source_plan
     source_eval_runner = operator_core.execution_state.source_eval_runner
+    runtime_layout = operator_core.runtime_layout
     source_runtime_state = operator_core.source_runtime_state
-    target_root_fields = source_runtime_state.target_root_fields
+    source_work_state = source_runtime_state.work_state
+    source_aux_state = source_runtime_state.aux_state
+    target_root_fields = source_aux_state.target_root_fields
+    psin_profile_u = runtime_layout.psin_profile_u
     tolerance = 1.0e-10
     allow_query_warmstart = bool(source_plan.endpoint_policy_code != _ENDPOINT_POLICY_CODES["none"])
 
     def runner() -> tuple[float, float]:
-        if (not allow_query_warmstart) or source_runtime_state.psin_query[0] < 0.0:
-            normalize_psin_query_inplace(source_runtime_state.psin_query, operator_core.psin_profile.u)
+        if (not allow_query_warmstart) or source_work_state.psin_query[0] < 0.0:
+            normalize_psin_query_inplace(source_work_state.psin_query, psin_profile_u)
         alpha1 = float("nan")
         alpha2 = float("nan")
         for _ in range(16):
             materialize_source_inputs(
                 source_plan=source_plan,
                 source_runtime_state=source_runtime_state,
-                psin_query=source_runtime_state.psin_query,
+                psin_query=source_work_state.psin_query,
                 enable_projection=False,
             )
             alpha1, alpha2 = source_eval_runner(
                 target_root_fields,
                 operator_core.FFn_psin,
                 operator_core.Pn_psin,
-                source_runtime_state.materialized_heat_input,
-                source_runtime_state.materialized_current_input,
+                source_work_state.materialized_heat_input,
+                source_work_state.materialized_current_input,
                 float(operator_core.case.R0),
             )
-            if update_fixed_point_psin_query(source_runtime_state.psin_query, target_root_fields[0], tolerance):
+            if update_fixed_point_psin_query(source_work_state.psin_query, target_root_fields[0], tolerance):
                 break
-        np.copyto(source_runtime_state.psin_query, target_root_fields[0])
+        np.copyto(source_work_state.psin_query, target_root_fields[0])
         for _ in range(16):
             materialize_source_inputs(
                 source_plan=source_plan,
                 source_runtime_state=source_runtime_state,
-                psin_query=source_runtime_state.psin_query,
+                psin_query=source_work_state.psin_query,
                 enable_projection=True,
             )
             alpha1, alpha2 = source_eval_runner(
                 target_root_fields,
                 operator_core.FFn_psin,
                 operator_core.Pn_psin,
-                source_runtime_state.materialized_heat_input,
-                source_runtime_state.materialized_current_input,
+                source_work_state.materialized_heat_input,
+                source_work_state.materialized_current_input,
                 float(operator_core.case.R0),
             )
-            if update_fixed_point_psin_query(source_runtime_state.psin_query, target_root_fields[0], tolerance):
+            if update_fixed_point_psin_query(source_work_state.psin_query, target_root_fields[0], tolerance):
                 break
         np.copyto(operator_core.psin, target_root_fields[0])
         np.copyto(operator_core.psin_r, target_root_fields[1])
@@ -748,6 +782,8 @@ def _build_pq_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[[
         return alpha1, alpha2
 
     return runner
+
+
 def build_geometry_stage_runner(
     *,
     c_family_fields: np.ndarray,

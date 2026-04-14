@@ -10,9 +10,13 @@ Public API:
 - StaticLayout
 - ResidualBindingLayout
 - RuntimeLayout
+- BackendState
 - FieldRuntimeState
 - ExecutionState
 - SourceRuntimeState
+- SourceConstState
+- SourceWorkState
+- SourceAuxState
 - build_profile_layout
 - build_profile_names
 - build_profile_index
@@ -26,11 +30,15 @@ Notes:
 from veqpy.operator.codec import decode_packed_blocks
 from veqpy.operator.layout import build_profile_index, build_profile_layout, build_profile_names
 from veqpy.operator.layouts import (
+    BackendState,
     ExecutionState,
     FieldRuntimeState,
     ResidualBindingLayout,
+    SourceAuxState,
+    SourceConstState,
     RuntimeLayout,
     SourceRuntimeState,
+    SourceWorkState,
     StaticLayout,
 )
 from veqpy.operator.operator import Operator
@@ -46,7 +54,11 @@ __all__ = [
     "StaticLayout",
     "ResidualBindingLayout",
     "RuntimeLayout",
+    "BackendState",
     "FieldRuntimeState",
     "ExecutionState",
     "SourceRuntimeState",
+    "SourceConstState",
+    "SourceWorkState",
+    "SourceAuxState",
 ]

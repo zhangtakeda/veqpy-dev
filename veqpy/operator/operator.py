@@ -37,6 +37,7 @@ from veqpy.operator.layout import (
     packed_size,
 )
 from veqpy.operator.layouts import (
+    BackendState,
     ExecutionState,
     FieldRuntimeState,
     ResidualBindingLayout,
@@ -79,6 +80,7 @@ class Operator:
     static_layout: StaticLayout = field(init=False, repr=False)
     residual_binding_layout: ResidualBindingLayout = field(init=False, repr=False)
     runtime_layout: RuntimeLayout = field(init=False, repr=False)
+    backend_state: BackendState = field(init=False, repr=False)
 
     h_profile: Profile = field(init=False)
     v_profile: Profile = field(init=False)
@@ -323,7 +325,6 @@ class Operator:
 
     def _refresh_runtime_layout_views(self) -> None:
         runtime = self.runtime_layout
-        runtime.profiles_by_name = self.profiles_by_name
         runtime.active_profile_slab = self.active_profile_slab
         runtime.family_field_slab = self.family_field_slab
         runtime.source_runtime_state = self.source_runtime_state
@@ -343,6 +344,13 @@ class Operator:
         runtime.active_slot_by_profile_id = self.active_slot_by_profile_id
         runtime.c_family_source_slots = self.c_family_source_slots
         runtime.s_family_source_slots = self.s_family_source_slots
+        runtime.h_fields = self.h_profile.u_fields
+        runtime.v_fields = self.v_profile.u_fields
+        runtime.k_fields = self.k_profile.u_fields
+        runtime.F_profile_u = self.F_profile.u
+        runtime.F_profile_fields = self.F_profile.u_fields
+        runtime.psin_profile_u = self.psin_profile.u
+        runtime.psin_profile_fields = self.psin_profile.u_fields
 
     def _setup_runtime_state(self) -> None:
         bundle = allocate_runtime_state(
@@ -413,9 +421,10 @@ class Operator:
             source_runtime_state=self.source_runtime_state,
             psin=self.psin,
         )
-        self._refresh_runtime_layout_views()
         self._refresh_stage_a_runtime()
+        self._refresh_runtime_layout_views()
         self._refresh_runtime_bindings()
+        self._refresh_backend_state()
 
     def _refresh_operator_identity(self) -> None:
         spec = validate_route(self.case.route, self.case.coordinate, self.case.nodes)
@@ -431,19 +440,10 @@ class Operator:
         self.profile_scale_specs = dict(_PROFILE_SCALE_SPECS)
 
     def _build_profile_postprocess_runner(self) -> Callable[[], None]:
-        F_fields = self.F_profile.u_fields
         eps = 1.0e-10
 
         def runner() -> None:
-            F2 = F_fields[0].copy()
-            F2_r = F_fields[1].copy()
-            F2_rr = F_fields[2].copy()
-            F = np.sqrt(np.maximum(F2, eps))
-            inv_F = 1.0 / F
-            inv_F3 = inv_F / np.maximum(F2, eps)
-            F_fields[0] = F
-            F_fields[1] = 0.5 * F2_r * inv_F
-            F_fields[2] = 0.5 * F2_rr * inv_F - 0.25 * F2_r * F2_r * inv_F3
+            operator_ops.apply_f2_profile_fields(self.runtime_layout.F_profile_fields, eps=eps)
 
         return runner
 
@@ -483,6 +483,15 @@ class Operator:
         if f_profile_id >= 0 and not bool(self.active_profile_mask[f_profile_id]):
             self.execution_state.profile_postprocess_runner()
 
+    def _refresh_backend_state(self) -> None:
+        self.backend_state = BackendState(
+            static_layout=self.static_layout,
+            residual_binding_layout=self.residual_binding_layout,
+            runtime_layout=self.runtime_layout,
+            field_runtime_state=self.field_runtime_state,
+            source_runtime_state=self.source_runtime_state,
+        )
+
     def _refresh_stage_a_runtime(self) -> None:
         refresh_stage_a_runtime(
             active_profile_ids=self.active_profile_ids,
@@ -521,9 +530,9 @@ class Operator:
             s_family_source_slots=self.s_family_source_slots,
             c_effective_order=self.c_effective_order,
             s_effective_order=self.s_effective_order,
-            h_fields=self.h_profile.u_fields,
-            v_fields=self.v_profile.u_fields,
-            k_fields=self.k_profile.u_fields,
+            h_fields=self.runtime_layout.h_fields,
+            v_fields=self.runtime_layout.v_fields,
+            k_fields=self.runtime_layout.k_fields,
             a=self.case.a,
             R0=self.case.R0,
             Z0=self.case.Z0,
@@ -547,7 +556,6 @@ class Operator:
             source_plan=self.source_plan,
             static_layout=self.static_layout,
             runtime_layout=self.runtime_layout,
-            profiles_by_name=self.profiles_by_name,
             B0=self.case.B0,
         )
 
@@ -662,7 +670,7 @@ class Operator:
             ("PJ2", "psin", "uniform"),
             ("PQ", "psin", "uniform"),
         }:
-            self.source_runtime_state.psin_query.fill(-1.0)
+            self.source_runtime_state.work_state.psin_query.fill(-1.0)
 
     def _build_fused_residual_runner(self) -> Callable[[np.ndarray], np.ndarray]:
         if self.source_plan.requires_psin_profile_fields and self.psin_profile.u_fields is None:
