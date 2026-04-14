@@ -17,7 +17,7 @@ from dataclasses import InitVar, dataclass, field
 
 import numpy as np
 
-from veqpy.engine import profile_ops
+from veqpy.engine.numba_profile import update_profile
 from veqpy.model.grid import Grid
 from veqpy.model.serial import Serial
 
@@ -153,7 +153,7 @@ def _fill_profile_outputs(
     scale: float,
 ) -> None:
     """根据 coeff 刷新单个 profile fields."""
-    profile_ops.update_profile(
+    update_profile(
         u_fields,
         T_fields,
         rp_fields,

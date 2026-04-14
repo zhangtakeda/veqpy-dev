@@ -8,6 +8,7 @@ import veqpy.engine.backend_abi as engine_backend_abi
 import veqpy.model.equilibrium as equilibrium_module
 import veqpy.operator.layout as layout_module
 from veqpy.engine import orchestration
+from veqpy.engine.backend import BackendCapabilities
 from veqpy.model.boundary import Boundary
 from veqpy.model.equilibrium import Equilibrium
 from veqpy.model.geqdsk import Geqdsk
@@ -602,6 +603,8 @@ def test_operator_exposes_explicit_layout_and_execution_layers():
     assert isinstance(operator.residual_binding_layout, ResidualBindingLayout)
     assert isinstance(operator.runtime_layout, RuntimeLayout)
     assert isinstance(operator.backend_state, BackendState)
+    assert isinstance(operator.backend_caps, BackendCapabilities)
+    assert operator.backend_caps.name == "numba"
     assert isinstance(operator.field_runtime_state, FieldRuntimeState)
     assert isinstance(operator.execution_state, ExecutionState)
     assert isinstance(operator.source_runtime_state, SourceRuntimeState)
@@ -821,6 +824,12 @@ def test_backend_abi_fixed_point_route_builders_encode_route_local_policy():
     assert pj2_abi.allow_query_warmstart is False
     assert pj2_abi.finalize_iter == 8
     assert pj2_abi.barycentric_weights.shape[0] == min(8, int(operator2.source_plan.n_src))
+
+
+def test_operator_rejects_unknown_backend():
+    grid, case = _build_operator_case()
+    with pytest.raises(ValueError, match="Unsupported backend"):
+        Operator(grid=grid, case=case, backend_name="jax")
 
 
 @pytest.mark.parametrize(("mode", "heat_degree", "current_degree"), [("PJ2", 5, 6), ("PQ", 7, 10)])

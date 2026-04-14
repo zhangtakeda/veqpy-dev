@@ -20,7 +20,8 @@ from typing import Callable
 
 import numpy as np
 
-from veqpy.engine import operator_ops, orchestration, residual_ops, validate_route
+from veqpy.engine import orchestration, validate_route
+from veqpy.engine.backend import BackendCapabilities, resolve_backend
 from veqpy.model.equilibrium import Equilibrium
 from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile
@@ -77,10 +78,12 @@ class Operator:
 
     grid: Grid = field(repr=False)
     case: OperatorCase = field(repr=False)
+    backend_name: str = "numba"
     static_layout: StaticLayout = field(init=False, repr=False)
     residual_binding_layout: ResidualBindingLayout = field(init=False, repr=False)
     runtime_layout: RuntimeLayout = field(init=False, repr=False)
     backend_state: BackendState = field(init=False, repr=False)
+    backend_caps: BackendCapabilities = field(init=False, repr=False)
 
     h_profile: Profile = field(init=False)
     v_profile: Profile = field(init=False)
@@ -142,6 +145,7 @@ class Operator:
 
     def __post_init__(self) -> None:
         """完成 layout 构造, 运行时缓冲区分配和 case 绑定."""
+        self.backend_caps = resolve_backend(self.backend_name)
         self._refresh_operator_identity()
         self.prefix_profile_names = get_prefix_profile_names()
         self.shape_profile_names = build_shape_profile_names(self.grid.M_max)
@@ -443,7 +447,7 @@ class Operator:
         eps = 1.0e-10
 
         def runner() -> None:
-            operator_ops.apply_f2_profile_fields(self.runtime_layout.F_profile_fields, eps=eps)
+            self.backend_caps.apply_f2_profile_fields(self.runtime_layout.F_profile_fields, eps=eps)
 
         return runner
 
@@ -517,6 +521,7 @@ class Operator:
             active_scales=self.active_scales,
             active_coeff_index_rows=self.active_coeff_index_rows,
             active_lengths=self.active_lengths,
+            update_profiles_packed_bulk=self.backend_caps.update_profiles_packed_bulk,
         )
 
     def _build_geometry_stage_runner(self) -> Callable:
@@ -552,7 +557,7 @@ class Operator:
         return orchestration.build_bound_source_stage_runner(self)
 
     def _build_source_eval_runner(self) -> Callable:
-        return operator_ops.bind_source_eval_runner(
+        return self.backend_caps.bind_source_eval_runner(
             source_plan=self.source_plan,
             backend_state=self.backend_state,
             B0=self.case.B0,
@@ -574,7 +579,7 @@ class Operator:
         B0 = self.case.B0
 
         def runner() -> np.ndarray:
-            residual_ops.update_residual_compact(
+            self.backend_caps.update_residual_compact(
                 residual_workspace,
                 float(alpha_state[0]),
                 float(alpha_state[1]),
@@ -583,7 +588,7 @@ class Operator:
             )
             packed = np.zeros(self.x_size, dtype=np.float64)
             scratch = np.empty(self.grid.Nr, dtype=np.float64)
-            residual_ops._run_residual_blocks_packed_precomputed(
+            self.backend_caps.run_residual_blocks_packed_precomputed(
                 packed,
                 scratch,
                 self.residual_binding_layout.active_residual_block_codes,
@@ -622,7 +627,7 @@ class Operator:
         B0 = self.case.B0
 
         def runner() -> np.ndarray:
-            residual_ops.update_residual_compact(
+            self.backend_caps.update_residual_compact(
                 residual_workspace,
                 float(alpha_state[0]),
                 float(alpha_state[1]),
@@ -631,7 +636,7 @@ class Operator:
             )
             packed_residual.fill(0.0)
             scratch = np.empty(self.grid.Nr, dtype=np.float64)
-            residual_ops._run_residual_blocks_packed_precomputed(
+            self.backend_caps.run_residual_blocks_packed_precomputed(
                 packed_residual,
                 scratch,
                 self.residual_binding_layout.active_residual_block_codes,
@@ -676,7 +681,7 @@ class Operator:
             return self._evaluate_residual
         if not self.source_plan.supports_fused_residual:
             return self._evaluate_residual
-        return operator_ops.bind_fused_residual_runner(
+        return self.backend_caps.bind_fused_residual_runner(
             source_plan=self.source_plan,
             backend_state=self.backend_state,
             alpha_state=self.execution_state.fused_alpha_state,
