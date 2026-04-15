@@ -10,6 +10,7 @@ docs
 scripts
 tests/demo
 tests/benchmark
+tests/_tmp_plot_regression
 tests/**/*.png
 tests/**/*.txt
 tests/**/*.json

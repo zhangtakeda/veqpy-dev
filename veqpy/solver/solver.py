@@ -16,8 +16,9 @@ Notes:
 from __future__ import annotations
 
 import warnings
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from time import perf_counter
+from typing import Callable
 
 import numpy as np
 from rich.console import Console
@@ -29,43 +30,6 @@ from veqpy.operator.operator_case import OperatorCase
 from veqpy.solver.solver_config import LEAST_SQUARES_METHODS, SolverConfig
 from veqpy.solver.solver_record import SolverRecord
 from veqpy.solver.solver_result import SolverResult
-
-
-@dataclass(frozen=True, slots=True)
-class _SolveAttemptPlan:
-    label: str
-    x_guess: np.ndarray
-    solve_config: SolverConfig
-
-
-@dataclass(slots=True)
-class _ResidualTransformWrapper:
-    operator: object
-    block_lengths: np.ndarray
-    transform: str = "linear"
-    scale: np.ndarray | None = None
-    last_x: np.ndarray | None = None
-    last_raw_residual: np.ndarray | None = None
-
-    def __call__(self, x: np.ndarray) -> np.ndarray:
-        x_eval = self.operator.coerce_x(x)
-        raw_residual = np.asarray(self.operator(x_eval), dtype=np.float64)
-        self.last_x = x_eval.copy()
-        self.last_raw_residual = raw_residual.copy()
-        if self.scale is None:
-            self.scale = _build_block_rms_scale(raw_residual, self.block_lengths)
-            if self.scale is None:
-                self.scale = np.ones_like(raw_residual)
-        scaled_residual = raw_residual / self.scale
-        if self.transform == "asinh":
-            return np.arcsinh(scaled_residual)
-        return scaled_residual
-
-    def get_raw_residual(self, x: np.ndarray) -> np.ndarray:
-        x_eval = self.operator.coerce_x(x)
-        if self.last_x is not None and self.last_raw_residual is not None and np.array_equal(self.last_x, x_eval):
-            return self.last_raw_residual.copy()
-        return np.asarray(self.operator(x_eval), dtype=np.float64)
 
 
 class Solver:
@@ -262,8 +226,8 @@ class Solver:
         )
 
         for idx, attempt_plan in enumerate(attempt_plans):
-            result, error = self._try_solve_attempt(attempt_plan.x_guess, solve_config=attempt_plan.solve_config)
-            label = attempt_plan.label
+            label, x_attempt_guess, attempt_config = attempt_plan
+            result, error = self._try_solve_attempt(x_attempt_guess, solve_config=attempt_config)
             attempts.append((label, result, error))
             if self._attempt_succeeded(result, error):
                 if result is None:
@@ -275,7 +239,7 @@ class Solver:
             if idx + 1 >= len(attempt_plans):
                 break
 
-            next_label = attempt_plans[idx + 1].label
+            next_label = attempt_plans[idx + 1][0]
             failure = self._format_attempt_failure(
                 method=label,
                 result=result,
@@ -296,28 +260,28 @@ class Solver:
         *,
         solve_config: SolverConfig,
         x0_was_provided: bool,
-    ) -> list[_SolveAttemptPlan]:
+    ) -> list[tuple[str, np.ndarray, SolverConfig]]:
         x_initial = self.operator.coerce_x(x_guess).copy()
         x_cold = np.zeros_like(x_initial)
         attempt_plans = [
-            _SolveAttemptPlan(
-                label=self._display_attempt_label(
+            (
+                self._display_attempt_label(
                     solve_config,
                     start_kind="warm-start"
                     if self._is_warm_initial_guess(x_initial, x0_was_provided)
                     else "cold-start",
                 ),
-                x_guess=x_initial,
-                solve_config=solve_config,
+                x_initial,
+                solve_config,
             )
         ]
 
         if self._should_retry_from_reset(x_initial, x0_was_provided=x0_was_provided):
             attempt_plans.append(
-                _SolveAttemptPlan(
-                    label=self._display_attempt_label(solve_config, start_kind="reset"),
-                    x_guess=x_cold.copy(),
-                    solve_config=solve_config,
+                (
+                    self._display_attempt_label(solve_config, start_kind="reset"),
+                    x_cold.copy(),
+                    solve_config,
                 )
             )
 
@@ -328,10 +292,10 @@ class Solver:
             seen_methods.add(fallback_method)
             fallback_config = replace(solve_config, method=fallback_method)
             attempt_plans.append(
-                _SolveAttemptPlan(
-                    label=self._display_attempt_label(fallback_config, start_kind="cold-fallback"),
-                    x_guess=x_cold.copy(),
-                    solve_config=fallback_config,
+                (
+                    self._display_attempt_label(fallback_config, start_kind="cold-fallback"),
+                    x_cold.copy(),
+                    fallback_config,
                 )
             )
         return attempt_plans
@@ -547,7 +511,7 @@ class Solver:
         *,
         solve_config: SolverConfig,
         options: dict[str, object],
-        wrapper: _ResidualTransformWrapper | None = None,
+        get_raw_residual: Callable[[np.ndarray], np.ndarray] | None = None,
     ):
         opt = root(
             root_fun,
@@ -556,9 +520,9 @@ class Solver:
             tol=solve_config.atol,
             options=options,
         )
-        if wrapper is not None:
+        if get_raw_residual is not None:
             x_opt = self.operator.coerce_x(opt.x)
-            opt.fun = wrapper.get_raw_residual(x_opt)
+            opt.fun = get_raw_residual(x_opt)
         return opt
 
     def _run_root_full(
@@ -570,15 +534,14 @@ class Solver:
         """在完整 packed x 上调用一次 `scipy.optimize.root`."""
 
         root_fun = self.operator
-        scaled_wrapper: _ResidualTransformWrapper | None = None
+        get_raw_residual: Callable[[np.ndarray], np.ndarray] | None = None
         options = _root_options_for(solve_config)
-        scaled_fun = self._build_residual_transform_wrapper(
+        scaled_fun, get_raw_residual = self._build_residual_transform_wrapper(
             x_guess,
             transform="linear",
         )
         if scaled_fun is not None:
-            scaled_wrapper = scaled_fun
-            root_fun = scaled_wrapper
+            root_fun = scaled_fun
             if solve_config.method == "hybr":
                 options = {**options, "factor": 1.0}
 
@@ -587,7 +550,7 @@ class Solver:
             x_guess,
             solve_config=solve_config,
             options=options,
-            wrapper=scaled_wrapper,
+            get_raw_residual=get_raw_residual,
         )
 
     def _build_residual_transform_wrapper(
@@ -595,22 +558,44 @@ class Solver:
         x_guess: np.ndarray,
         *,
         transform: str,
-    ) -> _ResidualTransformWrapper | None:
+    ) -> tuple[Callable[[np.ndarray], np.ndarray] | None, Callable[[np.ndarray], np.ndarray] | None]:
         """为 solver 层构造带 block scaling 的残差变换 wrapper."""
 
         block_lengths = getattr(self.operator, "active_lengths", None)
         if block_lengths is None:
-            return None
+            return None, None
 
         try:
             self.operator.coerce_x(x_guess)
         except Exception:
-            return None
-        return _ResidualTransformWrapper(
-            operator=self.operator,
-            block_lengths=np.asarray(block_lengths, dtype=np.int64),
-            transform=transform,
-        )
+            return None, None
+        block_lengths_eval = np.asarray(block_lengths, dtype=np.int64)
+        scale: np.ndarray | None = None
+        last_x: np.ndarray | None = None
+        last_raw_residual: np.ndarray | None = None
+
+        def wrapped(x: np.ndarray) -> np.ndarray:
+            nonlocal scale, last_x, last_raw_residual
+            x_eval = self.operator.coerce_x(x)
+            raw_residual = np.asarray(self.operator(x_eval), dtype=np.float64)
+            last_x = x_eval.copy()
+            last_raw_residual = raw_residual.copy()
+            if scale is None:
+                scale = _build_block_rms_scale(raw_residual, block_lengths_eval)
+                if scale is None:
+                    scale = np.ones_like(raw_residual)
+            scaled_residual = raw_residual / scale
+            if transform == "asinh":
+                return np.arcsinh(scaled_residual)
+            return scaled_residual
+
+        def get_raw_residual(x: np.ndarray) -> np.ndarray:
+            x_eval = self.operator.coerce_x(x)
+            if last_x is not None and last_raw_residual is not None and np.array_equal(last_x, x_eval):
+                return last_raw_residual.copy()
+            return np.asarray(self.operator(x_eval), dtype=np.float64)
+
+        return wrapped, get_raw_residual
 
     def _initial_residual_stats(self, x_guess: np.ndarray) -> tuple[np.ndarray | None, float | None]:
         try:
@@ -628,13 +613,14 @@ class Solver:
         """在完整 packed x 上调用一次 `scipy.optimize.least_squares`."""
 
         least_squares_fun = self.operator
-        wrapper: _ResidualTransformWrapper | None = None
+        get_raw_residual: Callable[[np.ndarray], np.ndarray] | None = None
         kwargs = _least_squares_kwargs_for(solve_config)
         if solve_config.method == "lm":
-            wrapper = self._build_residual_transform_wrapper(x_guess, transform="asinh")
-            if wrapper is not None:
-                least_squares_fun = wrapper
+            least_squares_fun, get_raw_residual = self._build_residual_transform_wrapper(x_guess, transform="asinh")
+            if least_squares_fun is not None:
                 kwargs["x_scale"] = 1.0
+            else:
+                least_squares_fun = self.operator
         elif solve_config.method == "trf":
             residual0, _ = self._initial_residual_stats(x_guess)
             if _should_use_robust_trf_loss(
@@ -649,9 +635,9 @@ class Solver:
             x_guess,
             **kwargs,
         )
-        if wrapper is not None:
+        if get_raw_residual is not None:
             x_opt = self.operator.coerce_x(opt.x)
-            opt.fun = wrapper.get_raw_residual(x_opt)
+            opt.fun = get_raw_residual(x_opt)
         return opt
 
 

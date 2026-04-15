@@ -308,62 +308,6 @@ def validate_source_plan_profile_support(
         raise ValueError(f"{case.route} does not accept an active psin profile because psin is source-owned")
 
 
-def normalize_psin_query_inplace(out: np.ndarray, source: np.ndarray | None) -> np.ndarray:
-    if source is None:
-        raise RuntimeError("psin_profile.u is not initialized")
-
-    np.copyto(out, np.asarray(source, dtype=np.float64))
-    if out.ndim != 1 or out.size < 2:
-        raise ValueError(f"Expected psin query to be 1D with at least two points, got {out.shape}")
-
-    offset = float(out[0])
-    scale = float(out[-1] - offset)
-    if abs(scale) < 1e-12:
-        raise ValueError("psin query does not span a valid normalized flux interval")
-
-    out -= offset
-    out /= scale
-    out[0] = 0.0
-    out[-1] = 1.0
-    return out
-
-
-def parameterize_psin_query_inplace(out: np.ndarray, source: np.ndarray, parameterization: str) -> np.ndarray:
-    np.copyto(out, np.asarray(source, dtype=np.float64))
-    if parameterization == "identity":
-        return out
-    if parameterization == "sqrt_psin":
-        np.maximum(out, 0.0, out=out)
-        np.sqrt(out, out=out)
-        return out
-    raise ValueError(f"Unsupported source parameterization {parameterization!r}")
-
-
-def _parameterize_projection_query_inplace(out: np.ndarray, source: np.ndarray, domain: str) -> np.ndarray:
-    np.copyto(out, np.asarray(source, dtype=np.float64))
-    np.clip(out, 0.0, 1.0, out=out)
-    if domain == "psin":
-        out *= 2.0
-        out -= 1.0
-        return out
-    if domain == "sqrt_psin":
-        np.sqrt(out, out=out)
-        out *= 2.0
-        out -= 1.0
-        return out
-    raise ValueError(f"Unsupported source projection domain {domain!r}")
-
-
-def _build_source_projection_fit_matrix(n_src: int, *, degree: int, domain: str) -> np.ndarray:
-    if degree < 0:
-        raise ValueError(f"Projection degree must be non-negative, got {degree}")
-    source_axis = np.linspace(0.0, 1.0, int(n_src), dtype=np.float64)
-    source_query = np.empty_like(source_axis)
-    _parameterize_projection_query_inplace(source_query, source_axis, domain)
-    vandermonde = chebvander(source_query, degree)
-    return np.linalg.pinv(vandermonde)
-
-
 def validate_source_inputs(case: "OperatorCase", nr: int) -> None:
     if case.heat_input.shape != case.current_input.shape:
         raise ValueError(
@@ -374,71 +318,6 @@ def validate_source_inputs(case: "OperatorCase", nr: int) -> None:
         raise ValueError(f"Expected grid inputs to have shape ({nr},), got {case.heat_input.shape}")
     if case.heat_input.shape[0] < 1:
         raise ValueError(f"Expected {case.coordinate}-coordinate inputs to contain at least one sample")
-
-
-def materialize_source_inputs(
-    *,
-    source_plan: SourcePlan,
-    source_runtime_state: "SourceRuntimeState",
-    psin_query: np.ndarray,
-    enable_projection: bool = True,
-) -> None:
-    source_const_state = source_runtime_state.const_state
-    source_work_state = source_runtime_state.work_state
-    if source_plan.is_grid_nodes:
-        np.copyto(source_work_state.materialized_heat_input, source_plan.heat_input)
-        np.copyto(source_work_state.materialized_current_input, source_plan.current_input)
-        return
-    if enable_projection and source_plan.is_psin_coordinate and source_plan.has_projection_policy:
-        materialize_projected_psin_source_inputs(
-            source_plan=source_plan,
-            source_runtime_state=source_runtime_state,
-            psin_query=psin_query,
-        )
-        return
-    query = psin_query
-    if source_plan.is_psin_coordinate:
-        parameterize_psin_query_inplace(
-            source_work_state.parameter_query,
-            psin_query,
-            source_plan.parameterization,
-        )
-        query = source_work_state.parameter_query
-    resolve_source_inputs(
-        source_work_state.materialized_heat_input,
-        source_work_state.materialized_current_input,
-        source_plan.heat_input,
-        source_plan.current_input,
-        source_plan.coordinate_code,
-        source_plan.n_src,
-        source_const_state.barycentric_weights,
-        source_const_state.fixed_remap_matrix,
-        query,
-    )
-
-
-def materialize_projected_psin_source_inputs(
-    *,
-    source_plan: SourcePlan,
-    source_runtime_state: "SourceRuntimeState",
-    psin_query: np.ndarray,
-) -> None:
-    if not source_plan.has_projection_policy:
-        raise RuntimeError("Projected psin source materialization requested without a projection policy")
-    source_const_state = source_runtime_state.const_state
-    source_work_state = source_runtime_state.work_state
-    source_aux_state = source_runtime_state.aux_state
-    materialize_projected_source_inputs(
-        source_work_state.materialized_heat_input,
-        source_work_state.materialized_current_input,
-        source_aux_state.heat_projection_coeff,
-        source_aux_state.current_projection_coeff,
-        source_plan.current_input,
-        psin_query,
-        source_plan.projection_domain_code,
-        source_plan.endpoint_policy_code,
-        source_const_state.endpoint_blend,
-    )
 
 
 def refresh_source_runtime(
@@ -476,15 +355,32 @@ def refresh_source_runtime(
                 source_const_state.heat_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
                 source_const_state.current_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
             else:
-                source_const_state.heat_projection_fit_matrix = _build_source_projection_fit_matrix(
-                    source_plan.n_src,
-                    degree=source_plan.heat_projection_degree,
-                    domain=source_plan.projection_domain,
+                source_axis = np.linspace(0.0, 1.0, int(source_plan.n_src), dtype=np.float64)
+                source_query = np.empty_like(source_axis)
+                np.copyto(source_query, source_axis)
+                np.clip(source_query, 0.0, 1.0, out=source_query)
+                if source_plan.projection_domain == "psin":
+                    source_query *= 2.0
+                    source_query -= 1.0
+                elif source_plan.projection_domain == "sqrt_psin":
+                    np.sqrt(source_query, out=source_query)
+                    source_query *= 2.0
+                    source_query -= 1.0
+                else:
+                    raise ValueError(f"Unsupported source projection domain {source_plan.projection_domain!r}")
+                if source_plan.heat_projection_degree < 0:
+                    raise ValueError(
+                        f"Projection degree must be non-negative, got {source_plan.heat_projection_degree}"
+                    )
+                if source_plan.current_projection_degree < 0:
+                    raise ValueError(
+                        f"Projection degree must be non-negative, got {source_plan.current_projection_degree}"
+                    )
+                source_const_state.heat_projection_fit_matrix = np.linalg.pinv(
+                    chebvander(source_query, source_plan.heat_projection_degree)
                 )
-                source_const_state.current_projection_fit_matrix = _build_source_projection_fit_matrix(
-                    source_plan.n_src,
-                    degree=source_plan.current_projection_degree,
-                    domain=source_plan.projection_domain,
+                source_const_state.current_projection_fit_matrix = np.linalg.pinv(
+                    chebvander(source_query, source_plan.current_projection_degree)
                 )
         source_runtime_state.cache_key = case_key
     if source_plan.is_grid_nodes or not source_plan.has_projection_policy:
@@ -499,11 +395,21 @@ def refresh_source_runtime(
             source_plan.current_input, dtype=np.float64
         )
     if source_plan.is_grid_nodes or not source_plan.is_psin_coordinate:
-        materialize_source_inputs(
-            source_plan=source_plan,
-            source_runtime_state=source_runtime_state,
-            psin_query=psin,
-        )
+        if source_plan.is_grid_nodes:
+            np.copyto(source_work_state.materialized_heat_input, source_plan.heat_input)
+            np.copyto(source_work_state.materialized_current_input, source_plan.current_input)
+        else:
+            resolve_source_inputs(
+                source_work_state.materialized_heat_input,
+                source_work_state.materialized_current_input,
+                source_plan.heat_input,
+                source_plan.current_input,
+                source_plan.coordinate_code,
+                source_plan.n_src,
+                source_const_state.barycentric_weights,
+                source_const_state.fixed_remap_matrix,
+                psin,
+            )
     elif (source_plan.route, source_plan.coordinate, source_plan.nodes) in {
         ("PJ2", "psin", "uniform"),
         ("PQ", "psin", "uniform"),
@@ -591,11 +497,16 @@ def _build_source_stage_runner_shared(operator_core: Any) -> Callable:
                     parameterization_code,
                 )
                 if source_plan.has_projection_policy:
-                    materialize_source_inputs(
-                        source_plan=source_plan,
-                        source_runtime_state=source_runtime_state,
-                        psin_query=source_psin_query,
-                        enable_projection=True,
+                    materialize_projected_source_inputs(
+                        source_work_state.materialized_heat_input,
+                        source_work_state.materialized_current_input,
+                        source_aux_state.heat_projection_coeff,
+                        source_aux_state.current_projection_coeff,
+                        source_plan.current_input,
+                        source_psin_query,
+                        source_plan.projection_domain_code,
+                        source_plan.endpoint_policy_code,
+                        source_runtime_state.const_state.endpoint_blend,
                     )
                 return source_eval_runner(
                     source_target_root_fields,
@@ -613,19 +524,44 @@ def _build_source_stage_runner_shared(operator_core: Any) -> Callable:
         psin_profile_fields = runtime_layout.psin_profile_fields
 
         def runner() -> tuple[float, float]:
-            copy_psin_profile_to_root_fields(
-                psin=psin,
-                psin_r=psin_r,
-                psin_rr=psin_rr,
-                psin_profile_u=psin_profile_u,
-                psin_profile_fields=psin_profile_fields,
-            )
+            if psin_profile_fields.size == 0:
+                raise RuntimeError("psin_profile runtime fields are not initialized")
+            np.copyto(psin, psin_profile_u)
+            np.copyto(psin_r, psin_profile_fields[1])
+            np.copyto(psin_rr, psin_profile_fields[2])
             np.copyto(source_psin_query, psin)
-            materialize_source_inputs(
-                source_plan=source_plan,
-                source_runtime_state=source_runtime_state,
-                psin_query=source_psin_query,
-            )
+            if source_plan.has_projection_policy:
+                materialize_projected_source_inputs(
+                    source_work_state.materialized_heat_input,
+                    source_work_state.materialized_current_input,
+                    source_aux_state.heat_projection_coeff,
+                    source_aux_state.current_projection_coeff,
+                    source_plan.current_input,
+                    source_psin_query,
+                    source_plan.projection_domain_code,
+                    source_plan.endpoint_policy_code,
+                    source_runtime_state.const_state.endpoint_blend,
+                )
+            else:
+                if source_plan.parameterization == "identity":
+                    np.copyto(source_work_state.parameter_query, source_psin_query)
+                elif source_plan.parameterization == "sqrt_psin":
+                    np.copyto(source_work_state.parameter_query, source_psin_query)
+                    np.maximum(source_work_state.parameter_query, 0.0, out=source_work_state.parameter_query)
+                    np.sqrt(source_work_state.parameter_query, out=source_work_state.parameter_query)
+                else:
+                    raise ValueError(f"Unsupported source parameterization {source_plan.parameterization!r}")
+                resolve_source_inputs(
+                    source_work_state.materialized_heat_input,
+                    source_work_state.materialized_current_input,
+                    source_plan.heat_input,
+                    source_plan.current_input,
+                    source_plan.coordinate_code,
+                    source_plan.n_src,
+                    source_runtime_state.const_state.barycentric_weights,
+                    source_runtime_state.const_state.fixed_remap_matrix,
+                    source_work_state.parameter_query,
+                )
             return source_eval_runner(
                 source_target_root_fields,
                 FFn_psin,
@@ -648,23 +584,6 @@ def _build_source_stage_runner_shared(operator_core: Any) -> Callable:
         )
 
     return runner
-
-
-def copy_psin_profile_to_root_fields(
-    *,
-    psin: np.ndarray,
-    psin_r: np.ndarray,
-    psin_rr: np.ndarray,
-    psin_profile_u: np.ndarray,
-    psin_profile_fields: np.ndarray,
-) -> None:
-    if psin_profile_fields.size == 0:
-        raise RuntimeError("psin_profile runtime fields are not initialized")
-    np.copyto(psin, psin_profile_u)
-    np.copyto(psin_r, psin_profile_fields[1])
-    np.copyto(psin_rr, psin_profile_fields[2])
-
-
 def _build_pj2_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[[], tuple[float, float]]:
     source_plan = operator_core.source_plan
     source_eval_runner = operator_core.execution_state.source_eval_runner
@@ -678,15 +597,42 @@ def _build_pj2_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[
 
     def runner() -> tuple[float, float]:
         if source_work_state.psin_query[0] < 0.0:
-            normalize_psin_query_inplace(source_work_state.psin_query, psin_profile_u)
+            if psin_profile_u is None:
+                raise RuntimeError("psin_profile.u is not initialized")
+            np.copyto(source_work_state.psin_query, np.asarray(psin_profile_u, dtype=np.float64))
+            if source_work_state.psin_query.ndim != 1 or source_work_state.psin_query.size < 2:
+                raise ValueError(
+                    f"Expected psin query to be 1D with at least two points, got {source_work_state.psin_query.shape}"
+                )
+            offset = float(source_work_state.psin_query[0])
+            scale = float(source_work_state.psin_query[-1] - offset)
+            if abs(scale) < 1e-12:
+                raise ValueError("psin query does not span a valid normalized flux interval")
+            source_work_state.psin_query -= offset
+            source_work_state.psin_query /= scale
+            source_work_state.psin_query[0] = 0.0
+            source_work_state.psin_query[-1] = 1.0
         alpha1 = float("nan")
         alpha2 = float("nan")
         for _ in range(16):
-            materialize_source_inputs(
-                source_plan=source_plan,
-                source_runtime_state=source_runtime_state,
-                psin_query=source_work_state.psin_query,
-                enable_projection=False,
+            if source_plan.parameterization == "identity":
+                np.copyto(source_work_state.parameter_query, source_work_state.psin_query)
+            elif source_plan.parameterization == "sqrt_psin":
+                np.copyto(source_work_state.parameter_query, source_work_state.psin_query)
+                np.maximum(source_work_state.parameter_query, 0.0, out=source_work_state.parameter_query)
+                np.sqrt(source_work_state.parameter_query, out=source_work_state.parameter_query)
+            else:
+                raise ValueError(f"Unsupported source parameterization {source_plan.parameterization!r}")
+            resolve_source_inputs(
+                source_work_state.materialized_heat_input,
+                source_work_state.materialized_current_input,
+                source_plan.heat_input,
+                source_plan.current_input,
+                source_plan.coordinate_code,
+                source_plan.n_src,
+                source_runtime_state.const_state.barycentric_weights,
+                source_runtime_state.const_state.fixed_remap_matrix,
+                source_work_state.parameter_query,
             )
             alpha1, alpha2 = source_eval_runner(
                 target_root_fields,
@@ -700,11 +646,16 @@ def _build_pj2_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[
                 break
         np.copyto(source_work_state.psin_query, target_root_fields[0])
         for _ in range(8):
-            materialize_source_inputs(
-                source_plan=source_plan,
-                source_runtime_state=source_runtime_state,
-                psin_query=source_work_state.psin_query,
-                enable_projection=True,
+            materialize_projected_source_inputs(
+                source_work_state.materialized_heat_input,
+                source_work_state.materialized_current_input,
+                source_aux_state.heat_projection_coeff,
+                source_aux_state.current_projection_coeff,
+                source_plan.current_input,
+                source_work_state.psin_query,
+                source_plan.projection_domain_code,
+                source_plan.endpoint_policy_code,
+                source_runtime_state.const_state.endpoint_blend,
             )
             alpha1, alpha2 = source_eval_runner(
                 target_root_fields,
@@ -738,15 +689,42 @@ def _build_pq_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[[
 
     def runner() -> tuple[float, float]:
         if (not allow_query_warmstart) or source_work_state.psin_query[0] < 0.0:
-            normalize_psin_query_inplace(source_work_state.psin_query, psin_profile_u)
+            if psin_profile_u is None:
+                raise RuntimeError("psin_profile.u is not initialized")
+            np.copyto(source_work_state.psin_query, np.asarray(psin_profile_u, dtype=np.float64))
+            if source_work_state.psin_query.ndim != 1 or source_work_state.psin_query.size < 2:
+                raise ValueError(
+                    f"Expected psin query to be 1D with at least two points, got {source_work_state.psin_query.shape}"
+                )
+            offset = float(source_work_state.psin_query[0])
+            scale = float(source_work_state.psin_query[-1] - offset)
+            if abs(scale) < 1e-12:
+                raise ValueError("psin query does not span a valid normalized flux interval")
+            source_work_state.psin_query -= offset
+            source_work_state.psin_query /= scale
+            source_work_state.psin_query[0] = 0.0
+            source_work_state.psin_query[-1] = 1.0
         alpha1 = float("nan")
         alpha2 = float("nan")
         for _ in range(16):
-            materialize_source_inputs(
-                source_plan=source_plan,
-                source_runtime_state=source_runtime_state,
-                psin_query=source_work_state.psin_query,
-                enable_projection=False,
+            if source_plan.parameterization == "identity":
+                np.copyto(source_work_state.parameter_query, source_work_state.psin_query)
+            elif source_plan.parameterization == "sqrt_psin":
+                np.copyto(source_work_state.parameter_query, source_work_state.psin_query)
+                np.maximum(source_work_state.parameter_query, 0.0, out=source_work_state.parameter_query)
+                np.sqrt(source_work_state.parameter_query, out=source_work_state.parameter_query)
+            else:
+                raise ValueError(f"Unsupported source parameterization {source_plan.parameterization!r}")
+            resolve_source_inputs(
+                source_work_state.materialized_heat_input,
+                source_work_state.materialized_current_input,
+                source_plan.heat_input,
+                source_plan.current_input,
+                source_plan.coordinate_code,
+                source_plan.n_src,
+                source_runtime_state.const_state.barycentric_weights,
+                source_runtime_state.const_state.fixed_remap_matrix,
+                source_work_state.parameter_query,
             )
             alpha1, alpha2 = source_eval_runner(
                 target_root_fields,
@@ -760,11 +738,16 @@ def _build_pq_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[[
                 break
         np.copyto(source_work_state.psin_query, target_root_fields[0])
         for _ in range(16):
-            materialize_source_inputs(
-                source_plan=source_plan,
-                source_runtime_state=source_runtime_state,
-                psin_query=source_work_state.psin_query,
-                enable_projection=True,
+            materialize_projected_source_inputs(
+                source_work_state.materialized_heat_input,
+                source_work_state.materialized_current_input,
+                source_aux_state.heat_projection_coeff,
+                source_aux_state.current_projection_coeff,
+                source_plan.current_input,
+                source_work_state.psin_query,
+                source_plan.projection_domain_code,
+                source_plan.endpoint_policy_code,
+                source_runtime_state.const_state.endpoint_blend,
             )
             alpha1, alpha2 = source_eval_runner(
                 target_root_fields,

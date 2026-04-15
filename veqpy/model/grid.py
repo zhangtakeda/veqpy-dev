@@ -274,6 +274,9 @@ class Grid(Serial):
         """在当前 Grid 上对轴心偶函数量做预计算修正微分."""
         if out is None:
             out = np.empty_like(f_1D)
+        if not np.all(np.isfinite(f_1D)):
+            out.fill(0.0)
+            return out
         np.matmul(self.corrected_even_derivative_matrix, f_1D, out=out)
         return out
 

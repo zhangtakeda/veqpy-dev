@@ -105,6 +105,8 @@ def _regularize_axis_linear_profile(
     rho2 = float(rho[2])
     if abs(rho2 - rho1) < 1e-14:
         return values
+    if not np.isfinite(values[1]) or not np.isfinite(values[2]):
+        return values
 
     slope = (values[2] - values[1]) / (rho2 - rho1)
     values[0] = values[1] + slope * (rho[0] - rho1)

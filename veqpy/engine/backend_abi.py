@@ -9,8 +9,6 @@ Public API:
 - FusedHotRuntimeABI
 - FusedResidualPackABI
 - FusedSourceEvalABI
-- ProfileOwnedPsinSourceABI
-- FixedPointPsinSourceABI
 - build_fused_hot_runtime_abi
 - build_fused_residual_pack_abi
 - build_fused_source_eval_abi
@@ -22,6 +20,7 @@ Public API:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Callable
 
 import numpy as np
@@ -105,50 +104,6 @@ class FusedSourceEvalABI:
     beta: float
     source_scratch_1d: np.ndarray
     B0: float
-
-
-@dataclass(frozen=True, slots=True)
-class ProfileOwnedPsinSourceABI:
-    source_target_root_fields: np.ndarray
-    source_psin_query: np.ndarray
-    source_parameter_query: np.ndarray
-    heat_projection_coeff: np.ndarray
-    current_projection_coeff: np.ndarray
-    endpoint_blend: np.ndarray
-    materialized_heat_input: np.ndarray
-    materialized_current_input: np.ndarray
-    psin_profile_fields: np.ndarray
-    parameterization_code: int
-    has_projection_policy: bool
-    projection_domain_code: int
-    endpoint_policy_code: int
-    heat_input: np.ndarray
-    current_input: np.ndarray
-    skip_projection_finalize: bool
-
-
-@dataclass(frozen=True, slots=True)
-class FixedPointPsinSourceABI:
-    source_psin_query: np.ndarray
-    materialized_heat_input: np.ndarray
-    materialized_current_input: np.ndarray
-    source_scratch_1d: np.ndarray
-    heat_projection_coeff: np.ndarray
-    current_projection_coeff: np.ndarray
-    endpoint_blend: np.ndarray
-    F_profile_u: np.ndarray
-    psin_profile_u: np.ndarray
-    heat_input: np.ndarray
-    current_input: np.ndarray
-    coordinate_code: int
-    Ip: float
-    beta: float
-    has_Ip: bool
-    projection_domain_code: int
-    endpoint_policy_code: int
-    barycentric_weights: np.ndarray
-    allow_query_warmstart: bool
-    finalize_iter: int
 
 
 def build_fused_hot_runtime_abi(
@@ -262,12 +217,12 @@ def build_profile_owned_psin_source_abi(
     source_plan: "SourcePlan",
     backend_state: "BackendState",
     skip_projection_finalize: bool,
-) -> ProfileOwnedPsinSourceABI:
+):
     runtime_layout = backend_state.runtime_layout
     source_runtime_state = backend_state.source_runtime_state
     source_work_state = source_runtime_state.work_state
     source_aux_state = source_runtime_state.aux_state
-    return ProfileOwnedPsinSourceABI(
+    return SimpleNamespace(
         source_target_root_fields=source_aux_state.target_root_fields,
         source_psin_query=source_work_state.psin_query,
         source_parameter_query=source_work_state.parameter_query,
@@ -294,13 +249,13 @@ def _build_fixed_point_psin_source_abi(
     barycentric_order_cap: int,
     allow_query_warmstart: bool,
     finalize_iter: int,
-) -> FixedPointPsinSourceABI:
+):
     runtime_layout = backend_state.runtime_layout
     source_runtime_state = backend_state.source_runtime_state
     source_work_state = source_runtime_state.work_state
     source_aux_state = source_runtime_state.aux_state
     Ip = float(source_plan.Ip)
-    return FixedPointPsinSourceABI(
+    return SimpleNamespace(
         source_psin_query=source_work_state.psin_query,
         materialized_heat_input=source_work_state.materialized_heat_input,
         materialized_current_input=source_work_state.materialized_current_input,
@@ -328,7 +283,7 @@ def build_pj2_fixed_point_psin_source_abi(
     *,
     source_plan: "SourcePlan",
     backend_state: "BackendState",
-) -> FixedPointPsinSourceABI:
+):
     return _build_fixed_point_psin_source_abi(
         source_plan=source_plan,
         backend_state=backend_state,
@@ -342,7 +297,7 @@ def build_pq_fixed_point_psin_source_abi(
     *,
     source_plan: "SourcePlan",
     backend_state: "BackendState",
-) -> FixedPointPsinSourceABI:
+):
     endpoint_policy_code = int(source_plan.endpoint_policy_code)
     return _build_fixed_point_psin_source_abi(
         source_plan=source_plan,
