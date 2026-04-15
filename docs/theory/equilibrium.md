@@ -15,10 +15,12 @@ $$
 $$
 \color{red}
 \begin{aligned}
-FF_\psi  &= \alpha_1   \hat{FF_\psi} = \alpha_1\frac{\hat{FF_\rho}}{\hat{\psi}_\rho} \\
-P_\psi &=\frac{\alpha_1}{\mu_0} \hat{P}_\psi = \frac{\alpha_1}{\mu_0}\frac{\hat{P_\rho}}{\hat{\psi}_\rho}\\
+FF_\psi  &= \alpha_1   \hat{FF_{\psi}} = \alpha_1\frac{\hat{FF_\rho}}{\hat{\psi}_\rho} \\
+P_\psi &=\frac{\alpha_1}{\mu_0} \hat{P_{\psi}} = \frac{\alpha_1}{\mu_0}\frac{\hat{P_\rho}}{\hat{\psi}_\rho}\\
 \end{aligned}
 $$
+
+其中红色的归一化导数 route 统一记为 `psin`; 物理量 `FF_\psi / P_\psi` 仍表示对实际磁通 $\psi$ 的导数.
 
 - **环向/极向磁通**
 
@@ -65,14 +67,37 @@ $$
   \begin{aligned}
   j_{\phi}(\rho,\theta)&=- \left(\frac{F F_\psi}{\mu_0 R}+R P_\psi\right) \\
   &=- \frac{\alpha_1}{\mu_0\hat{\psi}_\rho}\left(\frac{\hat{F F_\rho}}{R}+R \hat{P}_\rho\right)\\
-  &=\color{red}- \frac{\alpha_1}{\mu_0}\left(\frac{\hat{F F_\psi}}{R}+R \hat{P}_\psi\right)\\
+  &=\color{red}- \frac{\alpha_1}{\mu_0}\left(\frac{\hat{F F}_{\psi}}{R}+R \hat{P}_{\psi}\right)\\
   \end{aligned}
   $$
 
-  $$
-  \begin{aligned}
-  j_{\rm tor} \equiv \langle j_{\phi} \rangle_S=  \frac{1}{S_\rho} \frac{\mathrm{d} I_{\text {tor }}}{\mathrm{d} \rho}=-\frac{1}{S_\rho}\left(\frac{2\pi}{\mu_0^2}\ {F F_\psi } L_\rho +\frac{V_\rho P_\psi}{2\pi}\right)\\
+$$
+\begin{aligned}
+j_{\rm tor} \equiv \langle j_{\phi} \rangle_S=  \frac{1}{S_\rho} \frac{\mathrm{d} I_{\text {tor }}}{\mathrm{d} \rho}=-\frac{1}{S_\rho}\left(\frac{2\pi}{\mu_0^2}\ {F F_\psi } L_\rho +\frac{V_\rho P_\psi}{2\pi}\right)\\
   =-\frac{\alpha_1}{\mu_0\hat{\psi}_\rho S_\rho}\left( 2\pi \hat{F F_\rho } \hat{L}_\rho +\frac{V_\rho \hat{P}_\rho}{2\pi}\right) \\
-  =\color{red}-\frac{\alpha_1}{\mu_0S_\rho}\left( 2\pi \hat{F F_\psi } \hat{L}_\rho +\frac{V_\rho \hat{P}_\psi}{2\pi}\right) \\
-  \end{aligned}
-  $$
+  =\color{red}-\frac{\alpha_1}{\mu_0S_\rho}\left( 2\pi \hat{F F}_{\psi} \hat{L}_\rho +\frac{V_\rho \hat{P}_{\psi}}{2\pi}\right) \\
+\end{aligned}
+$$
+
+当前代码中的 `Equilibrium` 已经从固定低阶 shape profile 快照扩展成动态 Fourier family 快照:
+
+- snapshot 保存:
+  - `active_profiles`
+- `c{k}` / `s{k}` 可以直接进入:
+  - `build_equilibrium()`
+  - `Equilibrium.resample(...)`
+  - JSON roundtrip
+
+当前快照的权威 shape-profile 集合是:
+
+- `active_profiles: dict[str, Profile]`
+
+其中:
+
+- `h_profile`
+- `v_profile`
+- `k_profile`
+
+仍然保留为方便读取的核心形状属性.  
+高阶 `c{k}` / `s{k}` 不再有单独的 legacy 构造接口.
+默认零形状项不会被持久化；重建时按 profile 名字自动补回默认 `Profile`.

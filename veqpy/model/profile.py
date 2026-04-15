@@ -17,7 +17,7 @@ from dataclasses import InitVar, dataclass, field
 
 import numpy as np
 
-from veqpy.engine import update_profile
+from veqpy.engine.numba_profile import update_profile
 from veqpy.model.grid import Grid
 from veqpy.model.serial import Serial
 
@@ -118,7 +118,7 @@ class Profile(Serial):
         """绑定 Grid 并准备 runtime 缓存."""
         self.T_fields = grid.T_fields
         self.rp_fields = _power_terms(grid.rho, self.power)
-        self.env_fields = _envelope_terms(grid.rho, grid.rho2, grid.y, self.envelope_power)
+        self.env_fields = _envelope_terms(grid.rho, grid.rho_powers[2], grid.y, self.envelope_power)
         self.rp_fields.flags.writeable = False
         self.env_fields.flags.writeable = False
 
@@ -141,6 +141,8 @@ def _coerce_optional_array(value, *, copy: bool, name: str = "array") -> np.ndar
 
 def _copy_optional_array(value: np.ndarray | None) -> np.ndarray | None:
     return None if value is None else value.copy()
+
+
 def _fill_profile_outputs(
     u_fields: np.ndarray,
     T_fields: np.ndarray,

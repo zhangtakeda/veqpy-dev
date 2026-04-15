@@ -1,19 +1,29 @@
-/*.json
-/*.png
-/*.svg
+*.json
+*.pkl
+*.png
+*.svg
 *.egg-info
 /veqpy-*
 
-build 
-tests/_artifacts
+build
+docs
+scripts
+tests/demo
+tests/benchmark
+tests/_tmp_plot_regression
 tests/**/*.png
 tests/**/*.txt
 tests/**/*.json
 __pycache__
  
 .backup
+.claude
 .codex
 .ruff_cache
+.venv
 .vscode
 
+.uv-cache
+uv.lock
 TODO.md
+CLAUDE.md

@@ -1,237 +1,164 @@
 # Repository Overview
 
-## Scope
+## Purpose
 
-这份文档只回答三个问题:
+This document answers four practical questions:
 
-- 当前仓库的代码层次是什么.
-- 当前 `x -> residual -> solve -> snapshot` 链路由哪些文件负责.
-- 修改时优先看哪些入口和风险点.
+- What are the main layers in this repository?
+- Which files own the `x -> residual -> solve -> snapshot` path?
+- Which scripts and tests are the current entry points?
+- What should a developer read first before changing runtime code?
 
-如果要看风格和注释规则, 读 [`docs/conventions.md`](./conventions.md).  
-如果要看边界合同和不能打破的约束, 读 [`docs/guardrails.md`](./guardrails.md).
+For domain formulas, see the files under [`docs/theory/`](./theory).
+For implementation constraints and invariants, see [`docs/guardrails.md`](./guardrails.md).
 
 ## Repository Map
 
-当前主代码只分四层:
+The active codebase is organized into four layers:
 
-- [`veqpy/engine/`](../veqpy/engine)
-  - 数组导向的 backend kernels 和 backend 导出面.
 - [`veqpy/model/`](../veqpy/model)
-  - `Grid`, `Profile`, `Geometry`, `Equilibrium`.
+  - Grid definitions, profiles, geometry state, GEQDSK payloads, and equilibrium snapshots.
 - [`veqpy/operator/`](../veqpy/operator)
-  - packed `layout/codec`, `OperatorCase`, `Operator`.
+  - Packed layout and codec ownership, case normalization, runtime state, and the main `x -> residual` operator.
+- [`veqpy/engine/`](../veqpy/engine)
+  - Array-first backend kernels and backend binding surfaces.
 - [`veqpy/solver/`](../veqpy/solver)
-  - `Solver`, `SolverConfig`, `SolverRecord`, `SolverResult`.
+  - SciPy solve orchestration, fallback behavior, history, and result objects.
 
-配套入口:
+## Main Entry Points
 
+The most useful top-level entry points today are:
+
+- [`README.md`](../README.md)
+  - User-facing setup and command examples.
 - [`tests/demo.py`](../tests/demo.py)
-  - 最小示例和 demo 产物入口.
+  - Minimal no-argument workflow demo.
+- [`tests/demo_geqdsk_workflow.py`](../tests/demo_geqdsk_workflow.py)
+  - `GEQDSK -> boundary fit -> solve -> simple flux-surface comparison` workflow.
 - [`tests/benchmark.py`](../tests/benchmark.py)
-  - 多模式 benchmark 和差异检查入口.
+  - Internal benchmark and route-comparison script.
+- [`tests/test_model_core_regression.py`](../tests/test_model_core_regression.py)
+  - Core model and operator-facing regression coverage.
+- [`tests/test_solver_core_regression.py`](../tests/test_solver_core_regression.py)
+  - Core solver lifecycle and fallback regression coverage.
+
+## Supported Runtime Surface
+
+The default and supported user-facing backend is `numba`.
+
+There is also an experimental `jax` backend path in the repository, but it is
+still under development and should not be treated as part of the supported end-user workflow.
+
+## Environment
+
+Repository commands are expected to run inside the project-managed Python environment.
+
+Recommended workflow on Windows PowerShell:
+
+```powershell
+uv sync --group dev
+```
+
+Recommended command style:
+
+- `uv run python -m pytest ...`
+- `uv run python tests/demo.py`
+- `uv run python tests/demo_geqdsk_workflow.py`
+- `uv run python tests/benchmark.py`
+- `uv run python -m compileall veqpy tests`
+
+If an activated environment is already available, the corresponding `python ...`
+commands are also acceptable. Avoid relying on a random system interpreter.
 
 ## Runtime Path
 
-当前 runtime 主路径以 [`veqpy/operator/operator.py`](../veqpy/operator/operator.py) 为中心.
+The main runtime path is centered on [`veqpy/operator/operator.py`](../veqpy/operator/operator.py).
 
-执行顺序是:
+The normal execution order is:
 
 1. `Solver.solve(...)`
-2. `scipy.optimize.root(...)` 或 `scipy.optimize.least_squares(...)`
+2. `scipy.optimize.root(...)` or `scipy.optimize.least_squares(...)`
 3. `Operator.__call__(x)`
-4. Stage-A `profile`
-5. Stage-B `geometry`
-6. Stage-C `source`
-7. Stage-D `residual`
+4. Stage A: `profile`
+5. Stage B: `geometry`
+6. Stage C: `source`
+7. Stage D: `residual`
 
-当前四阶段的真实入口在 [`veqpy/operator/operator.py`](../veqpy/operator/operator.py):
+The stage entry points are:
 
-- `stage_a_profile(...)`
-- `stage_b_geometry(...)`
-- `stage_c_source(...)`
-- `stage_d_residual(...)`
+- `Operator.stage_a_profile(...)`
+- `Operator.stage_b_geometry(...)`
+- `Operator.stage_c_source(...)`
+- `Operator.stage_d_residual(...)`
 
-## Packed ABI
+## Ownership Summary
 
-packed runtime 的权威定义只在 [`veqpy/operator/layout.py`](../veqpy/operator/layout.py) 和 [`veqpy/operator/codec.py`](../veqpy/operator/codec.py).
+The core ownership model is:
 
-当前必须知道的事实:
+- `Solver` owns nonlinear iteration strategy and solve lifecycle.
+- `Operator` owns the runtime path from packed `x` to packed residual.
+- `Equilibrium` is a post-solve materialized snapshot, not a live runtime owner.
+- `Grid` and `OperatorCase` define the static problem shape and inputs, but not solver iteration state.
 
-- profile 权威顺序固定为:
-  - `psin`, `F`, `h`, `v`, `k`, `c0`, `c1`, `s1`, `s2`
-- packed state 和 packed residual 的唯一位置语义都是:
-  - `coeff_index`
-  - `coeff_indices`
-- runtime 路径里已经不再维护 `coeff_matrix`
+This is the most important mental model in the repository: the packed optimization
+vector `x` is the only solver-facing state.
 
-这意味着:
+## Packed Layout Surface
 
-- Stage-A 直接从 packed `x` 读取 profile coefficients
-- Stage-D 直接向 packed residual 写 block 输出
+Packed layout semantics are owned by:
 
-## Engine ABI
+- [`veqpy/operator/layout.py`](../veqpy/operator/layout.py)
+- [`veqpy/operator/codec.py`](../veqpy/operator/codec.py)
 
-engine 边界当前优先使用 field bundles, 不优先使用 exploded argument lists.
+Those files define:
 
-当前主要 bundles 是:
+- profile ordering
+- coefficient indexing
+- packed state topology
+- packed residual position semantics
 
-- `Grid.T_fields`
-- `Profile.u_fields`
-- `Profile.rp_fields`
-- `Profile.env_fields`
-- `Geometry.tb_fields`
-- `Geometry.R_fields`
-- `Geometry.Z_fields`
-- `Geometry.J_fields`
-- `Geometry.g_fields`
-- `Operator.root_fields`
-- `Operator.residual_fields`
+If a change touches layout, indexing, or coefficient activation rules, those two
+files are the first place to inspect.
 
-热路径可以直接使用 `*_fields[...]`.  
-语义化 property 仍然保留给阅读和冷路径使用, 例如:
+## Backend Binding Surface
 
-- `grid.T`
-- `profile.u`
-- `geometry.R`
+Backend selection and binding live under [`veqpy/engine/`](../veqpy/engine).
 
-## Backend Surface
+The most relevant files are:
 
-backend control surface 只有 [`veqpy/engine/__init__.py`](../veqpy/engine/__init__.py).
+- [`veqpy/engine/backend.py`](../veqpy/engine/backend.py)
+- [`veqpy/engine/backend_abi.py`](../veqpy/engine/backend_abi.py)
+- [`veqpy/engine/orchestration.py`](../veqpy/engine/orchestration.py)
+- [`veqpy/engine/numba_operator.py`](../veqpy/engine/numba_operator.py)
+- [`veqpy/engine/jax_operator.py`](../veqpy/engine/jax_operator.py)
 
-当前真实 backend 文件是:
+In practice:
 
-- `numpy_profile.py`
-- `numpy_geometry.py`
-- `numpy_source.py`
-- `numpy_residual.py`
-- `numba_profile.py`
-- `numba_geometry.py`
-- `numba_source.py`
-- `numba_residual.py`
-
-环境变量 `VEQPY_BACKEND` 当前只接受:
-
-- `numpy`
-- `numba`
-
-未设置时默认使用 `numba`.
-
-## Solver Surface
-
-[`veqpy/solver/solver.py`](../veqpy/solver/solver.py) 是 solve facade.
-
-它负责:
-
-- 持有 `x0`
-- 调用 SciPy solve API
-- fallback 编排
-- history 记录
-- 从结果重建 coeff 和 `Equilibrium`
-
-它不负责:
-
-- packed `layout/codec`
-- backend 选择
-- Stage A/B/C/D 数值核
-
-当前 `SolverConfig.method` 支持:
-
-- root 路径:
-  - `hybr`, `krylov`, `root-lm`, `broyden1`, `broyden2`
-- least-squares 路径:
-  - `trf`, `dogbox`, `lm`
+- `operator` decides semantics and assembles runtime state.
+- `engine` binds backend-specific runners.
 
 ## Snapshot Surface
 
-[`veqpy/model/equilibrium.py`](../veqpy/model/equilibrium.py) 是 snapshot 和 inspection 层入口.
+Snapshot and inspection behavior are centered on:
 
-当前要点:
-
-- `Equilibrium` 表示单网格 materialized snapshot
-- `Equilibrium.resample(...)` 表示 snapshot 插值后重建
-- `Equilibrium.compare(...)` 和 `plot_comparison(...)` 现在只做 1D 比较, 不再承担 resample 接口
-
-这层不是 solver runtime owner, 也不是 packed state owner.
-
-## Current Stage Ownership
-
-当前四阶段的 owner 如下:
-
-- Stage-A `profile`
-  - `Operator.stage_a_profile(...)`
-  - `update_profiles_packed_bulk(...)`
-- Stage-B `geometry`
-  - `Operator.stage_b_geometry(...)`
-  - `Geometry.update(...)`
-  - `update_geometry(...)`
-- Stage-C `source`
-  - `Operator.source_stage_runner(...)`
-- Stage-D `residual`
-  - `Operator._build_G_inplace()`
-  - `Operator.residual_stage_runner(...)`
-
-当前代码已经是:
-
-- Stage-A bulk profile update
-- Stage-D engine-level residual runner
-
-不再是旧的:
-
-- `coeff_matrix` 中转
-- per-block Python residual assembly
-
-## Key Files
-
-建议优先熟悉这些文件:
-
-- [`veqpy/engine/__init__.py`](../veqpy/engine/__init__.py)
-- [`veqpy/operator/operator.py`](../veqpy/operator/operator.py)
-- [`veqpy/operator/layout.py`](../veqpy/operator/layout.py)
-- [`veqpy/operator/codec.py`](../veqpy/operator/codec.py)
-- [`veqpy/solver/solver.py`](../veqpy/solver/solver.py)
-- [`veqpy/solver/solver_config.py`](../veqpy/solver/solver_config.py)
 - [`veqpy/model/equilibrium.py`](../veqpy/model/equilibrium.py)
-- [`tests/demo.py`](../tests/demo.py)
-- [`tests/benchmark.py`](../tests/benchmark.py)
 
-## Suggested Checks
+Important public behaviors include:
 
-只改文档:
+- `plot(...)`
+- `compare(...)`
+- `resample(...)`
+- `to_geqdsk(...)`
 
-- 至少核对路径, 命令, 环境变量, 入口文件仍存在.
+These APIs operate on a materialized equilibrium snapshot, not on the mutable runtime state used during solving.
 
-改任意 Python 源码:
+## Reading Order For Developers
 
-- `py -m compileall veqpy tests`
+For most runtime changes, the fastest useful reading order is:
 
-改 runtime 主链:
-
-- `py -m compileall veqpy tests`
-- `py tests/demo.py`
-
-改 solver 策略, benchmark 口径, source route, residual runner:
-
-- `py -m compileall veqpy tests`
-- `py tests/demo.py`
-- `py tests/benchmark.py`
-
-## High-Risk Files
-
-- [`veqpy/engine/__init__.py`](../veqpy/engine/__init__.py)
-  - backend control surface
-- [`veqpy/operator/operator.py`](../veqpy/operator/operator.py)
-  - runtime owner, stage orchestration, residual path
-- [`veqpy/operator/layout.py`](../veqpy/operator/layout.py)
-  - packed ABI definition
-- [`veqpy/operator/codec.py`](../veqpy/operator/codec.py)
-  - packed state / residual codec
-- [`veqpy/solver/solver.py`](../veqpy/solver/solver.py)
-  - SciPy solve path, fallback, homotopy
-- [`veqpy/model/equilibrium.py`](../veqpy/model/equilibrium.py)
-  - snapshot semantics, plotting, comparison, resample
-
-## Open Questions
-
-这份文档不记录未来方案, 只记录当前代码事实。  
-如果某个提案还没落地到代码, 不要先写进这里。
+1. [`docs/guardrails.md`](./guardrails.md)
+2. [`veqpy/operator/operator.py`](../veqpy/operator/operator.py)
+3. [`veqpy/operator/layout.py`](../veqpy/operator/layout.py)
+4. [`veqpy/engine/orchestration.py`](../veqpy/engine/orchestration.py)
+5. The relevant backend file under [`veqpy/engine/`](../veqpy/engine)
+6. The matching regression or script entry under [`tests/`](../tests)

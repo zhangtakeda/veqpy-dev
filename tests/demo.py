@@ -1,168 +1,187 @@
-import numpy as np
-from rich import print
+"""Minimal no-argument veqpy demo script.
 
-from veqpy.model import Grid
+Run it directly to get one solved equilibrium plus a simple flux-surface plot.
+This is meant to be the smallest user-facing workflow example in the repo.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+from veqpy.model import Boundary, Grid
 from veqpy.operator import Operator, OperatorCase
 from veqpy.solver import Solver, SolverConfig
 
-
-COEFFS = {
-    "h": [0.0] * 3,
-    "v": None,
-    "k": [0.0] * 3,
-    "c0": None,
-    "c1": None,
-    "s1": [0.0] * 3,
-    "s2": None,
-}
+MU0 = 4.0e-7 * np.pi
+SOURCE_SAMPLE_COUNT = 51
+DEFAULT_LEVELS = tuple(np.linspace(0.1, 1.0, 10, dtype=np.float64))
+DEFAULT_SURFACE_COLORS = tuple(plt.cm.viridis(np.linspace(0.18, 0.9, len(DEFAULT_LEVELS))))
 
 
-HIGH_PRECISION_COEFFS = {
-    "h": [0.0] * 10,
-    "v": [0.0] * 5,
-    "k": [0.0] * 10,
-    "c0": [0.0] * 5,
-    "c1": [0.0] * 5,
-    "s1": [0.0] * 10,
-    "s2": [0.0] * 5,
-}
-
-GRID = Grid(
-    Nr=12,
-    Nt=12,
-    scheme="legendre",
-)
-
-HIGH_PRECISION_GRID = Grid(
-    Nr=32,
-    Nt=32,
-    scheme="legendre",
-)
+def ensure_output_dir() -> Path:
+    outdir = Path(__file__).resolve().parent / "demo"
+    outdir.mkdir(parents=True, exist_ok=True)
+    return outdir
 
 
-CONFIG = SolverConfig(
-    method="hybr",
-    enable_verbose=True,
-    enable_warmstart=False,
-)
+def build_demo_boundary() -> Boundary:
+    return Boundary(
+        a=1.05 / 1.85,
+        R0=1.05,
+        Z0=0.0,
+        B0=3.0,
+        ka=2.2,
+        s_offsets=np.array([0.0, float(np.arcsin(0.5))], dtype=np.float64),
+    )
 
 
-HOMO_CONFIG = SolverConfig(
-    method="lm",
-    enable_verbose=True,
-    enable_warmstart=False,
-    enable_homotopy=True,
-)
-
-
-def pf_reference_profiles(rho: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def pf_reference_profiles(psin: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     beta0 = 0.75
-    psin = rho**2
-    psin_r = 2.0 * rho
+    alpha_p = 5.0
+    alpha_f = 3.32
+    exp_ap = np.exp(alpha_p)
+    exp_af = np.exp(alpha_f)
+    den_p = 1.0 + exp_ap * (alpha_p - 1.0)
+    den_f = 1.0 + exp_af * (alpha_f - 1.0)
+    current_input = (1.0 - beta0) * alpha_f * (np.exp(alpha_f * psin) - exp_af) / den_f
+    heat_input = beta0 * alpha_p * (np.exp(alpha_p * psin) - exp_ap) / den_p
+    return current_input.astype(np.float64), heat_input.astype(np.float64)
 
-    alpha_p, alpha_f = 5.0, 3.32
-    exp_ap, exp_af = np.exp(alpha_p), np.exp(alpha_f)
-    den_p, den_f = 1.0 + exp_ap * (alpha_p - 1.0), 1.0 + exp_af * (alpha_f - 1.0)
 
-    current_input = (1.0 - beta0) * alpha_f * (np.exp(alpha_f * psin) - exp_af) / den_f * psin_r
-    heat_input = beta0 * alpha_p * (np.exp(alpha_p * psin) - exp_ap) / den_p * psin_r
-    return current_input, heat_input
+def build_surface_from_psin(equilibrium, level: float) -> np.ndarray:
+    psin = np.asarray(equilibrium.psin, dtype=np.float64)
+    rho = np.asarray(equilibrium.rho, dtype=np.float64)
+    order = np.argsort(psin)
+    psin_unique, unique_idx = np.unique(psin[order], return_index=True)
+    rho_level = float(np.interp(float(level), psin_unique, rho[order][unique_idx]))
+    geometry = equilibrium.geometry
+    R = np.array(
+        [np.interp(rho_level, rho, geometry.R[:, idx]) for idx in range(equilibrium.grid.Nt)],
+        dtype=np.float64,
+    )
+    Z = np.array(
+        [np.interp(rho_level, rho, geometry.Z[:, idx]) for idx in range(equilibrium.grid.Nt)],
+        dtype=np.float64,
+    )
+    return np.column_stack((R, Z))
 
 
-FFn_r_1, Pn_r_1 = pf_reference_profiles(GRID.rho)
-FFn_r_2, Pn_r_2 = pf_reference_profiles(HIGH_PRECISION_GRID.rho)
+def close_curve(points: np.ndarray) -> np.ndarray:
+    arr = np.asarray(points, dtype=np.float64)
+    if arr.ndim != 2 or arr.shape[1] != 2:
+        raise ValueError(f"Expected an (N, 2) curve, got {arr.shape}")
+    return np.vstack((arr, arr[:1]))
 
-CASE_1 = OperatorCase(
-    coeffs_by_name=COEFFS,
-    a=1.05 / 1.85,
-    R0=1.05,
-    Z0=0.0,
-    B0=3.0,
-    ka=2.2,
-    s1a=float(np.arcsin(0.5)),
-    heat_input=Pn_r_1,
-    current_input=FFn_r_1,
-    Ip=3.0e6,
-)
 
-CASE_2 = OperatorCase(
-    coeffs_by_name=HIGH_PRECISION_COEFFS,
-    a=1.05 / 1.85,
-    R0=1.05,
-    Z0=0.0,
-    B0=3.0,
-    ka=2.2,
-    s1a=float(np.arcsin(0.5)),
-    heat_input=Pn_r_2,
-    current_input=FFn_r_2,
-    Ip=3.0e6,
-)
+def compute_rz_limits(
+    curves: list[np.ndarray], *, pad_fraction: float = 0.06
+) -> tuple[tuple[float, float], tuple[float, float]]:
+    valid = []
+    for curve in curves:
+        arr = np.asarray(curve, dtype=np.float64)
+        if arr.ndim == 2 and arr.shape[1] == 2 and arr.size:
+            valid.append(arr)
+    if not valid:
+        raise ValueError("At least one non-empty curve is required")
+    stacked = np.vstack(valid)
+    r_min = float(np.min(stacked[:, 0]))
+    r_max = float(np.max(stacked[:, 0]))
+    z_min = float(np.min(stacked[:, 1]))
+    z_max = float(np.max(stacked[:, 1]))
+    r_pad = max((r_max - r_min) * pad_fraction, 1.0e-3)
+    z_pad = max((z_max - z_min) * pad_fraction, 1.0e-3)
+    return (r_min - r_pad, r_max + r_pad), (z_min - z_pad, z_max + z_pad)
 
-CASE_3 = OperatorCase(
-    coeffs_by_name=COEFFS,
-    a=1.05 / 1.85,
-    R0=1.05,
-    Z0=0.0,
-    B0=3.0,
-    ka=2.2,
-    s1a=float(np.arcsin(0.5)),
-    heat_input=Pn_r_2,
-    current_input=FFn_r_2,
-    Ip=3.0e6,
-)
+
+def plot_equilibrium_surfaces(ax: plt.Axes, equilibrium, *, levels: tuple[float, ...] = DEFAULT_LEVELS) -> None:
+    first_label = "veqpy surfaces"
+    for index, level in enumerate(levels):
+        surface = build_surface_from_psin(equilibrium, float(level))
+        color = DEFAULT_SURFACE_COLORS[min(index, len(DEFAULT_SURFACE_COLORS) - 1)]
+        ax.plot(close_curve(surface)[:, 0], close_curve(surface)[:, 1], color=color, linewidth=1.1, label=first_label)
+        first_label = None
+    boundary = build_surface_from_psin(equilibrium, 1.0)
+    ax.plot(close_curve(boundary)[:, 0], close_curve(boundary)[:, 1], color="#111111", linewidth=1.8)
+
+
+def style_surface_axis(ax: plt.Axes, *, title: str, rz_limits: tuple[tuple[float, float], tuple[float, float]]) -> None:
+    ax.set_title(title)
+    ax.set_xlabel("R [m]")
+    ax.set_ylabel("Z [m]")
+    ax.set_xlim(*rz_limits[0])
+    ax.set_ylim(*rz_limits[1])
+    ax.set_aspect("equal", adjustable="box")
+    ax.grid(True, linestyle=":", alpha=0.35)
+    ax.tick_params(direction="in", top=True, right=True)
+
+
+def main() -> None:
+    outdir = ensure_output_dir()
+    figure_path = outdir / "demo_flux_surfaces.png"
+    equilibrium_path = outdir / "demo_equilibrium.json"
+
+    boundary = build_demo_boundary()
+    psin = np.linspace(0.0, 1.0, SOURCE_SAMPLE_COUNT, dtype=np.float64)
+    current_input, heat_input = pf_reference_profiles(psin)
+    case = OperatorCase(
+        route="PF",
+        coordinate="psin",
+        nodes="uniform",
+        profile_coeffs={
+            "psin": [0.0] * 5,
+            "h": [0.0] * 3,
+            "k": [0.0] * 5,
+            "s1": [0.0] * 3,
+        },
+        boundary=boundary,
+        heat_input=heat_input,
+        current_input=current_input,
+        Ip=MU0 * 3.0e6,
+    )
+    solve_grid = Grid(Nr=64, Nt=64, scheme="legendre")
+    plot_grid = Grid(Nr=128, Nt=256, scheme="uniform", L_max=solve_grid.L_max, M_max=solve_grid.M_max)
+    solver = Solver(
+        operator=Operator(grid=solve_grid, case=case),
+        config=SolverConfig(
+            method="lm",
+            enable_warmstart=False,
+            enable_verbose=False,
+            enable_history=False,
+        ),
+    )
+    solver.solve(enable_warmstart=False, enable_verbose=False, enable_history=False)
+    equilibrium = solver.build_equilibrium()
+    plot_equilibrium = equilibrium.resample(grid=plot_grid)
+
+    boundary_curve = build_surface_from_psin(plot_equilibrium, 1.0)
+    rz_limits = compute_rz_limits([boundary_curve])
+    fig, ax = plt.subplots(figsize=(7.4, 6.6), constrained_layout=True)
+    plot_equilibrium_surfaces(ax, plot_equilibrium, levels=DEFAULT_LEVELS)
+    ax.scatter(
+        [equilibrium.R0], [equilibrium.Z0], marker="x", color="#d62728", s=42, linewidths=1.4, label="magnetic axis"
+    )
+    style_surface_axis(ax, title="veqpy Demo Flux Surfaces", rz_limits=rz_limits)
+    ax.legend(loc="upper right")
+    fig.savefig(figure_path, dpi=220)
+    plt.close(fig)
+
+    # Save one serialized equilibrium so users can inspect the solved payload.
+    equilibrium.write(str(equilibrium_path))
+
+    result = solver.result
+    if result is None:
+        raise RuntimeError("solver.result is unavailable after demo solve")
+
+    print(f"Saved figure      : {figure_path}")
+    print(f"Saved equilibrium : {equilibrium_path}")
+    print(f"Solver success    : {result.success}")
+    print(f"Residual norm     : {result.residual_norm_final:.6e}")
+    print(f"Ip [MA]           : {equilibrium.Ip / 1.0e6:.6f}")
+    print(f"beta_t            : {equilibrium.beta_t:.6e}")
 
 
 if __name__ == "__main__":
-    operator_1 = Operator(grid=GRID, case=CASE_1, name="PF", derivative="rho")
-    operator_2 = Operator(grid=HIGH_PRECISION_GRID, case=CASE_2, name="PF", derivative="rho")
-    operator_3 = Operator(grid=HIGH_PRECISION_GRID, case=CASE_3, name="PF", derivative="rho")
-    solver_1 = Solver(operator=operator_1, config=CONFIG)
-    solver_2 = Solver(operator=operator_2, config=CONFIG)
-    solver_3 = Solver(operator=operator_3, config=CONFIG)
-    solver_4 = Solver(operator=operator_2, config=HOMO_CONFIG)
-
-    print("\n=== Typical Coefficients + Typical Grid ===")
-    x1 = solver_1.solve()
-    eq1 = solver_1.build_equilibrium()
-    eq1.write("tests/demo-1.json")
-    eq1.plot("tests/demo-1.png")
-    print(eq1)
-
-    print("\n=== High Precision Coefficients + High Precision Grid ===")
-    x2 = solver_2.solve()
-    eq2 = solver_2.build_equilibrium()
-    eq2.write("tests/demo-2.json")
-    eq2.plot("tests/demo-2.png")
-    eq2.compare(
-        eq1,
-        "tests/demo-coeffs-comparison.png",
-        label_ref="High Precision",
-        label_other="Typical",
-    )
-    print(eq2)
-
-    print("\n=== Typical Coefficients + High Precision Grid ===")
-    x3 = solver_3.solve()
-    eq3 = solver_3.build_equilibrium()
-    eq3.write("tests/demo-3.json")
-    eq3.plot("tests/demo-3.png")
-    eq3.compare(
-        eq1,
-        "tests/demo-grid-comparison.png",
-        label_ref="High Precision",
-        label_other="Typical",
-    )
-    print(eq3)
-
-    print("\n=== Homogeneous + High Precision Coefficients + High Precision Grid ===")
-    x4 = solver_4.solve()
-    eq4 = solver_4.build_equilibrium()
-    eq4.write("tests/demo-4.json")
-    eq4.plot("tests/demo-4.png")
-    eq4.compare(
-        eq2,
-        "tests/demo-homo-comparison.png",
-        label_ref="Homogeneous",
-        label_other="Non-Homogeneous",
-    )
-    print(eq4)
+    main()

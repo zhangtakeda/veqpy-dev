@@ -4,256 +4,149 @@
 a high-performance Python wrapper for plasma equilibrium simulations in magnetic confinement fusion (MCF) devices.
 
 - Author: `rhzhang`
-- Updated: `2026-03-24`
+- Updated: `2026-04-15`
+- Version: `0.3.0`
 
-This README was prepared with Codex assistance. The source code remains the authoritative reference.
-
-## What veqpy provides
-
-- Packed-state equilibrium solving with a fixed `x -> residual` operator path.
-- A layered runtime split into:
-  - `engine` for array-first numerical kernels
-  - `model` for grids, runtime buffers, and equilibrium snapshots
-  - `operator` for packed layout, cases, and the full residual operator
-  - `solver` for SciPy-based nonlinear solve orchestration
-- Snapshot and post-processing utilities through `Equilibrium`.
-- Benchmark and profiling entry points under `tests/`.
-
-## Quick Start
-
-Basic installation:
-
-```bash
-py -m pip install -e .
-```
-
-Development installation:
-
-```bash
-py -m pip install -e .[dev]
-```
-
-For a runnable example, see [tests/demo.py](E:/Dev/veqpy-dev/tests/demo.py).
-
-## Project Layout
+## Code Structure
 
 - `veqpy/engine/`
-  - Backend export surface and the `numpy` / `numba` numerical kernels
+  - Array-first numerical kernels.
+  - `numba` is the supported user-facing backend for `profile`, `geometry`, `source`, and `residual`.
+  - `jax` backend work is experimental and still under development; it is not intended for users.
 - `veqpy/model/`
-  - `Grid`, `Profile`, `Geometry`, and `Equilibrium`
+  - Passive or snapshot-oriented objects: `Grid`, `Profile`, `Geometry`, `Equilibrium`.
 - `veqpy/operator/`
-  - Packed `layout/codec`, `OperatorCase`, and the full `x -> residual` operator path
+  - Packed layout and the main `x -> residual` runtime path.
+  - Owns `OperatorCase`, packed `layout/codec`, and `Operator`.
 - `veqpy/solver/`
-  - `Solver`, `SolverConfig`, `SolverRecord`, and `SolverResult`
+  - SciPy solve orchestration, fallback logic, history, and result objects.
 - `tests/`
-  - `demo.py` example entry point
-  - `benchmark.py` multi-mode benchmark and consistency-check entry point
-  - `benchmark/` benchmark artifact directory
+  - Focused regression tests.
 
-## Runtime Model
+## Environment
 
-- `Operator` owns the packed runtime path from `x` to residual.
-- `Solver` owns solve orchestration, warmstart state, and history records.
-- `Equilibrium` is a snapshot object, not a mutable solver-side runtime.
-- `OperatorCase` may change physical inputs and profile values, but may not change packed topology.
+All scripts, benchmarks, compile checks, and `pytest` runs should be executed inside the project `uv`-managed virtual environment.
 
-## Runtime Boundaries
+Recommended workflow on Windows PowerShell:
 
-- `Operator` owns the full packed `x -> residual` runtime path.
-- `Operator.__call__(x)` currently executes the Stage A/B/C/D chain directly.
-- `Solver` is a nonlinear solve facade. It does not own the packed layout/codec and does not choose the backend.
-- `Solver.solve(...)` performs one solve and returns packed `x`.
-- Stable post-solve entry points include:
-  - `solver.result`
-  - `solver.history`
-  - `solver.build_equilibrium()`
-  - `solver.build_equilibrium_history()`
-  - `solver.build_coeffs()`
-  - `solver.build_coeffs_history()`
-- The backend is controlled only through `VEQPY_BACKEND`, with supported values:
-  - `numpy`
-  - `numba`
+```powershell
+uv sync --group dev
+```
 
-`veqpy.engine` defaults to `numba` when the environment variable is not set.
+If you want JAX inside a Linux devcontainer:
 
-## Current Runtime ABI
+```powershell
+uv sync --group dev --extra jax-gpu
+```
 
-- The authoritative profile order is:
-  - `psin`, `F`, `h`, `v`, `k`, `c0`, `c1`, `s1`, `s2`
-- Packed state and packed residual both use `coeff_index` / `coeff_indices` as the only layout language.
-- Stage A reads profile coefficients directly from packed `x` using `coeff_indices`.
-- Stage D writes residual blocks directly into packed residual output using `coeff_indices`.
-- `coeff_matrix` is no longer part of the runtime path.
-- Engine-facing hot-path ABI prefers packed field bundles over exploded argument lists.
+The repository devcontainer is based on `python:3.12-slim`, passes through `--gpus=all`, and installs dependencies with `uv sync --extra jax-gpu`. This matches JAX's pip-based NVIDIA GPU installation model, which supports the CUDA wheels on Linux containers rather than native Windows Python.
 
-Current packed field bundles include:
+JAX is currently a backend-development path only. It is not part of the supported end-user workflow, and the current implementation covers only a narrow experimental route.
 
-- `Grid.T_fields`
-- `Profile.u_fields`
-- `Profile.rp_fields`
-- `Profile.env_fields`
-- `Geometry.tb_fields`
-- `Geometry.R_fields`
-- `Geometry.Z_fields`
-- `Geometry.J_fields`
-- `Geometry.g_fields`
-- `Operator.root_fields`
-- `Operator.residual_fields`
+Recommended command style:
 
-Named properties such as `grid.T`, `profile.u`, and `geometry.R` remain valid semantic aliases, but hot operator paths prefer direct `*_fields[...]` access.
+- `python -m pytest ...`
+- `python tests/demo.py`
+- `python tests/demo_geqdsk_workflow.py`
+- `python tests/benchmark.py`
+- `python -m compileall veqpy tests`
 
-## Optional Semantics
+Prefer running them through `uv`:
 
-- At the public/model layer, `None` remains valid where it expresses real topology or input semantics.
-- Example: `coeffs_by_name[name] is None` means that profile is inactive in the packed layout.
-- But hot engine kernels are intentionally kept monomorphic whenever possible.
-- Therefore, hot Numba kernels prefer plain arrays and scalars over `optional(...)` arguments.
-- Packed profile execution uses empty `coeff_indices` arrays instead of `None`.
-- Source optional constraints (`Ip`, `beta`) remain a special case: semantic “optional” meaning is valid at the facade level, but hot kernels still use the current scalar ABI because direct `None` in Numba caused a measurable regression.
+- `uv run python -m pytest ...`
+- `uv run python tests/demo.py`
+- `uv run python tests/demo_geqdsk_workflow.py`
+- `uv run python tests/benchmark.py`
+- `uv run python -m compileall veqpy tests`
 
-## Solver Capabilities
+If you prefer an activated shell, use:
 
-- `SolverConfig.method` currently supports:
-  - Root-based methods: `hybr`, `krylov`, `root-lm`, `broyden1`, `broyden2`
-  - Least-squares methods: `trf`, `dogbox`, `lm`
-- Root-based methods use `scipy.optimize.root(...)`.
-- `lm`, `trf`, and `dogbox` use `scipy.optimize.least_squares(...)` directly.
-- If the primary method fails, `Solver` automatically retries in this order:
-  - `least_squares/lm`
-  - `least_squares/trf`
-- When `enable_homotopy=True`, the staged solve expands the active set level by level in profile order.
-- Homotopy also supports freezing higher-order shape coefficients through `homotopy_truncation_tol` and `homotopy_truncation_patience`.
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
 
-## Key Files
+Then run the same `python ...` commands inside that environment.  
+Avoid running repository commands from system Python or a non-project interpreter.  
+If you do not activate the environment, use `uv run ...` or `.\.venv\Scripts\python.exe ...` explicitly.
 
-- `veqpy/engine/__init__.py`
-  - Backend control surface and stable exports
-- `veqpy/operator/operator.py`
-  - Main runtime path from packed state to residual
-- `veqpy/operator/layout.py`
-  - Packed layout definition
-- `veqpy/operator/codec.py`
-  - Packed state / residual encoding and decoding
-- `veqpy/solver/solver.py`
-  - Solve lifecycle entry point, root / least-squares / fallback / homotopy
-- `veqpy/solver/solver_config.py`
-  - Solver method configuration and staged-solve options
-- `veqpy/model/equilibrium.py`
-  - Snapshots, diagnostics, plotting, comparison, and resampling
-- `tests/demo.py`
-  - Minimal example and demo artifact entry point
-- `tests/benchmark.py`
-  - Multi-mode benchmark, delta checks, and benchmark artifact entry point
+## Regression Suites
 
-## Notes
+Core regressions are now organized by submodule instead of by temporary refactor phase:
 
-- `replace_case(...)` only supports `OperatorCase` instances compatible with the packed layout.
-- `SolverRecord` copies `OperatorCase` snapshots to prevent later in-place updates from contaminating history.
-- `Grid` is immutable.
-- `Equilibrium.resample(...)` is snapshot interpolation, not strict parametric reconstruction.
-- If you change the packed layout, packed codec, operator contract, solver control flow, or engine exports, update `docs/` as well.
+- [tests/test_model_core_regression.py](tests/test_model_core_regression.py)
+  - `Grid`, `Boundary.from_geqdsk`, `Equilibrium` snapshot/serialization/comparison semantics
+- [tests/test_solver_core_regression.py](tests/test_solver_core_regression.py)
+  - solve facade, fallback/reset behavior, and solver/operator state lifecycle semantics
 
-## Related Documentation
+The main runtime path is:
 
-- [`docs/overview.md`](docs/overview.md)
-- [`docs/conventions.md`](docs/conventions.md)
-- [`docs/guardrails.md`](docs/guardrails.md)
+1. `Solver.solve(...)`
+2. SciPy root or least-squares entry
+3. `Operator.__call__(x)`
+4. Stage-A `profile`
+5. Stage-B `geometry`
+6. Stage-C `source`
+7. Stage-D `residual`
 
-### Runtime/Passive Engines
+## Performance Snapshot
 
-[docs/theory/profile.md](docs/theory/profile.md): Parameterized profile computation
+Current Fourier-family runtime is driven by `Grid.M_max`, but hot-path kernels only compute up to the current effective active order.
 
-- `veqpy/engine/numpy_profile.py`
-- `veqpy/engine/numba_profile.py`
+- Low-order case with the same active profiles:
+  - `M_max=4` vs `M_max=2` currently gives about `1.05x` full residual time in the `numba` microbenchmark.
+  - Geometry alone is about `1.03x`.
+- When higher-order terms are actually active:
+  - `M_max=4` high-order case is about `1.23x` full residual time relative to the low-order `M_max=2` baseline.
 
-[docs/theory/geometry.md](docs/theory/geometry.md): Metric and geometry computation
+This means the remaining cost from the more general `M_max` architecture is small in steady-state hot paths; most extra cost appears only when higher-order Fourier terms are really in use.
 
-- `veqpy/engine/numpy_geometry.py`
-- `veqpy/engine/numba_geometry.py`
+Benchmark entry points:
 
-[docs/theory/source.md](docs/theory/source.md): Source term computation and source families definition
+- [benchmark.py](tests/benchmark.py)
 
-- `veqpy/engine/numpy_source.py`
-- `veqpy/engine/numba_source.py`
+## Project Understanding
 
-[docs/theory/residual.md](docs/theory/residual.md): Residual field and packed residual assembly
+The project is organized around one core idea: packed optimization variables are the only solver-facing state, and everything else is derived from them through a fixed operator pipeline.
 
-- `veqpy/engine/numpy_residual.py`
-- `veqpy/engine/numba_residual.py`
+- `Grid` defines the discretization and precomputed tables.
+- `OperatorCase` defines physical inputs and boundary/profile metadata, but not solver state.
+- `Operator` owns the runtime buffers and transforms packed `x` into residuals.
+- `Solver` owns nonlinear iteration strategy.
+- `Equilibrium` is a post-solve materialized snapshot, not a live runtime owner.
 
-### Facade Models
+Current shape parameterization is a dynamic Fourier family:
 
-[docs/theory/equilibrium.md](docs/theory/equilibrium.md): Data-driven equilibrium snapshot modeling and diagnostics
+- Packed profile order is generated from `Grid.M_max`.
+- Boundary offsets are stored canonically in:
+  - `OperatorCase.c_offsets`
+  - `OperatorCase.s_offsets`
+- Runtime geometry/residual kernels consume Fourier family stacks rather than hard-coded `c1/s2` slots.
 
-- `veqpy/model/equilibrium.py`
+## Collaboration Notes
 
-## Profiling Notes
+For future development, keep these boundaries stable:
 
-- There are two useful solve timing metrics:
-  - full wall-clock around `solver.solve(...)`
-  - `SolverResult.elapsed`, which measures only the core solve-attempt region around `_solve_with_fallbacks(...)`
-- `SolverResult.elapsed` does not include later `SolverRecord` construction or `history.append(...)`.
-- Therefore:
-  - use full wall-clock when you want user-visible end-to-end `solve(...)` latency
-  - use `SolverResult.elapsed` when you want solve-core latency
+- Do not put grid-construction logic into hot runtime code.
+- Do not reintroduce fixed low-order special cases such as dedicated `c1/s2` runtime paths unless a benchmark proves they are necessary.
+- Keep packed layout authority in `veqpy/operator/layout.py`.
+- Keep `OperatorCase` as normalized input state, not layout owner and not solver owner.
+- Keep `Equilibrium` snapshot-oriented; it should not become a second runtime state container.
+- Prefer extending family-based kernels over adding more named one-off profile fields.
 
-The tables below come from a warm single solve of the demo case with internal source-level probes enabled and `enable_history=True`.
+When changing performance-sensitive code:
 
-### Timing Scope
+- Benchmark before and after.
+- Check low-order cases separately from truly high-order active cases.
+- Treat initialization-path cost and steady-state residual cost as different problems.
 
-PF mode, 9 parameters, 12x12, all coefficients set to zero.
+## Related Docs
 
-### Solve Breakdown
-
-| Item                                 |       Time | Share of full solve |
-| ------------------------------------ | ---------: | ------------------: |
-| full `solver.solve(...)` wall time   | `0.595 ms` |            `100.0%` |
-| solve core (`_solve_with_fallbacks`) | `0.550 ms` |             `92.4%` |
-| SciPy solve call(s)                  | `0.505 ms` |             `84.9%` |
-| `SolverResult` construction          | `0.005 ms` |              `0.8%` |
-| `SolverRecord` construction          | `0.020 ms` |              `3.4%` |
-| `history.append(...)`                | `0.000 ms` |              `0.0%` |
-| history bookkeeping total            | `0.021 ms` |              `3.5%` |
-
-### Residual Summary
-
-| Item                         |      Value |
-| ---------------------------- | ---------: |
-| solve success                |     `True` |
-| `nfev`                       |       `25` |
-| packed state size (`x_size`) |        `9` |
-| residual calls per solve     |       `25` |
-| residual total               | `0.443 ms` |
-| average per residual         | `0.018 ms` |
-
-### Stage Totals
-
-| Stage            | Total time | Share of full solve | Average per residual |
-| ---------------- | ---------: | ------------------: | -------------------: |
-| Stage-A profile  | `0.038 ms` |              `6.4%` |           `0.002 ms` |
-| Stage-B geometry | `0.145 ms` |             `24.3%` |           `0.006 ms` |
-| Stage-C source   | `0.121 ms` |             `20.4%` |           `0.005 ms` |
-| Stage-D residual | `0.103 ms` |             `17.4%` |           `0.004 ms` |
-
-### Stage Engine Share
-
-| Stage   | Stage total | Pure engine time | Engine share of stage | Non-engine remainder | Non-engine share of stage |
-| ------- | ----------: | ---------------: | --------------------: | -------------------: | ------------------------: |
-| Stage-A |  `0.038 ms` |       `0.027 ms` |               `71.8%` |           `0.011 ms` |                   `28.2%` |
-| Stage-B |  `0.145 ms` |       `0.128 ms` |               `88.5%` |           `0.017 ms` |                   `11.5%` |
-| Stage-C |  `0.121 ms` |       `0.096 ms` |               `79.6%` |           `0.025 ms` |                   `20.4%` |
-| Stage-D |  `0.103 ms` |       `0.072 ms` |               `69.8%` |           `0.031 ms` |                   `30.2%` |
-
-### Current Non-Engine Sources
-
-| Stage   | Main non-engine sources                                                                                                               |
-| ------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Stage-A | operator-side stage call boundary and remaining profile bulk wrapper overhead around `update_profiles_packed_bulk(...)`               |
-| Stage-B | `Geometry.update(...)` wrapper, argument passing, and Python-to-engine call boundary                                                  |
-| Stage-C | `source_runner(...)` wrapper, scalar/array argument passing, and Python-to-engine call boundary                                       |
-| Stage-D | `stage_d_residual()` / `_assemble_residual()` Python shell plus fresh packed residual allocation before residual blocks write into it |
-
-## Reference
+- [docs/overview.md](docs/overview.md)
+- [docs/guardrails.md](docs/guardrails.md)
+- [docs/theory/profile.md](docs/theory/profile.md)
+- [docs/theory/geometry.md](docs/theory/geometry.md)
+- [docs/theory/residual.md](docs/theory/residual.md)
+- [docs/theory/equilibrium.md](docs/theory/equilibrium.md)
 
 [1] Huasheng Xie and Yueyan Li, "What Is the Minimum Number of Parameters Required to Represent Solutions of the Grad-Shafranov Equation?," arXiv:2601.02942, 2026. [https://arxiv.org/abs/2601.02942](https://arxiv.org/abs/2601.02942)
 [2] Xingyu Li, Huasheng Xie, Lai Wei, and Zhengxiong Wang, "Investigation of Toroidal Rotation Effects on Spherical Torus Equilibria using the Fast Spectral Solver VEQ-R," arXiv:2602.11422, 2026. [https://arxiv.org/abs/2602.11422](https://arxiv.org/abs/2602.11422)

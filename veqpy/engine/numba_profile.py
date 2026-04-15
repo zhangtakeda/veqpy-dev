@@ -2,7 +2,7 @@
 Module: engine.numba_profile
 
 Role:
-- 负责在 numba backend 下计算 profile fields.
+- 负责计算 profile fields.
 - 输入使用 basis tables 与 profile coefficients.
 
 Public API:
@@ -66,10 +66,8 @@ def update_profile(
 
 @njit(cache=True, fastmath=True, nogil=True)
 def update_profiles_packed_bulk(
-    out_fields_all: np.ndarray,
+    active_profile_slab: np.ndarray,
     T_fields: np.ndarray,
-    rp_fields_all: np.ndarray,
-    env_fields_all: np.ndarray,
     offsets: np.ndarray,
     scales: np.ndarray,
     x: np.ndarray,
@@ -77,6 +75,9 @@ def update_profiles_packed_bulk(
     lengths: np.ndarray,
 ) -> None:
     """批量从 packed x 刷新所有 active profile fields."""
+    out_fields_all = active_profile_slab[0]
+    rp_fields_all = active_profile_slab[1]
+    env_fields_all = active_profile_slab[2]
     n_active = out_fields_all.shape[0]
     nr = out_fields_all.shape[2]
 

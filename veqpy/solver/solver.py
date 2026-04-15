@@ -15,23 +15,19 @@ Notes:
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import replace
 from time import perf_counter
-from types import SimpleNamespace
-import warnings
+from typing import Callable
 
 import numpy as np
 from rich.console import Console
 from scipy.optimize import least_squares, root
 
-from veqpy.model import Equilibrium
+from veqpy.model.equilibrium import Equilibrium
 from veqpy.operator.operator import Operator
 from veqpy.operator.operator_case import OperatorCase
-from veqpy.solver.solver_config import (
-    SUPPORTED_LEAST_SQUARES_METHODS,
-    SUPPORTED_ROOT_METHODS,
-    SolverConfig,
-)
+from veqpy.solver.solver_config import LEAST_SQUARES_METHODS, SolverConfig
 from veqpy.solver.solver_record import SolverRecord
 from veqpy.solver.solver_result import SolverResult
 
@@ -69,11 +65,6 @@ class Solver:
 
         self.operator.replace_case(case)
 
-    def replace_config(self, config: SolverConfig) -> None:
-        """替换 solver 的长期默认配置."""
-
-        self.config = config
-
     def solve(
         self,
         x0: np.ndarray | None = None,
@@ -84,7 +75,8 @@ class Solver:
         root_maxiter: int | None = None,
         root_maxfev: int | None = None,
         enable_warmstart: bool | None = None,
-        enable_homotopy: bool | None = None,
+        enable_fallback: bool | None = None,
+        fallback_methods: tuple[str, ...] | list[str] | None = None,
         enable_verbose: bool | None = None,
         enable_history: bool | None = None,
     ) -> np.ndarray:
@@ -97,7 +89,8 @@ class Solver:
             root_maxiter=root_maxiter,
             root_maxfev=root_maxfev,
             enable_warmstart=enable_warmstart,
-            enable_homotopy=enable_homotopy,
+            enable_fallback=enable_fallback,
+            fallback_methods=fallback_methods,
             enable_verbose=enable_verbose,
             enable_history=enable_history,
         )
@@ -106,6 +99,8 @@ class Solver:
             self.x0 = self.operator.coerce_x(x0).copy()
         elif not solve_config.enable_warmstart:
             self.reset()
+        if x0 is not None or not solve_config.enable_warmstart:
+            self.operator.invalidate_source_state()
 
         x_guess = self.x0.copy()
 
@@ -115,6 +110,7 @@ class Solver:
         x_opt, success, message, nfev, njev, nit, residual_norm_final = self._solve_with_fallbacks(
             x_guess,
             solve_config=solve_config,
+            x0_was_provided=x0 is not None,
         )
         elapsed = (perf_counter() - started) * 1e6
 
@@ -124,8 +120,10 @@ class Solver:
             residual_norm_final, residual_final_exc = self._safe_residual_norm(x_final)
         if residual_final_exc is not None:
             success = False
-            message = f"{message} [final residual evaluation failed: {type(residual_final_exc).__name__}:"
-            f" {residual_final_exc}]"
+            message = (
+                f"{message} [final residual evaluation failed: "
+                f"{type(residual_final_exc).__name__}: {residual_final_exc}]"
+            )
 
         self.result = SolverResult(
             x0=x_guess,
@@ -164,44 +162,10 @@ class Solver:
 
         return self.operator.build_coeffs(self.x0, include_none=include_none)
 
-    def build_coeffs_history(
-        self,
-        *,
-        include_none: bool = True,
-    ) -> list[dict[str, list[float] | None]]:
-        """从 history 中每个结果快照重建 profile 系数字典."""
-
-        history = []
-        for record in self.history:
-            history.append(self.operator.build_coeffs(record.result_snapshot.x, include_none=include_none))
-        return history
-
     def build_equilibrium(self) -> Equilibrium:
         """从当前 solver 持有的 x0 物化一个 Equilibrium snapshot."""
 
         return self.operator.build_equilibrium(self.x0)
-
-    def build_equilibrium_history(self) -> list[Equilibrium]:
-        """从 history 中每个结果快照物化 Equilibrium."""
-
-        saved_case = self.operator.case.copy()
-        saved_config = self.config
-        saved_result = self.result
-        saved_x0 = self.x0.copy()
-
-        try:
-            equilibria: list[Equilibrium] = []
-            for record in self.history:
-                self.replace_case(record.case_snapshot)
-                self.config = record.config_snapshot
-                equilibria.append(self.operator.build_equilibrium(record.result_snapshot.x))
-            return equilibria
-        finally:
-            self.replace_case(saved_case)
-            self.config = saved_config
-            self.result = saved_result
-            self.x0 = saved_x0
-            self.operator(self.x0)
 
     def _resolve_solve_config(
         self,
@@ -212,7 +176,8 @@ class Solver:
         root_maxiter: int | None,
         root_maxfev: int | None,
         enable_warmstart: bool | None,
-        enable_homotopy: bool | None,
+        enable_fallback: bool | None,
+        fallback_methods: tuple[str, ...] | list[str] | None,
         enable_verbose: bool | None,
         enable_history: bool | None,
     ) -> SolverConfig:
@@ -231,8 +196,10 @@ class Solver:
             overrides["root_maxfev"] = int(root_maxfev)
         if enable_warmstart is not None:
             overrides["enable_warmstart"] = bool(enable_warmstart)
-        if enable_homotopy is not None:
-            overrides["enable_homotopy"] = bool(enable_homotopy)
+        if enable_fallback is not None:
+            overrides["enable_fallback"] = bool(enable_fallback)
+        if fallback_methods is not None:
+            overrides["fallback_methods"] = tuple(str(method_name) for method_name in fallback_methods)
         if enable_verbose is not None:
             overrides["enable_verbose"] = bool(enable_verbose)
         if enable_history is not None:
@@ -246,56 +213,97 @@ class Solver:
         x_guess: np.ndarray,
         *,
         solve_config: SolverConfig,
+        x0_was_provided: bool,
     ) -> tuple[np.ndarray, bool, str, int, int, int, float]:
-        """按主方法求解, 必要时回退到 `least_squares` 的 `lm` 和 `trf`."""
+        """按主方法求解, 必要时按配置顺序回退到备用 solver 方法."""
 
         attempts: list[tuple[str, tuple[np.ndarray, bool, str, int, int, int, float] | None, Exception | None]] = []
 
-        primary_label = self._display_method_label(solve_config)
-        primary, primary_exc = self._try_solve_attempt(x_guess, solve_config=solve_config)
-        attempts.append((primary_label, primary, primary_exc))
-        if self._attempt_succeeded(primary, primary_exc):
-            if primary is None:
-                raise RuntimeError("Primary solve attempt succeeded without a result")
-            return primary
+        attempt_plans = self._build_attempt_plans(
+            x_guess,
+            solve_config=solve_config,
+            x0_was_provided=x0_was_provided,
+        )
 
-        if solve_config.method not in {"lm", "trf"}:
-            primary_failure = self._format_attempt_failure(
-                method=primary_label,
-                result=primary,
-                error=primary_exc,
-            )
-            warnings.warn(
-                (f"Solve with method={primary_label!r} failed ({primary_failure}). Retrying with method='lm'."),
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            lm_config = replace(solve_config, method="lm")
-            lm_result, lm_exc = self._try_solve_attempt(x_guess, solve_config=lm_config)
-            attempts.append((self._display_method_label(lm_config), lm_result, lm_exc))
-            if self._attempt_succeeded(lm_result, lm_exc):
+        for idx, attempt_plan in enumerate(attempt_plans):
+            label, x_attempt_guess, attempt_config = attempt_plan
+            result, error = self._try_solve_attempt(x_attempt_guess, solve_config=attempt_config)
+            attempts.append((label, result, error))
+            if self._attempt_succeeded(result, error):
+                if result is None:
+                    raise RuntimeError("Solve attempt succeeded without a result")
+                if idx == 0:
+                    return result
                 return self._finalize_attempts(attempts)
 
-        if solve_config.method != "trf" and attempts[-1][0] != self._display_method_label(
-            replace(solve_config, method="trf")
-        ):
-            trf_label = self._display_method_label(replace(solve_config, method="trf"))
-            last_label, last_result, last_exc = attempts[-1]
-            last_failure = self._format_attempt_failure(
-                method=last_label,
-                result=last_result,
-                error=last_exc,
+            if idx + 1 >= len(attempt_plans):
+                break
+
+            next_label = attempt_plans[idx + 1][0]
+            failure = self._format_attempt_failure(
+                method=label,
+                result=result,
+                error=error,
             )
-            warnings.warn(
-                (f"Solve with method={last_label!r} still failed ({last_failure}). Retrying with {trf_label!r}."),
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            trf_config = replace(solve_config, method="trf")
-            trf_result, trf_exc = self._try_solve_attempt(x_guess, solve_config=trf_config)
-            attempts.append((trf_label, trf_result, trf_exc))
+            if solve_config.enable_verbose:
+                warnings.warn(
+                    (f"Solve with method={label!r} failed ({failure}). Retrying with {next_label!r}."),
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
 
         return self._finalize_attempts(attempts)
+
+    def _build_attempt_plans(
+        self,
+        x_guess: np.ndarray,
+        *,
+        solve_config: SolverConfig,
+        x0_was_provided: bool,
+    ) -> list[tuple[str, np.ndarray, SolverConfig]]:
+        x_initial = self.operator.coerce_x(x_guess).copy()
+        x_cold = np.zeros_like(x_initial)
+        attempt_plans = [
+            (
+                self._display_attempt_label(
+                    solve_config,
+                    start_kind="warm-start"
+                    if self._is_warm_initial_guess(x_initial, x0_was_provided)
+                    else "cold-start",
+                ),
+                x_initial,
+                solve_config,
+            )
+        ]
+
+        if self._should_retry_from_reset(x_initial, x0_was_provided=x0_was_provided):
+            attempt_plans.append(
+                (
+                    self._display_attempt_label(solve_config, start_kind="reset"),
+                    x_cold.copy(),
+                    solve_config,
+                )
+            )
+
+        seen_methods = {solve_config.method}
+        for fallback_method in self._ordered_fallback_methods(solve_config):
+            if fallback_method in seen_methods:
+                continue
+            seen_methods.add(fallback_method)
+            fallback_config = replace(solve_config, method=fallback_method)
+            attempt_plans.append(
+                (
+                    self._display_attempt_label(fallback_config, start_kind="cold-fallback"),
+                    x_cold.copy(),
+                    fallback_config,
+                )
+            )
+        return attempt_plans
+
+    def _ordered_fallback_methods(self, solve_config: SolverConfig) -> tuple[str, ...]:
+        if not solve_config.enable_fallback:
+            return ()
+        return tuple(solve_config.fallback_methods)
 
     def _try_solve_attempt(
         self,
@@ -305,18 +313,33 @@ class Solver:
     ) -> tuple[tuple[np.ndarray, bool, str, int, int, int, float] | None, Exception | None]:
         """包装一次 solve stage, 让 fallback 流程也能处理数值异常."""
 
+        x_guess_eval = self.operator.coerce_x(x_guess).copy()
         try:
-            return self._solve_opt_problem(x_guess, solve_config=solve_config), None
+            return self._solve_opt_problem(x_guess_eval, solve_config=solve_config), None
         except Exception as exc:
+            residual_norm_x0, residual_exc = self._safe_residual_norm(x_guess_eval)
+            if residual_exc is None and _residual_within_acceptance(residual_norm_x0, solve_config):
+                return (
+                    (
+                        x_guess_eval.copy(),
+                        True,
+                        f"{type(exc).__name__}: {exc} [accepted by x0 residual={residual_norm_x0:.6e}]",
+                        0,
+                        0,
+                        0,
+                        float(residual_norm_x0),
+                    ),
+                    None,
+                )
             return (
                 (
-                    self.operator.coerce_x(x_guess).copy(),
+                    x_guess_eval.copy(),
                     False,
                     f"{type(exc).__name__}: {exc}",
                     0,
                     0,
                     0,
-                    float("nan"),
+                    float("nan") if residual_exc is not None else float(residual_norm_x0),
                 ),
                 exc,
             )
@@ -356,12 +379,27 @@ class Solver:
         attempt: tuple[np.ndarray, bool, str, int, int, int, float] | None,
         error: Exception | None,
     ) -> bool:
-        return error is None and attempt is not None and bool(attempt[1])
+        return bool(error is None and attempt is not None and bool(attempt[1]) and np.isfinite(float(attempt[6])))
+
+    def _display_attempt_label(self, solve_config: SolverConfig, *, start_kind: str) -> str:
+        return f"{self._display_method_label(solve_config)} [{start_kind}]"
 
     def _display_method_label(self, solve_config: SolverConfig) -> str:
         if _uses_least_squares_api(solve_config):
             return f"least_squares/{solve_config.method}"
         return f"root/{solve_config.method}"
+
+    def _is_warm_initial_guess(self, x_guess: np.ndarray, x0_was_provided: bool) -> bool:
+        return bool(x0_was_provided or not self._is_zero_guess(x_guess))
+
+    def _should_retry_from_reset(self, x_guess: np.ndarray, *, x0_was_provided: bool) -> bool:
+        if not self._is_warm_initial_guess(x_guess, x0_was_provided):
+            return False
+        return not self._is_zero_guess(x_guess)
+
+    def _is_zero_guess(self, x_guess: np.ndarray) -> bool:
+        x_eval = self.operator.coerce_x(x_guess)
+        return bool(np.all(x_eval == 0.0))
 
     def _finalize_attempts(
         self,
@@ -391,13 +429,13 @@ class Solver:
         selected_result: tuple[np.ndarray, bool, str, int, int, int, float],
     ) -> tuple[np.ndarray, bool, str, int, int, int, float]:
         message = "; ".join(
-            f"attempt(method={label}) {'succeeded' if res is not None and res[1] and err is None else 'failed'}: "
+            f"attempt(method={label}) {'succeeded' if self._attempt_succeeded(res, err) else 'failed'}: "
             f"{self._format_attempt_failure(method=label, result=res, error=err)}"
             for label, res, err in attempts
         )
         return (
             selected_result[0],
-            bool(selected_result[1]),
+            self._attempt_succeeded(selected_result, None),
             f"{message}; selected method={selected_label}",
             sum(int(result[3]) for _, result, _ in attempts if result is not None),
             sum(int(result[4]) for _, result, _ in attempts if result is not None),
@@ -424,111 +462,36 @@ class Solver:
         *,
         solve_config: SolverConfig,
     ) -> tuple[np.ndarray, bool, str, int, int, int, float]:
-        """执行 full solve 或 homotopy solve."""
+        """执行一次完整 nonlinear solve."""
 
-        stage_groups = self._build_stage_groups(solve_config=solve_config)
-        run_full = self._run_solve_full
-        run_masked = self._run_solve_masked
-        if len(stage_groups) == 1 and _stage_group_is_full(stage_groups[0], self.operator.x_size):
-            opt = run_full(x_guess, solve_config=solve_config)
-            x_opt = self.operator.coerce_x(opt.x)
-            residual_norm = _opt_residual_norm(opt)
-            if residual_norm is None and not bool(opt.success):
-                residual_norm, _ = self._safe_residual_norm(x_opt)
-            accepted = bool(opt.success) or _residual_within_acceptance(residual_norm, solve_config)
-            message = str(opt.message)
-            if not bool(opt.success) and accepted:
-                message = f"{message} [accepted by residual]"
-            return (
-                x_opt,
-                accepted,
-                message,
-                _count_opt_attr(opt, "nfev"),
-                _count_opt_attr(opt, "njev"),
-                _count_opt_attr(opt, "nit"),
-                float("nan") if residual_norm is None else float(residual_norm),
+        opt = self._run_solve_full(x_guess, solve_config=solve_config)
+        x_opt = self.operator.coerce_x(opt.x)
+        residual_norm = _opt_residual_norm(opt)
+        if residual_norm is None or not np.isfinite(residual_norm):
+            residual_norm, _ = self._safe_residual_norm(x_opt)
+        accepted_by_residual = _residual_within_acceptance(residual_norm, solve_config)
+        accepted = bool(
+            accepted_by_residual
+            or (
+                bool(opt.success)
+                and residual_norm is not None
+                and np.isfinite(residual_norm)
+                and not _requires_strict_residual_acceptance(solve_config)
             )
-
-        x_stage = x_guess.copy()
-        active_indices = np.zeros(0, dtype=np.int64)
-        total_nfev = 0
-        total_njev = 0
-        total_nit = 0
-        stage_message = "homotopy continuation completed"
-        last_opt = None
-        truncation_state = self._init_homotopy_truncation_state()
-        last_active_size = 0
-        last_stage_residual_norm: float | None = None
-        last_stage_accepted = False
-
-        for stage_group in stage_groups:
-            stage_new_indices = self._select_stage_indices(stage_group, truncation_state)
-            if stage_new_indices.size == 0:
-                continue
-            active_indices = np.concatenate([active_indices, stage_new_indices])
-            opt = run_masked(x_stage, active_indices=active_indices, solve_config=solve_config)
-            x_stage[active_indices] = np.asarray(opt.x, dtype=np.float64)
-            total_nfev += _count_opt_attr(opt, "nfev")
-            total_njev += _count_opt_attr(opt, "njev")
-            total_nit += _count_opt_attr(opt, "nit")
-            last_opt = opt
-            last_active_size = int(active_indices.shape[0])
-            stage_message = f"{opt.message} [active_size={last_active_size}] [order={stage_group.order}]"
-            stage_residual_norm = _opt_residual_norm(opt)
-            if stage_residual_norm is None and not bool(opt.success):
-                try:
-                    stage_residual = self.operator.residual_masked(
-                        x_stage[active_indices],
-                        active_indices=active_indices,
-                        x_template=x_stage,
-                    )
-                except Exception:
-                    stage_residual_norm = None
-                else:
-                    stage_residual_norm = float(np.linalg.norm(stage_residual))
-            accepted = bool(opt.success) or _residual_within_acceptance(stage_residual_norm, solve_config)
-            last_stage_residual_norm = stage_residual_norm
-            last_stage_accepted = bool(accepted)
-            if not bool(opt.success) and accepted:
-                stage_message = f"{stage_message} [accepted by residual]"
-            if accepted:
-                self._update_homotopy_truncation_state(
-                    stage_group=stage_group,
-                    x_stage=x_stage,
-                    truncation_state=truncation_state,
-                    solve_config=solve_config,
-                )
-            if active_indices.shape[0] == self.operator.x_size and accepted:
-                break
-            if not accepted:
-                break
-
-        if last_opt is None:
-            raise RuntimeError("No solve stage was executed")
-
-        residual_norm_final = float("nan")
-        if last_stage_residual_norm is not None:
-            residual_norm_final = float(last_stage_residual_norm)
-        elif not bool(last_opt.success):
-            try:
-                stage_residual = self.operator.residual_masked(
-                    x_stage[active_indices],
-                    active_indices=active_indices,
-                    x_template=x_stage,
-                )
-            except Exception:
-                residual_norm_final = float("nan")
-            else:
-                residual_norm_final = float(np.linalg.norm(stage_residual))
-
+        )
+        message = str(opt.message)
+        if not bool(opt.success) and accepted:
+            message = f"{message} [accepted by residual]"
+        if bool(opt.success) and not accepted and _requires_strict_residual_acceptance(solve_config):
+            message = f"{message} [rejected by residual={residual_norm:.6e}]"
         return (
-            self.operator.coerce_x(x_stage),
-            bool(last_stage_accepted),
-            stage_message,
-            total_nfev,
-            total_njev,
-            total_nit,
-            residual_norm_final,
+            x_opt,
+            accepted,
+            message,
+            _count_opt_attr(opt, "nfev"),
+            _count_opt_attr(opt, "njev"),
+            _count_opt_attr(opt, "nit"),
+            float("nan") if residual_norm is None else float(residual_norm),
         )
 
     def _run_solve_full(
@@ -541,26 +504,26 @@ class Solver:
             return self._run_least_squares_full(x_guess, solve_config=solve_config)
         return self._run_root_full(x_guess, solve_config=solve_config)
 
-    def _run_solve_prefix(
+    def _run_root_once(
         self,
-        x_stage: np.ndarray,
+        root_fun,
+        x_guess: np.ndarray,
         *,
-        active_len: int,
         solve_config: SolverConfig,
+        options: dict[str, object],
+        get_raw_residual: Callable[[np.ndarray], np.ndarray] | None = None,
     ):
-        active_indices = np.arange(int(active_len), dtype=np.int64)
-        return self._run_solve_masked(x_stage, active_indices=active_indices, solve_config=solve_config)
-
-    def _run_solve_masked(
-        self,
-        x_stage: np.ndarray,
-        *,
-        active_indices: np.ndarray,
-        solve_config: SolverConfig,
-    ):
-        if _uses_least_squares_api(solve_config):
-            return self._run_least_squares_masked(x_stage, active_indices=active_indices, solve_config=solve_config)
-        return self._run_root_masked(x_stage, active_indices=active_indices, solve_config=solve_config)
+        opt = root(
+            root_fun,
+            x_guess,
+            method=_root_method_name_for(solve_config),
+            tol=solve_config.atol,
+            options=options,
+        )
+        if get_raw_residual is not None:
+            x_opt = self.operator.coerce_x(opt.x)
+            opt.fun = get_raw_residual(x_opt)
+        return opt
 
     def _run_root_full(
         self,
@@ -570,13 +533,76 @@ class Solver:
     ):
         """在完整 packed x 上调用一次 `scipy.optimize.root`."""
 
-        return root(
-            self.operator,
+        root_fun = self.operator
+        get_raw_residual: Callable[[np.ndarray], np.ndarray] | None = None
+        options = _root_options_for(solve_config)
+        scaled_fun, get_raw_residual = self._build_residual_transform_wrapper(
             x_guess,
-            method=_root_method_name_for(solve_config),
-            tol=solve_config.atol,
-            options=_root_options_for(solve_config),
+            transform="linear",
         )
+        if scaled_fun is not None:
+            root_fun = scaled_fun
+            if solve_config.method == "hybr":
+                options = {**options, "factor": 1.0}
+
+        return self._run_root_once(
+            root_fun,
+            x_guess,
+            solve_config=solve_config,
+            options=options,
+            get_raw_residual=get_raw_residual,
+        )
+
+    def _build_residual_transform_wrapper(
+        self,
+        x_guess: np.ndarray,
+        *,
+        transform: str,
+    ) -> tuple[Callable[[np.ndarray], np.ndarray] | None, Callable[[np.ndarray], np.ndarray] | None]:
+        """为 solver 层构造带 block scaling 的残差变换 wrapper."""
+
+        block_lengths = getattr(self.operator, "active_lengths", None)
+        if block_lengths is None:
+            return None, None
+
+        try:
+            self.operator.coerce_x(x_guess)
+        except Exception:
+            return None, None
+        block_lengths_eval = np.asarray(block_lengths, dtype=np.int64)
+        scale: np.ndarray | None = None
+        last_x: np.ndarray | None = None
+        last_raw_residual: np.ndarray | None = None
+
+        def wrapped(x: np.ndarray) -> np.ndarray:
+            nonlocal scale, last_x, last_raw_residual
+            x_eval = self.operator.coerce_x(x)
+            raw_residual = np.asarray(self.operator(x_eval), dtype=np.float64)
+            last_x = x_eval.copy()
+            last_raw_residual = raw_residual.copy()
+            if scale is None:
+                scale = _build_block_rms_scale(raw_residual, block_lengths_eval)
+                if scale is None:
+                    scale = np.ones_like(raw_residual)
+            scaled_residual = raw_residual / scale
+            if transform == "asinh":
+                return np.arcsinh(scaled_residual)
+            return scaled_residual
+
+        def get_raw_residual(x: np.ndarray) -> np.ndarray:
+            x_eval = self.operator.coerce_x(x)
+            if last_x is not None and last_raw_residual is not None and np.array_equal(last_x, x_eval):
+                return last_raw_residual.copy()
+            return np.asarray(self.operator(x_eval), dtype=np.float64)
+
+        return wrapped, get_raw_residual
+
+    def _initial_residual_stats(self, x_guess: np.ndarray) -> tuple[np.ndarray | None, float | None]:
+        try:
+            residual = np.asarray(self.operator(self.operator.coerce_x(x_guess)), dtype=np.float64)
+        except Exception:
+            return None, None
+        return residual, float(np.linalg.norm(residual))
 
     def _run_least_squares_full(
         self,
@@ -586,171 +612,33 @@ class Solver:
     ):
         """在完整 packed x 上调用一次 `scipy.optimize.least_squares`."""
 
-        return least_squares(
-            self.operator,
-            x_guess,
-            **_least_squares_kwargs_for(solve_config),
-        )
-
-    def _run_root_prefix(
-        self,
-        x_stage: np.ndarray,
-        *,
-        active_len: int,
-        solve_config: SolverConfig,
-    ):
-        """在 prefix 子问题上调用 `root`."""
-
-        active_indices = np.arange(int(active_len), dtype=np.int64)
-        return self._run_root_masked(x_stage, active_indices=active_indices, solve_config=solve_config)
-
-    def _run_root_masked(
-        self,
-        x_stage: np.ndarray,
-        *,
-        active_indices: np.ndarray,
-        solve_config: SolverConfig,
-    ):
-        active_indices = np.asarray(active_indices, dtype=np.int64)
-        x_active0 = np.asarray(x_stage[active_indices], dtype=np.float64).copy()
-        x_template = self.operator.coerce_x(x_stage).copy()
-
-        return root(
-            lambda x_active: self.operator.residual_masked(
-                x_active,
-                active_indices=active_indices,
-                x_template=x_template,
-            ),
-            x_active0,
-            method=_root_method_name_for(solve_config),
-            tol=solve_config.atol,
-            options=_root_options_for(solve_config),
-        )
-
-    def _run_least_squares_prefix(
-        self,
-        x_stage: np.ndarray,
-        *,
-        active_len: int,
-        solve_config: SolverConfig,
-    ):
-        """在 prefix 子问题上调用 `least_squares`."""
-
-        active_indices = np.arange(int(active_len), dtype=np.int64)
-        return self._run_least_squares_masked(x_stage, active_indices=active_indices, solve_config=solve_config)
-
-    def _run_least_squares_masked(
-        self,
-        x_stage: np.ndarray,
-        *,
-        active_indices: np.ndarray,
-        solve_config: SolverConfig,
-    ):
-        active_indices = np.asarray(active_indices, dtype=np.int64)
-        x_active0 = np.asarray(x_stage[active_indices], dtype=np.float64).copy()
-        x_template = self.operator.coerce_x(x_stage).copy()
-
-        return least_squares(
-            lambda x_active: self.operator.residual_masked(
-                x_active,
-                active_indices=active_indices,
-                x_template=x_template,
-            ),
-            x_active0,
-            **_least_squares_kwargs_for(solve_config),
-        )
-
-    def _build_stage_groups(
-        self,
-        *,
-        solve_config: SolverConfig,
-    ) -> list:
-        x_size = self.operator.x_size
-        if not solve_config.enable_homotopy:
-            return [_full_stage_group(x_size)]
-
-        groups = list(self.operator.homotopy_stage_groups())
-        if not groups:
-            return [_full_stage_group(x_size)]
-
-        covered = np.concatenate([stage.indices for stage in groups]) if groups else np.zeros(0, dtype=np.int64)
-        missing = np.setdiff1d(np.arange(x_size, dtype=np.int64), np.unique(covered), assume_unique=False)
-        if missing.size:
-            groups.append(type(groups[-1])(order=groups[-1].order + 1, indices=missing, shape_profile_ids=np.zeros(0, dtype=np.int64)))
-        return groups
-
-    def _init_homotopy_truncation_state(self) -> dict[str, np.ndarray]:
-        profile_ids = self.operator.homotopy_truncation_profile_ids()
-        shape = self.operator.profile_L.shape
-        return {
-            "profile_ids": profile_ids,
-            "small_streak": np.zeros(shape, dtype=np.int64),
-            "frozen_profile_mask": np.zeros(shape, dtype=bool),
-        }
-
-    def _select_stage_indices(self, stage_group, truncation_state: dict[str, np.ndarray]) -> np.ndarray:
-        if int(stage_group.order) == 0:
-            return np.asarray(stage_group.indices, dtype=np.int64)
-
-        frozen_profile_mask = truncation_state["frozen_profile_mask"]
-        indices: list[int] = []
-        for profile_id in np.asarray(stage_group.shape_profile_ids, dtype=np.int64):
-            if bool(frozen_profile_mask[int(profile_id)]):
-                continue
-            idx = int(self.operator.coeff_index[int(profile_id), int(stage_group.order)])
-            if idx >= 0:
-                indices.append(idx)
-        return np.asarray(indices, dtype=np.int64)
-
-    def _update_homotopy_truncation_state(
-        self,
-        *,
-        stage_group,
-        x_stage: np.ndarray,
-        truncation_state: dict[str, np.ndarray],
-        solve_config: SolverConfig,
-    ) -> None:
-        order = int(stage_group.order)
-        profile_ids = truncation_state["profile_ids"]
-        small_streak = truncation_state["small_streak"]
-        frozen_profile_mask = truncation_state["frozen_profile_mask"]
-        tol = float(solve_config.homotopy_truncation_tol)
-        patience = int(solve_config.homotopy_truncation_patience)
-
-        for profile_id in profile_ids:
-            profile_id = int(profile_id)
-            if bool(frozen_profile_mask[profile_id]):
-                continue
-            if int(self.operator.profile_L[profile_id]) < order:
-                continue
-            coeff_idx = int(self.operator.coeff_index[profile_id, order])
-            if coeff_idx < 0:
-                continue
-            if abs(float(x_stage[coeff_idx])) < tol:
-                small_streak[profile_id] += 1
+        least_squares_fun = self.operator
+        get_raw_residual: Callable[[np.ndarray], np.ndarray] | None = None
+        kwargs = _least_squares_kwargs_for(solve_config)
+        if solve_config.method == "lm":
+            least_squares_fun, get_raw_residual = self._build_residual_transform_wrapper(x_guess, transform="asinh")
+            if least_squares_fun is not None:
+                kwargs["x_scale"] = 1.0
             else:
-                small_streak[profile_id] = 0
-            if small_streak[profile_id] >= patience:
-                frozen_profile_mask[profile_id] = True
+                least_squares_fun = self.operator
+        elif solve_config.method == "trf":
+            residual0, _ = self._initial_residual_stats(x_guess)
+            if _should_use_robust_trf_loss(
+                residual0,
+                getattr(self.operator, "active_lengths", None),
+            ):
+                kwargs["loss"] = "cauchy"
+                kwargs["f_scale"] = max(_residual_rms(residual0), 1.0)
 
-    def _build_stage_lengths(
-        self,
-        *,
-        solve_config: SolverConfig,
-    ) -> list[int]:
-        """生成 homotopy frontier 序列."""
-
-        x_size = self.operator.x_size
-        if not solve_config.enable_homotopy:
-            return [x_size]
-
-        frontiers = [int(frontier) for frontier in self.operator.homotopy_frontiers()]
-        if not frontiers:
-            return [x_size]
-
-        if frontiers[-1] != x_size:
-            frontiers.append(x_size)
-        return frontiers
+        opt = least_squares(
+            least_squares_fun,
+            x_guess,
+            **kwargs,
+        )
+        if get_raw_residual is not None:
+            x_opt = self.operator.coerce_x(opt.x)
+            opt.fun = get_raw_residual(x_opt)
+        return opt
 
 
 def _root_options_for(solve_config: SolverConfig) -> dict[str, object]:
@@ -799,25 +687,8 @@ def _opt_residual_norm(opt) -> float | None:
     return float(np.linalg.norm(arr))
 
 
-def _uses_root_api(solve_config: SolverConfig) -> bool:
-    return solve_config.method in SUPPORTED_ROOT_METHODS
-
-
 def _uses_least_squares_api(solve_config: SolverConfig) -> bool:
-    return solve_config.method in SUPPORTED_LEAST_SQUARES_METHODS
-
-
-def _full_stage_group(x_size: int):
-    return SimpleNamespace(
-        order=0,
-        indices=np.arange(int(x_size), dtype=np.int64),
-        shape_profile_ids=np.zeros(0, dtype=np.int64),
-    )
-
-
-def _stage_group_is_full(stage_group, x_size: int) -> bool:
-    indices = np.asarray(stage_group.indices, dtype=np.int64)
-    return indices.shape[0] == int(x_size) and np.array_equal(indices, np.arange(int(x_size), dtype=np.int64))
+    return solve_config.method in LEAST_SQUARES_METHODS
 
 
 def _accepted_residual_norm(solve_config: SolverConfig) -> float:
@@ -825,12 +696,82 @@ def _accepted_residual_norm(solve_config: SolverConfig) -> float:
 
 
 def _residual_within_acceptance(residual_norm: float | None, solve_config: SolverConfig) -> bool:
-    return residual_norm is not None and np.isfinite(residual_norm) and residual_norm <= _accepted_residual_norm(
-        solve_config
+    return bool(
+        residual_norm is not None
+        and np.isfinite(residual_norm)
+        and residual_norm <= _accepted_residual_norm(solve_config)
     )
 
 
 def _root_method_name_for(solve_config: SolverConfig) -> str:
-    if solve_config.method == "root-lm":
-        return "lm"
     return solve_config.method
+
+
+def _requires_strict_residual_acceptance(solve_config: SolverConfig) -> bool:
+    return solve_config.method in {"lm", "trf"}
+
+
+def _hard_residual_norm_threshold() -> float:
+    return 1.0e3
+
+
+def _trf_robust_block_rms_threshold() -> float:
+    return 2.0e40
+
+
+def _residual_rms(residual: np.ndarray) -> float:
+    residual_eval = np.asarray(residual, dtype=np.float64)
+    if residual_eval.ndim != 1 or residual_eval.size == 0:
+        return 1.0
+    return float(np.linalg.norm(residual_eval) / np.sqrt(residual_eval.size))
+
+
+def _block_rms_values(residual: np.ndarray, block_lengths: np.ndarray) -> np.ndarray | None:
+    residual_eval = np.asarray(residual, dtype=np.float64)
+    lengths_eval = np.asarray(block_lengths, dtype=np.int64)
+    if residual_eval.ndim != 1 or lengths_eval.ndim != 1 or residual_eval.size == 0 or lengths_eval.size == 0:
+        return None
+    if int(np.sum(lengths_eval)) != int(residual_eval.size):
+        return None
+
+    values = np.empty_like(lengths_eval, dtype=np.float64)
+    offset = 0
+    for idx, length in enumerate(lengths_eval):
+        block_size = int(length)
+        if block_size <= 0:
+            return None
+        block = residual_eval[offset : offset + block_size]
+        block_rms = float(np.linalg.norm(block) / np.sqrt(block_size))
+        if not np.isfinite(block_rms):
+            return None
+        values[idx] = block_rms
+        offset += block_size
+    return values
+
+
+def _should_use_robust_trf_loss(
+    residual: np.ndarray | None,
+    block_lengths: np.ndarray | None,
+) -> bool:
+    if residual is None or block_lengths is None:
+        return False
+    block_rms = _block_rms_values(residual, np.asarray(block_lengths, dtype=np.int64))
+    if block_rms is None or block_rms.size == 0:
+        return False
+    return bool(np.median(block_rms) >= _trf_robust_block_rms_threshold())
+
+
+def _build_block_rms_scale(residual: np.ndarray, block_lengths: np.ndarray) -> np.ndarray | None:
+    residual_eval = np.asarray(residual, dtype=np.float64)
+    lengths_eval = np.asarray(block_lengths, dtype=np.int64)
+    block_rms = _block_rms_values(residual_eval, lengths_eval)
+    if block_rms is None:
+        return None
+
+    scale = np.empty_like(residual_eval)
+    offset = 0
+    for value, length in zip(block_rms, lengths_eval, strict=False):
+        block_scale = max(float(value), 1.0)
+        scale[offset : offset + int(length)] = block_scale
+        offset += int(length)
+    return scale

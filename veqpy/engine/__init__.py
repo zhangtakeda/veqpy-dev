@@ -2,89 +2,46 @@
 Module: engine.__init__
 
 Role:
-- 负责选择当前数组后端.
-- 负责导出 engine 层稳定入口.
-
-Public API:
-- update_profile
-- update_profiles_packed_bulk
-- update_geometry
-- update_residual
-- bind_source_runner
-- bind_residual_runner
-- validate_operator
+- 作为 engine 的唯一对外导入入口.
 
 Notes:
-- 这里只负责 backend dispatch.
+- `numba` 是默认且用户可用的 backend.
+- `jax` backend 仅供内部开发验证, 仍在开发中.
 - operator layout 与 solver orchestration 保留在上层.
+- 外层模块应统一 `from veqpy.engine import ...`, 不直接导入内部文件.
 """
 
-import os
-
-BACKEND = os.environ.get("VEQPY_BACKEND", "numba")
-if BACKEND not in ("numpy", "numba"):
-    raise ValueError(f"Unsupported VEQPY_BACKEND={BACKEND!r}. Supported backends: numpy, numba")
-
-if BACKEND == "numpy":
-    from veqpy.engine.numpy_geometry import update_geometry
-    from veqpy.engine.numpy_profile import update_profile, update_profiles_packed_bulk
-    from veqpy.engine.numpy_residual import (
-        update_residual,
-        bind_residual_runner,
-    )
-    from veqpy.engine.numpy_source import (
-        RHO_AXIS,
-        THETA_AXIS,
-        DERIVATIVE_NAMES,
-        PSI_DERIVATIVE,
-        RHO_DERIVATIVE,
-        bind_source_runner,
-        validate_operator,
-        full_differentiation,
-        theta_reduction,
-        quadrature,
-        full_integration,
-        corrected_integration,
-    )
-elif BACKEND == "numba":
-    from veqpy.engine.numba_geometry import update_geometry
-    from veqpy.engine.numba_profile import update_profile, update_profiles_packed_bulk
-    from veqpy.engine.numba_residual import (
-        update_residual,
-        bind_residual_runner,
-    )
-    from veqpy.engine.numba_source import (
-        RHO_AXIS,
-        THETA_AXIS,
-        DERIVATIVE_NAMES,
-        PSI_DERIVATIVE,
-        RHO_DERIVATIVE,
-        bind_source_runner,
-        validate_operator,
-        full_differentiation,
-        theta_reduction,
-        quadrature,
-        full_integration,
-        corrected_integration,
-    )
-
+from veqpy.engine import backend_abi, orchestration
+from veqpy.engine.numba_source import (
+    COORDINATE_NAMES,
+    PSIN_COORDINATE,
+    RHO_AXIS,
+    RHO_COORDINATE,
+    THETA_AXIS,
+    corrected_even_derivative,
+    corrected_integration,
+    corrected_linear_derivative,
+    full_differentiation,
+    full_integration,
+    quadrature,
+    theta_reduction,
+    validate_route,
+)
 
 __all__ = [
-    "update_profile",
-    "update_profiles_packed_bulk",
-    "update_geometry",
-    "update_residual",
-    "bind_residual_runner",
+    "backend_abi",
+    "orchestration",
     "RHO_AXIS",
     "THETA_AXIS",
-    "DERIVATIVE_NAMES",
-    "PSI_DERIVATIVE",
-    "RHO_DERIVATIVE",
-    "bind_source_runner",
-    "validate_operator",
+    "COORDINATE_NAMES",
+    "PSIN_COORDINATE",
+    "RHO_COORDINATE",
+    "validate_route",
     "full_differentiation",
     "theta_reduction",
     "quadrature",
     "full_integration",
     "corrected_integration",
+    "corrected_linear_derivative",
+    "corrected_even_derivative",
 ]

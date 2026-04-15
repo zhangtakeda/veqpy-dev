@@ -19,14 +19,9 @@ import inspect
 import textwrap
 from collections import defaultdict, deque
 from copy import deepcopy
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, Set
 
 import numpy as np
-
-
-def _is_none(node: ast.expr) -> bool:
-    """检查 AST 节点是否为 None 字面量."""
-    return isinstance(node, ast.Constant) and node.value is None
 
 
 def _parse_dependency(func) -> Set[str]:
@@ -63,7 +58,6 @@ class Reactive:
 
     dependency_graph: Dict[str, Set[str]]
     downstream_map: Dict[str, Set[str]]
-    property_dag: List[List[str]]
     _reverse_adj: Dict[str, Set[str]]
 
     root_properties: Set[str]
@@ -75,16 +69,17 @@ class Reactive:
         super().__init_subclass__(**kwargs)
 
         roots = getattr(cls, "root_properties", None)
-        if roots is None or (callable(roots) and not isinstance(roots, set)):
-            inferred = cls._infer_root_properties()
-            if not inferred:
-                return
-            cls.root_properties = inferred
+        if roots is None:
+            raise TypeError(f"{cls.__name__} must define root_properties explicitly")
+        if not isinstance(roots, set) or any(not isinstance(name, str) for name in roots):
+            raise TypeError(f"{cls.__name__}.root_properties must be a set[str]")
+        if not roots:
+            raise ValueError(f"{cls.__name__}.root_properties must not be empty")
 
         cls.dependency_graph = cls._build_dependency_graph()
         cls._reverse_adj = cls._build_reverse_adj()
         cls.downstream_map = cls._build_downstream_map()
-        cls.property_dag = cls._build_topological_sort()
+        cls._validate_dependency_graph()
 
         cls._setup_root_properties()
         cls._wrap_derived_properties()
@@ -258,12 +253,12 @@ class Reactive:
         return result
 
     @classmethod
-    def _build_topological_sort(cls) -> List[List[str]]:
-        """构建所有属性的分层拓扑排序 (Kahn, O(V+E))"""
+    def _validate_dependency_graph(cls) -> None:
+        """校验依赖图无环."""
 
         all_props = set(cls.root_properties) | set(cls.dependency_graph.keys())
         if not all_props:
-            return []
+            return
 
         rev = cls._reverse_adj
         in_degree: Dict[str, int] = {p: 0 for p in all_props}
@@ -274,12 +269,10 @@ class Reactive:
         for root in cls.root_properties:
             in_degree.setdefault(root, 0)
 
-        result: List[List[str]] = []
         queue = sorted([p for p, d in in_degree.items() if d == 0])
 
         processed = 0
         while queue:
-            result.append(queue)
             next_queue = []
             for node in queue:
                 processed += 1
@@ -298,15 +291,13 @@ class Reactive:
                 + f"-- dependency cycles: {cycles}"
             )
 
-        return result
-
     @classmethod
-    def _detect_cycles(cls, nodes: List[str]) -> List[List[str]]:
+    def _detect_cycles(cls, nodes: list[str]) -> list[list[str]]:
         """检测并返回所有循环依赖路径"""
-        cycles: List[List[str]] = []
+        cycles: list[list[str]] = []
         node_set = set(nodes)
 
-        def dfs(node: str, path: List[str], visited: Set[str]):
+        def dfs(node: str, path: list[str], visited: Set[str]):
             if node in path:
                 cycle_start = path.index(node)
                 cycles.append(path[cycle_start:] + [node])
@@ -328,38 +319,3 @@ class Reactive:
                 dfs(node, [], visited_global)
 
         return cycles
-
-    @classmethod
-    def _infer_root_properties(cls) -> Set[str]:
-        """从子类 __init__ 自动推断根属性
-
-        规则: __init__ 中形如 self.X = Y 的赋值, 其中 Y 不是 None
-        """
-        init = cls.__dict__.get("__init__")
-        if init is None:
-            return set()
-
-        try:
-            source = inspect.getsource(init)
-            source = textwrap.dedent(source)
-            tree = ast.parse(source)
-        except OSError:
-            return set()
-
-        roots: Set[str] = set()
-        func_def = tree.body[0]
-        if not isinstance(func_def, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            return set()
-
-        for node in ast.walk(func_def):
-            if (
-                isinstance(node, ast.Assign)
-                and len(node.targets) == 1
-                and isinstance(node.targets[0], ast.Attribute)
-                and isinstance(node.targets[0].value, ast.Name)
-                and node.targets[0].value.id == "self"
-                and not _is_none(node.value)
-            ):
-                roots.add(node.targets[0].attr)
-
-        return roots
