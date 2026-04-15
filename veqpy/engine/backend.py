@@ -35,14 +35,26 @@ class BackendCapabilities:
 
 def resolve_backend(name: str) -> BackendCapabilities:
     backend_name = str(name).lower()
-    if backend_name != "numba":
-        raise ValueError(f"Unsupported backend {name!r}")
-    return BackendCapabilities(
-        name="numba",
-        apply_f2_profile_fields=numba_operator.apply_f2_profile_fields,
-        bind_source_eval_runner=numba_operator.bind_source_eval_runner,
-        bind_fused_residual_runner=numba_operator.bind_fused_residual_runner,
-        update_profiles_packed_bulk=numba_profile.update_profiles_packed_bulk,
-        update_residual_compact=numba_residual.update_residual_compact,
-        run_residual_blocks_packed_precomputed=numba_residual._run_residual_blocks_packed_precomputed,
-    )
+    if backend_name == "numba":
+        return BackendCapabilities(
+            name="numba",
+            apply_f2_profile_fields=numba_operator.apply_f2_profile_fields,
+            bind_source_eval_runner=numba_operator.bind_source_eval_runner,
+            bind_fused_residual_runner=numba_operator.bind_fused_residual_runner,
+            update_profiles_packed_bulk=numba_profile.update_profiles_packed_bulk,
+            update_residual_compact=numba_residual.update_residual_compact,
+            run_residual_blocks_packed_precomputed=numba_residual._run_residual_blocks_packed_precomputed,
+        )
+    if backend_name == "jax":
+        from veqpy.engine import jax_operator
+
+        return BackendCapabilities(
+            name="jax",
+            apply_f2_profile_fields=numba_operator.apply_f2_profile_fields,
+            bind_source_eval_runner=numba_operator.bind_source_eval_runner,
+            bind_fused_residual_runner=jax_operator.bind_fused_residual_runner,
+            update_profiles_packed_bulk=numba_profile.update_profiles_packed_bulk,
+            update_residual_compact=numba_residual.update_residual_compact,
+            run_residual_blocks_packed_precomputed=numba_residual._run_residual_blocks_packed_precomputed,
+        )
+    raise ValueError(f"Unsupported backend {name!r}")

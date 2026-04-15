@@ -829,6 +829,25 @@ def test_backend_abi_fixed_point_route_builders_encode_route_local_policy():
 def test_operator_rejects_unknown_backend():
     grid, case = _build_operator_case()
     with pytest.raises(ValueError, match="Unsupported backend"):
+        Operator(grid=grid, case=case, backend_name="bogus")
+
+
+def test_jax_pf_rho_uniform_backend_matches_numba_residual():
+    grid, case = _build_operator_case(mode="PF", coordinate="rho", nodes="uniform")
+    numba_operator = Operator(grid=grid, case=case, backend_name="numba")
+    jax_operator = Operator(grid=grid, case=case, backend_name="jax")
+    x = numba_operator.encode_initial_state()
+
+    numba_residual = numba_operator.residual(x)
+    jax_residual = jax_operator.residual(x)
+
+    assert np.allclose(jax_residual, numba_residual, rtol=1.0e-8, atol=1.0e-10)
+
+
+def test_jax_backend_rejects_unsupported_route():
+    grid, case = _build_operator_case(mode="PP", coordinate="rho", nodes="uniform")
+
+    with pytest.raises(NotImplementedError, match="JAX backend currently supports only"):
         Operator(grid=grid, case=case, backend_name="jax")
 
 

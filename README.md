@@ -32,6 +32,14 @@ Recommended workflow on Windows PowerShell:
 uv sync --group dev
 ```
 
+If you want JAX inside a Linux devcontainer:
+
+```powershell
+uv sync --group dev --extra jax-gpu
+```
+
+The repository devcontainer is based on `python:3.12-slim`, passes through `--gpus=all`, and installs dependencies with `uv sync --extra jax-gpu`. This matches JAX's pip-based NVIDIA GPU installation model, which supports the CUDA wheels on Linux containers rather than native Windows Python.
+
 Recommended command style:
 
 - `python -m pytest ...`

@@ -22,6 +22,7 @@ __pycache__
 .venv
 .vscode
 
+.uv-cache
 uv.lock
 TODO.md
 CLAUDE.md
