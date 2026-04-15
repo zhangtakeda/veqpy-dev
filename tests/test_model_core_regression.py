@@ -1,3 +1,4 @@
+import importlib.util
 from pathlib import Path
 
 import numpy as np
@@ -31,8 +32,9 @@ from veqpy.operator.layouts import (
 from veqpy.operator.operator import Operator
 from veqpy.operator.operator_case import OperatorCase
 
-GEQDSK_PATH = Path("tests/fitting/geqdsk.txt")
+GEQDSK_PATH = Path("tests/EFIT.geqdsk")
 TEST_SOURCE_SAMPLE_COUNT = 21
+HAS_JAX = importlib.util.find_spec("jax") is not None
 
 
 def _build_boundary(*, R0, Z0, a, ka, c_offsets, s_offsets, n=721):
@@ -322,7 +324,7 @@ def test_boundary_from_geqdsk_auto_selects_minimal_orders():
         (lambda: Geqdsk(), {"M": 1, "N": 2}, "Boundary is empty"),
         (lambda: _make_geqdsk_with_boundary(), {"M": 2}, "provided together or both omitted"),
         (lambda: _make_geqdsk_with_boundary(), {"maxtol": 0.0}, "maxtol must be positive"),
-        (lambda: _make_geqdsk_with_boundary(), {"M": 11, "N": 2}, "must be <= 10"),
+        (lambda: _make_geqdsk_with_boundary(), {"M": 21, "N": 2}, "must be <= 20"),
     ],
 )
 def test_boundary_from_geqdsk_rejects_invalid_inputs(build_source, kwargs, expected):
@@ -507,6 +509,7 @@ def test_equilibrium_to_geqdsk_rejects_zero_alpha2_for_physical_psi_export():
 
 def test_reactive_requires_explicit_root_properties():
     with pytest.raises(TypeError, match="must define root_properties explicitly"):
+
         class _BadReactive(Reactive):
             @property
             def value(self):
@@ -649,6 +652,7 @@ def test_operator_exposes_explicit_layout_and_execution_layers():
     assert operator.source_runtime_state.const_state.endpoint_blend.shape == (grid.Nr,)
     assert operator.source_runtime_state.work_state.scratch_1d.shape == (6, grid.Nr)
 
+
 def test_operator_replace_case_preserves_static_layout_and_refreshes_runtime_identity():
     grid, case = _build_operator_case()
     operator = Operator(grid=grid, case=case)
@@ -759,7 +763,9 @@ def test_source_eval_binding_delegates_to_backend_abi_builder(monkeypatch):
 
         return DummyAbi()
 
-    monkeypatch.setattr("veqpy.engine.numba_operator.backend_abi.build_fused_source_eval_abi", fake_build_fused_source_eval_abi)
+    monkeypatch.setattr(
+        "veqpy.engine.numba_operator.backend_abi.build_fused_source_eval_abi", fake_build_fused_source_eval_abi
+    )
 
     operator = Operator(grid=grid, case=case)
 
@@ -832,6 +838,7 @@ def test_operator_rejects_unknown_backend():
         Operator(grid=grid, case=case, backend_name="bogus")
 
 
+@pytest.mark.skipif(not HAS_JAX, reason="JAX backend tests are only for experimental backend development")
 def test_jax_pf_rho_uniform_backend_matches_numba_residual():
     grid, case = _build_operator_case(mode="PF", coordinate="rho", nodes="uniform")
     numba_operator = Operator(grid=grid, case=case, backend_name="numba")
@@ -844,6 +851,7 @@ def test_jax_pf_rho_uniform_backend_matches_numba_residual():
     assert np.allclose(jax_residual, numba_residual, rtol=1.0e-8, atol=1.0e-10)
 
 
+@pytest.mark.skipif(not HAS_JAX, reason="JAX backend tests are only for experimental backend development")
 def test_jax_backend_rejects_unsupported_route():
     grid, case = _build_operator_case(mode="PP", coordinate="rho", nodes="uniform")
 
@@ -932,8 +940,7 @@ def test_pj2_psin_route_uses_f_profile_parameterization():
     expected_F = scale * np.sqrt(latent_H)
     expected_F_r = scale * 0.5 * latent_H_r / np.sqrt(latent_H)
     expected_F_rr = scale * (
-        0.5 * latent_H_rr / np.sqrt(latent_H)
-        - 0.25 * latent_H_r * latent_H_r / np.power(latent_H, 1.5)
+        0.5 * latent_H_rr / np.sqrt(latent_H) - 0.25 * latent_H_r * latent_H_r / np.power(latent_H, 1.5)
     )
 
     assert operator.F_profile.offset == pytest.approx(1.0)

@@ -5,7 +5,8 @@ Role:
 - 作为 engine 的唯一对外导入入口.
 
 Notes:
-- 求解后端已统一为 numba.
+- `numba` 是默认且用户可用的 backend.
+- `jax` backend 仅供内部开发验证, 仍在开发中.
 - operator layout 与 solver orchestration 保留在上层.
 - 外层模块应统一 `from veqpy.engine import ...`, 不直接导入内部文件.
 """

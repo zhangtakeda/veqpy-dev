@@ -12,7 +12,6 @@ from typing import Callable
 
 import numpy as np
 
-from veqpy.engine.numba_profile import update_profiles_packed_bulk
 from veqpy.engine.numba_source import validate_route
 from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile

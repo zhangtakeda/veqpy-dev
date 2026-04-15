@@ -2,295 +2,246 @@
 
 ## Purpose
 
-这份文档只记录当前代码必须守住的边界合同。  
-它不描述理想架构, 只描述当前实现中不能随意打破的事实。
+This document records the constraints that should be treated as current implementation contracts.
+
+It is not an idealized architecture note. It is a practical list of boundaries,
+ownership rules, naming rules, and runtime invariants that are easy to break by accident.
+
+## Language And Output Rules
+
+- Runtime-facing text must be English.
+- This applies to:
+  - `print(...)`
+  - warnings
+  - exceptions
+  - benchmark and report text
+  - generated artifact summaries
+- Documentation in this repository should prefer English for shared project docs.
 
 ## Layer Boundaries
 
-### Engine
-
-位置:
-
-- [`veqpy/engine/`](../veqpy/engine)
-
-必须:
-
-- 只放 backend-facing 数值核和 backend 导出面.
-- hot-path ABI 优先使用:
-  - `ndarray`
-  - `float`
-  - `int`
-  - 显式长度数组 / 索引数组 / code 数组
-- 通过 [`veqpy/engine/__init__.py`](../veqpy/engine/__init__.py) 暴露稳定入口.
-
-不得:
-
-- 不持有 packed layout owner.
-- 不持有 `OperatorCase`, `Solver`, `Equilibrium`.
-- 不把 Python 对象语义直接拖进 hot kernels.
-
 ### Model
 
-位置:
+[`veqpy/model/`](../veqpy/model) owns:
 
-- [`veqpy/model/`](../veqpy/model)
+- grid definitions and precomputed tables
+- profile and geometry containers
+- GEQDSK payload I/O
+- equilibrium snapshots and inspection APIs
 
-必须:
+It must not own:
 
-- `Grid` 表示网格和 basis tables.
-- `Profile` / `Geometry` 表示 runtime buffers.
-- `Equilibrium` 表示 snapshot 和 inspection surface.
-
-不得:
-
-- 不持有 packed layout owner.
-- 不承担 SciPy solve orchestration.
-- 不把 snapshot 和 runtime owner 混成一个对象.
+- packed layout topology
+- solve orchestration
+- backend selection policy
 
 ### Operator
 
-位置:
+[`veqpy/operator/`](../veqpy/operator) is the runtime owner.
 
-- [`veqpy/operator/`](../veqpy/operator)
+It owns:
 
-必须:
+- packed layout and codec semantics
+- `OperatorCase` compatibility rules
+- runtime buffers
+- stage orchestration
+- the full `x -> residual` path
 
-- 持有 packed `profile_L`, `coeff_index`, `order_offsets`.
-- 持有完整的 `x -> residual` runtime 路径.
-- 持有四阶段组织:
-  - `profile`
-  - `geometry`
-  - `source`
-  - `residual`
-- 持有 `OperatorCase` 兼容性检查和 `replace_case(...)` 逻辑.
+It must not delegate packed-layout ownership back into `solver` or `tests`.
 
-不得:
+### Engine
 
-- 不把 packed ABI owner 拆回 `solver`.
-- 不把 stage owner 分散到 `tests`.
+[`veqpy/engine/`](../veqpy/engine) owns backend-facing numerical kernels and backend runner construction.
+
+It should prefer:
+
+- `ndarray`
+- `float`
+- `int`
+- explicit index arrays
+- explicit code arrays
+- array bundles with stable slot conventions
+
+It must not depend on rich Python object semantics in the hot path.
 
 ### Solver
 
-位置:
+[`veqpy/solver/`](../veqpy/solver) owns:
 
-- [`veqpy/solver/`](../veqpy/solver)
+- solve policy
+- `x0`
+- fallback behavior
+- history
+- result packaging
 
-必须:
+It must not own:
 
-- 只负责 solve policy 和 solve lifecycle.
-- 持有:
-  - `x0`
-  - `config`
-  - `result`
-  - `history`
-- 通过 `Operator` 调 residual.
+- packed layout definitions
+- backend selection semantics
+- stage A/B/C/D implementations
 
-其中:
+## Core Ownership Model
 
-- `x0` 是下次 solve 的初值.
-- warmstart 路径若主方法异常, solver 可以复核 `x0` 的 residual 并在满足阈值时接受该初值.
+The packed optimization vector `x` is the only solver-facing state.
 
-不得:
+From that rule:
 
-- 不持有 packed layout/codec owner.
-- 不持有 backend 选择逻辑.
-- 不重写 Stage A/B/C/D.
+- `Operator` is the runtime owner.
+- `Solver` owns iteration, not physics state.
+- `Equilibrium` is a post-solve snapshot, not a live runtime cache.
 
-## Packed ABI
+If a change creates a second state owner for the same runtime information, it is
+probably architectural drift rather than a local refactor.
 
-当前 packed ABI 的唯一权威位置在:
+## Packed ABI Rules
+
+The only authority for packed layout semantics is:
 
 - [`veqpy/operator/layout.py`](../veqpy/operator/layout.py)
 - [`veqpy/operator/codec.py`](../veqpy/operator/codec.py)
 
-必须:
+Required rules:
 
-- packed state 和 packed residual 都只用 `coeff_index` / `coeff_indices` 表示位置语义.
-- profile 权威顺序由 `Grid.M_max` 动态生成:
-  - `psin`, `F2`
-  - `h`, `v`, `k`
-  - `c0 .. cK`
-  - `s1 .. sK`
+- packed state and packed residual position semantics must continue to flow through `coeff_index` / `coeff_indices`
+- profile ordering must remain layout-driven rather than handwritten in scattered places
+- `replace_case(...)` must not change packed topology
 
-不得:
+Forbidden regressions:
 
-- 不重新引入第二套 packed 协议.
-- 不重新引入 `coeff_matrix`.
-- 不允许 `replace_case(...)` 改 packed topology.
+- reintroducing a second packed protocol
+- reintroducing `coeff_matrix`
+- reintroducing Python-side mirrored row caches as semantic owners
+
+## Replace-Case Contract
+
+`Operator.replace_case(...)` may update compatible case values, but it may not
+change the packed topology.
+
+If a change requires different active profile lengths, different coefficient
+counts, or a different effective packed layout, the correct action is usually to
+rebuild the `Operator`, not to hot-swap the case.
 
 ## Field Bundle ABI
 
-当前 engine 边界优先使用 field bundles.
+At the engine boundary, stable array bundles are preferred over long exploded
+argument lists.
 
-必须优先使用的 bundles:
+Important bundle-style data includes:
 
 - `T_fields`
 - `u_fields`
 - `rp_fields`
 - `env_fields`
-- `tb_fields`
-- `R_fields`
-- `Z_fields`
-- `J_fields`
-- `g_fields`
 - `root_fields`
-- `residual_fields`
+- geometry workspaces
+- residual workspaces
 
-允许:
-
-- 保留语义化 property 作为冷路径和阅读入口
-
-不得:
-
-- 不在 hot path 中重新扩回长参数表, 前提是稳定 bundle 已存在.
+Semantic convenience properties are still acceptable for readability and cold
+paths, but the hot path should not expand back into long Python-managed call signatures
+when stable bundles already exist.
 
 ## Stage Ownership
 
-当前四阶段由 [`veqpy/operator/operator.py`](../veqpy/operator/operator.py) 组织.
+The stage pipeline is owned by [`veqpy/operator/operator.py`](../veqpy/operator/operator.py).
 
-### Stage-A
+The current stage terms are fixed:
 
-当前事实:
+- `profile`
+- `geometry`
+- `source`
+- `residual`
 
-- `Stage-A` 已经是 bulk packed profile update.
-- 入口是 `stage_a_profile(...)`.
-- 主要 engine 入口是 `update_profiles_packed_bulk(...)`.
+Preferred lifecycle terms are also fixed:
 
-不得:
+- `setup`
+- `runtime`
+- `refresh`
+- `snapshot`
 
-- 不回退到 `coeff_matrix` 中转.
+Avoid introducing near-synonyms when the existing vocabulary already matches the behavior.
 
-### Stage-B
+## Hot-Path Rules
 
-当前事实:
+Engine hot paths should avoid:
 
-- `Stage-B` 通过 `Geometry.update(...)` 和 backend `update_geometry(...)` 刷 geometry fields.
+- Python object chasing
+- `None`-driven optional semantics inside tight kernels
+- repeated Python-side block assembly when array kernels already exist
 
-### Stage-C
-
-当前事实:
-
-- `Stage-C` 由 `Operator.stage_c_source(...)` 组织, 并通过 `resolve_source_inputs(...)`
-  解析 `coordinate + nodes` 的 source 输入语义.
-
-### Stage-D
-
-当前事实:
-
-- `Stage-D` 先构造 `G`, 再通过 `residual_stage_runner` 生成 packed residual.
-- residual block registry 仍留在 engine 内部.
-- 当前已经不是 per-block Python assembly.
-
-不得:
-
-- 不回退到 Python-side row buffer + scatter.
-
-## Optional Semantics
-
-public/model 层允许 richer 语义, hot engine ABI 保持单态。
-
-必须:
-
-- 在 facade/operator 层把 richer 语义 lower 成 engine-friendly ABI.
-- profile packed 路径使用空 `coeff_indices` 数组表达 offset-only.
-
-当前例外:
-
-- `Ip` / `beta` 在 facade 语义上仍可理解为 optional constraints.
-- 但 hot source kernels 继续使用当前 scalar ABI, 因为 direct `None` in Numba 已证明有性能回退.
-
-不得:
-
-- 不把 `None` 直接塞进 hot Numba kernels, 除非有新的 benchmark 证据.
+If a richer public semantic is needed, lower it in the facade or operator layer
+before entering backend hot code.
 
 ## Snapshot Semantics
 
-[`veqpy/model/equilibrium.py`](../veqpy/model/equilibrium.py) 的语义必须保持清楚.
+[`veqpy/model/equilibrium.py`](../veqpy/model/equilibrium.py) must continue to mean:
 
-必须:
+- one materialized equilibrium snapshot on one grid
 
-- `Equilibrium` 表示单网格 materialized snapshot.
-- `Equilibrium.resample(...)` 表示 snapshot 插值后重建.
-- `compare(...)` / `plot_comparison(...)` 表示比较接口, 不再承担 resample 参数.
+Important semantic constraints:
 
-不得:
+- `resample(...)` means interpolation onto another grid, not exact parametric reconstruction
+- `Equilibrium` must not become a second live runtime state container
+- derived values should remain derived when practical instead of being stored as duplicated canonical state
 
-- 不把 `Equilibrium` 当成 solver runtime owner.
-- 不把 `resample(...)` 描述成严格参数化重建.
+## Fourier-Family Semantics
 
-## Backend Control Surface
+Do not confuse representational order with active runtime order.
 
-backend control surface 只有 [`veqpy/engine/__init__.py`](../veqpy/engine/__init__.py).
+Current meaning:
 
-必须:
+- `Grid.M_max` is the maximum representable order
+- effective runtime order is determined by active coefficients and nonzero boundary content
 
-- 只在这里读取 `VEQPY_BACKEND`.
-- 当前只支持:
-  - `numpy`
-  - `numba`
+This means a change that only raises `M_max` is not automatically a change in
+what the hot path must compute for every case.
 
-不得:
+## Backend Support Surface
 
-- 不在 `SolverConfig` 或 `Solver` 里加入 instance-level backend 开关.
-- 不在文档里写不存在的 backend 文件或旧 build 链路.
+The supported user-facing backend is `numba`.
 
-## Runtime Output
+`jax` currently exists as an experimental development path only. It should not
+be documented or treated as a stable user workflow.
 
-必须:
+Any documentation or code change that makes `jax` look production-ready without
+the corresponding testing and packaging guarantees is a contract drift.
 
-- runtime 输出保持纯英文.
+## Script And Test Roles
 
-适用范围:
+Keep the distinction between these file types clear:
 
-- `print(...)`
-- rich 输出
-- warnings
-- exceptions
-- benchmark / artifact / report 文本
+- `tests/demo.py` and `tests/demo_geqdsk_workflow.py`
+  - user-facing workflow examples
+- `tests/benchmark.py`
+  - internal benchmark and comparison driver
+- `tests/test_*.py`
+  - regression evidence
+
+Do not treat demo or benchmark scripts as substitutes for regression coverage.
+
+## Comment And Documentation Rules
+
+Use comments to explain:
+
+- ownership
+- invariants
+- compatibility constraints
+- numerical stability assumptions
+- why a non-obvious workflow step exists
+
+Avoid:
+
+- line-by-line translation comments
+- comments that restate obvious syntax
+- long stale architecture prose embedded next to fast-moving implementation details
 
 ## Documentation Governance
 
-修改下列内容后, 必须同步检查文档:
+When changing any of the following, review both [`docs/overview.md`](./overview.md)
+and this file:
 
-- packed layout / codec
-- field bundle ABI
-- `Operator` runtime owner 语义
-- `Solver` public surface
-- `Equilibrium` snapshot 语义
-- backend exports
-
-至少需要同步核对:
-
-- [`README.md`](../README.md)
-- [`docs/overview.md`](./overview.md)
-- [`docs/conventions.md`](./conventions.md)
-- [`docs/guardrails.md`](./guardrails.md)
-
-同时必须核对:
-
-- 命令示例是否仍然要求在项目 `uv` 虚拟环境中执行
-- `tests/demo.py` / `tests/benchmark.py` / 核心回归测试入口路径是否仍然正确
-
-## Minimum Validation
-
-只改文档:
-
-- 至少核对路径, 文件名, 入口命名仍然存在.
-- 命令示例默认必须以项目 `uv` 虚拟环境为前提, 优先使用 `uv run ...`, 或明确说明 shell 已激活 `.venv`.
-
-改任意源码:
-
-- `uv run python -m compileall veqpy tests`
-
-改 runtime 主链或 solver:
-
-- `uv run python -m compileall veqpy tests`
-- `uv run python tests/demo.py`
-- `uv run python -m pytest tests/test_model_core_regression.py tests/test_engine_core_regression.py tests/test_solver_core_regression.py -q`
-
-改 benchmark 口径, source route, residual runner:
-
-- `uv run python -m compileall veqpy tests`
-- `uv run python tests/demo.py`
-- `uv run python tests/benchmark.py`
-- `uv run python -m pytest tests/test_model_core_regression.py tests/test_engine_core_regression.py tests/test_solver_core_regression.py -q`
+- packed layout or codec rules
+- runtime ownership boundaries
+- backend support surface
+- stage pipeline semantics
+- solver public behavior
+- equilibrium snapshot semantics

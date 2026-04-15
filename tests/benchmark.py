@@ -1,3 +1,11 @@
+"""Repository benchmark and regression-driving script.
+
+This file is intentionally script-oriented rather than pytest-oriented. It
+builds one high-resolution PF reference solve, projects that reference into a
+matrix of route/constraint cases, and writes comparison artifacts under
+``tests/benchmark/``.
+"""
+
 from __future__ import annotations
 
 import json
@@ -26,6 +34,7 @@ from veqpy.solver.solver_config import SolverConfig
 PLOT = False
 SHOW_PROGRESS = True
 
+# Reference solve: high-resolution baseline used to derive downstream cases.
 REFERENCE_SOURCE_SAMPLE_COUNT = 51
 TEST_SOURCE_SAMPLE_COUNT = 51
 BENCHMARK_REPEAT_COUNT = 10
@@ -44,6 +53,7 @@ CONFIG = SolverConfig(
     enable_history=False,
 )
 
+# Minimal robust coefficient seeds for benchmark cases.
 BASE_COEFFS = {
     "h": [0.0] * 3,
     "k": [0.0] * 5,
@@ -188,6 +198,7 @@ def _render_ranking_section(
 
 
 def _artifact_dir() -> Path:
+    """Keep generated benchmark artifacts in one ignored location."""
     outdir = Path(__file__).resolve().parent / "benchmark"
     outdir.mkdir(parents=True, exist_ok=True)
     return outdir
@@ -275,6 +286,7 @@ def _profile_interp(axis: np.ndarray | PreparedInterpAxis, values: np.ndarray, x
 
 
 def pf_reference_profiles(psin: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Analytic PF reference profiles used to build the baseline solve."""
     beta0 = 0.75
 
     alpha_p, alpha_f = 5.0, 3.32
@@ -337,6 +349,8 @@ def build_pf_reference_profiles(equilibrium) -> dict[str, np.ndarray | float]:
 
 
 def _reference_pf_case() -> OperatorCase:
+    # Start from a stable PF/rho/uniform case, then reuse its solved profiles
+    # to build the wider route/constraint benchmark matrix.
     rho_src = np.linspace(0.0, 1.0, REFERENCE_SOURCE_SAMPLE_COUNT)
     psin_src = rho_src * rho_src
     FFn_psin_src, Pn_psin_src = pf_reference_profiles(psin_src)
@@ -435,6 +449,7 @@ def _write_reference_cache(reference: ReferenceBundle) -> None:
 
 
 def _solve_reference(*, show_progress: bool = False) -> ReferenceBundle:
+    """Solve or load the high-resolution reference equilibrium."""
     cached = _load_reference_cache()
     if cached is not None:
         if show_progress:
@@ -568,6 +583,7 @@ def _profile_coeffs_for_case(
     *,
     constraint: str | None = None,
 ) -> dict[str, list[float] | None]:
+    """Choose a conservative coefficient seed for one benchmark case."""
     route_spec = validate_route(mode, coordinate, input_kind)
     if route_spec.source_strategy == "profile_owned_psin":
         coeffs = {name: list(values) for name, values in PSIN_ROBUST_COEFFS.items()}
@@ -580,6 +596,7 @@ def _profile_coeffs_for_case(
 
 
 def _make_benchmark_case(spec: BenchmarkCaseSpec, reference: ReferenceBundle) -> OperatorCase:
+    """Project the reference solution onto one route/constraint test case."""
     init_kwargs = _build_mode_init_kwargs(spec.mode, spec.coordinate, spec.constraint, reference.ref_profiles)
     heat_profile = init_kwargs["heat_input"]
     current_profile = init_kwargs["current_input"]
@@ -1161,6 +1178,7 @@ def _write_reference_summary_json(reference: ReferenceBundle) -> None:
 
 
 def run_full_benchmark(*, show_progress: bool = SHOW_PROGRESS) -> tuple[ReferenceBundle, list[BenchmarkCaseResult]]:
+    """Main script entry: sweep the benchmark matrix and write reports."""
     reference = _solve_reference(show_progress=show_progress)
     rows: list[BenchmarkCaseResult] = []
     plot_failures: list[str] = []
@@ -1209,6 +1227,7 @@ def run_full_benchmark(*, show_progress: bool = SHOW_PROGRESS) -> tuple[Referenc
 
 
 def _run_as_script() -> int:
+    """Console entry used by ``python tests/benchmark.py``."""
     run_full_benchmark(show_progress=SHOW_PROGRESS)
     return 0
 

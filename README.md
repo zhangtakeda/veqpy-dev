@@ -4,14 +4,15 @@
 a high-performance Python wrapper for plasma equilibrium simulations in magnetic confinement fusion (MCF) devices.
 
 - Author: `rhzhang`
-- Updated: `2026-03-30`
-- Version: `0.2.3`
+- Updated: `2026-04-15`
+- Version: `0.3.0`
 
 ## Code Structure
 
 - `veqpy/engine/`
   - Array-first numerical kernels.
-  - `numba` kernels for `profile`, `geometry`, `source`, and `residual`.
+  - `numba` is the supported user-facing backend for `profile`, `geometry`, `source`, and `residual`.
+  - `jax` backend work is experimental and still under development; it is not intended for users.
 - `veqpy/model/`
   - Passive or snapshot-oriented objects: `Grid`, `Profile`, `Geometry`, `Equilibrium`.
 - `veqpy/operator/`
@@ -40,10 +41,13 @@ uv sync --group dev --extra jax-gpu
 
 The repository devcontainer is based on `python:3.12-slim`, passes through `--gpus=all`, and installs dependencies with `uv sync --extra jax-gpu`. This matches JAX's pip-based NVIDIA GPU installation model, which supports the CUDA wheels on Linux containers rather than native Windows Python.
 
+JAX is currently a backend-development path only. It is not part of the supported end-user workflow, and the current implementation covers only a narrow experimental route.
+
 Recommended command style:
 
 - `python -m pytest ...`
 - `python tests/demo.py`
+- `python tests/demo_geqdsk_workflow.py`
 - `python tests/benchmark.py`
 - `python -m compileall veqpy tests`
 
@@ -51,6 +55,7 @@ Prefer running them through `uv`:
 
 - `uv run python -m pytest ...`
 - `uv run python tests/demo.py`
+- `uv run python tests/demo_geqdsk_workflow.py`
 - `uv run python tests/benchmark.py`
 - `uv run python -m compileall veqpy tests`
 
@@ -70,8 +75,6 @@ Core regressions are now organized by submodule instead of by temporary refactor
 
 - [tests/test_model_core_regression.py](tests/test_model_core_regression.py)
   - `Grid`, `Boundary.from_geqdsk`, `Equilibrium` snapshot/serialization/comparison semantics
-- [tests/test_engine_core_regression.py](tests/test_engine_core_regression.py)
-  - numba geometry/residual/source regression checks, high-order runtime propagation, and operator-facing engine contracts
 - [tests/test_solver_core_regression.py](tests/test_solver_core_regression.py)
   - solve facade, fallback/reset behavior, and solver/operator state lifecycle semantics
 
@@ -139,7 +142,7 @@ When changing performance-sensitive code:
 ## Related Docs
 
 - [docs/overview.md](docs/overview.md)
-- [docs/agent-context.md](docs/agent-context.md)
+- [docs/guardrails.md](docs/guardrails.md)
 - [docs/theory/profile.md](docs/theory/profile.md)
 - [docs/theory/geometry.md](docs/theory/geometry.md)
 - [docs/theory/residual.md](docs/theory/residual.md)

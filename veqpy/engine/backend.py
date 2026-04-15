@@ -10,7 +10,8 @@ Public API:
 - resolve_backend
 
 Notes:
-- 当前只提供 numba backend.
+- `numba` 是默认且用户可用的 backend.
+- `jax` backend 仅供内部开发验证, 仍在开发中.
 - 避免模块级 registry, 直到确有第三实现需要.
 """
 
@@ -46,7 +47,13 @@ def resolve_backend(name: str) -> BackendCapabilities:
             run_residual_blocks_packed_precomputed=numba_residual._run_residual_blocks_packed_precomputed,
         )
     if backend_name == "jax":
-        from veqpy.engine import jax_operator
+        try:
+            from veqpy.engine import jax_operator
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "JAX backend is an experimental development path and is not intended for end users. "
+                "Install a JAX extra only if you are working on backend development."
+            ) from exc
 
         return BackendCapabilities(
             name="jax",
