@@ -2,6 +2,8 @@
 
 Run it directly to get one solved equilibrium plus a simple flux-surface plot.
 This is meant to be the smallest user-facing workflow example in the repo.
+
+Note: The first run may be slower due to JIT compilation.
 """
 
 from __future__ import annotations

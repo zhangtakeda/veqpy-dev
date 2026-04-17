@@ -5,6 +5,8 @@ This script shows the intended user flow:
 2. fit a veqpy boundary from it,
 3. solve a veqpy equilibrium,
 4. compare magnetic surfaces in one simple figure.
+
+Note: The first run may be slower due to JIT compilation.
 """
 
 from __future__ import annotations
