@@ -840,12 +840,16 @@ def test_operator_rejects_unknown_backend():
         Operator(grid=grid, case=case, backend_name="bogus")
 
 
-@pytest.mark.skipif(not HAS_JAX, reason="JAX backend tests are only for experimental backend development")
 def test_jax_pf_rho_uniform_backend_matches_numba_residual():
     grid, case = _build_operator_case(mode="PF", coordinate="rho", nodes="uniform")
     numba_operator = Operator(grid=grid, case=case, backend_name="numba")
-    jax_operator = Operator(grid=grid, case=case, backend_name="jax")
     x = numba_operator.encode_initial_state()
+    if not HAS_JAX:
+        with pytest.raises(RuntimeError, match="JAX backend is an experimental development path"):
+            Operator(grid=grid, case=case, backend_name="jax")
+        return
+
+    jax_operator = Operator(grid=grid, case=case, backend_name="jax")
 
     numba_residual = numba_operator.residual(x)
     jax_residual = jax_operator.residual(x)
@@ -853,9 +857,12 @@ def test_jax_pf_rho_uniform_backend_matches_numba_residual():
     assert np.allclose(jax_residual, numba_residual, rtol=1.0e-8, atol=1.0e-10)
 
 
-@pytest.mark.skipif(not HAS_JAX, reason="JAX backend tests are only for experimental backend development")
 def test_jax_backend_rejects_unsupported_route():
     grid, case = _build_operator_case(mode="PP", coordinate="rho", nodes="uniform")
+    if not HAS_JAX:
+        with pytest.raises(RuntimeError, match="JAX backend is an experimental development path"):
+            Operator(grid=grid, case=case, backend_name="jax")
+        return
 
     with pytest.raises(NotImplementedError, match="JAX backend currently supports only"):
         Operator(grid=grid, case=case, backend_name="jax")
