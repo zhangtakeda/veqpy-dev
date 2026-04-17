@@ -482,12 +482,14 @@ def test_geqdsk_io_uses_standard_psirz_file_order():
         loaded = Geqdsk(str(outpath))
 
         payload = outpath.read_text(encoding="utf-8").splitlines()
+        header_tail = np.fromstring(payload[4], sep=" ")
         flat_values = np.fromstring(" ".join(payload[5:]), sep=" ")
         psi_start = 4 * geqdsk.NR
         psi_stop = psi_start + geqdsk.NR * geqdsk.NZ
         psi_file = flat_values[psi_start:psi_stop]
 
         assert np.allclose(loaded.psi, psi)
+        assert np.allclose(header_tail, np.array([0.0, 0.0, 1.0, 0.0, 0.0], dtype=np.float64))
         assert np.allclose(psi_file, psi.T.reshape(-1))
     finally:
         outpath.unlink(missing_ok=True)

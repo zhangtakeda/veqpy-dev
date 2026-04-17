@@ -13,7 +13,7 @@ $$
 \end{aligned}
 $$
 
-Lagrangian density (参考 [Lao1981](https://doi.org/10.1063/1.863562)):
+Lagrangian density (形式不同于 [Lao1981](https://doi.org/10.1063/1.863562), 但推导的势能泛函等价):
 
 $$
 L = \frac{|\nabla \psi|^2}{2 \mu_0 R^2} -\left(\frac{F^2}{2 \mu_0 R^2}+P\right)

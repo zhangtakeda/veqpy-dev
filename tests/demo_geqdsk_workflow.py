@@ -91,9 +91,7 @@ def build_geqdsk_surfaces(geqdsk: Geqdsk, *, levels: tuple[float, ...]) -> dict[
         plt.close(fig)
         for idx, level in enumerate(contour_levels):
             candidates = [
-                np.asarray(segment, dtype=np.float64)
-                for segment in contour.allsegs[idx]
-                if len(segment) >= 8
+                np.asarray(segment, dtype=np.float64) for segment in contour.allsegs[idx] if len(segment) >= 8
             ]
             if candidates:
                 surfaces[level] = max(candidates, key=len)
@@ -166,6 +164,7 @@ def main() -> None:
         ),
     )
     solver.solve(enable_verbose=False, enable_history=False, enable_warmstart=False, enable_fallback=False)
+    print(solver.result)
     equilibrium = solver.build_equilibrium()
     plot_equilibrium = equilibrium.resample(grid=plot_grid)
 
