@@ -4,9 +4,11 @@
 *.svg
 *.egg-info 
  
+data
 dist
 docs
 scripts
+figures
 tests/demo
 tests/benchmark
 tests/_tmp_plot_regression
@@ -22,5 +24,7 @@ __pycache__
 .uv-cache
 uv.lock
 TODO.md
-CLAUDE.md
+PAPER.md
 /test.py
+
+zhang2026

@@ -143,18 +143,24 @@ def main() -> None:
         current_input=current_input,
         Ip=MU0 * 3.0e6,
     )
-    solve_grid = Grid(Nr=64, Nt=64, scheme="legendre")
+    solve_grid = Grid(Nr=16, Nt=16, scheme="legendre")
     plot_grid = Grid(Nr=128, Nt=256, scheme="uniform", L_max=solve_grid.L_max, M_max=solve_grid.M_max)
     solver = Solver(
         operator=Operator(grid=solve_grid, case=case),
         config=SolverConfig(
-            method="lm",
+            method="hybr",
             enable_warmstart=False,
             enable_verbose=False,
             enable_history=False,
         ),
     )
+
+    for _ in range(10):
+        solver.solve()
+        solver.reset()
+
     solver.solve(enable_warmstart=False, enable_verbose=False, enable_history=False)
+    print(solver.result)
     equilibrium = solver.build_equilibrium()
     plot_equilibrium = equilibrium.resample(grid=plot_grid)
 
@@ -163,7 +169,7 @@ def main() -> None:
     fig, ax = plt.subplots(figsize=(7.4, 6.6), constrained_layout=True)
     plot_equilibrium_surfaces(ax, plot_equilibrium, levels=DEFAULT_LEVELS)
     ax.scatter(
-        [equilibrium.R0], [equilibrium.Z0], marker="x", color="#d62728", s=42, linewidths=1.4, label="magnetic axis"
+        [equilibrium.R0], [equilibrium.Z0], marker="x", color="#d62728", s=42, linewidths=1.4, label="Boundary (R0, Z0)"
     )
     style_surface_axis(ax, title="veqpy Demo Flux Surfaces", rz_limits=rz_limits)
     ax.legend(loc="upper right")

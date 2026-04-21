@@ -165,6 +165,11 @@ def main() -> None:
             enable_history=False,
         ),
     )
+
+    for _ in range(10):
+        solver.solve()
+        solver.reset()
+
     solver.solve(enable_verbose=False, enable_history=False, enable_warmstart=False, enable_fallback=False)
     print(solver.result)
     equilibrium = solver.build_equilibrium()
@@ -194,7 +199,15 @@ def main() -> None:
             linewidth=linewidth,
             label="veqpy" if index == 0 else None,
         )
-    ax.scatter([boundary.R0], [boundary.Z0], marker="x", color="#d62728", s=42, linewidths=1.4, label="fitted axis")
+    ax.scatter(
+        [boundary.R0],
+        [boundary.Z0],
+        marker="x",
+        color="#d62728",
+        s=42,
+        linewidths=1.4,
+        label="Boundary (R0, Z0)",
+    )
     style_surface_axis(ax, title="EFIT vs veqpy Flux Surfaces", rz_limits=rz_limits)
     ax.legend(loc="upper right")
     fig.savefig(figure_path, dpi=220)
