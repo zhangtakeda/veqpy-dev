@@ -40,6 +40,7 @@ class Solver:
         *,
         operator: Operator,
         config: SolverConfig | None = None,
+        enable_warmup: bool = True,
     ) -> None:
         """绑定一个 Operator 和一份默认求解配置."""
 
@@ -49,6 +50,11 @@ class Solver:
         self.history: list[SolverRecord] = []
 
         self.x0 = self.operator.encode_initial_state()
+
+        if enable_warmup:
+            for _ in range(5):
+                self.solve(enable_verbose=False, enable_history=False)
+                self.reset()
 
     def reset(self) -> None:
         """将 solver 持有的 x0 原地清零."""

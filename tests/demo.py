@@ -141,21 +141,22 @@ def main() -> None:
         current_input=current_input,
         Ip=MU0 * 3.0e6,
     )
-    solve_grid = Grid(Nr=64, Nt=64, scheme="legendre")
+    solve_grid = Grid(Nr=16, Nt=16, scheme="legendre")
     plot_grid = Grid(Nr=128, Nt=256, scheme="uniform", L_max=solve_grid.L_max, M_max=solve_grid.M_max)
     solver = Solver(
         operator=Operator(grid=solve_grid, case=case),
         config=SolverConfig(
-            method="lm",
+            method="hybr",
             enable_warmstart=False,
             enable_verbose=False,
             enable_history=False,
         ),
     )
-    solver.solve()
-    solver.solve()
-    solver.solve()
-    solver.solve()
+
+    # for _ in range(1):
+    #     solver.solve()
+    #     solver.reset()
+
     solver.solve(enable_warmstart=False, enable_verbose=False, enable_history=False)
     print(solver.result)
     equilibrium = solver.build_equilibrium()

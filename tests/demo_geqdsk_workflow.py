@@ -163,6 +163,11 @@ def main() -> None:
             enable_history=False,
         ),
     )
+
+    for _ in range(10):
+        solver.solve()
+        solver.reset()
+
     solver.solve(enable_verbose=False, enable_history=False, enable_warmstart=False, enable_fallback=False)
     print(solver.result)
     equilibrium = solver.build_equilibrium()
