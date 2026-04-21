@@ -40,7 +40,6 @@ class Solver:
         *,
         operator: Operator,
         config: SolverConfig | None = None,
-        enable_warmup: bool = True,
     ) -> None:
         """绑定一个 Operator 和一份默认求解配置."""
 
@@ -50,11 +49,6 @@ class Solver:
         self.history: list[SolverRecord] = []
 
         self.x0 = self.operator.encode_initial_state()
-
-        if enable_warmup:
-            for _ in range(5):
-                self.solve(enable_verbose=False, enable_history=False)
-                self.reset()
 
     def reset(self) -> None:
         """将 solver 持有的 x0 原地清零."""
@@ -518,6 +512,7 @@ class Solver:
         solve_config: SolverConfig,
         options: dict[str, object],
         get_raw_residual: Callable[[np.ndarray], np.ndarray] | None = None,
+        decode_x: Callable[[np.ndarray], np.ndarray] | None = None,
     ):
         opt = root(
             root_fun,
@@ -526,6 +521,8 @@ class Solver:
             tol=solve_config.atol,
             options=options,
         )
+        if decode_x is not None:
+            opt.x = decode_x(opt.x)
         if get_raw_residual is not None:
             x_opt = self.operator.coerce_x(opt.x)
             opt.fun = get_raw_residual(x_opt)
@@ -546,17 +543,28 @@ class Solver:
             x_guess,
             transform="linear",
         )
-        if scaled_fun is not None:
+        x_root_guess = x_guess
+        decode_x: Callable[[np.ndarray], np.ndarray] | None = None
+        x_transform_fun, x_root_guess, decode_x = self._build_x_transform_wrapper(x_guess)
+        if x_transform_fun is not None:
+            if scaled_fun is not None:
+                def root_fun(z_eval: np.ndarray) -> np.ndarray:
+                    return scaled_fun(x_transform_fun(z_eval))
+            else:
+                root_fun = x_transform_fun
+        elif scaled_fun is not None:
             root_fun = scaled_fun
+        if scaled_fun is not None:
             if solve_config.method == "hybr":
                 options = {**options, "factor": 1.0}
 
         return self._run_root_once(
             root_fun,
-            x_guess,
+            x_root_guess,
             solve_config=solve_config,
             options=options,
             get_raw_residual=get_raw_residual,
+            decode_x=decode_x,
         )
 
     def _build_residual_transform_wrapper(
@@ -603,6 +611,28 @@ class Solver:
 
         return wrapped, get_raw_residual
 
+    def _build_x_transform_wrapper(
+        self,
+        x_guess: np.ndarray,
+    ) -> tuple[
+        Callable[[np.ndarray], np.ndarray] | None,
+        np.ndarray,
+        Callable[[np.ndarray], np.ndarray] | None,
+    ]:
+        x_eval = self.operator.coerce_x(x_guess)
+        x_scale = _build_x_block_scale_vector(self.operator, x_eval)
+        if x_scale is None:
+            return None, x_eval, None
+
+        inv_scale = 1.0 / x_scale
+
+        def map_z_to_x(z: np.ndarray) -> np.ndarray:
+            z_eval = np.asarray(z, dtype=np.float64)
+            if z_eval.ndim != 1 or z_eval.shape[0] != x_eval.shape[0]:
+                raise ValueError(f"Expected z to have shape {x_eval.shape}, got {z_eval.shape}")
+            return self.operator.coerce_x(z_eval * x_scale)
+
+        return map_z_to_x, x_eval * inv_scale, map_z_to_x
     def _initial_residual_stats(self, x_guess: np.ndarray) -> tuple[np.ndarray | None, float | None]:
         try:
             residual = np.asarray(self.operator(self.operator.coerce_x(x_guess)), dtype=np.float64)
@@ -656,6 +686,8 @@ def _root_options_for(solve_config: SolverConfig) -> dict[str, object]:
     if method in {"hybr", "df-sane"}:
         if solve_config.root_maxfev > 0:
             options["maxfev"] = max(int(solve_config.root_maxfev), 500)
+        if method == "hybr":
+            options["eps"] = 1.0e-6
     else:
         if solve_config.root_maxiter > 0:
             options["maxiter"] = int(solve_config.root_maxiter)
@@ -714,7 +746,7 @@ def _root_method_name_for(solve_config: SolverConfig) -> str:
 
 
 def _requires_strict_residual_acceptance(solve_config: SolverConfig) -> bool:
-    return solve_config.method in {"lm", "trf"}
+    return solve_config.method in {"hybr", "lm", "trf"}
 
 
 def _hard_residual_norm_threshold() -> float:
@@ -780,4 +812,83 @@ def _build_block_rms_scale(residual: np.ndarray, block_lengths: np.ndarray) -> n
         block_scale = max(float(value), 1.0)
         scale[offset : offset + int(length)] = block_scale
         offset += int(length)
+    return scale
+
+
+def _x_scale_floor() -> float:
+    return 1.0e-2
+
+
+def _x_scale_core_profile_prior() -> float:
+    return 1.5e-1
+
+
+def _x_scale_fourier_profile_prior() -> float:
+    return 5.0e-2
+
+
+def _x_scale_f_profile_prior() -> float:
+    return 2.5e-1
+
+
+def _x_scale_kappa_profile_prior() -> float:
+    return 1.0
+
+
+def _x_scale_profile_prior(name: str) -> float:
+    if name in {"h", "v", "psin"}:
+        return _x_scale_core_profile_prior()
+    if name == "k":
+        return _x_scale_kappa_profile_prior()
+    if name.startswith(("c", "s")):
+        return _x_scale_fourier_profile_prior()
+    if name == "F":
+        return _x_scale_f_profile_prior()
+    return _x_scale_f_profile_prior()
+
+
+def _use_offset_for_x_scale(name: str) -> bool:
+    return name not in {"h", "v", "psin"}
+
+
+def _build_x_block_scale_vector(operator, x_guess: np.ndarray) -> np.ndarray | None:
+    x_eval = np.asarray(x_guess, dtype=np.float64)
+    active_lengths = getattr(operator, "active_lengths", None)
+    active_offsets = getattr(operator, "active_offsets", None)
+    active_scales = getattr(operator, "active_scales", None)
+    active_coeff_index_rows = getattr(operator, "active_coeff_index_rows", None)
+    if (
+        active_lengths is None
+        or active_offsets is None
+        or active_scales is None
+        or active_coeff_index_rows is None
+    ):
+        return None
+
+    lengths_eval = np.asarray(active_lengths, dtype=np.int64)
+    offsets_eval = np.asarray(active_offsets, dtype=np.float64)
+    scales_eval = np.asarray(active_scales, dtype=np.float64)
+    coeff_rows_eval = np.asarray(active_coeff_index_rows, dtype=np.int64)
+    if lengths_eval.ndim != 1 or offsets_eval.shape != lengths_eval.shape or scales_eval.shape != lengths_eval.shape:
+        return None
+
+    scale = np.ones_like(x_eval)
+    floor = _x_scale_floor()
+    for slot, (p, block_len) in enumerate(zip(operator.active_profile_ids, lengths_eval, strict=False)):
+        length = int(block_len)
+        if length <= 0:
+            continue
+        coeff_indices = coeff_rows_eval[slot, :length]
+        if np.any(coeff_indices < 0) or np.any(coeff_indices >= x_eval.size):
+            return None
+        block_guess = x_eval[coeff_indices]
+        guess_rms = float(np.linalg.norm(block_guess) / np.sqrt(length))
+        profile_name = operator.profile_names[int(p)]
+        offset_scale = abs(float(offsets_eval[slot])) if _use_offset_for_x_scale(profile_name) else 0.0
+        profile_scale = abs(float(scales_eval[slot]))
+        profile_prior = _x_scale_profile_prior(profile_name)
+        if abs(profile_scale - 1.0) <= 1.0e-12:
+            profile_scale = profile_prior
+        block_scale = max(offset_scale, profile_scale, profile_prior, guess_rms, floor)
+        scale[coeff_indices] = block_scale
     return scale

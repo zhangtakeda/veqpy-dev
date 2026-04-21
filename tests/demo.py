@@ -153,9 +153,9 @@ def main() -> None:
         ),
     )
 
-    # for _ in range(1):
-    #     solver.solve()
-    #     solver.reset()
+    for _ in range(10):
+        solver.solve()
+        solver.reset()
 
     solver.solve(enable_warmstart=False, enable_verbose=False, enable_history=False)
     print(solver.result)

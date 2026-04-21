@@ -4,6 +4,7 @@
 *.svg
 *.egg-info 
  
+data
 dist
 docs
 scripts
@@ -25,3 +26,5 @@ uv.lock
 TODO.md
 PAPER.md
 /test.py
+
+zhang2026
