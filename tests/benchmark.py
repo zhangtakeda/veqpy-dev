@@ -4,6 +4,8 @@ This file is intentionally script-oriented rather than pytest-oriented. It
 builds one high-resolution PF reference solve, projects that reference into a
 matrix of route/constraint cases, and writes comparison artifacts under
 ``tests/benchmark/``.
+
+Note: The first run may be slower due to JIT compilation.
 """
 
 from __future__ import annotations
@@ -43,9 +45,24 @@ REFERENCE_CACHE_VERSION = 2
 DIAGNOSTIC_SIGN_CHANGE_WINDOW = 12
 MU0 = 4.0e-7 * np.pi
 
-REFERENCE_GRID = Grid(Nr=64, Nt=32, scheme="legendre")
-TEST_GRID = Grid(Nr=16, Nt=16, scheme="legendre", L_max=REFERENCE_GRID.L_max)
-REFERENCE_SUMMARY_GRID = Grid(Nr=64, Nt=128, scheme="uniform", L_max=REFERENCE_GRID.L_max, M_max=REFERENCE_GRID.M_max)
+REFERENCE_GRID = Grid(
+    Nr=64,
+    Nt=32,
+    scheme="legendre",
+)
+
+TEST_GRID = Grid(
+    Nr=16,
+    Nt=16,
+    scheme="legendre",
+)
+
+REFERENCE_SUMMARY_GRID = Grid(
+    Nr=64,
+    Nt=128,
+    scheme="uniform",
+)
+
 CONFIG = SolverConfig(
     method="hybr",
     enable_verbose=False,
@@ -92,14 +109,6 @@ BENCHMARK_MODE_CONSTRAINTS = {
     "PJ2": ("Ip_beta", "Ip", "beta", "null"),
     "PQ": ("Ip_beta", "Ip", "beta", "null"),
 }
-# BENCHMARK_MODE_CONSTRAINTS = {
-#     "PF": ("null",),
-#     "PP": ("null",),
-#     "PI": ("null",),
-#     "PJ1": ("null",),
-#     "PJ2": ("null",),
-#     "PQ": ("null",),
-# }
 
 
 @dataclass(frozen=True)
