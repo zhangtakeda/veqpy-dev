@@ -152,7 +152,12 @@ def main() -> None:
             enable_history=False,
         ),
     )
+    solver.solve()
+    solver.solve()
+    solver.solve()
+    solver.solve()
     solver.solve(enable_warmstart=False, enable_verbose=False, enable_history=False)
+    print(solver.result)
     equilibrium = solver.build_equilibrium()
     plot_equilibrium = equilibrium.resample(grid=plot_grid)
 
@@ -161,7 +166,7 @@ def main() -> None:
     fig, ax = plt.subplots(figsize=(7.4, 6.6), constrained_layout=True)
     plot_equilibrium_surfaces(ax, plot_equilibrium, levels=DEFAULT_LEVELS)
     ax.scatter(
-        [equilibrium.R0], [equilibrium.Z0], marker="x", color="#d62728", s=42, linewidths=1.4, label="magnetic axis"
+        [equilibrium.R0], [equilibrium.Z0], marker="x", color="#d62728", s=42, linewidths=1.4, label="Boundary (R0, Z0)"
     )
     style_surface_axis(ax, title="veqpy Demo Flux Surfaces", rz_limits=rz_limits)
     ax.legend(loc="upper right")
