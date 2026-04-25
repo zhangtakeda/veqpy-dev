@@ -25,10 +25,10 @@ from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 
-from veqpy.engine.numba_source import _uniform_barycentric_weights, resolve_source_scratch_kernel
+from veqpy.engine.numba_source import resolve_source_scratch_kernel, uniform_barycentric_weights
 
 if TYPE_CHECKING:
-    from veqpy.operator.layouts import BackendState
+    from veqpy.operator.runtime_layout import BackendState
     from veqpy.orchestration import SourcePlan
 
 
@@ -275,7 +275,7 @@ def _build_fixed_point_psin_source_abi(
         has_Ip=bool(np.isfinite(Ip)),
         projection_domain_code=int(source_plan.projection_domain_code),
         endpoint_policy_code=int(source_plan.endpoint_policy_code),
-        barycentric_weights=_uniform_barycentric_weights(
+        barycentric_weights=uniform_barycentric_weights(
             min(barycentric_order_cap, int(source_plan.source_sample_count))
         ),
         allow_query_warmstart=allow_query_warmstart,

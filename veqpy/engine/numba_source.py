@@ -3224,6 +3224,9 @@ def _uniform_barycentric_weights(source_sample_count: int) -> np.ndarray:
     return weights
 
 
+uniform_barycentric_weights = _uniform_barycentric_weights
+
+
 def _build_uniform_barycentric_matrix(
     query: np.ndarray,
     source_sample_count: int,

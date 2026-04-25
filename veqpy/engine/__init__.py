@@ -2,14 +2,14 @@
 Module: engine.__init__
 
 Role:
-- Expose supported numerical engine primitives.
+- Expose supported numerical engine primitives used by public model/operator code.
 
 Notes:
 - Numba is the only supported execution backend.
+- Backend ABI builders and residual runner wiring are submodule implementation details.
 - High-level Python orchestration lives in :mod:`veqpy.orchestration`.
 """
 
-from veqpy.engine import backend_abi
 from veqpy.engine.numba_source import (
     COORDINATE_NAMES,
     PSIN_COORDINATE,
@@ -27,7 +27,6 @@ from veqpy.engine.numba_source import (
 )
 
 __all__ = [
-    "backend_abi",
     "RHO_AXIS",
     "THETA_AXIS",
     "COORDINATE_NAMES",

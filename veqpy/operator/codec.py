@@ -15,7 +15,7 @@ Notes:
 
 import numpy as np
 
-from veqpy.operator.layout import (
+from veqpy.operator.packed_layout import (
     coeff_array_from_list,
     packed_size,
     validate_packed_state,

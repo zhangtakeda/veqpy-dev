@@ -15,7 +15,7 @@ import numpy as np
 
 from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile
-from veqpy.operator.layouts import (
+from veqpy.operator.runtime_layout import (
     FieldRuntimeState,
     RuntimeLayout,
     SourceAuxState,
@@ -96,23 +96,13 @@ def allocate_runtime_state(
 
     materialized_heat_input = np.empty(nr, dtype=np.float64)
     materialized_current_input = np.empty(nr, dtype=np.float64)
-    needs_psin_query = bool(
-        source_plan.is_profile_owned_psin
-        or (source_plan.route, source_plan.coordinate, source_plan.nodes)
-        in {
-            ("PJ2", "psin", "uniform"),
-            ("PQ", "psin", "uniform"),
-        }
-    )
+    needs_psin_query = bool(source_plan.requires_psin_query_workspace)
     psin_query = np.empty(nr, dtype=np.float64) if needs_psin_query else np.empty(0, dtype=np.float64)
-    if source_plan.is_psin_coordinate and source_plan.parameterization != "identity":
+    if source_plan.requires_source_parameter_query:
         parameter_query = np.empty(nr, dtype=np.float64)
     else:
         parameter_query = psin_query
-    if source_plan.is_profile_owned_psin or (source_plan.route, source_plan.coordinate, source_plan.nodes) in {
-        ("PJ2", "psin", "uniform"),
-        ("PQ", "psin", "uniform"),
-    }:
+    if source_plan.requires_target_root_fields:
         target_root_fields = np.empty((3, nr), dtype=np.float64)
     else:
         target_root_fields = np.empty((3, 0), dtype=np.float64)

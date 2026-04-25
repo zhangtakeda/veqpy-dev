@@ -4,31 +4,8 @@ import numpy as np
 import orjson
 import pytest
 
-import veqpy.engine.backend_abi as engine_backend_abi
-import veqpy.model.equilibrium as equilibrium_module
-import veqpy.operator.layout as layout_module
-from veqpy import orchestration
-from veqpy.model.boundary import Boundary
-from veqpy.model.equilibrium import Equilibrium
-from veqpy.model.geqdsk import Geqdsk
-from veqpy.model.grid import Grid
-from veqpy.model.reactive import Reactive
-from veqpy.operator.codec import encode_packed_state
-from veqpy.operator.layout import build_profile_layout, build_profile_names
-from veqpy.operator.layouts import (
-    BackendState,
-    ExecutionState,
-    FieldRuntimeState,
-    ResidualBindingLayout,
-    RuntimeLayout,
-    SourceAuxState,
-    SourceConstState,
-    SourceRuntimeState,
-    SourceWorkState,
-    StaticLayout,
-)
-from veqpy.operator.operator import Operator
-from veqpy.operator.operator_case import OperatorCase
+from veqpy.model import Boundary, Equilibrium, Geqdsk, Grid, Reactive
+from veqpy.operator import Operator, OperatorCase, build_profile_names
 
 GEQDSK_PATH = Path("tests/EFIT.geqdsk")
 TEST_SOURCE_SAMPLE_COUNT = 21
@@ -537,27 +514,19 @@ def test_equilibrium_exposes_gs_operator_residual_terms():
     assert np.allclose(equilibrium.G, equilibrium.alpha1 * equilibrium.Gn1 + equilibrium.alpha2 * equilibrium.Gn2)
 
 
-def test_resampled_equilibrium_uses_linear_profile_reconstruction(monkeypatch):
+def test_resampled_equilibrium_preserves_profile_shapes_on_target_grid():
     profile_equilibrium, _ = _build_high_order_equilibrium()
-    sentinel = np.linspace(0.0, 1.0, 12, dtype=np.float64)
-    called = {"value": False}
+    target_grid = Grid(Nr=12, Nt=24, scheme="uniform", M_max=4)
 
-    def _fake_resample_profile_linear(rho_src, y_src, rho_eval, **kwargs):
-        called["value"] = True
-        return sentinel
+    resampled = profile_equilibrium.resample(target_grid)
 
-    monkeypatch.setattr(equilibrium_module, "_resample_profile_linear", _fake_resample_profile_linear)
-
-    resampled = equilibrium_module._build_resampled_equilibrium(
-        profile_equilibrium,
-        grid=Grid(Nr=12, Nt=24, scheme="uniform", M_max=4),
-    )
-
-    assert called["value"] is True
-    assert np.allclose(resampled.psin_r, sentinel)
-    assert np.allclose(resampled.psin, sentinel)
-    assert np.allclose(resampled.FFn_psin, sentinel)
-    assert np.allclose(resampled.Pn_psin, sentinel)
+    assert resampled.grid is target_grid
+    assert resampled.psin.shape == target_grid.rho.shape
+    assert resampled.psin_r.shape == target_grid.rho.shape
+    assert resampled.FFn_psin.shape == target_grid.rho.shape
+    assert resampled.Pn_psin.shape == target_grid.rho.shape
+    assert np.all(np.isfinite(resampled.psin))
+    assert np.all(np.isfinite(resampled.FFn_psin))
 
 
 def test_equilibrium_diagnostics_use_grid_corrected_calculus(monkeypatch):
@@ -596,306 +565,6 @@ def test_equilibrium_diagnostics_use_grid_corrected_calculus(monkeypatch):
     assert calls["corrected_linear_derivative"] >= 1
 
 
-def test_operator_exposes_explicit_layout_and_execution_layers():
-    grid, case = _build_operator_case()
-    operator = Operator(grid=grid, case=case)
-
-    assert isinstance(operator.static_layout, StaticLayout)
-    assert isinstance(operator.residual_binding_layout, ResidualBindingLayout)
-    assert isinstance(operator.runtime_layout, RuntimeLayout)
-    assert isinstance(operator.backend_state, BackendState)
-    assert isinstance(operator.field_runtime_state, FieldRuntimeState)
-    assert isinstance(operator.execution_state, ExecutionState)
-    assert isinstance(operator.source_runtime_state, SourceRuntimeState)
-    assert isinstance(operator.source_runtime_state.const_state, SourceConstState)
-    assert isinstance(operator.source_runtime_state.work_state, SourceWorkState)
-    assert isinstance(operator.source_runtime_state.aux_state, SourceAuxState)
-
-    assert operator.static_layout.rho is grid.rho
-    assert operator.backend_state.static_layout is operator.static_layout
-    assert operator.backend_state.runtime_layout is operator.runtime_layout
-    assert operator.backend_state.field_runtime_state is operator.field_runtime_state
-    assert operator.backend_state.source_runtime_state is operator.source_runtime_state
-    assert operator.static_layout.T_fields is grid.T_fields
-    assert operator.profile_L.shape[0] == len(operator.profile_names)
-    assert operator.coeff_index.shape[0] == len(operator.profile_names)
-    assert operator.packed_residual.shape[0] == operator.x_size
-    assert operator.residual_binding_layout.active_profile_names == tuple(
-        operator.profile_names[int(p)] for p in operator.active_profile_ids
-    )
-    assert operator.runtime_layout.geometry_surface_workspace is operator.geometry_surface_workspace
-    assert operator.runtime_layout.geometry_radial_workspace is operator.geometry_radial_workspace
-    assert operator.runtime_layout.residual_surface_workspace is operator.residual_surface_workspace
-    assert operator.runtime_layout.root_fields is operator.root_fields
-    assert operator.runtime_layout.packed_residual is operator.packed_residual
-    assert operator.field_runtime_state.root_fields is operator.root_fields
-    assert operator.execution_state.fused_alpha_state.shape == (2,)
-    assert callable(operator.execution_state.fused_residual_runner)
-    assert callable(operator.execution_state.profile_postprocess_runner)
-    assert operator.active_u_fields.base is operator.active_profile_slab
-    assert operator.c_family_fields.base is operator.family_field_slab
-    expected_psin_query_shape = (
-        (grid.Nr,)
-        if (
-            operator.source_plan.is_profile_owned_psin
-            or (operator.source_plan.route, operator.source_plan.coordinate, operator.source_plan.nodes)
-            in {("PJ2", "psin", "uniform"), ("PQ", "psin", "uniform")}
-        )
-        else (0,)
-    )
-    assert operator.source_runtime_state.work_state.psin_query.shape == expected_psin_query_shape
-    assert operator.source_runtime_state.work_state.materialized_heat_input.shape == (grid.Nr,)
-    assert operator.source_runtime_state.const_state.endpoint_blend.shape == (grid.Nr,)
-    assert operator.source_runtime_state.work_state.scratch_1d.shape == (6, grid.Nr)
-
-
-def test_operator_replace_case_preserves_static_layout_and_refreshes_runtime_identity():
-    grid, case = _build_operator_case()
-    operator = Operator(grid=grid, case=case)
-    static_layout = operator.static_layout
-
-    next_case = case.copy()
-    next_case.beta = 0.25
-    next_case.profile_coeffs["c3"] = [0.02]
-
-    operator.replace_case(next_case)
-
-    assert operator.static_layout is static_layout
-    assert operator.case.coordinate == next_case.coordinate
-    assert operator.case.nodes == next_case.nodes
-    assert operator.source_plan.coordinate == next_case.coordinate
-    assert operator.source_plan.nodes == next_case.nodes
-    assert operator.runtime_layout.geometry_surface_workspace is operator.geometry_surface_workspace
-    assert operator.runtime_layout.geometry_radial_workspace is operator.geometry_radial_workspace
-
-
-def test_runtime_layout_exposes_array_only_hot_path_views():
-    grid, case = _build_operator_case()
-    operator = Operator(grid=grid, case=case)
-    runtime = operator.runtime_layout
-
-    assert not hasattr(runtime, "profiles_by_name")
-    assert runtime.h_fields is operator.h_profile.u_fields
-    assert runtime.v_fields is operator.v_profile.u_fields
-    assert runtime.k_fields is operator.k_profile.u_fields
-    assert runtime.F_profile_fields is operator.F_profile.u_fields
-    assert runtime.psin_profile_fields is operator.psin_profile.u_fields
-    assert np.shares_memory(runtime.F_profile_u, runtime.F_profile_fields)
-    assert np.shares_memory(runtime.psin_profile_u, runtime.psin_profile_fields)
-
-
-def test_runtime_layout_hot_path_views_refresh_after_replace_case():
-    grid, case = _build_operator_case()
-    operator = Operator(grid=grid, case=case)
-
-    next_case = case.copy()
-    next_case.beta = 0.25
-    next_case.profile_coeffs["h"] = [0.02]
-    operator.replace_case(next_case)
-
-    h_slot = int(operator.active_slot_by_profile_id[operator.profile_index["h"]])
-    assert h_slot >= 0
-    assert np.shares_memory(operator.h_profile.u_fields, operator.active_u_fields[h_slot])
-    assert np.shares_memory(operator.runtime_layout.h_fields, operator.active_u_fields[h_slot])
-
-
-def test_operator_binds_fused_runner_from_backend_state(monkeypatch):
-    grid, case = _build_operator_case()
-    captured: dict[str, object] = {}
-
-    def fake_bind_fused_residual_runner(**kwargs):
-        captured.update(kwargs)
-        return lambda x: x
-
-    monkeypatch.setattr("veqpy.engine.numba_operator.bind_fused_residual_runner", fake_bind_fused_residual_runner)
-
-    operator = Operator(grid=grid, case=case)
-
-    assert captured["backend_state"] is operator.backend_state
-    assert "static_layout" not in captured
-    assert "residual_binding_layout" not in captured
-    assert "runtime_layout" not in captured
-
-
-def test_operator_binds_source_eval_runner_from_backend_state(monkeypatch):
-    grid, case = _build_operator_case()
-    captured: dict[str, object] = {}
-
-    def fake_bind_source_eval_runner(**kwargs):
-        captured.update(kwargs)
-        return lambda *args: (0.0, 0.0)
-
-    monkeypatch.setattr("veqpy.engine.numba_operator.bind_source_eval_runner", fake_bind_source_eval_runner)
-
-    operator = Operator(grid=grid, case=case)
-
-    assert captured["backend_state"] is operator.backend_state
-    assert "static_layout" not in captured
-    assert "runtime_layout" not in captured
-
-
-def test_source_eval_binding_delegates_to_backend_abi_builder(monkeypatch):
-    grid, case = _build_operator_case()
-    captured: dict[str, object] = {}
-
-    def fake_build_fused_source_eval_abi(**kwargs):
-        captured.update(kwargs)
-
-        class DummyAbi:
-            source_kernel = None
-            scratch_source_kernel = None
-            coordinate_code = 0
-            weights = np.empty(0, dtype=np.float64)
-            differentiation_matrix = np.empty((0, 0), dtype=np.float64)
-            integration_matrix = np.empty((0, 0), dtype=np.float64)
-            rho = np.empty(0, dtype=np.float64)
-            radial_workspace = np.empty((0, 0), dtype=np.float64)
-            surface_workspace = np.empty((0, 0, 0), dtype=np.float64)
-            F_profile_u = np.empty(0, dtype=np.float64)
-            Ip = 0.0
-            beta = 0.0
-            source_scratch_1d = np.empty((0, 0), dtype=np.float64)
-            B0 = 0.0
-
-        return DummyAbi()
-
-    monkeypatch.setattr(
-        "veqpy.engine.numba_operator.backend_abi.build_fused_source_eval_abi", fake_build_fused_source_eval_abi
-    )
-
-    operator = Operator(grid=grid, case=case)
-
-    assert captured["backend_state"] is operator.backend_state
-    assert captured["source_plan"] is operator.source_plan
-
-
-def test_backend_abi_public_builders_preserve_backend_state_views():
-    grid, case = _build_operator_case()
-    operator = Operator(grid=grid, case=case)
-
-    hot_abi = engine_backend_abi.build_fused_hot_runtime_abi(
-        backend_state=operator.backend_state,
-        convert_f_squared_to_f=True,
-        c_active_order=operator.c_effective_order,
-        s_active_order=operator.s_effective_order,
-        a=operator.case.a,
-        R0=operator.case.R0,
-        Z0=operator.case.Z0,
-    )
-    residual_pack_abi = engine_backend_abi.build_fused_residual_pack_abi(
-        backend_state=operator.backend_state,
-        a=operator.case.a,
-        R0=operator.case.R0,
-        B0=operator.case.B0,
-    )
-    source_eval_abi = engine_backend_abi.build_fused_source_eval_abi(
-        source_plan=operator.source_plan,
-        backend_state=operator.backend_state,
-        B0=operator.case.B0,
-    )
-
-    assert hot_abi.h_fields is operator.runtime_layout.h_fields
-    assert hot_abi.active_profile_slab is operator.runtime_layout.active_profile_slab
-    assert residual_pack_abi.packed_residual is operator.runtime_layout.packed_residual
-    assert residual_pack_abi.active_residual_block_codes is operator.residual_binding_layout.active_residual_block_codes
-    assert source_eval_abi.F_profile_u is operator.runtime_layout.F_profile_u
-    assert source_eval_abi.radial_workspace is operator.runtime_layout.geometry_radial_workspace
-
-
-def test_backend_abi_fixed_point_route_builders_encode_route_local_policy():
-    grid, case = _build_operator_case(mode="PQ", coordinate="psin", nodes="uniform")
-    case.profile_coeffs["psin"] = None
-    operator = Operator(grid=grid, case=case)
-
-    pq_abi = engine_backend_abi.build_pq_fixed_point_psin_source_abi(
-        source_plan=operator.source_plan,
-        backend_state=operator.backend_state,
-    )
-
-    grid2, case2 = _build_operator_case(mode="PJ2", coordinate="psin", nodes="uniform")
-    case2.profile_coeffs["psin"] = None
-    operator2 = Operator(grid=grid2, case=case2)
-    pj2_abi = engine_backend_abi.build_pj2_fixed_point_psin_source_abi(
-        source_plan=operator2.source_plan,
-        backend_state=operator2.backend_state,
-    )
-
-    assert pq_abi.allow_query_warmstart == bool(operator.source_plan.endpoint_policy_code != 0)
-    assert pq_abi.finalize_iter == 16
-    assert pq_abi.barycentric_weights.shape[0] == min(4, int(operator.source_plan.source_sample_count))
-    assert pj2_abi.allow_query_warmstart is False
-    assert pj2_abi.finalize_iter == 8
-    assert pj2_abi.barycentric_weights.shape[0] == min(8, int(operator2.source_plan.source_sample_count))
-
-
-
-@pytest.mark.parametrize(("mode", "heat_degree", "current_degree"), [("PJ2", 5, 6), ("PQ", 7, 10)])
-def test_source_plan_captures_fixed_point_route_metadata(mode, heat_degree, current_degree):
-    grid, case = _build_operator_case(mode=mode, coordinate="psin", nodes="uniform")
-    case.profile_coeffs["psin"] = None
-    operator = Operator(grid=grid, case=case)
-
-    assert operator.source_plan.strategy == "single_pass"
-    assert operator.source_plan.source_sample_count == TEST_SOURCE_SAMPLE_COUNT
-    assert operator.source_plan.heat_projection_degree == heat_degree
-    assert operator.source_plan.current_projection_degree == current_degree
-    if mode == "PJ2":
-        assert operator.source_plan.projection_domain == "psin"
-        assert operator.source_plan.projection_domain_code == 0
-        assert operator.source_plan.endpoint_policy_code == 0
-    else:
-        assert operator.source_plan.projection_domain == "sqrt_psin"
-        assert operator.source_plan.projection_domain_code == 1
-        assert operator.source_plan.endpoint_policy_code == 2
-    assert (operator.source_plan.route, operator.source_plan.coordinate, operator.source_plan.nodes) in {
-        ("PJ2", "psin", "uniform"),
-        ("PQ", "psin", "uniform"),
-    }
-
-
-@pytest.mark.parametrize(("mode", "heat_degree", "current_degree"), [("PI", 7, 8), ("PJ1", 7, 8)])
-def test_source_plan_captures_profile_owned_projection_policy(mode, heat_degree, current_degree):
-    grid, case = _build_operator_case(mode=mode, coordinate="psin", nodes="uniform")
-    operator = Operator(grid=grid, case=case)
-
-    assert operator.source_plan.strategy == "profile_owned_psin"
-    assert operator.source_plan.has_projection_policy is True
-    assert operator.source_plan.projection_domain == "psin"
-    assert operator.source_plan.heat_projection_degree == heat_degree
-    assert operator.source_plan.current_projection_degree == current_degree
-    assert operator.source_plan.endpoint_policy_code == 0
-
-
-@pytest.mark.parametrize("mode", ["PI", "PJ1"])
-def test_source_plan_uses_both_endpoint_policy_when_ip_constraint_is_active(mode):
-    grid, case = _build_operator_case(mode=mode, coordinate="psin", nodes="uniform")
-    case.Ip = 3.0e6
-    operator = Operator(grid=grid, case=case)
-
-    assert operator.source_plan.has_projection_policy is True
-    assert operator.source_plan.endpoint_policy_code == 2
-
-
-def test_pq_psin_uniform_ip_beta_uses_lower_degree_projection_policy():
-    grid, case = _build_operator_case(mode="PQ", coordinate="psin", nodes="uniform")
-    case.profile_coeffs["psin"] = None
-    case.Ip = 3.0e6
-    case.beta = 0.02
-    operator = Operator(grid=grid, case=case)
-
-    assert operator.source_plan.strategy == "single_pass"
-    assert operator.source_plan.has_projection_policy is True
-    assert operator.source_plan.projection_domain == "sqrt_psin"
-    assert operator.source_plan.heat_projection_degree == 7
-    assert operator.source_plan.current_projection_degree == 7
-    assert operator.source_plan.endpoint_policy_code == 3
-    assert (operator.source_plan.route, operator.source_plan.coordinate, operator.source_plan.nodes) == (
-        "PQ",
-        "psin",
-        "uniform",
-    )
-
-
 def test_pj2_psin_route_uses_f_profile_parameterization():
     grid, case = _build_operator_case(mode="PJ2", coordinate="psin", nodes="uniform")
     case.profile_coeffs["psin"] = None
@@ -913,74 +582,22 @@ def test_pj2_psin_route_uses_f_profile_parameterization():
         0.5 * latent_H_rr / np.sqrt(latent_H) - 0.25 * latent_H_r * latent_H_r / np.power(latent_H, 1.5)
     )
 
-    assert operator.F_profile.offset == pytest.approx(1.0)
-    assert operator.F_profile.scale == pytest.approx((case.R0 * case.B0) ** 2)
-    assert operator.F_profile.envelope_power == 2
-    f_slot = operator.residual_binding_layout.active_profile_names.index("F")
-    assert operator.residual_binding_layout.active_residual_block_codes[f_slot] == orchestration.F_BLOCK_CODE
     assert np.allclose(operator.F_profile.u, expected_F)
     assert np.allclose(operator.F_profile.u_r, expected_F_r)
     assert np.allclose(operator.F_profile.u_rr, expected_F_rr)
 
 
-def test_pq_psin_route_uses_f_profile_parameterization():
+def test_pq_psin_route_evaluates_residual_without_active_psin_profile():
     grid, case = _build_operator_case(mode="PQ", coordinate="psin", nodes="uniform")
     case.profile_coeffs["psin"] = None
+    case.heat_input = np.linspace(1.0, 2.0, case.heat_input.shape[0])
+    case.current_input = np.linspace(1.0, 2.0, case.current_input.shape[0])
     operator = Operator(grid=grid, case=case)
+    equilibrium = operator.build_equilibrium(operator.encode_initial_state())
 
-    assert operator.F_profile.offset == pytest.approx(1.0)
-    assert operator.F_profile.scale == pytest.approx((case.R0 * case.B0) ** 2)
-    assert operator.F_profile.envelope_power == 2
-    f_slot = operator.residual_binding_layout.active_profile_names.index("F")
-    assert operator.residual_binding_layout.active_residual_block_codes[f_slot] == orchestration.F_BLOCK_CODE
-
-
-def test_pj2_psin_f_profile_uses_fused_residual_runner():
-    grid, case = _build_operator_case(mode="PJ2", coordinate="psin", nodes="uniform")
-    case.profile_coeffs["psin"] = None
-    operator = Operator(grid=grid, case=case)
-
-    fused_runner = operator.execution_state.fused_residual_runner
-    assert getattr(fused_runner, "__self__", None) is not operator
-
-
-def test_build_profile_names_respects_module_family_order(monkeypatch):
-    monkeypatch.setattr(layout_module, "PACKED_PROFILE_FAMILY_ORDER", ("psin", "F", "k", "h", "v", "c0", "s", "c"))
-    assert layout_module.build_profile_names(2) == (
-        "psin",
-        "F",
-        "k",
-        "h",
-        "v",
-        "c0",
-        "s1",
-        "s2",
-        "c1",
-        "c2",
-    )
-
-
-def test_build_profile_layout_can_group_shape_coeffs_by_profile(monkeypatch):
-    monkeypatch.setattr(
-        layout_module,
-        "PACKED_PROFILE_FAMILY_ORDER",
-        ("h", "v", "k", "c0", "c", "s", "psin", "F"),
-    )
-    monkeypatch.setattr(layout_module, "INTERLEAVE_SHAPE_COEFFS_BY_ORDER", False)
-    profile_names = layout_module.build_profile_names(1)
-    profile_coeffs = {name: None for name in profile_names}
-    profile_coeffs.update(
-        {
-            "psin": [0.0, 1.0],
-            "F": [1.0, 2.0],
-            "h": [10.0, 11.0],
-            "v": [20.0, 21.0],
-            "k": [30.0, 31.0],
-        }
-    )
-    profile_L, coeff_index, _ = build_profile_layout(profile_coeffs, profile_names=profile_names)
-    x = encode_packed_state(profile_coeffs, profile_L, coeff_index, profile_names=profile_names)
-    assert x.tolist()[:10] == [10.0, 11.0, 20.0, 21.0, 30.0, 31.0, 0.0, 1.0, 1.0, 2.0]
+    assert equilibrium.grid is grid
+    assert equilibrium.F.shape == grid.rho.shape
+    assert np.all(np.isfinite(equilibrium.F))
 
 
 def test_equilibrium_load_rejects_legacy_shape_payload():

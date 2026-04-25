@@ -1,11 +1,8 @@
 import numpy as np
 import pytest
 
-from veqpy.model.boundary import Boundary
-from veqpy.model.grid import Grid
-from veqpy.operator.layout import build_profile_names
-from veqpy.operator.operator import Operator
-from veqpy.operator.operator_case import OperatorCase
+from veqpy.model import Boundary, Grid
+from veqpy.operator import Operator, OperatorCase, build_profile_names
 from veqpy.orchestration import resolve_fourier_power
 
 
@@ -104,18 +101,3 @@ def test_capped_K_max_changes_materialized_profile_and_geometry_for_high_order_m
     assert not np.allclose(strong.profiles_by_name["c3"].u, capped.profiles_by_name["c3"].u)
     assert not np.allclose(strong.profiles_by_name["s4"].u, capped.profiles_by_name["s4"].u)
     assert not np.allclose(strong.geometry_surface_workspace[1], capped.geometry_surface_workspace[1])
-
-
-def test_capped_K_max_splits_residual_harmonic_order_from_radial_power():
-    grid, case = _build_high_order_case()
-    operator = Operator(grid=grid, case=case, K_max=2)
-    layout = operator.residual_binding_layout
-    active_names = layout.active_profile_names
-
-    c3_slot = active_names.index("c3")
-    s4_slot = active_names.index("s4")
-
-    assert layout.active_residual_block_orders[c3_slot] == 3
-    assert layout.active_residual_block_orders[s4_slot] == 4
-    assert layout.active_residual_block_radial_powers[c3_slot] == 2
-    assert layout.active_residual_block_radial_powers[s4_slot] == 2

@@ -24,7 +24,7 @@ from numba import njit
 import veqpy.engine.backend_abi as backend_abi
 from veqpy.engine.numba_geometry import update_geometry_hot
 from veqpy.engine.numba_profile import update_profiles_packed_bulk
-from veqpy.engine.numba_residual import _run_residual_blocks_packed_precomputed, update_residual_compact
+from veqpy.engine.numba_residual import run_residual_blocks_packed_precomputed, update_residual_compact
 from veqpy.engine.numba_source import (
     _linear_uniform_interpolate_pair,
     _local_barycentric_interpolate_pair,
@@ -39,7 +39,7 @@ from veqpy.engine.numba_source import (
 )
 
 if TYPE_CHECKING:
-    from veqpy.operator.layouts import BackendState
+    from veqpy.operator.runtime_layout import BackendState
     from veqpy.orchestration import SourcePlan
 
 
@@ -190,7 +190,7 @@ def _pack_residual_output(
     if scratch is None or scratch.shape[0] != nr:
         scratch = np.empty(nr, dtype=np.float64)
         scratch_holder[0] = scratch
-    _run_residual_blocks_packed_precomputed(
+    run_residual_blocks_packed_precomputed(
         packed_residual,
         scratch,
         residual_pack_binding.active_residual_block_codes,

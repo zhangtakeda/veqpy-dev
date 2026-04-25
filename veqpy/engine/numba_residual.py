@@ -218,3 +218,6 @@ def _run_residual_blocks_packed_precomputed(
             )
         else:
             raise ValueError("Unknown residual block code")
+
+
+run_residual_blocks_packed_precomputed = _run_residual_blocks_packed_precomputed

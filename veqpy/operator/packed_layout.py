@@ -1,5 +1,5 @@
 """
-Module: operator.layout
+Module: operator.packed_layout
 
 Role:
 - 负责构造 packed layout 与 profile 元数据.
@@ -20,82 +20,42 @@ Public API:
 - coeff_array_from_list
 
 Notes:
+- Profile family ordering is declared in ``veqpy.orchestration``; this module keeps
+  compatibility aliases and packed-index construction.
 - 这里定义的是 packed layout 规则.
 - 不负责数值核计算, residual 组装, 或 solver 迭代控制.
 """
 
 import numpy as np
 
-PACKED_PROFILE_FAMILY_ORDER = ("h", "v", "k", "c0", "c", "s", "psin", "F")
-INTERLEAVE_SHAPE_COEFFS_BY_ORDER = True
+from veqpy import orchestration
 
-_PREFIX_PROFILE_FAMILIES = ("psin", "F")
-_SHAPE_PROFILE_FAMILIES = ("h", "v", "k", "c0", "c", "s")
-_ALL_PROFILE_FAMILIES = _SHAPE_PROFILE_FAMILIES + _PREFIX_PROFILE_FAMILIES
+PACKED_PROFILE_FAMILY_ORDER = orchestration.PACKED_PROFILE_FAMILY_ORDER
+INTERLEAVE_SHAPE_COEFFS_BY_ORDER = True
 
 
 def _validated_profile_family_order() -> tuple[str, ...]:
-    family_order = tuple(PACKED_PROFILE_FAMILY_ORDER)
-    if len(family_order) != len(_ALL_PROFILE_FAMILIES) or set(family_order) != set(_ALL_PROFILE_FAMILIES):
-        raise ValueError(
-            "PACKED_PROFILE_FAMILY_ORDER must contain each family exactly once: "
-            f"{_ALL_PROFILE_FAMILIES!r}, got {family_order!r}"
-        )
-    return family_order
+    return orchestration.validate_profile_family_order(PACKED_PROFILE_FAMILY_ORDER)
 
 
 def get_prefix_profile_names() -> tuple[str, ...]:
-    return tuple(family for family in _validated_profile_family_order() if family in _PREFIX_PROFILE_FAMILIES)
+    return orchestration.get_prefix_profile_names(PACKED_PROFILE_FAMILY_ORDER)
 
 
 def _expand_profile_family(family: str, M_max: int) -> tuple[str, ...]:
-    if family == "psin":
-        return ("psin",)
-    if family == "F":
-        return ("F",)
-    if family == "h":
-        return ("h",)
-    if family == "v":
-        return ("v",)
-    if family == "k":
-        return ("k",)
-    if family == "c0":
-        return ("c0",)
-    if family == "c":
-        return tuple(f"c{k}" for k in range(1, M_max + 1))
-    if family == "s":
-        return tuple(f"s{k}" for k in range(1, M_max + 1))
-    raise KeyError(f"Unknown profile family {family!r}")
+    return orchestration.expand_profile_family(family, M_max)
 
 
 def build_fourier_profile_names(M_max: int) -> tuple[str, ...]:
-    M_max = int(M_max)
-    if M_max < 0:
-        raise ValueError(f"M_max must be non-negative, got {M_max}")
-
-    fourier_names: list[str] = []
-    for family in _validated_profile_family_order():
-        if family not in ("c0", "c", "s"):
-            continue
-        fourier_names.extend(_expand_profile_family(family, M_max))
-    return tuple(fourier_names)
+    return orchestration.build_fourier_profile_names(M_max, PACKED_PROFILE_FAMILY_ORDER)
 
 
 def build_shape_profile_names(M_max: int) -> tuple[str, ...]:
-    shape_profile_names: list[str] = []
-    for family in _validated_profile_family_order():
-        if family in _PREFIX_PROFILE_FAMILIES:
-            continue
-        shape_profile_names.extend(_expand_profile_family(family, int(M_max)))
-    return tuple(shape_profile_names)
+    return orchestration.build_shape_profile_names(M_max, PACKED_PROFILE_FAMILY_ORDER)
 
 
 def build_profile_names(M_max: int) -> tuple[str, ...]:
-    M_max = int(M_max)
-    profile_names: list[str] = []
-    for family in _validated_profile_family_order():
-        profile_names.extend(_expand_profile_family(family, M_max))
-    return tuple(profile_names)
+    return orchestration.build_profile_names(M_max, PACKED_PROFILE_FAMILY_ORDER)
 
 
 def build_profile_index(profile_names: tuple[str, ...]) -> dict[str, int]:

@@ -15,8 +15,8 @@ import numpy as np
 from veqpy.engine.numba_source import validate_route
 from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile
-from veqpy.operator.layout import build_profile_layout
 from veqpy.operator.operator_case import OperatorCase
+from veqpy.operator.packed_layout import build_profile_layout
 from veqpy.orchestration import resolve_fourier_power
 
 
@@ -29,7 +29,6 @@ def make_profile(
     profile_index: dict[str, int],
     profile_static_kwargs_by_name: dict[str, dict[str, int]],
     profile_offset_specs: dict[str, float | str],
-    profile_scale_specs: dict[str, tuple[str, ...]],
 ) -> Profile:
     kwargs: dict[str, float | int | np.ndarray | None] = {}
     static_kwargs = profile_static_kwargs_by_name.get(name)
@@ -52,12 +51,7 @@ def make_profile(
             raise KeyError(f"Unknown profile name {name!r}") from exc
         kwargs["offset"] = float(getattr(case, offset_spec)) if isinstance(offset_spec, str) else float(offset_spec)
 
-    attrs = profile_scale_specs.get(name)
-    scale = 1.0
-    if attrs is not None:
-        for attr in attrs:
-            scale *= float(getattr(case, attr))
-    kwargs["scale"] = scale
+    kwargs["scale"] = _profile_scale(case, name)
 
     p = profile_index[name]
     L = int(profile_L[p])
@@ -76,7 +70,6 @@ def refresh_profile_runtime(
     profiles_by_name: dict[str, Profile],
     profile_static_kwargs_by_name: dict[str, dict[str, int]],
     profile_offset_specs: dict[str, float | str],
-    profile_scale_specs: dict[str, tuple[str, ...]],
     refresh_fourier_family_base_fields: Callable[[], None],
 ) -> None:
     for name in profile_names:
@@ -100,11 +93,7 @@ def refresh_profile_runtime(
             profile.offset = (
                 float(getattr(case, offset_spec)) if isinstance(offset_spec, str) else float(offset_spec)
             )
-        attrs = profile_scale_specs.get(name)
-        profile.scale = 1.0
-        if attrs is not None:
-            for attr in attrs:
-                profile.scale *= float(getattr(case, attr))
+        profile.scale = _profile_scale(case, name)
         p = profile_index[name]
         L = int(profile_L[p])
         coeff = case.profile_coeffs.get(name)
@@ -112,6 +101,12 @@ def refresh_profile_runtime(
         profile._prepare_runtime_cache(grid)
         profile.update()
     refresh_fourier_family_base_fields()
+
+
+def _profile_scale(case: OperatorCase, name: str) -> float:
+    if name == "F":
+        return float(case.R0 * case.B0) ** 2
+    return 1.0
 
 
 def refresh_stage_a_runtime(

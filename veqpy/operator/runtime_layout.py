@@ -1,5 +1,5 @@
 """
-Module: operator.layouts
+Module: operator.runtime_layout
 
 Role:
 - 定义 operator 运行期使用的三层 layout 容器.

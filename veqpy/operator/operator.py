@@ -27,7 +27,8 @@ from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile
 from veqpy.operator.codec import decode_packed_blocks, encode_packed_state
 from veqpy.operator.execution_helpers import snapshot_equilibrium_from_runtime
-from veqpy.operator.layout import (
+from veqpy.operator.operator_case import OperatorCase
+from veqpy.operator.packed_layout import (
     build_active_profile_metadata,
     build_fourier_profile_names,
     build_profile_index,
@@ -37,16 +38,6 @@ from veqpy.operator.layout import (
     get_prefix_profile_names,
     packed_size,
 )
-from veqpy.operator.layouts import (
-    BackendState,
-    ExecutionState,
-    FieldRuntimeState,
-    ResidualBindingLayout,
-    RuntimeLayout,
-    SourceRuntimeState,
-    StaticLayout,
-)
-from veqpy.operator.operator_case import OperatorCase
 from veqpy.operator.profile_setup import (
     build_profile_stage_runner,
     make_profile,
@@ -57,20 +48,16 @@ from veqpy.operator.profile_setup import (
     validate_case_compatibility,
 )
 from veqpy.operator.runtime_allocation import allocate_runtime_state
+from veqpy.operator.runtime_layout import (
+    BackendState,
+    ExecutionState,
+    FieldRuntimeState,
+    ResidualBindingLayout,
+    RuntimeLayout,
+    SourceRuntimeState,
+    StaticLayout,
+)
 from veqpy.orchestration import normalize_fourier_power_K_max, resolve_fourier_power
-
-_PROFILE_STATIC_KWARGS: dict[str, dict[str, int]] = {
-    "psin": {"power": 2},
-    "F": {"envelope_power": 2},
-}
-_PROFILE_OFFSET_SPECS: dict[str, float | str] = {
-    "h": 0.0,
-    "v": 0.0,
-    "k": "ka",
-    "psin": 1.0,
-    "F": 1.0,
-}
-_PROFILE_SCALE_SPECS: dict[str, tuple[str, ...]] = {"F": ("R0", "B0", "R0", "B0")}
 
 
 @dataclass(slots=True)
@@ -141,7 +128,6 @@ class Operator:
     packed_residual: np.ndarray = field(init=False, repr=False)
     profile_static_kwargs_by_name: dict[str, dict[str, int]] = field(init=False, repr=False)
     profile_offset_specs: dict[str, float | str] = field(init=False, repr=False)
-    profile_scale_specs: dict[str, tuple[str, ...]] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         """完成 layout 构造, 运行时缓冲区分配和 case 绑定."""
@@ -379,7 +365,6 @@ class Operator:
                 profile_index=self.profile_index,
                 profile_static_kwargs_by_name=self.profile_static_kwargs_by_name,
                 profile_offset_specs=self.profile_offset_specs,
-                profile_scale_specs=self.profile_scale_specs,
             ),
         )
         self.profiles_by_name = bundle.profiles_by_name
@@ -444,14 +429,15 @@ class Operator:
         )
 
     def _refresh_profile_config(self) -> None:
-        self.profile_static_kwargs_by_name = {name: dict(kwargs) for name, kwargs in _PROFILE_STATIC_KWARGS.items()}
+        self.profile_static_kwargs_by_name = {
+            name: dict(kwargs) for name, kwargs in orchestration.PROFILE_STATIC_KWARGS.items()
+        }
         for name in self.c_profile_names + self.s_profile_names:
             order = int(name[1:])
             self.profile_static_kwargs_by_name[name] = (
                 {} if order == 0 else {"power": resolve_fourier_power(order, self.K_max)}
             )
-        self.profile_offset_specs = dict(_PROFILE_OFFSET_SPECS)
-        self.profile_scale_specs = dict(_PROFILE_SCALE_SPECS)
+        self.profile_offset_specs = dict(orchestration.PROFILE_OFFSET_SPECS)
 
     def _build_profile_postprocess_runner(self) -> Callable[[], None]:
         eps = 1.0e-10
@@ -471,7 +457,6 @@ class Operator:
             profiles_by_name=self.profiles_by_name,
             profile_static_kwargs_by_name=self.profile_static_kwargs_by_name,
             profile_offset_specs=self.profile_offset_specs,
-            profile_scale_specs=self.profile_scale_specs,
             refresh_fourier_family_base_fields=lambda: refresh_fourier_family_base_fields(
                 M_max=self.grid.M_max,
                 profile_index=self.profile_index,
@@ -598,7 +583,7 @@ class Operator:
             )
             packed = np.zeros(self.x_size, dtype=np.float64)
             scratch = np.empty(self.grid.Nr, dtype=np.float64)
-            numba_residual._run_residual_blocks_packed_precomputed(
+            numba_residual.run_residual_blocks_packed_precomputed(
                 packed,
                 scratch,
                 self.residual_binding_layout.active_residual_block_codes,
@@ -647,7 +632,7 @@ class Operator:
             )
             packed_residual.fill(0.0)
             scratch = np.empty(self.grid.Nr, dtype=np.float64)
-            numba_residual._run_residual_blocks_packed_precomputed(
+            numba_residual.run_residual_blocks_packed_precomputed(
                 packed_residual,
                 scratch,
                 self.residual_binding_layout.active_residual_block_codes,
@@ -682,10 +667,7 @@ class Operator:
         )
 
     def invalidate_source_state(self) -> None:
-        if (self.source_plan.route, self.source_plan.coordinate, self.source_plan.nodes) in {
-            ("PJ2", "psin", "uniform"),
-            ("PQ", "psin", "uniform"),
-        }:
+        if self.source_plan.is_fixed_point_psin_route:
             self.source_runtime_state.work_state.psin_query.fill(-1.0)
 
     def _build_fused_residual_runner(self) -> Callable[[np.ndarray], np.ndarray]:
