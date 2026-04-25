@@ -1,16 +1,12 @@
 import numpy as np
 import pytest
 
-from veqpy.engine.profile_regularization import (
-    fourier_power_K_max,
-    resolve_fourier_power,
-    set_fourier_power_K_max,
-)
 from veqpy.model.boundary import Boundary
 from veqpy.model.grid import Grid
 from veqpy.operator.layout import build_profile_names
 from veqpy.operator.operator import Operator
 from veqpy.operator.operator_case import OperatorCase
+from veqpy.orchestration import resolve_fourier_power
 
 
 def _build_high_order_case() -> tuple[Grid, OperatorCase]:
@@ -75,20 +71,16 @@ def test_operator_maps_fourier_profile_powers_from_instance_K_max():
     assert capped.profiles_by_name["s4"].power == 2
 
 
-def test_operator_K_max_is_instance_stable_across_global_default_and_replace_case():
+def test_operator_K_max_is_instance_stable_across_replace_case():
     grid, case = _build_high_order_case()
     operator = Operator(grid=grid, case=case)
 
-    try:
-        set_fourier_power_K_max(2)
-        operator.replace_case(case.copy())
+    operator.replace_case(case.copy())
 
-        assert operator.K_max is None
-        assert operator.profiles_by_name["c3"].power == 3
-        assert operator.profiles_by_name["s4"].power == 4
-        assert Operator(grid=grid, case=case, K_max=2).profiles_by_name["c3"].power == 2
-    finally:
-        set_fourier_power_K_max(None)
+    assert operator.K_max is None
+    assert operator.profiles_by_name["c3"].power == 3
+    assert operator.profiles_by_name["s4"].power == 4
+    assert Operator(grid=grid, case=case, K_max=2).profiles_by_name["c3"].power == 2
 
 
 def test_operator_rejects_invalid_instance_K_max():
@@ -127,12 +119,3 @@ def test_capped_K_max_splits_residual_harmonic_order_from_radial_power():
     assert layout.active_residual_block_orders[s4_slot] == 4
     assert layout.active_residual_block_radial_powers[c3_slot] == 2
     assert layout.active_residual_block_radial_powers[s4_slot] == 2
-
-
-def test_fourier_power_K_max_context_manager_restores_default():
-    assert resolve_fourier_power(3, None) == 3
-
-    with fourier_power_K_max(2):
-        assert resolve_fourier_power(3, 2) == 2
-
-    assert resolve_fourier_power(3, None) == 3

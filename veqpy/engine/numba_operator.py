@@ -39,8 +39,8 @@ from veqpy.engine.numba_source import (
 )
 
 if TYPE_CHECKING:
-    from veqpy.engine.orchestration import SourcePlan
     from veqpy.operator.layouts import BackendState
+    from veqpy.orchestration import SourcePlan
 
 
 def _source_route_key(source_plan: "SourcePlan") -> tuple[str, str, str]:
@@ -95,7 +95,7 @@ def bind_source_eval_runner(
 
 
 @njit(cache=True, fastmath=True, nogil=True)
-def _apply_f2_profile_fields_impl(fields: np.ndarray, eps: float = 1.0e-10) -> None:
+def _convert_f_squared_fields_to_f_impl(fields: np.ndarray, eps: float = 1.0e-10) -> None:
     nr = fields.shape[1]
     for i in range(nr):
         F2 = fields[0, i]
@@ -111,8 +111,8 @@ def _apply_f2_profile_fields_impl(fields: np.ndarray, eps: float = 1.0e-10) -> N
         fields[2, i] = 0.5 * F2_rr * inv_F - 0.25 * F2_r * F2_r * inv_F3
 
 
-def apply_f2_profile_fields(fields: np.ndarray, eps: float = 1.0e-10) -> None:
-    _apply_f2_profile_fields_impl(fields, eps=eps)
+def convert_f_squared_fields_to_f(fields: np.ndarray, eps: float = 1.0e-10) -> None:
+    _convert_f_squared_fields_to_f_impl(fields, eps=eps)
 
 
 def _normalize_psin_query(out: np.ndarray, source: np.ndarray) -> None:
@@ -141,8 +141,8 @@ def _refresh_hot_runtime(
         hot_runtime_binding.active_coeff_index_rows,
         hot_runtime_binding.active_lengths,
     )
-    if hot_runtime_binding.apply_f2_transform:
-        _apply_f2_profile_fields_impl(hot_runtime_binding.F_profile_fields)
+    if hot_runtime_binding.convert_f_squared_to_f:
+        _convert_f_squared_fields_to_f_impl(hot_runtime_binding.F_profile_fields)
     _update_fourier_family_fields_impl(
         hot_runtime_binding.c_family_fields,
         hot_runtime_binding.s_family_fields,
@@ -260,7 +260,7 @@ def _call_source_kernel_with_scratch(
 def _run_fixed_point_linear_with_scratch_impl(
     scratch_source_kernel,
     max_iter: int,
-    tolerance: float,
+    max_residual: float,
     source_psin_query: np.ndarray,
     psin: np.ndarray,
     root_fields: np.ndarray,
@@ -318,7 +318,7 @@ def _run_fixed_point_linear_with_scratch_impl(
         if _update_fixed_point_psin_query_and_linear_uniform_inputs_impl(
             source_psin_query,
             psin,
-            tolerance,
+            max_residual,
             materialized_heat_input,
             materialized_current_input,
             heat_input,
@@ -332,7 +332,7 @@ def _run_fixed_point_linear_with_scratch_impl(
 def _run_fixed_point_barycentric_with_scratch_impl(
     scratch_source_kernel,
     max_iter: int,
-    tolerance: float,
+    max_residual: float,
     source_psin_query: np.ndarray,
     psin: np.ndarray,
     root_fields: np.ndarray,
@@ -392,7 +392,7 @@ def _run_fixed_point_barycentric_with_scratch_impl(
         if _update_fixed_point_psin_query_and_local_barycentric_inputs_impl(
             source_psin_query,
             psin,
-            tolerance,
+            max_residual,
             materialized_heat_input,
             materialized_current_input,
             heat_input,
@@ -407,7 +407,7 @@ def _run_fixed_point_barycentric_with_scratch_impl(
 def _run_projected_finalize_with_scratch_impl(
     scratch_source_kernel,
     finalize_iter: int,
-    tolerance: float,
+    max_residual: float,
     source_psin_query: np.ndarray,
     psin: np.ndarray,
     root_fields: np.ndarray,
@@ -477,7 +477,7 @@ def _run_projected_finalize_with_scratch_impl(
         if _update_fixed_point_psin_query_and_projected_inputs_impl(
             source_psin_query,
             psin,
-            tolerance,
+            max_residual,
             materialized_heat_input,
             materialized_current_input,
             heat_projection_coeff,
@@ -503,13 +503,13 @@ def bind_fused_residual_runner(
     Z0: float,
     B0: float,
 ) -> Callable[[np.ndarray], np.ndarray]:
-    apply_f2_transform = "F" in backend_state.residual_binding_layout.active_profile_names
+    convert_f_squared_to_f = "F" in backend_state.residual_binding_layout.active_profile_names
     route_key = _source_route_key(source_plan)
     if route_key == ("PJ2", "psin", "uniform"):
         return _bind_pj2_psin_fixed_point_residual_runner_core(
             source_plan=source_plan,
             backend_state=backend_state,
-            apply_f2_transform=apply_f2_transform,
+            convert_f_squared_to_f=convert_f_squared_to_f,
             alpha_state=alpha_state,
             c_active_order=c_active_order,
             s_active_order=s_active_order,
@@ -522,7 +522,7 @@ def bind_fused_residual_runner(
         return _bind_pq_psin_fixed_point_residual_runner_core(
             source_plan=source_plan,
             backend_state=backend_state,
-            apply_f2_transform=apply_f2_transform,
+            convert_f_squared_to_f=convert_f_squared_to_f,
             alpha_state=alpha_state,
             c_active_order=c_active_order,
             s_active_order=s_active_order,
@@ -540,7 +540,7 @@ def bind_fused_residual_runner(
         return _bind_single_pass_residual_runner_core(
             source_plan=source_plan,
             backend_state=backend_state,
-            apply_f2_transform=apply_f2_transform,
+            convert_f_squared_to_f=convert_f_squared_to_f,
             alpha_state=alpha_state,
             c_active_order=c_active_order,
             s_active_order=s_active_order,
@@ -553,7 +553,7 @@ def bind_fused_residual_runner(
         return _bind_profile_owned_psin_residual_runner_core(
             source_plan=source_plan,
             backend_state=backend_state,
-            apply_f2_transform=apply_f2_transform,
+            convert_f_squared_to_f=convert_f_squared_to_f,
             alpha_state=alpha_state,
             c_active_order=c_active_order,
             s_active_order=s_active_order,
@@ -570,7 +570,7 @@ def _bind_single_pass_residual_runner_core(
     *,
     source_plan: SourcePlan,
     backend_state: "BackendState",
-    apply_f2_transform: bool,
+    convert_f_squared_to_f: bool,
     alpha_state: np.ndarray,
     c_active_order: int,
     s_active_order: int,
@@ -588,7 +588,7 @@ def _bind_single_pass_residual_runner_core(
     materialized_current_input = source_work_state.materialized_current_input
     hot_runtime_binding = backend_abi.build_fused_hot_runtime_abi(
         backend_state=backend_state,
-        apply_f2_transform=apply_f2_transform,
+        convert_f_squared_to_f=convert_f_squared_to_f,
         c_active_order=c_active_order,
         s_active_order=s_active_order,
         a=a,
@@ -640,7 +640,7 @@ def _bind_profile_owned_psin_residual_runner_core(
     *,
     source_plan: SourcePlan,
     backend_state: "BackendState",
-    apply_f2_transform: bool,
+    convert_f_squared_to_f: bool,
     alpha_state: np.ndarray,
     c_active_order: int,
     s_active_order: int,
@@ -656,7 +656,7 @@ def _bind_profile_owned_psin_residual_runner_core(
     root_fields = runtime_layout.root_fields
     hot_runtime_binding = backend_abi.build_fused_hot_runtime_abi(
         backend_state=backend_state,
-        apply_f2_transform=apply_f2_transform,
+        convert_f_squared_to_f=convert_f_squared_to_f,
         c_active_order=c_active_order,
         s_active_order=s_active_order,
         a=a,
@@ -746,7 +746,7 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
     *,
     source_plan: SourcePlan,
     backend_state: "BackendState",
-    apply_f2_transform: bool,
+    convert_f_squared_to_f: bool,
     alpha_state: np.ndarray,
     c_active_order: int,
     s_active_order: int,
@@ -767,7 +767,7 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
     root_fields = runtime_layout.root_fields
     hot_runtime_binding = backend_abi.build_fused_hot_runtime_abi(
         backend_state=backend_state,
-        apply_f2_transform=apply_f2_transform,
+        convert_f_squared_to_f=convert_f_squared_to_f,
         c_active_order=c_active_order,
         s_active_order=s_active_order,
         a=a,
@@ -958,7 +958,7 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
     *,
     source_plan: SourcePlan,
     backend_state: "BackendState",
-    apply_f2_transform: bool,
+    convert_f_squared_to_f: bool,
     alpha_state: np.ndarray,
     c_active_order: int,
     s_active_order: int,
@@ -979,7 +979,7 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
     root_fields = runtime_layout.root_fields
     hot_runtime_binding = backend_abi.build_fused_hot_runtime_abi(
         backend_state=backend_state,
-        apply_f2_transform=apply_f2_transform,
+        convert_f_squared_to_f=convert_f_squared_to_f,
         c_active_order=c_active_order,
         s_active_order=s_active_order,
         a=a,

@@ -28,11 +28,10 @@ class SolverResult:
     x: np.ndarray
     success: bool
     message: str
-    residual_norm_initial: float
     residual_norm_final: float
-    nfev: int
-    njev: int
-    nit: int
+    function_evaluations: int
+    jacobian_evaluations: int
+    iterations: int
     elapsed: float
 
     def __post_init__(self) -> None:
@@ -46,9 +45,9 @@ class SolverResult:
         tree.add(f"success: {self.success}")
         tree.add(f"message: {self.message}")
         tree.add(f"residual_norm: {self.residual_norm_final:.6e}")
-        tree.add(f"nfev: {self.nfev}")
-        tree.add(f"njev: {self.njev}")
-        tree.add(f"nit: {self.nit}")
+        tree.add(f"function_evaluations: {self.function_evaluations}")
+        tree.add(f"jacobian_evaluations: {self.jacobian_evaluations}")
+        tree.add(f"iterations: {self.iterations}")
         tree.add(Text(f"elapsed: {(self.elapsed / 1000):.3f} [ms]"))
         tree.add(f"x0: shape={self.x0.shape}, min={float(np.min(self.x0)):.3f}, max={float(np.max(self.x0)):.3f}")
         tree.add(f"x: shape={self.x.shape}, min={float(np.min(self.x)):.3f}, max={float(np.max(self.x)):.3f}")

@@ -13,11 +13,11 @@ from typing import Callable
 import numpy as np
 
 from veqpy.engine.numba_source import validate_route
-from veqpy.engine.profile_regularization import resolve_fourier_power
 from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile
 from veqpy.operator.layout import build_profile_layout
 from veqpy.operator.operator_case import OperatorCase
+from veqpy.orchestration import resolve_fourier_power
 
 
 def make_profile(

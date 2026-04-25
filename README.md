@@ -12,7 +12,8 @@ a high-performance Python wrapper for plasma equilibrium simulations in magnetic
 - `veqpy/engine/`
   - Array-first numerical kernels.
   - `numba` is the supported user-facing backend for `profile`, `geometry`, `source`, and `residual`.
-  - `jax` backend work is experimental and still under development; it is not intended for users.
+- `veqpy/orchestration.py`
+  - Python-level route, source, residual metadata, and stage-runner orchestration.
 - `veqpy/model/`
   - Passive or snapshot-oriented objects: `Grid`, `Profile`, `Geometry`, `Equilibrium`.
 - `veqpy/operator/`
@@ -32,8 +33,6 @@ Recommended workflow on Windows PowerShell:
 ```powershell
 uv sync --group dev
 ```
-
-JAX is currently a backend-development path only. It is not part of the supported end-user workflow, and the current implementation covers only a narrow experimental route.
 
 Recommended command style:
 

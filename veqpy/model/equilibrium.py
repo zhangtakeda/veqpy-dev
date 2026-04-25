@@ -32,13 +32,13 @@ from rich.console import Console
 from rich.text import Text
 from rich.tree import Tree
 
-from veqpy.engine.profile_regularization import resolve_fourier_power
 from veqpy.model.geometry import Geometry
 from veqpy.model.geqdsk import Geqdsk
 from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile
 from veqpy.model.reactive import Reactive
 from veqpy.model.serial import Serial
+from veqpy.orchestration import resolve_fourier_power
 
 plt.style.use("seaborn-v0_8-paper")
 plt.rcParams.update(

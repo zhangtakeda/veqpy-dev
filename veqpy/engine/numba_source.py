@@ -2481,7 +2481,7 @@ def _maximum_floor_out(out: np.ndarray, arr: np.ndarray, floor: float) -> np.nda
 
 def build_source_remap_cache(
     coordinate: str,
-    n_src: int,
+    source_sample_count: int,
     *,
     rho: np.ndarray | None = None,
     stencil_size: int = DEFAULT_LOCAL_BARYCENTRIC_STENCIL,
@@ -2490,9 +2490,9 @@ def build_source_remap_cache(
     if coord not in ("rho", "psin"):
         raise ValueError(f"Unsupported coordinate {coordinate!r}")
 
-    count = int(n_src)
+    count = int(source_sample_count)
     if count < 1:
-        raise ValueError(f"n_src must be positive, got {n_src!r}")
+        raise ValueError(f"source_sample_count must be positive, got {source_sample_count!r}")
 
     coord_code = PSIN_COORDINATE if coord == "psin" else RHO_COORDINATE
     local_size = min(count, int(stencil_size))
@@ -2515,7 +2515,7 @@ def resolve_source_inputs(
     heat_input: np.ndarray,
     current_input: np.ndarray,
     coordinate_code: int,
-    n_src: int,
+    source_sample_count: int,
     barycentric_weights: np.ndarray,
     fixed_remap_matrix: np.ndarray,
     psin_query: np.ndarray,
@@ -2528,8 +2528,8 @@ def resolve_source_inputs(
         raise ValueError(f"Expected 1D heat/current inputs, got {heat.shape} and {current.shape}")
     if heat.shape != current.shape:
         raise ValueError(f"Expected heat/current inputs to share a shape, got {heat.shape} and {current.shape}")
-    if heat.shape[0] != n_src:
-        raise ValueError(f"Expected heat/current inputs to have length {n_src}, got {heat.shape[0]}")
+    if heat.shape[0] != source_sample_count:
+        raise ValueError(f"Expected heat/current inputs to have length {source_sample_count}, got {heat.shape[0]}")
     if out_heat_input.ndim != 1 or out_current_input.ndim != 1 or out_heat_input.shape != out_current_input.shape:
         raise ValueError(
             "Expected out_heat_input/out_current_input to be 1D arrays with matching shapes, "
@@ -2699,7 +2699,7 @@ def materialize_projected_source_inputs(
 def update_fixed_point_psin_query(
     query: np.ndarray,
     psin: np.ndarray,
-    tolerance: float,
+    max_residual: float,
 ) -> bool:
     if query.ndim != 1 or psin.ndim != 1 or query.shape != psin.shape:
         raise ValueError(f"Expected query/psin to share a 1D shape, got {query.shape} and {psin.shape}")
@@ -2707,7 +2707,7 @@ def update_fixed_point_psin_query(
         _update_fixed_point_psin_query_impl(
             np.asarray(query, dtype=np.float64),
             np.asarray(psin, dtype=np.float64),
-            float(tolerance),
+            float(max_residual),
         )
     )
 
@@ -2773,7 +2773,7 @@ def _materialize_projected_source_inputs_impl(
 def _update_fixed_point_psin_query_impl(
     query: np.ndarray,
     psin: np.ndarray,
-    tolerance: float,
+    max_residual: float,
 ) -> bool:
     max_abs_diff = 0.0
     for i in range(query.shape[0]):
@@ -2781,22 +2781,22 @@ def _update_fixed_point_psin_query_impl(
         if diff > max_abs_diff:
             max_abs_diff = diff
         query[i] = psin[i]
-    return max_abs_diff <= tolerance
+    return max_abs_diff <= max_residual
 
 
 @njit(cache=True, fastmath=True, nogil=True)
 def _update_fixed_point_psin_query_and_linear_uniform_inputs_impl(
     query: np.ndarray,
     psin: np.ndarray,
-    tolerance: float,
+    max_residual: float,
     out_heat_input: np.ndarray,
     out_current_input: np.ndarray,
     heat_input: np.ndarray,
     current_input: np.ndarray,
 ) -> bool:
     max_abs_diff = 0.0
-    n_src = heat_input.shape[0]
-    if n_src == 1:
+    source_sample_count = heat_input.shape[0]
+    if source_sample_count == 1:
         heat0 = heat_input[0]
         current0 = current_input[0]
         for i in range(query.shape[0]):
@@ -2807,9 +2807,9 @@ def _update_fixed_point_psin_query_and_linear_uniform_inputs_impl(
             query[i] = q
             out_heat_input[i] = heat0
             out_current_input[i] = current0
-        return max_abs_diff <= tolerance
+        return max_abs_diff <= max_residual
 
-    step = 1.0 / (n_src - 1.0)
+    step = 1.0 / (source_sample_count - 1.0)
     for i in range(query.shape[0]):
         q = psin[i]
         diff = abs(q - query[i])
@@ -2833,14 +2833,14 @@ def _update_fixed_point_psin_query_and_linear_uniform_inputs_impl(
         frac = position - left
         out_heat_input[i] = (1.0 - frac) * heat_input[left] + frac * heat_input[right]
         out_current_input[i] = (1.0 - frac) * current_input[left] + frac * current_input[right]
-    return max_abs_diff <= tolerance
+    return max_abs_diff <= max_residual
 
 
 @njit(cache=True, fastmath=True, nogil=True)
 def _update_fixed_point_psin_query_and_local_barycentric_inputs_impl(
     query: np.ndarray,
     psin: np.ndarray,
-    tolerance: float,
+    max_residual: float,
     out_heat_input: np.ndarray,
     out_current_input: np.ndarray,
     heat_input: np.ndarray,
@@ -2848,8 +2848,8 @@ def _update_fixed_point_psin_query_and_local_barycentric_inputs_impl(
     weights: np.ndarray,
 ) -> bool:
     max_abs_diff = 0.0
-    n_src = heat_input.shape[0]
-    if n_src == 1:
+    source_sample_count = heat_input.shape[0]
+    if source_sample_count == 1:
         heat0 = heat_input[0]
         current0 = current_input[0]
         for i in range(query.shape[0]):
@@ -2860,10 +2860,10 @@ def _update_fixed_point_psin_query_and_local_barycentric_inputs_impl(
             query[i] = q
             out_heat_input[i] = heat0
             out_current_input[i] = current0
-        return max_abs_diff <= tolerance
+        return max_abs_diff <= max_residual
 
     local_size = weights.shape[0]
-    denom_scale = n_src - 1.0
+    denom_scale = source_sample_count - 1.0
     for i in range(query.shape[0]):
         q = psin[i]
         diff = abs(q - query[i])
@@ -2876,7 +2876,7 @@ def _update_fixed_point_psin_query_and_local_barycentric_inputs_impl(
         elif q > 1.0:
             q = 1.0
 
-        start = _local_uniform_stencil_start(q, n_src, local_size)
+        start = _local_uniform_stencil_start(q, source_sample_count, local_size)
         hit = -1
         for local_j in range(local_size):
             j = start + local_j
@@ -2900,14 +2900,14 @@ def _update_fixed_point_psin_query_and_local_barycentric_inputs_impl(
             numerator_current += term * current_input[j]
         out_heat_input[i] = numerator_heat / denominator
         out_current_input[i] = numerator_current / denominator
-    return max_abs_diff <= tolerance
+    return max_abs_diff <= max_residual
 
 
 @njit(cache=True, fastmath=True, nogil=True)
 def _update_fixed_point_psin_query_and_projected_inputs_impl(
     query: np.ndarray,
     psin: np.ndarray,
-    tolerance: float,
+    max_residual: float,
     out_heat_input: np.ndarray,
     out_current_input: np.ndarray,
     heat_coeff: np.ndarray,
@@ -2945,7 +2945,7 @@ def _update_fixed_point_psin_query_and_projected_inputs_impl(
             )
             out_heat_input[i] = heat_val
             out_current_input[i] = current_val + (1.0 - blend[i]) * delta_left + blend[i] * delta_right
-        return max_abs_diff <= tolerance
+        return max_abs_diff <= max_residual
 
     for i in range(n):
         q = psin[i]
@@ -2963,14 +2963,14 @@ def _update_fixed_point_psin_query_and_projected_inputs_impl(
         out_current_input[i] = current_val
 
     if endpoint_policy_code == ENDPOINT_POLICY_NONE:
-        return max_abs_diff <= tolerance
+        return max_abs_diff <= max_residual
     if endpoint_policy_code == ENDPOINT_POLICY_RIGHT:
         out_current_input[-1] = current_source_values[-1]
-        return max_abs_diff <= tolerance
+        return max_abs_diff <= max_residual
     if endpoint_policy_code == ENDPOINT_POLICY_BOTH:
         out_current_input[0] = current_source_values[0]
         out_current_input[-1] = current_source_values[-1]
-        return max_abs_diff <= tolerance
+        return max_abs_diff <= max_residual
     raise ValueError("Unsupported endpoint policy code")
 
 
@@ -3130,8 +3130,8 @@ def _linear_uniform_interpolate_pair(
     values1: np.ndarray,
     query: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    n_src = values0.shape[0]
-    if n_src == 1:
+    source_sample_count = values0.shape[0]
+    if source_sample_count == 1:
         value0 = values0[0]
         value1 = values1[0]
         for i in range(out0.shape[0]):
@@ -3139,7 +3139,7 @@ def _linear_uniform_interpolate_pair(
             out1[i] = value1
         return out0, out1
 
-    step = 1.0 / (n_src - 1.0)
+    step = 1.0 / (source_sample_count - 1.0)
     for i in range(out0.shape[0]):
         q = query[i]
         if q < 0.0:
@@ -3170,8 +3170,8 @@ def _local_barycentric_interpolate_pair(
     query: np.ndarray,
     weights: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    n_src = values0.shape[0]
-    if n_src == 1:
+    source_sample_count = values0.shape[0]
+    if source_sample_count == 1:
         value0 = values0[0]
         value1 = values1[0]
         for i in range(out0.shape[0]):
@@ -3180,7 +3180,7 @@ def _local_barycentric_interpolate_pair(
         return out0, out1
 
     local_size = weights.shape[0]
-    denom_scale = n_src - 1.0
+    denom_scale = source_sample_count - 1.0
     for i in range(out0.shape[0]):
         q = query[i]
         if q < 0.0:
@@ -3188,7 +3188,7 @@ def _local_barycentric_interpolate_pair(
         elif q > 1.0:
             q = 1.0
 
-        start = _local_uniform_stencil_start(q, n_src, local_size)
+        start = _local_uniform_stencil_start(q, source_sample_count, local_size)
         hit = -1
         for local_j in range(local_size):
             j = start + local_j
@@ -3216,33 +3216,33 @@ def _local_barycentric_interpolate_pair(
 
 
 @njit(cache=True, fastmath=True, nogil=True)
-def _uniform_barycentric_weights(n_src: int) -> np.ndarray:
-    weights = np.empty(n_src, dtype=np.float64)
+def _uniform_barycentric_weights(source_sample_count: int) -> np.ndarray:
+    weights = np.empty(source_sample_count, dtype=np.float64)
     weights[0] = 1.0
-    for j in range(1, n_src):
-        weights[j] = -weights[j - 1] * (n_src - j) / j
+    for j in range(1, source_sample_count):
+        weights[j] = -weights[j - 1] * (source_sample_count - j) / j
     return weights
 
 
 def _build_uniform_barycentric_matrix(
     query: np.ndarray,
-    n_src: int,
+    source_sample_count: int,
     stencil_size: int,
     weights: np.ndarray,
 ) -> np.ndarray:
-    matrix = np.empty((query.shape[0], n_src), dtype=np.float64)
-    if n_src == 1:
+    matrix = np.empty((query.shape[0], source_sample_count), dtype=np.float64)
+    if source_sample_count == 1:
         matrix[:, 0] = 1.0
         return matrix
 
     for i, q in enumerate(query):
-        for j in range(n_src):
+        for j in range(source_sample_count):
             matrix[i, j] = 0.0
-        start = _local_uniform_stencil_start(q, n_src, stencil_size)
+        start = _local_uniform_stencil_start(q, source_sample_count, stencil_size)
         hit = False
         for local_j in range(stencil_size):
             j = start + local_j
-            diff = q - j / (n_src - 1.0)
+            diff = q - j / (source_sample_count - 1.0)
             if abs(diff) <= 1e-14:
                 matrix[i, j] = 1.0
                 hit = True
@@ -3253,25 +3253,25 @@ def _build_uniform_barycentric_matrix(
         denominator = 0.0
         for local_j in range(stencil_size):
             j = start + local_j
-            denominator += weights[local_j] / (q - j / (n_src - 1.0))
+            denominator += weights[local_j] / (q - j / (source_sample_count - 1.0))
         for local_j in range(stencil_size):
             j = start + local_j
-            matrix[i, j] = (weights[local_j] / (q - j / (n_src - 1.0))) / denominator
+            matrix[i, j] = (weights[local_j] / (q - j / (source_sample_count - 1.0))) / denominator
     return matrix
 
 
 @njit(cache=True, fastmath=True, nogil=True)
-def _local_uniform_stencil_start(q: float, n_src: int, stencil_size: int) -> int:
-    if stencil_size >= n_src:
+def _local_uniform_stencil_start(q: float, source_sample_count: int, stencil_size: int) -> int:
+    if stencil_size >= source_sample_count:
         return 0
-    pos = q * (n_src - 1.0)
+    pos = q * (source_sample_count - 1.0)
     center = int(pos)
     if pos > center:
         center += 1
     start = center - stencil_size // 2
     if start < 0:
         return 0
-    max_start = n_src - stencil_size
+    max_start = source_sample_count - stencil_size
     if start > max_start:
         return max_start
     return start

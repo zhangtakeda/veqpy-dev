@@ -45,9 +45,17 @@ def _attempt_result(
     success: bool,
     message: str,
     residual_norm: float,
-    nfev: int = 1,
+    function_evaluations: int = 1,
 ) -> tuple[np.ndarray, bool, str, int, int, int, float]:
-    return (np.asarray(x, dtype=np.float64).copy(), success, message, nfev, 0, nfev, residual_norm)
+    return (
+        np.asarray(x, dtype=np.float64).copy(),
+        success,
+        message,
+        function_evaluations,
+        0,
+        function_evaluations,
+        residual_norm,
+    )
 
 
 def _install_fake_attempts(monkeypatch, solver: Solver, scripted_attempts):
@@ -72,6 +80,31 @@ def test_solver_config_removes_homotopy_fields():
     assert not hasattr(config, "homotopy_truncation_tol")
     assert not hasattr(config, "homotopy_truncation_patience")
     assert "homotopy" not in str(config)
+
+
+def test_solver_public_api_omits_unwired_max_residuals_and_diagnostics():
+    config = SolverConfig()
+    solver = Solver(operator=_DummyOperator(), config=config)
+    solver.solve(enable_history=False, enable_warmstart=False, enable_fallback=False)
+
+    assert not hasattr(config, "atol")
+    assert not hasattr(config, "rtol")
+    assert not hasattr(config, "root_maxfev")
+    assert not hasattr(config, "root_maxiter")
+    assert not hasattr(solver.result, "residual_norm_initial")
+    assert "atol" not in str(config)
+    assert "rtol" not in str(config)
+    assert "root_maxfev" not in str(config)
+    assert "root_maxiter" not in str(config)
+
+
+def test_solver_config_uses_whole_word_control_names():
+    config = SolverConfig(max_residual=2.5e-7, max_evaluations=1234)
+
+    assert config.max_residual == 2.5e-7
+    assert config.max_evaluations == 1234
+    assert "max_residual" in str(config)
+    assert "max_evaluations" in str(config)
 
 
 def test_solver_explicit_guess_retries_same_method_after_reset(monkeypatch):
@@ -217,8 +250,9 @@ def test_hybr_uses_block_scaled_residual_with_unit_factor(monkeypatch):
         dtype=np.float64,
     )
     assert captured["method"] == "hybr"
-    assert captured["tol"] == solver.config.atol
+    assert captured["tol"] == solver.config.max_residual
     assert np.allclose(captured["fun0"], expected)
+    assert captured["options"]["maxfev"] == solver.config.max_evaluations
     assert captured["options"]["factor"] == 1.0
     assert solver.operator.call_count == 1
 
@@ -302,6 +336,10 @@ def test_lm_uses_asinh_block_scaled_residual(monkeypatch):
     )
     assert np.allclose(captured["fun0"], np.arcsinh(expected_linear))
     assert captured["kwargs"]["method"] == "lm"
+    assert captured["kwargs"]["ftol"] == solver.config.max_residual
+    assert captured["kwargs"]["xtol"] == solver.config.max_residual
+    assert captured["kwargs"]["gtol"] == solver.config.max_residual
+    assert captured["kwargs"]["max_nfev"] == solver.config.max_evaluations
     assert captured["kwargs"]["x_scale"] == 1.0
 
 

@@ -1,4 +1,3 @@
-import importlib.util
 from pathlib import Path
 
 import numpy as np
@@ -8,8 +7,7 @@ import pytest
 import veqpy.engine.backend_abi as engine_backend_abi
 import veqpy.model.equilibrium as equilibrium_module
 import veqpy.operator.layout as layout_module
-from veqpy.engine import orchestration
-from veqpy.engine.backend import BackendCapabilities
+from veqpy import orchestration
 from veqpy.model.boundary import Boundary
 from veqpy.model.equilibrium import Equilibrium
 from veqpy.model.geqdsk import Geqdsk
@@ -34,8 +32,6 @@ from veqpy.operator.operator_case import OperatorCase
 
 GEQDSK_PATH = Path("tests/EFIT.geqdsk")
 TEST_SOURCE_SAMPLE_COUNT = 21
-HAS_JAX = importlib.util.find_spec("jax") is not None
-
 
 def _build_boundary(*, R0, Z0, a, ka, c_offsets, s_offsets, n=721):
     theta = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
@@ -608,8 +604,6 @@ def test_operator_exposes_explicit_layout_and_execution_layers():
     assert isinstance(operator.residual_binding_layout, ResidualBindingLayout)
     assert isinstance(operator.runtime_layout, RuntimeLayout)
     assert isinstance(operator.backend_state, BackendState)
-    assert isinstance(operator.backend_caps, BackendCapabilities)
-    assert operator.backend_caps.name == "numba"
     assert isinstance(operator.field_runtime_state, FieldRuntimeState)
     assert isinstance(operator.execution_state, ExecutionState)
     assert isinstance(operator.source_runtime_state, SourceRuntimeState)
@@ -781,7 +775,7 @@ def test_backend_abi_public_builders_preserve_backend_state_views():
 
     hot_abi = engine_backend_abi.build_fused_hot_runtime_abi(
         backend_state=operator.backend_state,
-        apply_f2_transform=True,
+        convert_f_squared_to_f=True,
         c_active_order=operator.c_effective_order,
         s_active_order=operator.s_effective_order,
         a=operator.case.a,
@@ -828,44 +822,11 @@ def test_backend_abi_fixed_point_route_builders_encode_route_local_policy():
 
     assert pq_abi.allow_query_warmstart == bool(operator.source_plan.endpoint_policy_code != 0)
     assert pq_abi.finalize_iter == 16
-    assert pq_abi.barycentric_weights.shape[0] == min(4, int(operator.source_plan.n_src))
+    assert pq_abi.barycentric_weights.shape[0] == min(4, int(operator.source_plan.source_sample_count))
     assert pj2_abi.allow_query_warmstart is False
     assert pj2_abi.finalize_iter == 8
-    assert pj2_abi.barycentric_weights.shape[0] == min(8, int(operator2.source_plan.n_src))
+    assert pj2_abi.barycentric_weights.shape[0] == min(8, int(operator2.source_plan.source_sample_count))
 
-
-def test_operator_rejects_unknown_backend():
-    grid, case = _build_operator_case()
-    with pytest.raises(ValueError, match="Unsupported backend"):
-        Operator(grid=grid, case=case, backend_name="bogus")
-
-
-def test_jax_pf_rho_uniform_backend_matches_numba_residual():
-    grid, case = _build_operator_case(mode="PF", coordinate="rho", nodes="uniform")
-    numba_operator = Operator(grid=grid, case=case, backend_name="numba")
-    x = numba_operator.encode_initial_state()
-    if not HAS_JAX:
-        with pytest.raises(RuntimeError, match="JAX backend is an experimental development path"):
-            Operator(grid=grid, case=case, backend_name="jax")
-        return
-
-    jax_operator = Operator(grid=grid, case=case, backend_name="jax")
-
-    numba_residual = numba_operator.residual(x)
-    jax_residual = jax_operator.residual(x)
-
-    assert np.allclose(jax_residual, numba_residual, rtol=1.0e-8, atol=1.0e-10)
-
-
-def test_jax_backend_rejects_unsupported_route():
-    grid, case = _build_operator_case(mode="PP", coordinate="rho", nodes="uniform")
-    if not HAS_JAX:
-        with pytest.raises(RuntimeError, match="JAX backend is an experimental development path"):
-            Operator(grid=grid, case=case, backend_name="jax")
-        return
-
-    with pytest.raises(NotImplementedError, match="JAX backend currently supports only"):
-        Operator(grid=grid, case=case, backend_name="jax")
 
 
 @pytest.mark.parametrize(("mode", "heat_degree", "current_degree"), [("PJ2", 5, 6), ("PQ", 7, 10)])
@@ -875,7 +836,7 @@ def test_source_plan_captures_fixed_point_route_metadata(mode, heat_degree, curr
     operator = Operator(grid=grid, case=case)
 
     assert operator.source_plan.strategy == "single_pass"
-    assert operator.source_plan.n_src == TEST_SOURCE_SAMPLE_COUNT
+    assert operator.source_plan.source_sample_count == TEST_SOURCE_SAMPLE_COUNT
     assert operator.source_plan.heat_projection_degree == heat_degree
     assert operator.source_plan.current_projection_degree == current_degree
     if mode == "PJ2":

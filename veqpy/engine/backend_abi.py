@@ -28,8 +28,8 @@ import numpy as np
 from veqpy.engine.numba_source import _uniform_barycentric_weights, resolve_source_scratch_kernel
 
 if TYPE_CHECKING:
-    from veqpy.engine.orchestration import SourcePlan
     from veqpy.operator.layouts import BackendState
+    from veqpy.orchestration import SourcePlan
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,7 +61,7 @@ class FusedHotRuntimeABI:
     v_fields: np.ndarray
     k_fields: np.ndarray
     F_profile_fields: np.ndarray
-    apply_f2_transform: bool
+    convert_f_squared_to_f: bool
     c_active_order: int
     s_active_order: int
     a: float
@@ -110,7 +110,7 @@ class FusedSourceEvalABI:
 def build_fused_hot_runtime_abi(
     *,
     backend_state: "BackendState",
-    apply_f2_transform: bool,
+    convert_f_squared_to_f: bool,
     c_active_order: int,
     s_active_order: int,
     a: float,
@@ -147,7 +147,7 @@ def build_fused_hot_runtime_abi(
         v_fields=runtime_layout.v_fields,
         k_fields=runtime_layout.k_fields,
         F_profile_fields=runtime_layout.F_profile_fields,
-        apply_f2_transform=apply_f2_transform,
+        convert_f_squared_to_f=convert_f_squared_to_f,
         c_active_order=c_active_order,
         s_active_order=s_active_order,
         a=a,
@@ -275,7 +275,9 @@ def _build_fixed_point_psin_source_abi(
         has_Ip=bool(np.isfinite(Ip)),
         projection_domain_code=int(source_plan.projection_domain_code),
         endpoint_policy_code=int(source_plan.endpoint_policy_code),
-        barycentric_weights=_uniform_barycentric_weights(min(barycentric_order_cap, int(source_plan.n_src))),
+        barycentric_weights=_uniform_barycentric_weights(
+            min(barycentric_order_cap, int(source_plan.source_sample_count))
+        ),
         allow_query_warmstart=allow_query_warmstart,
         finalize_iter=finalize_iter,
     )

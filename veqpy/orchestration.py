@@ -1,13 +1,16 @@
 """
-Module: engine.orchestration
+Module: veqpy.orchestration
 
 Role:
-- 收敛 operator stage orchestration 的 engine 内部实现.
-- 避免 source/geometry/materialization 逻辑泄露到 operator 层.
+- Centralize Python-level stage orchestration shared by operator/runtime code.
+- Keep route policy, source materialization, residual metadata, and K_max
+  decisions out of numeric kernels.
 
 Notes:
-- 这里承接的是 Python orchestration, 不改 numba kernel 本体.
-- operator 层应只保留 case/layout/runtime 接线.
+- This module assembles and refreshes runtime stages; it does not implement
+  numba kernels.
+- ABI dataclasses remain in ``veqpy.engine.backend_abi`` because they describe
+  backend binding shapes rather than orchestration policy.
 """
 
 from __future__ import annotations
@@ -28,7 +31,6 @@ from veqpy.engine.numba_source import (
     update_fixed_point_psin_query,
     update_fourier_family_fields,
 )
-from veqpy.engine.profile_regularization import resolve_fourier_power
 
 if TYPE_CHECKING:
     from veqpy.operator.layouts import SourceRuntimeState
@@ -46,7 +48,27 @@ _RESIDUAL_BLOCK_CODE_BY_NAME = {
     "F": 7,
 }
 F_BLOCK_CODE = _RESIDUAL_BLOCK_CODE_BY_NAME["F"]
-F2_BLOCK_CODE = F_BLOCK_CODE
+
+
+def normalize_fourier_power_K_max(value: int | None) -> int | None:
+    """Normalize and validate a Fourier radial-power cap."""
+    if value is None:
+        return None
+    K_max = int(value)
+    if K_max < 1:
+        raise ValueError(f"K_max must be None or an integer >= 1, got {value!r}")
+    return K_max
+
+
+def resolve_fourier_power(order: int, K_max: int | None = None) -> int:
+    """Resolve the radial prefactor power for a Fourier shape profile order."""
+    order = int(order)
+    if order <= 0:
+        return 0
+    normalized_K_max = normalize_fourier_power_K_max(K_max)
+    if normalized_K_max is None:
+        return order
+    return min(order, normalized_K_max)
 
 
 def _decode_residual_block_code(name: str) -> tuple[int, int]:
@@ -93,7 +115,7 @@ class SourcePlan:
     nodes: str
     strategy: str
     parameterization: str
-    n_src: int
+    source_sample_count: int
     heat_input: np.ndarray
     current_input: np.ndarray
     Ip: float
@@ -290,7 +312,7 @@ def build_source_plan(
         nodes=str(case.nodes).lower(),
         strategy=str(source_route_spec.source_strategy).lower(),
         parameterization=str(source_route_spec.source_parameterization).lower(),
-        n_src=int(case.heat_input.shape[0]),
+        source_sample_count=int(case.heat_input.shape[0]),
         heat_input=case.heat_input,
         current_input=case.current_input,
         Ip=float(case.Ip),
@@ -341,7 +363,7 @@ def refresh_source_runtime(
     source_const_state = source_runtime_state.const_state
     source_aux_state = source_runtime_state.aux_state
     source_work_state = source_runtime_state.work_state
-    case_key = (source_plan.coordinate, source_plan.nodes, source_plan.n_src)
+    case_key = (source_plan.coordinate, source_plan.nodes, source_plan.source_sample_count)
     if source_runtime_state.cache_key != case_key:
         if source_plan.is_grid_nodes:
             source_const_state.barycentric_weights = np.empty(0, dtype=np.float64)
@@ -357,14 +379,14 @@ def refresh_source_runtime(
                 source_const_state.fixed_remap_matrix,
             ) = build_source_remap_cache(
                 source_plan.coordinate,
-                source_plan.n_src,
+                source_plan.source_sample_count,
                 rho=grid_rho,
             )
             if not source_plan.has_projection_policy:
                 source_const_state.heat_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
                 source_const_state.current_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
             else:
-                source_axis = np.linspace(0.0, 1.0, int(source_plan.n_src), dtype=np.float64)
+                source_axis = np.linspace(0.0, 1.0, int(source_plan.source_sample_count), dtype=np.float64)
                 source_query = np.empty_like(source_axis)
                 np.copyto(source_query, source_axis)
                 np.clip(source_query, 0.0, 1.0, out=source_query)
@@ -414,7 +436,7 @@ def refresh_source_runtime(
                 source_plan.heat_input,
                 source_plan.current_input,
                 source_plan.coordinate_code,
-                source_plan.n_src,
+                source_plan.source_sample_count,
                 source_const_state.barycentric_weights,
                 source_const_state.fixed_remap_matrix,
                 psin,
@@ -566,7 +588,7 @@ def _build_source_stage_runner_shared(operator_core: Any) -> Callable:
                     source_plan.heat_input,
                     source_plan.current_input,
                     source_plan.coordinate_code,
-                    source_plan.n_src,
+                    source_plan.source_sample_count,
                     source_runtime_state.const_state.barycentric_weights,
                     source_runtime_state.const_state.fixed_remap_matrix,
                     source_work_state.parameter_query,
@@ -602,7 +624,7 @@ def _build_pj2_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[
     source_aux_state = source_runtime_state.aux_state
     target_root_fields = source_aux_state.target_root_fields
     psin_profile_u = runtime_layout.psin_profile_u
-    tolerance = 1.0e-10
+    max_residual = 1.0e-10
 
     def runner() -> tuple[float, float]:
         if source_work_state.psin_query[0] < 0.0:
@@ -638,7 +660,7 @@ def _build_pj2_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[
                 source_plan.heat_input,
                 source_plan.current_input,
                 source_plan.coordinate_code,
-                source_plan.n_src,
+                source_plan.source_sample_count,
                 source_runtime_state.const_state.barycentric_weights,
                 source_runtime_state.const_state.fixed_remap_matrix,
                 source_work_state.parameter_query,
@@ -651,7 +673,7 @@ def _build_pj2_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[
                 source_work_state.materialized_current_input,
                 float(operator_core.case.R0),
             )
-            if update_fixed_point_psin_query(source_work_state.psin_query, target_root_fields[0], tolerance):
+            if update_fixed_point_psin_query(source_work_state.psin_query, target_root_fields[0], max_residual):
                 break
         np.copyto(source_work_state.psin_query, target_root_fields[0])
         for _ in range(8):
@@ -674,7 +696,7 @@ def _build_pj2_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[
                 source_work_state.materialized_current_input,
                 float(operator_core.case.R0),
             )
-            if update_fixed_point_psin_query(source_work_state.psin_query, target_root_fields[0], tolerance):
+            if update_fixed_point_psin_query(source_work_state.psin_query, target_root_fields[0], max_residual):
                 break
         np.copyto(operator_core.psin, target_root_fields[0])
         np.copyto(operator_core.psin_r, target_root_fields[1])
@@ -693,7 +715,7 @@ def _build_pq_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[[
     source_aux_state = source_runtime_state.aux_state
     target_root_fields = source_aux_state.target_root_fields
     psin_profile_u = runtime_layout.psin_profile_u
-    tolerance = 1.0e-10
+    max_residual = 1.0e-10
     allow_query_warmstart = bool(source_plan.endpoint_policy_code != _ENDPOINT_POLICY_CODES["none"])
 
     def runner() -> tuple[float, float]:
@@ -730,7 +752,7 @@ def _build_pq_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[[
                 source_plan.heat_input,
                 source_plan.current_input,
                 source_plan.coordinate_code,
-                source_plan.n_src,
+                source_plan.source_sample_count,
                 source_runtime_state.const_state.barycentric_weights,
                 source_runtime_state.const_state.fixed_remap_matrix,
                 source_work_state.parameter_query,
@@ -743,7 +765,7 @@ def _build_pq_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[[
                 source_work_state.materialized_current_input,
                 float(operator_core.case.R0),
             )
-            if update_fixed_point_psin_query(source_work_state.psin_query, target_root_fields[0], tolerance):
+            if update_fixed_point_psin_query(source_work_state.psin_query, target_root_fields[0], max_residual):
                 break
         np.copyto(source_work_state.psin_query, target_root_fields[0])
         for _ in range(16):
@@ -766,7 +788,7 @@ def _build_pq_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[[
                 source_work_state.materialized_current_input,
                 float(operator_core.case.R0),
             )
-            if update_fixed_point_psin_query(source_work_state.psin_query, target_root_fields[0], tolerance):
+            if update_fixed_point_psin_query(source_work_state.psin_query, target_root_fields[0], max_residual):
                 break
         np.copyto(operator_core.psin, target_root_fields[0])
         np.copyto(operator_core.psin_r, target_root_fields[1])
@@ -850,8 +872,9 @@ def build_geometry_stage_runner(
 
 __all__ = [
     "F_BLOCK_CODE",
-    "F2_BLOCK_CODE",
     "SourcePlan",
+    "normalize_fourier_power_K_max",
+    "resolve_fourier_power",
     "build_bound_source_stage_runner",
     "build_residual_block_metadata",
     "build_residual_block_radial_powers",

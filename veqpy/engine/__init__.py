@@ -2,16 +2,14 @@
 Module: engine.__init__
 
 Role:
-- 作为 engine 的唯一对外导入入口.
+- Expose supported numerical engine primitives.
 
 Notes:
-- `numba` 是默认且用户可用的 backend.
-- `jax` backend 仅供内部开发验证, 仍在开发中.
-- operator layout 与 solver orchestration 保留在上层.
-- 外层模块应统一 `from veqpy.engine import ...`, 不直接导入内部文件.
+- Numba is the only supported execution backend.
+- High-level Python orchestration lives in :mod:`veqpy.orchestration`.
 """
 
-from veqpy.engine import backend_abi, orchestration
+from veqpy.engine import backend_abi
 from veqpy.engine.numba_source import (
     COORDINATE_NAMES,
     PSIN_COORDINATE,
@@ -27,28 +25,15 @@ from veqpy.engine.numba_source import (
     theta_reduction,
     validate_route,
 )
-from veqpy.engine.profile_regularization import (
-    fourier_power_K_max,
-    get_fourier_power_K_max,
-    normalize_fourier_power_K_max,
-    resolve_fourier_power,
-    set_fourier_power_K_max,
-)
 
 __all__ = [
     "backend_abi",
-    "orchestration",
     "RHO_AXIS",
     "THETA_AXIS",
     "COORDINATE_NAMES",
     "PSIN_COORDINATE",
     "RHO_COORDINATE",
     "validate_route",
-    "resolve_fourier_power",
-    "normalize_fourier_power_K_max",
-    "get_fourier_power_K_max",
-    "set_fourier_power_K_max",
-    "fourier_power_K_max",
     "full_differentiation",
     "theta_reduction",
     "quadrature",
