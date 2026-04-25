@@ -32,6 +32,7 @@ from rich.console import Console
 from rich.text import Text
 from rich.tree import Tree
 
+from veqpy.engine.profile_regularization import resolve_fourier_power
 from veqpy.model.geometry import Geometry
 from veqpy.model.geqdsk import Geqdsk
 from veqpy.model.grid import Grid
@@ -612,7 +613,7 @@ def _normalize_shape_profiles(shape_profiles: dict[str, Profile]) -> dict[str, P
 def _build_default_shape_profile(name: str) -> Profile:
     power = 0
     if name.startswith(("c", "s")) and name[1:].isdigit():
-        power = int(name[1:])
+        power = resolve_fourier_power(int(name[1:]))
     return Profile(scale=1.0, power=power, envelope_power=1, offset=0.0, coeff=None)
 
 

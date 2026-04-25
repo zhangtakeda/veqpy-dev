@@ -75,6 +75,7 @@ class FusedResidualPackABI:
     residual_surface_workspace: np.ndarray
     active_residual_block_codes: np.ndarray
     active_residual_block_orders: np.ndarray
+    active_residual_block_radial_powers: np.ndarray
     active_coeff_index_rows: np.ndarray
     active_lengths: np.ndarray
     sin_ktheta: np.ndarray
@@ -170,6 +171,7 @@ def build_fused_residual_pack_abi(
         residual_surface_workspace=runtime_layout.residual_surface_workspace,
         active_residual_block_codes=residual_binding_layout.active_residual_block_codes,
         active_residual_block_orders=residual_binding_layout.active_residual_block_orders,
+        active_residual_block_radial_powers=residual_binding_layout.active_residual_block_radial_powers,
         active_coeff_index_rows=runtime_layout.active_coeff_index_rows,
         active_lengths=runtime_layout.active_lengths,
         sin_ktheta=static_layout.sin_ktheta,

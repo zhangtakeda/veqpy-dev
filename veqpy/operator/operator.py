@@ -22,6 +22,7 @@ import numpy as np
 
 from veqpy.engine import orchestration, validate_route
 from veqpy.engine.backend import BackendCapabilities, resolve_backend
+from veqpy.engine.profile_regularization import normalize_fourier_power_K_max, resolve_fourier_power
 from veqpy.model.equilibrium import Equilibrium
 from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile
@@ -79,6 +80,7 @@ class Operator:
     grid: Grid = field(repr=False)
     case: OperatorCase = field(repr=False)
     backend_name: str = "numba"
+    K_max: int | None = None
     static_layout: StaticLayout = field(init=False, repr=False)
     residual_binding_layout: ResidualBindingLayout = field(init=False, repr=False)
     runtime_layout: RuntimeLayout = field(init=False, repr=False)
@@ -145,6 +147,7 @@ class Operator:
 
     def __post_init__(self) -> None:
         """完成 layout 构造, 运行时缓冲区分配和 case 绑定."""
+        self.K_max = normalize_fourier_power_K_max(self.K_max)
         self.backend_caps = resolve_backend(self.backend_name)
         self._refresh_operator_identity()
         self.prefix_profile_names = get_prefix_profile_names()
@@ -321,10 +324,15 @@ class Operator:
         active_residual_block_codes, active_residual_block_orders = orchestration.build_residual_block_metadata(
             active_profile_names
         )
+        active_residual_block_radial_powers = orchestration.build_residual_block_radial_powers(
+            active_profile_names,
+            K_max=self.K_max,
+        )
         return ResidualBindingLayout(
             active_profile_names=active_profile_names,
             active_residual_block_codes=active_residual_block_codes,
             active_residual_block_orders=active_residual_block_orders,
+            active_residual_block_radial_powers=active_residual_block_radial_powers,
         )
 
     def _refresh_runtime_layout_views(self) -> None:
@@ -440,6 +448,11 @@ class Operator:
 
     def _refresh_profile_config(self) -> None:
         self.profile_static_kwargs_by_name = {name: dict(kwargs) for name, kwargs in _PROFILE_STATIC_KWARGS.items()}
+        for name in self.c_profile_names + self.s_profile_names:
+            order = int(name[1:])
+            self.profile_static_kwargs_by_name[name] = (
+                {} if order == 0 else {"power": resolve_fourier_power(order, self.K_max)}
+            )
         self.profile_offset_specs = dict(_PROFILE_OFFSET_SPECS)
         self.profile_scale_specs = dict(_PROFILE_SCALE_SPECS)
 
@@ -593,6 +606,7 @@ class Operator:
                 scratch,
                 self.residual_binding_layout.active_residual_block_codes,
                 self.residual_binding_layout.active_residual_block_orders,
+                self.residual_binding_layout.active_residual_block_radial_powers,
                 self.active_coeff_index_rows,
                 self.active_lengths,
                 residual_workspace,
@@ -641,6 +655,7 @@ class Operator:
                 scratch,
                 self.residual_binding_layout.active_residual_block_codes,
                 self.residual_binding_layout.active_residual_block_orders,
+                self.residual_binding_layout.active_residual_block_radial_powers,
                 self.active_coeff_index_rows,
                 self.active_lengths,
                 residual_workspace,

@@ -17,6 +17,7 @@ __pycache__
 .backup
 .claude
 .codex
+.omx
 .ruff_cache
 .venv
 .vscode

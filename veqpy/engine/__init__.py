@@ -27,6 +27,13 @@ from veqpy.engine.numba_source import (
     theta_reduction,
     validate_route,
 )
+from veqpy.engine.profile_regularization import (
+    fourier_power_K_max,
+    get_fourier_power_K_max,
+    normalize_fourier_power_K_max,
+    resolve_fourier_power,
+    set_fourier_power_K_max,
+)
 
 __all__ = [
     "backend_abi",
@@ -37,6 +44,11 @@ __all__ = [
     "PSIN_COORDINATE",
     "RHO_COORDINATE",
     "validate_route",
+    "resolve_fourier_power",
+    "normalize_fourier_power_K_max",
+    "get_fourier_power_K_max",
+    "set_fourier_power_K_max",
+    "fourier_power_K_max",
     "full_differentiation",
     "theta_reduction",
     "quadrature",

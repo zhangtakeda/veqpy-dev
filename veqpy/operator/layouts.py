@@ -60,6 +60,7 @@ class ResidualBindingLayout:
     active_profile_names: tuple[str, ...]
     active_residual_block_codes: np.ndarray
     active_residual_block_orders: np.ndarray
+    active_residual_block_radial_powers: np.ndarray
 
 
 @dataclass(slots=True)

@@ -28,6 +28,7 @@ from veqpy.engine.numba_source import (
     update_fixed_point_psin_query,
     update_fourier_family_fields,
 )
+from veqpy.engine.profile_regularization import resolve_fourier_power
 
 if TYPE_CHECKING:
     from veqpy.operator.layouts import SourceRuntimeState
@@ -72,6 +73,14 @@ def build_residual_block_metadata(profile_names: tuple[str, ...]) -> tuple[np.nd
     for i, name in enumerate(profile_names):
         block_codes[i], block_orders[i] = _decode_residual_block_code(name)
     return block_codes, block_orders
+
+
+def build_residual_block_radial_powers(profile_names: tuple[str, ...], *, K_max: int | None) -> np.ndarray:
+    radial_powers = np.zeros(len(profile_names), dtype=np.int64)
+    for i, name in enumerate(profile_names):
+        if name.startswith(("c", "s")) and name[1:].isdigit():
+            radial_powers[i] = resolve_fourier_power(int(name[1:]), K_max)
+    return radial_powers
 
 
 @dataclass(frozen=True, slots=True)
@@ -845,6 +854,7 @@ __all__ = [
     "SourcePlan",
     "build_bound_source_stage_runner",
     "build_residual_block_metadata",
+    "build_residual_block_radial_powers",
     "build_source_plan",
     "build_geometry_stage_runner",
     "refresh_source_runtime",

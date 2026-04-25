@@ -195,6 +195,7 @@ def _pack_residual_output(
         scratch,
         residual_pack_binding.active_residual_block_codes,
         residual_pack_binding.active_residual_block_orders,
+        residual_pack_binding.active_residual_block_radial_powers,
         residual_pack_binding.active_coeff_index_rows,
         residual_pack_binding.active_lengths,
         residual_pack_binding.residual_surface_workspace,

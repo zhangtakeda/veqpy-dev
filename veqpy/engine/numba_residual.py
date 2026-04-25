@@ -150,6 +150,7 @@ def _run_residual_blocks_packed_precomputed(
     scratch: np.ndarray,
     block_codes: np.ndarray,
     block_orders: np.ndarray,
+    block_radial_powers: np.ndarray,
     coeff_index_rows: np.ndarray,
     lengths: np.ndarray,
     residual_workspace: np.ndarray,
@@ -177,6 +178,7 @@ def _run_residual_blocks_packed_precomputed(
         coeff_indices = coeff_index_rows[slot, : lengths[slot]]
         code = block_codes[slot]
         order = block_orders[slot]
+        radial_power = block_radial_powers[slot]
         if code == 0:
             _collapse_field(scratch, Gpsin_R)
             _project_scaled2(out_packed, coeff_indices, T, scratch, y, weights, base_scale * a)
@@ -192,12 +194,12 @@ def _run_residual_blocks_packed_precomputed(
         elif code == 4:
             _collapse_field_theta(scratch, Gpsin_R_sin_tb, cos_ktheta[order])
             _project_scaled3(
-                out_packed, coeff_indices, T, scratch, rho_powers[order + 1], y, weights, base_scale * (-a)
+                out_packed, coeff_indices, T, scratch, rho_powers[radial_power + 1], y, weights, base_scale * (-a)
             )
         elif code == 5:
             _collapse_field_theta(scratch, Gpsin_R_sin_tb, sin_ktheta[order])
             _project_scaled3(
-                out_packed, coeff_indices, T, scratch, rho_powers[order + 1], y, weights, base_scale * (-a)
+                out_packed, coeff_indices, T, scratch, rho_powers[radial_power + 1], y, weights, base_scale * (-a)
             )
         elif code == 6:
             _collapse_g(scratch, G)
