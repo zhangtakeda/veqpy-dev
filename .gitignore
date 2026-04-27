@@ -7,6 +7,7 @@
 data
 dist
 docs
+paper
 scripts
 figures
 tests/demo

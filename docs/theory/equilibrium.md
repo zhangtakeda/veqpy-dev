@@ -82,7 +82,7 @@ $$
 当前代码中的 `Equilibrium` 已经从固定低阶 shape profile 快照扩展成动态 Fourier family 快照:
 
 - snapshot 保存:
-  - `active_profiles`
+  - `shape_profiles`
 - `c{k}` / `s{k}` 可以直接进入:
   - `build_equilibrium()`
   - `Equilibrium.resample(...)`
@@ -90,7 +90,7 @@ $$
 
 当前快照的权威 shape-profile 集合是:
 
-- `active_profiles: dict[str, Profile]`
+- `shape_profiles: dict[str, Profile]`
 
 其中:
 
