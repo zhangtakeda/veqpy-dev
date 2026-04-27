@@ -10,7 +10,7 @@ Public API:
 - Packed-state naming/layout helpers used by callers that need to prepare coefficient vectors
 
 Notes:
-- Runtime layout containers stay in ``veqpy.operator.runtime_layout`` as implementation data structures.
+- Runtime layout containers/allocation stay in ``veqpy.operator.runtime_layout`` as implementation data structures.
 - Engine backend selection, solver driving, and document/demo orchestration live outside this package surface.
 """
 
@@ -23,6 +23,8 @@ from veqpy.operator.packed_layout import (
     build_profile_layout,
     build_profile_names,
     build_shape_profile_names,
+    decode_packed_blocks,
+    encode_packed_state,
     get_prefix_profile_names,
     packed_size,
     validate_packed_state,
@@ -37,6 +39,8 @@ __all__ = [
     "build_profile_layout",
     "build_profile_names",
     "build_shape_profile_names",
+    "decode_packed_blocks",
+    "encode_packed_state",
     "get_prefix_profile_names",
     "packed_size",
     "validate_packed_state",

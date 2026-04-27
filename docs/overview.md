@@ -107,10 +107,9 @@ vector `x` is the only solver-facing state.
 
 Packed layout semantics are owned by:
 
-- [`veqpy/operator/layout.py`](../veqpy/operator/layout.py)
-- [`veqpy/operator/codec.py`](../veqpy/operator/codec.py)
+- [`veqpy/operator/packed_layout.py`](../veqpy/operator/packed_layout.py)
 
-Those files define:
+That file defines:
 
 - profile ordering
 - coefficient indexing
@@ -128,7 +127,7 @@ The most relevant files are:
 
 - [`veqpy/engine/backend.py`](../veqpy/engine/backend.py)
 - [`veqpy/engine/backend_abi.py`](../veqpy/engine/backend_abi.py)
-- [`veqpy/engine/orchestration.py`](../veqpy/engine/orchestration.py)
+- [`veqpy/orchestration.py`](../veqpy/orchestration.py)
 - [`veqpy/engine/numba_operator.py`](../veqpy/engine/numba_operator.py)
 - [`veqpy/engine/jax_operator.py`](../veqpy/engine/jax_operator.py)
 
@@ -158,7 +157,7 @@ For most runtime changes, the fastest useful reading order is:
 
 1. [`docs/guardrails.md`](./guardrails.md)
 2. [`veqpy/operator/operator.py`](../veqpy/operator/operator.py)
-3. [`veqpy/operator/layout.py`](../veqpy/operator/layout.py)
-4. [`veqpy/engine/orchestration.py`](../veqpy/engine/orchestration.py)
+3. [`veqpy/operator/packed_layout.py`](../veqpy/operator/packed_layout.py)
+4. [`veqpy/orchestration.py`](../veqpy/orchestration.py)
 5. The relevant backend file under [`veqpy/engine/`](../veqpy/engine)
 6. The matching regression or script entry under [`tests/`](../tests)

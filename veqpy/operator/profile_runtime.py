@@ -1,5 +1,5 @@
 """
-Module: operator.profile_setup
+Module: operator.profile_runtime
 
 Role:
 - 收敛 profile/case setup 与 profile-stage 装配的共享 Python 规则.

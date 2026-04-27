@@ -97,8 +97,7 @@ probably architectural drift rather than a local refactor.
 
 The only authority for packed layout semantics is:
 
-- [`veqpy/operator/layout.py`](../veqpy/operator/layout.py)
-- [`veqpy/operator/codec.py`](../veqpy/operator/codec.py)
+- [`veqpy/operator/packed_layout.py`](../veqpy/operator/packed_layout.py)
 
 Required rules:
 

@@ -24,8 +24,7 @@ __pycache__
 
 .uv-cache
 uv.lock
+AGENTS.md
 TODO.md
 PAPER.md
 /test.py
-
-zhang2026

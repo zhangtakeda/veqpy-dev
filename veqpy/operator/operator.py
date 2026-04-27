@@ -25,8 +25,6 @@ from veqpy.engine import numba_operator, numba_profile, numba_residual, validate
 from veqpy.model.equilibrium import Equilibrium
 from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile
-from veqpy.operator.codec import decode_packed_blocks, encode_packed_state
-from veqpy.operator.execution_helpers import snapshot_equilibrium_from_runtime
 from veqpy.operator.operator_case import OperatorCase
 from veqpy.operator.packed_layout import (
     build_active_profile_metadata,
@@ -35,10 +33,12 @@ from veqpy.operator.packed_layout import (
     build_profile_layout,
     build_profile_names,
     build_shape_profile_names,
+    decode_packed_blocks,
+    encode_packed_state,
     get_prefix_profile_names,
     packed_size,
 )
-from veqpy.operator.profile_setup import (
+from veqpy.operator.profile_runtime import (
     build_profile_stage_runner,
     make_profile,
     refresh_fourier_family_base_fields,
@@ -47,7 +47,6 @@ from veqpy.operator.profile_setup import (
     refresh_stage_a_runtime,
     validate_case_compatibility,
 )
-from veqpy.operator.runtime_allocation import allocate_runtime_state
 from veqpy.operator.runtime_layout import (
     BackendState,
     ExecutionState,
@@ -56,6 +55,7 @@ from veqpy.operator.runtime_layout import (
     RuntimeLayout,
     SourceRuntimeState,
     StaticLayout,
+    allocate_runtime_state,
 )
 from veqpy.orchestration import normalize_fourier_power_K_max, resolve_fourier_power
 
@@ -706,3 +706,82 @@ class Operator:
             alpha1=self.alpha1,
             alpha2=self.alpha2,
         )
+
+
+def snapshot_equilibrium_from_runtime(
+    x: np.ndarray,
+    *,
+    case: OperatorCase,
+    grid: Grid,
+    profile_L: np.ndarray,
+    coeff_index: np.ndarray,
+    profile_names: tuple[str, ...],
+    shape_profile_names: tuple[str, ...],
+    profile_index: dict[str, int],
+    profiles_by_name: dict[str, Profile],
+    psin: np.ndarray,
+    FFn_psin: np.ndarray,
+    Pn_psin: np.ndarray,
+    psin_r: np.ndarray,
+    psin_rr: np.ndarray,
+    alpha1: float,
+    alpha2: float,
+) -> Equilibrium:
+    """Materialize an Equilibrium snapshot from current Operator runtime arrays."""
+    coeff_blocks = decode_packed_blocks(x, profile_L, coeff_index, profile_names=profile_names)
+    shape_profiles = snapshot_equilibrium_profiles(
+        coeff_blocks,
+        shape_profile_names=shape_profile_names,
+        profile_index=profile_index,
+        profiles_by_name=profiles_by_name,
+    )
+    ffn_psin_snapshot = np.asarray(FFn_psin, dtype=np.float64).copy()
+    if _should_regularize_snapshot_ffn_psin(case):
+        ff_r = ffn_psin_snapshot * np.asarray(psin_r, dtype=np.float64)
+        ff_r = grid.regularize_ff_r(ff_r)
+        ffn_psin_snapshot = ff_r / np.maximum(np.asarray(psin_r, dtype=np.float64), 1.0e-10)
+    return Equilibrium(
+        R0=case.R0,
+        Z0=case.Z0,
+        B0=case.B0,
+        a=case.a,
+        grid=grid,
+        shape_profiles=shape_profiles,
+        psin=psin.copy(),
+        FFn_psin=ffn_psin_snapshot,
+        Pn_psin=Pn_psin.copy(),
+        psin_r=psin_r.copy(),
+        psin_rr=psin_rr.copy(),
+        alpha1=float(alpha1),
+        alpha2=float(alpha2),
+    )
+
+
+def _should_regularize_snapshot_ffn_psin(case: OperatorCase) -> bool:
+    has_ip = case.Ip is not None and np.isfinite(case.Ip)
+    if case.route == "PP" and case.nodes == "uniform":
+        return True
+    if case.route == "PJ2" and case.coordinate == "psin" and case.nodes == "uniform":
+        return True
+    if case.route == "PQ" and case.coordinate == "psin" and case.nodes == "uniform" and has_ip:
+        return True
+    return False
+
+
+def snapshot_equilibrium_profiles(
+    coeff_blocks: tuple[np.ndarray | None, ...],
+    *,
+    shape_profile_names: tuple[str, ...],
+    profile_index: dict[str, int],
+    profiles_by_name: dict[str, Profile],
+) -> dict[str, Profile]:
+    return {
+        name: snapshot_profile(profiles_by_name[name], coeff_blocks[profile_index[name]])
+        for name in shape_profile_names
+    }
+
+
+def snapshot_profile(profile: Profile, coeff_block: np.ndarray | None) -> Profile:
+    copied = profile.copy()
+    copied.coeff = None if coeff_block is None else coeff_block.copy()
+    return copied
