@@ -46,8 +46,9 @@ The most useful top-level entry points today are:
 
 The default and supported user-facing backend is `numba`.
 
-There is also an experimental `jax` backend path in the repository, but it is
-still under development and should not be treated as part of the supported end-user workflow.
+There is no supported `jax` runtime surface in the current codebase. Any future
+or experimental non-numba path should be documented as development-only until it
+has matching tests, packaging, and user-facing guarantees.
 
 ## Environment
 
@@ -107,35 +108,54 @@ vector `x` is the only solver-facing state.
 
 Packed layout semantics are owned by:
 
-- [`veqpy/operator/layout.py`](../veqpy/operator/layout.py)
-- [`veqpy/operator/codec.py`](../veqpy/operator/codec.py)
+- [`veqpy/operator/packed_layout.py`](../veqpy/operator/packed_layout.py)
 
-Those files define:
+That file defines:
 
 - profile ordering
 - coefficient indexing
 - packed state topology
 - packed residual position semantics
+- packed state encoding/decoding helpers
 
-If a change touches layout, indexing, or coefficient activation rules, those two
-files are the first place to inspect.
+If a change touches layout, indexing, coefficient activation rules, or packed
+state codec behavior, this is the first file to inspect.
+
+## Operator Runtime Surface
+
+The operator layer owns the mutable runtime path from packed state to packed
+residual. The most relevant implementation files are:
+
+- [`veqpy/operator/operator.py`](../veqpy/operator/operator.py)
+  - Main `Operator` facade, stage pipeline, `replace_case(...)`, and
+    `build_equilibrium(...)` snapshot materialization.
+- [`veqpy/operator/operator_case.py`](../veqpy/operator/operator_case.py)
+  - Normalized case inputs, boundary offsets, and source/profile metadata.
+- [`veqpy/operator/runtime_layout.py`](../veqpy/operator/runtime_layout.py)
+  - Static/runtime/backend state containers and one-time runtime allocation.
+- [`veqpy/operator/profile_runtime.py`](../veqpy/operator/profile_runtime.py)
+  - Profile construction, profile runtime refresh, Stage-A binding, and Fourier
+    family metadata refresh.
 
 ## Backend Binding Surface
 
-Backend selection and binding live under [`veqpy/engine/`](../veqpy/engine).
+Numba backend kernels and binding helpers live under [`veqpy/engine/`](../veqpy/engine).
 
 The most relevant files are:
 
-- [`veqpy/engine/backend.py`](../veqpy/engine/backend.py)
 - [`veqpy/engine/backend_abi.py`](../veqpy/engine/backend_abi.py)
-- [`veqpy/engine/orchestration.py`](../veqpy/engine/orchestration.py)
 - [`veqpy/engine/numba_operator.py`](../veqpy/engine/numba_operator.py)
-- [`veqpy/engine/jax_operator.py`](../veqpy/engine/jax_operator.py)
+- [`veqpy/engine/numba_profile.py`](../veqpy/engine/numba_profile.py)
+- [`veqpy/engine/numba_geometry.py`](../veqpy/engine/numba_geometry.py)
+- [`veqpy/engine/numba_residual.py`](../veqpy/engine/numba_residual.py)
+- [`veqpy/engine/numba_source.py`](../veqpy/engine/numba_source.py)
+- [`veqpy/orchestration.py`](../veqpy/orchestration.py)
 
 In practice:
 
 - `operator` decides semantics and assembles runtime state.
-- `engine` binds backend-specific runners.
+- `orchestration` resolves route/source/residual metadata and stage runner policy.
+- `engine` consumes array bundles and binds numba-specific runners.
 
 ## Snapshot Surface
 
@@ -158,7 +178,9 @@ For most runtime changes, the fastest useful reading order is:
 
 1. [`docs/guardrails.md`](./guardrails.md)
 2. [`veqpy/operator/operator.py`](../veqpy/operator/operator.py)
-3. [`veqpy/operator/layout.py`](../veqpy/operator/layout.py)
-4. [`veqpy/engine/orchestration.py`](../veqpy/engine/orchestration.py)
-5. The relevant backend file under [`veqpy/engine/`](../veqpy/engine)
-6. The matching regression or script entry under [`tests/`](../tests)
+3. [`veqpy/operator/packed_layout.py`](../veqpy/operator/packed_layout.py)
+4. [`veqpy/operator/runtime_layout.py`](../veqpy/operator/runtime_layout.py)
+5. [`veqpy/operator/profile_runtime.py`](../veqpy/operator/profile_runtime.py)
+6. [`veqpy/orchestration.py`](../veqpy/orchestration.py)
+7. The relevant numba kernel or binding file under [`veqpy/engine/`](../veqpy/engine)
+8. The matching regression or script entry under [`tests/`](../tests)

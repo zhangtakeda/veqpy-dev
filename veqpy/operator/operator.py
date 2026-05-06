@@ -20,34 +20,25 @@ from typing import Callable
 
 import numpy as np
 
-from veqpy.engine import orchestration, validate_route
-from veqpy.engine.backend import BackendCapabilities, resolve_backend
+from veqpy import orchestration
+from veqpy.engine import numba_operator, numba_profile, numba_residual, validate_route
 from veqpy.model.equilibrium import Equilibrium
 from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile
-from veqpy.operator.codec import decode_packed_blocks, encode_packed_state
-from veqpy.operator.execution_helpers import snapshot_equilibrium_from_runtime
-from veqpy.operator.layout import (
+from veqpy.operator.operator_case import OperatorCase
+from veqpy.operator.packed_layout import (
     build_active_profile_metadata,
     build_fourier_profile_names,
     build_profile_index,
     build_profile_layout,
     build_profile_names,
     build_shape_profile_names,
+    decode_packed_blocks,
+    encode_packed_state,
     get_prefix_profile_names,
     packed_size,
 )
-from veqpy.operator.layouts import (
-    BackendState,
-    ExecutionState,
-    FieldRuntimeState,
-    ResidualBindingLayout,
-    RuntimeLayout,
-    SourceRuntimeState,
-    StaticLayout,
-)
-from veqpy.operator.operator_case import OperatorCase
-from veqpy.operator.profile_setup import (
+from veqpy.operator.profile_runtime import (
     build_profile_stage_runner,
     make_profile,
     refresh_fourier_family_base_fields,
@@ -56,20 +47,17 @@ from veqpy.operator.profile_setup import (
     refresh_stage_a_runtime,
     validate_case_compatibility,
 )
-from veqpy.operator.runtime_allocation import allocate_runtime_state
-
-_PROFILE_STATIC_KWARGS: dict[str, dict[str, int]] = {
-    "psin": {"power": 2},
-    "F": {"envelope_power": 2},
-}
-_PROFILE_OFFSET_SPECS: dict[str, float | str] = {
-    "h": 0.0,
-    "v": 0.0,
-    "k": "ka",
-    "psin": 1.0,
-    "F": 1.0,
-}
-_PROFILE_SCALE_SPECS: dict[str, tuple[str, ...]] = {"F": ("R0", "B0", "R0", "B0")}
+from veqpy.operator.runtime_layout import (
+    BackendState,
+    ExecutionState,
+    FieldRuntimeState,
+    ResidualBindingLayout,
+    RuntimeLayout,
+    SourceRuntimeState,
+    StaticLayout,
+    allocate_runtime_state,
+)
+from veqpy.orchestration import normalize_fourier_power_K_max, resolve_fourier_power
 
 
 @dataclass(slots=True)
@@ -78,12 +66,11 @@ class Operator:
 
     grid: Grid = field(repr=False)
     case: OperatorCase = field(repr=False)
-    backend_name: str = "numba"
+    K_max: int | None = None
     static_layout: StaticLayout = field(init=False, repr=False)
     residual_binding_layout: ResidualBindingLayout = field(init=False, repr=False)
     runtime_layout: RuntimeLayout = field(init=False, repr=False)
     backend_state: BackendState = field(init=False, repr=False)
-    backend_caps: BackendCapabilities = field(init=False, repr=False)
 
     h_profile: Profile = field(init=False)
     v_profile: Profile = field(init=False)
@@ -141,11 +128,10 @@ class Operator:
     packed_residual: np.ndarray = field(init=False, repr=False)
     profile_static_kwargs_by_name: dict[str, dict[str, int]] = field(init=False, repr=False)
     profile_offset_specs: dict[str, float | str] = field(init=False, repr=False)
-    profile_scale_specs: dict[str, tuple[str, ...]] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         """完成 layout 构造, 运行时缓冲区分配和 case 绑定."""
-        self.backend_caps = resolve_backend(self.backend_name)
+        self.K_max = normalize_fourier_power_K_max(self.K_max)
         self._refresh_operator_identity()
         self.prefix_profile_names = get_prefix_profile_names()
         self.shape_profile_names = build_shape_profile_names(self.grid.M_max)
@@ -321,10 +307,15 @@ class Operator:
         active_residual_block_codes, active_residual_block_orders = orchestration.build_residual_block_metadata(
             active_profile_names
         )
+        active_residual_block_radial_powers = orchestration.build_residual_block_radial_powers(
+            active_profile_names,
+            K_max=self.K_max,
+        )
         return ResidualBindingLayout(
             active_profile_names=active_profile_names,
             active_residual_block_codes=active_residual_block_codes,
             active_residual_block_orders=active_residual_block_orders,
+            active_residual_block_radial_powers=active_residual_block_radial_powers,
         )
 
     def _refresh_runtime_layout_views(self) -> None:
@@ -374,7 +365,6 @@ class Operator:
                 profile_index=self.profile_index,
                 profile_static_kwargs_by_name=self.profile_static_kwargs_by_name,
                 profile_offset_specs=self.profile_offset_specs,
-                profile_scale_specs=self.profile_scale_specs,
             ),
         )
         self.profiles_by_name = bundle.profiles_by_name
@@ -439,15 +429,21 @@ class Operator:
         )
 
     def _refresh_profile_config(self) -> None:
-        self.profile_static_kwargs_by_name = {name: dict(kwargs) for name, kwargs in _PROFILE_STATIC_KWARGS.items()}
-        self.profile_offset_specs = dict(_PROFILE_OFFSET_SPECS)
-        self.profile_scale_specs = dict(_PROFILE_SCALE_SPECS)
+        self.profile_static_kwargs_by_name = {
+            name: dict(kwargs) for name, kwargs in orchestration.PROFILE_STATIC_KWARGS.items()
+        }
+        for name in self.c_profile_names + self.s_profile_names:
+            order = int(name[1:])
+            self.profile_static_kwargs_by_name[name] = (
+                {} if order == 0 else {"power": resolve_fourier_power(order, self.K_max)}
+            )
+        self.profile_offset_specs = dict(orchestration.PROFILE_OFFSET_SPECS)
 
     def _build_profile_postprocess_runner(self) -> Callable[[], None]:
         eps = 1.0e-10
 
         def runner() -> None:
-            self.backend_caps.apply_f2_profile_fields(self.runtime_layout.F_profile_fields, eps=eps)
+            numba_operator.convert_f_squared_fields_to_f(self.runtime_layout.F_profile_fields, eps=eps)
 
         return runner
 
@@ -461,7 +457,6 @@ class Operator:
             profiles_by_name=self.profiles_by_name,
             profile_static_kwargs_by_name=self.profile_static_kwargs_by_name,
             profile_offset_specs=self.profile_offset_specs,
-            profile_scale_specs=self.profile_scale_specs,
             refresh_fourier_family_base_fields=lambda: refresh_fourier_family_base_fields(
                 M_max=self.grid.M_max,
                 profile_index=self.profile_index,
@@ -521,7 +516,7 @@ class Operator:
             active_scales=self.active_scales,
             active_coeff_index_rows=self.active_coeff_index_rows,
             active_lengths=self.active_lengths,
-            update_profiles_packed_bulk=self.backend_caps.update_profiles_packed_bulk,
+            update_profiles_packed_bulk=numba_profile.update_profiles_packed_bulk,
         )
 
     def _build_geometry_stage_runner(self) -> Callable:
@@ -557,7 +552,7 @@ class Operator:
         return orchestration.build_bound_source_stage_runner(self)
 
     def _build_source_eval_runner(self) -> Callable:
-        return self.backend_caps.bind_source_eval_runner(
+        return numba_operator.bind_source_eval_runner(
             source_plan=self.source_plan,
             backend_state=self.backend_state,
             B0=self.case.B0,
@@ -579,7 +574,7 @@ class Operator:
         B0 = self.case.B0
 
         def runner() -> np.ndarray:
-            self.backend_caps.update_residual_compact(
+            numba_residual.update_residual_compact(
                 residual_workspace,
                 float(alpha_state[0]),
                 float(alpha_state[1]),
@@ -588,11 +583,12 @@ class Operator:
             )
             packed = np.zeros(self.x_size, dtype=np.float64)
             scratch = np.empty(self.grid.Nr, dtype=np.float64)
-            self.backend_caps.run_residual_blocks_packed_precomputed(
+            numba_residual.run_residual_blocks_packed_precomputed(
                 packed,
                 scratch,
                 self.residual_binding_layout.active_residual_block_codes,
                 self.residual_binding_layout.active_residual_block_orders,
+                self.residual_binding_layout.active_residual_block_radial_powers,
                 self.active_coeff_index_rows,
                 self.active_lengths,
                 residual_workspace,
@@ -627,7 +623,7 @@ class Operator:
         B0 = self.case.B0
 
         def runner() -> np.ndarray:
-            self.backend_caps.update_residual_compact(
+            numba_residual.update_residual_compact(
                 residual_workspace,
                 float(alpha_state[0]),
                 float(alpha_state[1]),
@@ -636,11 +632,12 @@ class Operator:
             )
             packed_residual.fill(0.0)
             scratch = np.empty(self.grid.Nr, dtype=np.float64)
-            self.backend_caps.run_residual_blocks_packed_precomputed(
+            numba_residual.run_residual_blocks_packed_precomputed(
                 packed_residual,
                 scratch,
                 self.residual_binding_layout.active_residual_block_codes,
                 self.residual_binding_layout.active_residual_block_orders,
+                self.residual_binding_layout.active_residual_block_radial_powers,
                 self.active_coeff_index_rows,
                 self.active_lengths,
                 residual_workspace,
@@ -670,10 +667,7 @@ class Operator:
         )
 
     def invalidate_source_state(self) -> None:
-        if (self.source_plan.route, self.source_plan.coordinate, self.source_plan.nodes) in {
-            ("PJ2", "psin", "uniform"),
-            ("PQ", "psin", "uniform"),
-        }:
+        if self.source_plan.is_fixed_point_psin_route:
             self.source_runtime_state.work_state.psin_query.fill(-1.0)
 
     def _build_fused_residual_runner(self) -> Callable[[np.ndarray], np.ndarray]:
@@ -681,7 +675,7 @@ class Operator:
             return self._evaluate_residual
         if not self.source_plan.supports_fused_residual:
             return self._evaluate_residual
-        return self.backend_caps.bind_fused_residual_runner(
+        return numba_operator.bind_fused_residual_runner(
             source_plan=self.source_plan,
             backend_state=self.backend_state,
             alpha_state=self.execution_state.fused_alpha_state,
@@ -712,3 +706,82 @@ class Operator:
             alpha1=self.alpha1,
             alpha2=self.alpha2,
         )
+
+
+def snapshot_equilibrium_from_runtime(
+    x: np.ndarray,
+    *,
+    case: OperatorCase,
+    grid: Grid,
+    profile_L: np.ndarray,
+    coeff_index: np.ndarray,
+    profile_names: tuple[str, ...],
+    shape_profile_names: tuple[str, ...],
+    profile_index: dict[str, int],
+    profiles_by_name: dict[str, Profile],
+    psin: np.ndarray,
+    FFn_psin: np.ndarray,
+    Pn_psin: np.ndarray,
+    psin_r: np.ndarray,
+    psin_rr: np.ndarray,
+    alpha1: float,
+    alpha2: float,
+) -> Equilibrium:
+    """Materialize an Equilibrium snapshot from current Operator runtime arrays."""
+    coeff_blocks = decode_packed_blocks(x, profile_L, coeff_index, profile_names=profile_names)
+    shape_profiles = snapshot_equilibrium_profiles(
+        coeff_blocks,
+        shape_profile_names=shape_profile_names,
+        profile_index=profile_index,
+        profiles_by_name=profiles_by_name,
+    )
+    ffn_psin_snapshot = np.asarray(FFn_psin, dtype=np.float64).copy()
+    if _should_regularize_snapshot_ffn_psin(case):
+        ff_r = ffn_psin_snapshot * np.asarray(psin_r, dtype=np.float64)
+        ff_r = grid.regularize_ff_r(ff_r)
+        ffn_psin_snapshot = ff_r / np.maximum(np.asarray(psin_r, dtype=np.float64), 1.0e-10)
+    return Equilibrium(
+        R0=case.R0,
+        Z0=case.Z0,
+        B0=case.B0,
+        a=case.a,
+        grid=grid,
+        shape_profiles=shape_profiles,
+        psin=psin.copy(),
+        FFn_psin=ffn_psin_snapshot,
+        Pn_psin=Pn_psin.copy(),
+        psin_r=psin_r.copy(),
+        psin_rr=psin_rr.copy(),
+        alpha1=float(alpha1),
+        alpha2=float(alpha2),
+    )
+
+
+def _should_regularize_snapshot_ffn_psin(case: OperatorCase) -> bool:
+    has_ip = case.Ip is not None and np.isfinite(case.Ip)
+    if case.route == "PP" and case.nodes == "uniform":
+        return True
+    if case.route == "PJ2" and case.coordinate == "psin" and case.nodes == "uniform":
+        return True
+    if case.route == "PQ" and case.coordinate == "psin" and case.nodes == "uniform" and has_ip:
+        return True
+    return False
+
+
+def snapshot_equilibrium_profiles(
+    coeff_blocks: tuple[np.ndarray | None, ...],
+    *,
+    shape_profile_names: tuple[str, ...],
+    profile_index: dict[str, int],
+    profiles_by_name: dict[str, Profile],
+) -> dict[str, Profile]:
+    return {
+        name: snapshot_profile(profiles_by_name[name], coeff_blocks[profile_index[name]])
+        for name in shape_profile_names
+    }
+
+
+def snapshot_profile(profile: Profile, coeff_block: np.ndarray | None) -> Profile:
+    copied = profile.copy()
+    copied.coeff = None if coeff_block is None else coeff_block.copy()
+    return copied

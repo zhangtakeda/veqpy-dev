@@ -7,6 +7,7 @@
 data
 dist
 docs
+paper
 scripts
 figures
 tests/demo
@@ -17,14 +18,14 @@ __pycache__
 .backup
 .claude
 .codex
+.omx
 .ruff_cache
 .venv
 .vscode
 
 .uv-cache
 uv.lock
+AGENTS.md
 TODO.md
 PAPER.md
 /test.py
-
-zhang2026

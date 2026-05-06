@@ -1,13 +1,16 @@
 """
-Module: engine.orchestration
+Module: veqpy.orchestration
 
 Role:
-- 收敛 operator stage orchestration 的 engine 内部实现.
-- 避免 source/geometry/materialization 逻辑泄露到 operator 层.
+- Centralize Python-level stage orchestration shared by operator/runtime code.
+- Keep route policy, source materialization, residual metadata, and K_max
+  decisions out of numeric kernels.
 
 Notes:
-- 这里承接的是 Python orchestration, 不改 numba kernel 本体.
-- operator 层应只保留 case/layout/runtime 接线.
+- This module assembles and refreshes runtime stages; it does not implement
+  numba kernels.
+- ABI dataclasses remain in ``veqpy.engine.backend_abi`` because they describe
+  backend binding shapes rather than orchestration policy.
 """
 
 from __future__ import annotations
@@ -30,11 +33,11 @@ from veqpy.engine.numba_source import (
 )
 
 if TYPE_CHECKING:
-    from veqpy.operator.layouts import SourceRuntimeState
     from veqpy.operator.operator_case import OperatorCase
+    from veqpy.operator.runtime_layout import SourceRuntimeState
 
 
-_RESIDUAL_BLOCK_CODE_BY_NAME = {
+RESIDUAL_BLOCK_CODE_BY_NAME = {
     "h": 0,
     "v": 1,
     "k": 2,
@@ -44,25 +47,138 @@ _RESIDUAL_BLOCK_CODE_BY_NAME = {
     "psin": 6,
     "F": 7,
 }
-F_BLOCK_CODE = _RESIDUAL_BLOCK_CODE_BY_NAME["F"]
-F2_BLOCK_CODE = F_BLOCK_CODE
+
+PACKED_PROFILE_FAMILY_ORDER = ("h", "v", "k", "c0", "c", "s", "psin", "F")
+PREFIX_PROFILE_FAMILIES = ("psin", "F")
+SHAPE_PROFILE_FAMILIES = ("h", "v", "k", "c0", "c", "s")
+ALL_PROFILE_FAMILIES = SHAPE_PROFILE_FAMILIES + PREFIX_PROFILE_FAMILIES
+
+PROFILE_STATIC_KWARGS: dict[str, dict[str, int]] = {
+    "psin": {"power": 2},
+    "F": {"envelope_power": 2},
+}
+PROFILE_OFFSET_SPECS: dict[str, float | str] = {
+    "h": 0.0,
+    "v": 0.0,
+    "k": "ka",
+    "psin": 1.0,
+    "F": 1.0,
+}
+
+
+def validate_profile_family_order(
+    family_order: tuple[str, ...] = PACKED_PROFILE_FAMILY_ORDER,
+) -> tuple[str, ...]:
+    family_order = tuple(family_order)
+    if len(family_order) != len(ALL_PROFILE_FAMILIES) or set(family_order) != set(ALL_PROFILE_FAMILIES):
+        raise ValueError(
+            "PACKED_PROFILE_FAMILY_ORDER must contain each family exactly once: "
+            f"{ALL_PROFILE_FAMILIES!r}, got {family_order!r}"
+        )
+    return family_order
+
+
+def get_prefix_profile_names(
+    family_order: tuple[str, ...] = PACKED_PROFILE_FAMILY_ORDER,
+) -> tuple[str, ...]:
+    return tuple(family for family in validate_profile_family_order(family_order) if family in PREFIX_PROFILE_FAMILIES)
+
+
+def expand_profile_family(family: str, M_max: int) -> tuple[str, ...]:
+    if family == "psin":
+        return ("psin",)
+    if family == "F":
+        return ("F",)
+    if family == "h":
+        return ("h",)
+    if family == "v":
+        return ("v",)
+    if family == "k":
+        return ("k",)
+    if family == "c0":
+        return ("c0",)
+    if family == "c":
+        return tuple(f"c{k}" for k in range(1, M_max + 1))
+    if family == "s":
+        return tuple(f"s{k}" for k in range(1, M_max + 1))
+    raise KeyError(f"Unknown profile family {family!r}")
+
+
+def build_fourier_profile_names(
+    M_max: int,
+    family_order: tuple[str, ...] = PACKED_PROFILE_FAMILY_ORDER,
+) -> tuple[str, ...]:
+    M_max = int(M_max)
+    if M_max < 0:
+        raise ValueError(f"M_max must be non-negative, got {M_max}")
+
+    fourier_names: list[str] = []
+    for family in validate_profile_family_order(family_order):
+        if family not in ("c0", "c", "s"):
+            continue
+        fourier_names.extend(expand_profile_family(family, M_max))
+    return tuple(fourier_names)
+
+
+def build_shape_profile_names(
+    M_max: int,
+    family_order: tuple[str, ...] = PACKED_PROFILE_FAMILY_ORDER,
+) -> tuple[str, ...]:
+    shape_profile_names: list[str] = []
+    for family in validate_profile_family_order(family_order):
+        if family in PREFIX_PROFILE_FAMILIES:
+            continue
+        shape_profile_names.extend(expand_profile_family(family, int(M_max)))
+    return tuple(shape_profile_names)
+
+
+def build_profile_names(
+    M_max: int,
+    family_order: tuple[str, ...] = PACKED_PROFILE_FAMILY_ORDER,
+) -> tuple[str, ...]:
+    M_max = int(M_max)
+    profile_names: list[str] = []
+    for family in validate_profile_family_order(family_order):
+        profile_names.extend(expand_profile_family(family, M_max))
+    return tuple(profile_names)
+
+
+def normalize_fourier_power_K_max(value: int | None) -> int | None:
+    """Normalize and validate a Fourier radial-power cap."""
+    if value is None:
+        return None
+    K_max = int(value)
+    if K_max < 1:
+        raise ValueError(f"K_max must be None or an integer >= 1, got {value!r}")
+    return K_max
+
+
+def resolve_fourier_power(order: int, K_max: int | None = None) -> int:
+    """Resolve the radial prefactor power for a Fourier shape profile order."""
+    order = int(order)
+    if order <= 0:
+        return 0
+    normalized_K_max = normalize_fourier_power_K_max(K_max)
+    if normalized_K_max is None:
+        return order
+    return min(order, normalized_K_max)
 
 
 def _decode_residual_block_code(name: str) -> tuple[int, int]:
     if name.startswith("c") and name[1:].isdigit():
         order = int(name[1:])
         if order == 0:
-            return (_RESIDUAL_BLOCK_CODE_BY_NAME["c0"], 0)
-        return (_RESIDUAL_BLOCK_CODE_BY_NAME["c_family"], order)
+            return (RESIDUAL_BLOCK_CODE_BY_NAME["c0"], 0)
+        return (RESIDUAL_BLOCK_CODE_BY_NAME["c_family"], order)
     if name.startswith("s") and name[1:].isdigit():
         order = int(name[1:])
         if order == 0:
             raise KeyError("s0 is not a valid residual block")
-        return (_RESIDUAL_BLOCK_CODE_BY_NAME["s_family"], order)
+        return (RESIDUAL_BLOCK_CODE_BY_NAME["s_family"], order)
     try:
-        return (_RESIDUAL_BLOCK_CODE_BY_NAME[name], 0)
+        return (RESIDUAL_BLOCK_CODE_BY_NAME[name], 0)
     except KeyError as exc:
-        supported = ", ".join(_RESIDUAL_BLOCK_CODE_BY_NAME)
+        supported = ", ".join(RESIDUAL_BLOCK_CODE_BY_NAME)
         raise KeyError(f"Unknown residual block {name!r}. Supported blocks: {supported}") from exc
 
 
@@ -72,6 +188,14 @@ def build_residual_block_metadata(profile_names: tuple[str, ...]) -> tuple[np.nd
     for i, name in enumerate(profile_names):
         block_codes[i], block_orders[i] = _decode_residual_block_code(name)
     return block_codes, block_orders
+
+
+def build_residual_block_radial_powers(profile_names: tuple[str, ...], *, K_max: int | None) -> np.ndarray:
+    radial_powers = np.zeros(len(profile_names), dtype=np.int64)
+    for i, name in enumerate(profile_names):
+        if name.startswith(("c", "s")) and name[1:].isdigit():
+            radial_powers[i] = resolve_fourier_power(int(name[1:]), K_max)
+    return radial_powers
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,7 +208,7 @@ class SourcePlan:
     nodes: str
     strategy: str
     parameterization: str
-    n_src: int
+    source_sample_count: int
     heat_input: np.ndarray
     current_input: np.ndarray
     Ip: float
@@ -108,6 +232,13 @@ class SourcePlan:
         return self.strategy == "profile_owned_psin"
 
     @property
+    def is_fixed_point_psin_route(self) -> bool:
+        return (self.route, self.coordinate, self.nodes) in {
+            ("PJ2", "psin", "uniform"),
+            ("PQ", "psin", "uniform"),
+        }
+
+    @property
     def supports_fused_residual(self) -> bool:
         return self.strategy in {"single_pass", "profile_owned_psin"}
 
@@ -116,26 +247,40 @@ class SourcePlan:
         return self.is_profile_owned_psin
 
     @property
+    def requires_psin_query_workspace(self) -> bool:
+        return self.is_profile_owned_psin or self.is_fixed_point_psin_route
+
+    @property
+    def requires_source_parameter_query(self) -> bool:
+        return self.is_psin_coordinate and self.parameterization != "identity"
+
+    @property
+    def requires_target_root_fields(self) -> bool:
+        return self.is_profile_owned_psin or self.is_fixed_point_psin_route
+
+    @property
     def coordinate_code(self) -> int:
         return int(COORDINATE_CODES[self.coordinate])
 
     @property
     def parameterization_code(self) -> int:
-        return int(_SOURCE_PARAMETERIZATION_CODES[self.parameterization])
+        return int(SOURCE_PARAMETERIZATION_CODES[self.parameterization])
 
     @property
     def projection_domain_code(self) -> int:
-        return int(_PROJECTION_DOMAIN_CODES[self.projection_domain])
+        return int(PROJECTION_DOMAIN_CODES[self.projection_domain])
 
     @property
     def endpoint_policy_code(self) -> int:
-        return int(_ENDPOINT_POLICY_CODES[self.endpoint_policy])
+        return int(ENDPOINT_POLICY_CODES[self.endpoint_policy])
 
 
 def _source_route_key(source_plan: SourcePlan) -> tuple[str, str, str]:
     return (source_plan.route, source_plan.coordinate, source_plan.nodes)
+
+
 @dataclass(frozen=True, slots=True)
-class _SourceProjectionPolicy:
+class SourceProjectionPolicy:
     domain: str
     heat_degree: int
     current_degree: int
@@ -144,29 +289,29 @@ class _SourceProjectionPolicy:
     current_other_endpoint_policy: str = "none"
 
 
-_SOURCE_PROJECTION_POLICIES: dict[tuple[str, str, str], _SourceProjectionPolicy] = {
-    ("PI", "psin", "uniform"): _SourceProjectionPolicy(
+SOURCE_PROJECTION_POLICIES: dict[tuple[str, str, str], SourceProjectionPolicy] = {
+    ("PI", "psin", "uniform"): SourceProjectionPolicy(
         domain="psin",
         heat_degree=7,
         current_degree=8,
         current_ip_endpoint_policy="both",
         current_other_endpoint_policy="none",
     ),
-    ("PJ1", "psin", "uniform"): _SourceProjectionPolicy(
+    ("PJ1", "psin", "uniform"): SourceProjectionPolicy(
         domain="psin",
         heat_degree=7,
         current_degree=8,
         current_ip_endpoint_policy="both",
         current_other_endpoint_policy="none",
     ),
-    ("PJ2", "psin", "uniform"): _SourceProjectionPolicy(
+    ("PJ2", "psin", "uniform"): SourceProjectionPolicy(
         domain="psin",
         heat_degree=5,
         current_degree=6,
         current_ip_endpoint_policy="none",
         current_other_endpoint_policy="none",
     ),
-    ("PQ", "psin", "uniform"): _SourceProjectionPolicy(
+    ("PQ", "psin", "uniform"): SourceProjectionPolicy(
         domain="sqrt_psin",
         heat_degree=8,
         current_degree=10,
@@ -177,19 +322,19 @@ _SOURCE_PROJECTION_POLICIES: dict[tuple[str, str, str], _SourceProjectionPolicy]
 }
 
 
-_PROJECTION_DOMAIN_CODES = {
+PROJECTION_DOMAIN_CODES = {
     "psin": 0,
     "sqrt_psin": 1,
 }
 
-_ENDPOINT_POLICY_CODES = {
+ENDPOINT_POLICY_CODES = {
     "none": 0,
     "right": 1,
     "both": 2,
     "affine_both": 3,
 }
 
-_SOURCE_PARAMETERIZATION_CODES = {
+SOURCE_PARAMETERIZATION_CODES = {
     "identity": 0,
     "sqrt_psin": 1,
 }
@@ -202,14 +347,14 @@ def _resolve_source_projection_policy(
     *,
     has_ip_constraint: bool,
     has_beta_constraint: bool,
-) -> _SourceProjectionPolicy | None:
-    policy = _SOURCE_PROJECTION_POLICIES.get((route, coordinate, nodes))
+) -> SourceProjectionPolicy | None:
+    policy = SOURCE_PROJECTION_POLICIES.get((route, coordinate, nodes))
     if policy is None:
         return None
     if route != "PQ" or coordinate != "psin" or nodes != "uniform":
         return policy
     if has_ip_constraint and has_beta_constraint:
-        return _SourceProjectionPolicy(
+        return SourceProjectionPolicy(
             domain="sqrt_psin",
             heat_degree=7,
             current_degree=7,
@@ -218,7 +363,7 @@ def _resolve_source_projection_policy(
             current_other_endpoint_policy="none",
         )
     if has_ip_constraint:
-        return _SourceProjectionPolicy(
+        return SourceProjectionPolicy(
             domain="sqrt_psin",
             heat_degree=7,
             current_degree=9,
@@ -227,7 +372,7 @@ def _resolve_source_projection_policy(
             current_other_endpoint_policy="none",
         )
     if has_beta_constraint:
-        return _SourceProjectionPolicy(
+        return SourceProjectionPolicy(
             domain="sqrt_psin",
             heat_degree=7,
             current_degree=9,
@@ -235,7 +380,7 @@ def _resolve_source_projection_policy(
             current_ip_endpoint_policy="affine_both",
             current_other_endpoint_policy="both",
         )
-    return _SourceProjectionPolicy(
+    return SourceProjectionPolicy(
         domain="sqrt_psin",
         heat_degree=7,
         current_degree=10,
@@ -243,6 +388,8 @@ def _resolve_source_projection_policy(
         current_ip_endpoint_policy="affine_both",
         current_other_endpoint_policy="both",
     )
+
+
 def build_source_plan(
     *,
     case: "OperatorCase",
@@ -281,7 +428,7 @@ def build_source_plan(
         nodes=str(case.nodes).lower(),
         strategy=str(source_route_spec.source_strategy).lower(),
         parameterization=str(source_route_spec.source_parameterization).lower(),
-        n_src=int(case.heat_input.shape[0]),
+        source_sample_count=int(case.heat_input.shape[0]),
         heat_input=case.heat_input,
         current_input=case.current_input,
         Ip=float(case.Ip),
@@ -332,7 +479,7 @@ def refresh_source_runtime(
     source_const_state = source_runtime_state.const_state
     source_aux_state = source_runtime_state.aux_state
     source_work_state = source_runtime_state.work_state
-    case_key = (source_plan.coordinate, source_plan.nodes, source_plan.n_src)
+    case_key = (source_plan.coordinate, source_plan.nodes, source_plan.source_sample_count)
     if source_runtime_state.cache_key != case_key:
         if source_plan.is_grid_nodes:
             source_const_state.barycentric_weights = np.empty(0, dtype=np.float64)
@@ -348,14 +495,14 @@ def refresh_source_runtime(
                 source_const_state.fixed_remap_matrix,
             ) = build_source_remap_cache(
                 source_plan.coordinate,
-                source_plan.n_src,
+                source_plan.source_sample_count,
                 rho=grid_rho,
             )
             if not source_plan.has_projection_policy:
                 source_const_state.heat_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
                 source_const_state.current_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
             else:
-                source_axis = np.linspace(0.0, 1.0, int(source_plan.n_src), dtype=np.float64)
+                source_axis = np.linspace(0.0, 1.0, int(source_plan.source_sample_count), dtype=np.float64)
                 source_query = np.empty_like(source_axis)
                 np.copyto(source_query, source_axis)
                 np.clip(source_query, 0.0, 1.0, out=source_query)
@@ -405,7 +552,7 @@ def refresh_source_runtime(
                 source_plan.heat_input,
                 source_plan.current_input,
                 source_plan.coordinate_code,
-                source_plan.n_src,
+                source_plan.source_sample_count,
                 source_const_state.barycentric_weights,
                 source_const_state.fixed_remap_matrix,
                 psin,
@@ -557,7 +704,7 @@ def _build_source_stage_runner_shared(operator_core: Any) -> Callable:
                     source_plan.heat_input,
                     source_plan.current_input,
                     source_plan.coordinate_code,
-                    source_plan.n_src,
+                    source_plan.source_sample_count,
                     source_runtime_state.const_state.barycentric_weights,
                     source_runtime_state.const_state.fixed_remap_matrix,
                     source_work_state.parameter_query,
@@ -584,6 +731,8 @@ def _build_source_stage_runner_shared(operator_core: Any) -> Callable:
         )
 
     return runner
+
+
 def _build_pj2_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[[], tuple[float, float]]:
     source_plan = operator_core.source_plan
     source_eval_runner = operator_core.execution_state.source_eval_runner
@@ -593,7 +742,7 @@ def _build_pj2_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[
     source_aux_state = source_runtime_state.aux_state
     target_root_fields = source_aux_state.target_root_fields
     psin_profile_u = runtime_layout.psin_profile_u
-    tolerance = 1.0e-10
+    max_residual = 1.0e-10
 
     def runner() -> tuple[float, float]:
         if source_work_state.psin_query[0] < 0.0:
@@ -629,7 +778,7 @@ def _build_pj2_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[
                 source_plan.heat_input,
                 source_plan.current_input,
                 source_plan.coordinate_code,
-                source_plan.n_src,
+                source_plan.source_sample_count,
                 source_runtime_state.const_state.barycentric_weights,
                 source_runtime_state.const_state.fixed_remap_matrix,
                 source_work_state.parameter_query,
@@ -642,7 +791,7 @@ def _build_pj2_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[
                 source_work_state.materialized_current_input,
                 float(operator_core.case.R0),
             )
-            if update_fixed_point_psin_query(source_work_state.psin_query, target_root_fields[0], tolerance):
+            if update_fixed_point_psin_query(source_work_state.psin_query, target_root_fields[0], max_residual):
                 break
         np.copyto(source_work_state.psin_query, target_root_fields[0])
         for _ in range(8):
@@ -665,7 +814,7 @@ def _build_pj2_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[
                 source_work_state.materialized_current_input,
                 float(operator_core.case.R0),
             )
-            if update_fixed_point_psin_query(source_work_state.psin_query, target_root_fields[0], tolerance):
+            if update_fixed_point_psin_query(source_work_state.psin_query, target_root_fields[0], max_residual):
                 break
         np.copyto(operator_core.psin, target_root_fields[0])
         np.copyto(operator_core.psin_r, target_root_fields[1])
@@ -684,8 +833,8 @@ def _build_pq_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[[
     source_aux_state = source_runtime_state.aux_state
     target_root_fields = source_aux_state.target_root_fields
     psin_profile_u = runtime_layout.psin_profile_u
-    tolerance = 1.0e-10
-    allow_query_warmstart = bool(source_plan.endpoint_policy_code != _ENDPOINT_POLICY_CODES["none"])
+    max_residual = 1.0e-10
+    allow_query_warmstart = bool(source_plan.endpoint_policy_code != ENDPOINT_POLICY_CODES["none"])
 
     def runner() -> tuple[float, float]:
         if (not allow_query_warmstart) or source_work_state.psin_query[0] < 0.0:
@@ -721,7 +870,7 @@ def _build_pq_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[[
                 source_plan.heat_input,
                 source_plan.current_input,
                 source_plan.coordinate_code,
-                source_plan.n_src,
+                source_plan.source_sample_count,
                 source_runtime_state.const_state.barycentric_weights,
                 source_runtime_state.const_state.fixed_remap_matrix,
                 source_work_state.parameter_query,
@@ -734,7 +883,7 @@ def _build_pq_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[[
                 source_work_state.materialized_current_input,
                 float(operator_core.case.R0),
             )
-            if update_fixed_point_psin_query(source_work_state.psin_query, target_root_fields[0], tolerance):
+            if update_fixed_point_psin_query(source_work_state.psin_query, target_root_fields[0], max_residual):
                 break
         np.copyto(source_work_state.psin_query, target_root_fields[0])
         for _ in range(16):
@@ -757,7 +906,7 @@ def _build_pq_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[[
                 source_work_state.materialized_current_input,
                 float(operator_core.case.R0),
             )
-            if update_fixed_point_psin_query(source_work_state.psin_query, target_root_fields[0], tolerance):
+            if update_fixed_point_psin_query(source_work_state.psin_query, target_root_fields[0], max_residual):
                 break
         np.copyto(operator_core.psin, target_root_fields[0])
         np.copyto(operator_core.psin_r, target_root_fields[1])
@@ -840,14 +989,21 @@ def build_geometry_stage_runner(
 
 
 __all__ = [
-    "F_BLOCK_CODE",
-    "F2_BLOCK_CODE",
     "SourcePlan",
     "build_bound_source_stage_runner",
-    "build_residual_block_metadata",
-    "build_source_plan",
+    "build_fourier_profile_names",
     "build_geometry_stage_runner",
+    "build_profile_names",
+    "build_residual_block_metadata",
+    "build_residual_block_radial_powers",
+    "build_shape_profile_names",
+    "build_source_plan",
+    "expand_profile_family",
+    "get_prefix_profile_names",
+    "normalize_fourier_power_K_max",
     "refresh_source_runtime",
-    "validate_source_plan_profile_support",
+    "resolve_fourier_power",
+    "validate_profile_family_order",
     "validate_source_inputs",
+    "validate_source_plan_profile_support",
 ]

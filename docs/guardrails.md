@@ -49,6 +49,17 @@ It owns:
 
 It must not delegate packed-layout ownership back into `solver` or `tests`.
 
+Current operator-layer implementation boundaries:
+
+- [`veqpy/operator/packed_layout.py`](../veqpy/operator/packed_layout.py)
+  owns packed layout and packed state codec helpers.
+- [`veqpy/operator/runtime_layout.py`](../veqpy/operator/runtime_layout.py)
+  owns runtime containers and one-time runtime allocation.
+- [`veqpy/operator/profile_runtime.py`](../veqpy/operator/profile_runtime.py)
+  owns profile setup/refresh rules and Stage-A runtime binding.
+- [`veqpy/operator/operator.py`](../veqpy/operator/operator.py)
+  owns the public `Operator` facade, stage calls, and snapshot materialization.
+
 ### Engine
 
 [`veqpy/engine/`](../veqpy/engine) owns backend-facing numerical kernels and backend runner construction.
@@ -97,12 +108,12 @@ probably architectural drift rather than a local refactor.
 
 The only authority for packed layout semantics is:
 
-- [`veqpy/operator/layout.py`](../veqpy/operator/layout.py)
-- [`veqpy/operator/codec.py`](../veqpy/operator/codec.py)
+- [`veqpy/operator/packed_layout.py`](../veqpy/operator/packed_layout.py)
 
 Required rules:
 
 - packed state and packed residual position semantics must continue to flow through `coeff_index` / `coeff_indices`
+- packed encode/decode helpers must use the same layout authority
 - profile ordering must remain layout-driven rather than handwritten in scattered places
 - `replace_case(...)` must not change packed topology
 
@@ -199,11 +210,13 @@ what the hot path must compute for every case.
 
 The supported user-facing backend is `numba`.
 
-`jax` currently exists as an experimental development path only. It should not
-be documented or treated as a stable user workflow.
+No `jax` module is part of the current supported runtime surface. If a future
+`jax` or other non-numba path is added experimentally, it should not be
+documented or treated as a stable user workflow.
 
-Any documentation or code change that makes `jax` look production-ready without
-the corresponding testing and packaging guarantees is a contract drift.
+Any documentation or code change that makes a non-numba path look
+production-ready without the corresponding testing and packaging guarantees is a
+contract drift.
 
 ## Script And Test Roles
 

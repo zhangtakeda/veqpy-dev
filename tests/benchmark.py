@@ -20,20 +20,18 @@ import numpy as np
 from scipy.interpolate import PchipInterpolator, interp1d
 
 from veqpy.engine import validate_route
-from veqpy.model.boundary import Boundary
-from veqpy.model.grid import Grid
-from veqpy.operator.layout import (
+from veqpy.model import Boundary, Grid
+from veqpy.operator import (
+    Operator,
+    OperatorCase,
     build_profile_index,
     build_profile_layout,
     build_profile_names,
     build_shape_profile_names,
 )
-from veqpy.operator.operator import Operator
-from veqpy.operator.operator_case import OperatorCase
-from veqpy.solver.solver import Solver
-from veqpy.solver.solver_config import SolverConfig
+from veqpy.solver import Solver, SolverConfig
 
-PLOT = False
+PLOT = True
 SHOW_PROGRESS = True
 
 # Reference solve: high-resolution baseline used to derive downstream cases.
@@ -100,7 +98,7 @@ REFERENCE_IP = 3.0e6
 REFERENCE_MU0_IP = MU0 * REFERENCE_IP
 SHAPE_PROFILE_NAMES = build_shape_profile_names(REFERENCE_GRID.M_max)
 BENCHMARK_MODES = ("PF", "PP", "PI", "PJ1", "PJ2", "PQ")
-BENCHMARK_INPUT_KINDS = ("uniform", "grid")
+BENCHMARK_INPUT_KINDS = ("uniform",)
 BENCHMARK_MODE_CONSTRAINTS = {
     "PF": ("null", "Ip", "beta"),
     "PP": ("Ip_beta", "Ip", "beta", "null"),
@@ -399,10 +397,8 @@ def _reference_cache_signature() -> dict[str, object]:
         },
         "config": {
             "method": CONFIG.method,
-            "rtol": float(CONFIG.rtol),
-            "atol": float(CONFIG.atol),
-            "root_maxiter": int(CONFIG.root_maxiter),
-            "root_maxfev": int(CONFIG.root_maxfev),
+            "max_residual": float(CONFIG.max_residual),
+            "max_evaluations": int(CONFIG.max_evaluations),
         },
     }
 
@@ -468,10 +464,8 @@ def _solve_reference(*, show_progress: bool = False) -> ReferenceBundle:
     solver = Solver(operator=Operator(REFERENCE_GRID, _reference_pf_case()), config=CONFIG)
     solver.solve(
         method=CONFIG.method,
-        rtol=CONFIG.rtol,
-        atol=CONFIG.atol,
-        root_maxiter=CONFIG.root_maxiter,
-        root_maxfev=CONFIG.root_maxfev,
+        max_residual=CONFIG.max_residual,
+        max_evaluations=CONFIG.max_evaluations,
         enable_verbose=False,
         enable_history=False,
         enable_warmstart=False,
@@ -658,10 +652,8 @@ def _solve_with_timing(case: OperatorCase) -> tuple[object, object, np.ndarray, 
     solver = Solver(operator=Operator(TEST_GRID, case), config=CONFIG)
     solver.solve(
         method=CONFIG.method,
-        rtol=CONFIG.rtol,
-        atol=CONFIG.atol,
-        root_maxiter=CONFIG.root_maxiter,
-        root_maxfev=CONFIG.root_maxfev,
+        max_residual=CONFIG.max_residual,
+        max_evaluations=CONFIG.max_evaluations,
         enable_verbose=False,
         enable_history=False,
         enable_warmstart=False,
@@ -672,10 +664,8 @@ def _solve_with_timing(case: OperatorCase) -> tuple[object, object, np.ndarray, 
     for index in range(BENCHMARK_REPEAT_COUNT):
         solver.solve(
             method=CONFIG.method,
-            rtol=CONFIG.rtol,
-            atol=CONFIG.atol,
-            root_maxiter=CONFIG.root_maxiter,
-            root_maxfev=CONFIG.root_maxfev,
+            max_residual=CONFIG.max_residual,
+            max_evaluations=CONFIG.max_evaluations,
             enable_verbose=False,
             enable_history=False,
             enable_warmstart=False,
@@ -806,7 +796,7 @@ def _write_report(
 ) -> None:
     worst_shape = max(rows, key=lambda row: row.shape_error)
     slowest_case = max(rows, key=lambda row: row.avg_ms)
-    largest_nfev_case = max(rows, key=lambda row: int(row.result.nfev))
+    largest_function_evaluations_case = max(rows, key=lambda row: int(row.result.function_evaluations))
     worst_psi_r_case = max(rows, key=lambda row: row.psi_r_rel_rms_error)
     worst_ff_psi_case = max(rows, key=lambda row: row.ff_psi_rel_rms_error)
     worst_mu0_p_psi_case = max(rows, key=lambda row: row.mu0_p_psi_rel_rms_error)
@@ -820,7 +810,7 @@ def _write_report(
     failing_rows = [row for row in rows if row.shape_error > SHAPE_MATCH_TOL]
     rows_by_error = _sort_rows_desc(rows, lambda row: row.shape_error)
     rows_by_time = _sort_rows_desc(rows, lambda row: row.avg_ms)
-    rows_by_nfev = _sort_rows_desc(rows, lambda row: int(row.result.nfev))
+    rows_by_function_evaluations = _sort_rows_desc(rows, lambda row: int(row.result.function_evaluations))
     rows_by_psi_r_rms = _sort_rows_desc(rows, lambda row: row.psi_r_rel_rms_error)
     rows_by_ff_psi_rms = _sort_rows_desc(rows, lambda row: row.ff_psi_rel_rms_error)
     rows_by_mu0_p_psi_rms = _sort_rows_desc(rows, lambda row: row.mu0_p_psi_rel_rms_error)
@@ -875,7 +865,11 @@ def _write_report(
                     f"(h/t={most_oscillatory_mu0_p_psi_case.mu0_p_psi_head_sign_changes}/{most_oscillatory_mu0_p_psi_case.mu0_p_psi_tail_sign_changes})",
                 ),
                 ("slowest_case", f"{slowest_case.case_name} ({slowest_case.avg_ms:.3f} ms)"),
-                ("largest_nfev_case", f"{largest_nfev_case.case_name} ({int(largest_nfev_case.result.nfev)})"),
+                (
+                    "largest_function_evaluations_case",
+                    f"{largest_function_evaluations_case.case_name} "
+                    f"({int(largest_function_evaluations_case.result.function_evaluations)})",
+                ),
             ]
         )
     )
@@ -890,9 +884,9 @@ def _write_report(
         + " | "
         + "std_ms".rjust(12)
         + " | "
-        + "nfev".rjust(6)
+        + "evaluations".rjust(6)
         + " | "
-        + "nit".rjust(6)
+        + "iterations".rjust(6)
         + " | "
         + "residual".rjust(12)
         + " | "
@@ -906,8 +900,8 @@ def _write_report(
             f"{row.shape_error:>12.6e} | "
             f"{row.avg_ms:>12.3f} | "
             f"{row.std_ms:>12.3f} | "
-            f"{int(row.result.nfev):>6d} | "
-            f"{int(row.result.nit):>6d} | "
+            f"{int(row.result.function_evaluations):>6d} | "
+            f"{int(row.result.iterations):>6d} | "
             f"{float(row.result.residual_norm_final):>12.6e} | "
             f"{ok:>4}"
         )
@@ -959,7 +953,7 @@ def _write_report(
                 ("right", "shape_error", 12, lambda index, row: f"{row.shape_error:.6e}"),
                 ("right", "avg_ms", 12, lambda index, row: f"{row.avg_ms:.3f}"),
                 ("right", "std_ms", 12, lambda index, row: f"{row.std_ms:.3f}"),
-                ("right", "nfev", 6, lambda index, row: int(row.result.nfev)),
+                ("right", "evaluations", 6, lambda index, row: int(row.result.function_evaluations)),
             ],
         )
     )
@@ -1087,18 +1081,18 @@ def _write_report(
                 ("right", "avg_ms", 12, lambda index, row: f"{row.avg_ms:.3f}"),
                 ("right", "std_ms", 12, lambda index, row: f"{row.std_ms:.3f}"),
                 ("right", "shape_error", 12, lambda index, row: f"{row.shape_error:.6e}"),
-                ("right", "nfev", 6, lambda index, row: int(row.result.nfev)),
+                ("right", "evaluations", 6, lambda index, row: int(row.result.function_evaluations)),
             ],
         )
     )
     lines.extend(
         _render_ranking_section(
-            "Largest nfev ranking",
-            rows_by_nfev,
+            "Largest function_evaluations ranking",
+            rows_by_function_evaluations,
             columns=[
                 ("right", "rank", 4, lambda index, row: index),
                 ("left", "case", 24, lambda index, row: row.case_name),
-                ("right", "nfev", 6, lambda index, row: int(row.result.nfev)),
+                ("right", "evaluations", 6, lambda index, row: int(row.result.function_evaluations)),
                 ("right", "avg_ms", 12, lambda index, row: f"{row.avg_ms:.3f}"),
                 ("right", "std_ms", 12, lambda index, row: f"{row.std_ms:.3f}"),
                 ("right", "shape_error", 12, lambda index, row: f"{row.shape_error:.6e}"),

@@ -70,10 +70,8 @@ class Solver:
         x0: np.ndarray | None = None,
         *,
         method: str | None = None,
-        rtol: float | None = None,
-        atol: float | None = None,
-        root_maxiter: int | None = None,
-        root_maxfev: int | None = None,
+        max_residual: float | None = None,
+        max_evaluations: int | None = None,
         enable_warmstart: bool | None = None,
         enable_fallback: bool | None = None,
         fallback_methods: tuple[str, ...] | list[str] | None = None,
@@ -84,10 +82,8 @@ class Solver:
 
         solve_config = self._resolve_solve_config(
             method=method,
-            rtol=rtol,
-            atol=atol,
-            root_maxiter=root_maxiter,
-            root_maxfev=root_maxfev,
+            max_residual=max_residual,
+            max_evaluations=max_evaluations,
             enable_warmstart=enable_warmstart,
             enable_fallback=enable_fallback,
             fallback_methods=fallback_methods,
@@ -104,10 +100,16 @@ class Solver:
 
         x_guess = self.x0.copy()
 
-        residual_norm_initial = float("nan")
-
         started = perf_counter()
-        x_opt, success, message, nfev, njev, nit, residual_norm_final = self._solve_with_fallbacks(
+        (
+            x_opt,
+            success,
+            message,
+            function_evaluations,
+            jacobian_evaluations,
+            iterations,
+            residual_norm_final,
+        ) = self._solve_with_fallbacks(
             x_guess,
             solve_config=solve_config,
             x0_was_provided=x0 is not None,
@@ -130,11 +132,10 @@ class Solver:
             x=x_final,
             success=bool(success),
             message=str(message),
-            residual_norm_initial=residual_norm_initial,
             residual_norm_final=residual_norm_final,
-            nfev=int(nfev),
-            njev=int(njev),
-            nit=int(nit),
+            function_evaluations=int(function_evaluations),
+            jacobian_evaluations=int(jacobian_evaluations),
+            iterations=int(iterations),
             elapsed=elapsed,
         )
 
@@ -171,10 +172,8 @@ class Solver:
         self,
         *,
         method: str | None,
-        rtol: float | None,
-        atol: float | None,
-        root_maxiter: int | None,
-        root_maxfev: int | None,
+        max_residual: float | None,
+        max_evaluations: int | None,
         enable_warmstart: bool | None,
         enable_fallback: bool | None,
         fallback_methods: tuple[str, ...] | list[str] | None,
@@ -186,14 +185,10 @@ class Solver:
         overrides: dict[str, object] = {}
         if method is not None:
             overrides["method"] = str(method)
-        if rtol is not None:
-            overrides["rtol"] = float(rtol)
-        if atol is not None:
-            overrides["atol"] = float(atol)
-        if root_maxiter is not None:
-            overrides["root_maxiter"] = int(root_maxiter)
-        if root_maxfev is not None:
-            overrides["root_maxfev"] = int(root_maxfev)
+        if max_residual is not None:
+            overrides["max_residual"] = float(max_residual)
+        if max_evaluations is not None:
+            overrides["max_evaluations"] = int(max_evaluations)
         if enable_warmstart is not None:
             overrides["enable_warmstart"] = bool(enable_warmstart)
         if enable_fallback is not None:
@@ -518,7 +513,7 @@ class Solver:
             root_fun,
             x_guess,
             method=_root_method_name_for(solve_config),
-            tol=solve_config.atol,
+            tol=solve_config.max_residual,
             options=options,
         )
         if decode_x is not None:
@@ -633,6 +628,7 @@ class Solver:
             return self.operator.coerce_x(z_eval * x_scale)
 
         return map_z_to_x, x_eval * inv_scale, map_z_to_x
+
     def _initial_residual_stats(self, x_guess: np.ndarray) -> tuple[np.ndarray | None, float | None]:
         try:
             residual = np.asarray(self.operator(self.operator.coerce_x(x_guess)), dtype=np.float64)
@@ -684,13 +680,10 @@ def _root_options_for(solve_config: SolverConfig) -> dict[str, object]:
     method = solve_config.method
 
     if method in {"hybr", "df-sane"}:
-        if solve_config.root_maxfev > 0:
-            options["maxfev"] = max(int(solve_config.root_maxfev), 500)
+        if solve_config.max_evaluations > 0:
+            options["maxfev"] = max(int(solve_config.max_evaluations), 500)
         if method == "hybr":
             options["eps"] = 1.0e-6
-    else:
-        if solve_config.root_maxiter > 0:
-            options["maxiter"] = int(solve_config.root_maxiter)
     return options
 
 
@@ -699,12 +692,12 @@ def _least_squares_kwargs_for(solve_config: SolverConfig) -> dict[str, object]:
 
     kwargs: dict[str, object] = {
         "method": solve_config.method,
-        "ftol": float(solve_config.atol),
-        "xtol": float(solve_config.atol),
-        "gtol": float(solve_config.atol),
+        "ftol": float(solve_config.max_residual),
+        "xtol": float(solve_config.max_residual),
+        "gtol": float(solve_config.max_residual),
     }
-    if solve_config.root_maxfev > 0:
-        kwargs["max_nfev"] = max(int(solve_config.root_maxfev), 500)
+    if solve_config.max_evaluations > 0:
+        kwargs["max_nfev"] = max(int(solve_config.max_evaluations), 500)
     return kwargs
 
 
@@ -730,7 +723,7 @@ def _uses_least_squares_api(solve_config: SolverConfig) -> bool:
 
 
 def _accepted_residual_norm(solve_config: SolverConfig) -> float:
-    return max(float(solve_config.atol) * 10.0, 1.0e-5)
+    return max(float(solve_config.max_residual) * 10.0, 1.0e-5)
 
 
 def _residual_within_acceptance(residual_norm: float | None, solve_config: SolverConfig) -> bool:
@@ -746,7 +739,7 @@ def _root_method_name_for(solve_config: SolverConfig) -> str:
 
 
 def _requires_strict_residual_acceptance(solve_config: SolverConfig) -> bool:
-    return solve_config.method in {"hybr", "lm", "trf"}
+    return solve_config.method in {"lm", "trf"}
 
 
 def _hard_residual_norm_threshold() -> float:

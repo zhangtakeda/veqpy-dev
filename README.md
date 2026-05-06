@@ -5,14 +5,15 @@ a high-performance Python wrapper for plasma equilibrium simulations in magnetic
 
 - Author: `rhzhang`
 - Updated: `2026-04-15`
-- Version: `0.3.0`
+- Version: `0.3.1`
 
 ## Code Structure
 
 - `veqpy/engine/`
   - Array-first numerical kernels.
   - `numba` is the supported user-facing backend for `profile`, `geometry`, `source`, and `residual`.
-  - `jax` backend work is experimental and still under development; it is not intended for users.
+- `veqpy/orchestration.py`
+  - Python-level route, source, residual metadata, and stage-runner orchestration.
 - `veqpy/model/`
   - Passive or snapshot-oriented objects: `Grid`, `Profile`, `Geometry`, `Equilibrium`.
 - `veqpy/operator/`
@@ -32,8 +33,6 @@ Recommended workflow on Windows PowerShell:
 ```powershell
 uv sync --group dev
 ```
-
-JAX is currently a backend-development path only. It is not part of the supported end-user workflow, and the current implementation covers only a narrow experimental route.
 
 Recommended command style:
 
@@ -120,7 +119,7 @@ For future development, keep these boundaries stable:
 
 - Do not put grid-construction logic into hot runtime code.
 - Do not reintroduce fixed low-order special cases such as dedicated `c1/s2` runtime paths unless a benchmark proves they are necessary.
-- Keep packed layout authority in `veqpy/operator/layout.py`.
+- Keep packed layout and codec authority in `veqpy/operator/packed_layout.py`.
 - Keep `OperatorCase` as normalized input state, not layout owner and not solver owner.
 - Keep `Equilibrium` snapshot-oriented; it should not become a second runtime state container.
 - Prefer extending family-based kernels over adding more named one-off profile fields.

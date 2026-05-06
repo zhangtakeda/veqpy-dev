@@ -158,7 +158,7 @@ def main() -> None:
         operator=Operator(grid=solve_grid, case=case),
         config=SolverConfig(
             method="hybr",
-            root_maxfev=2000,
+            max_evaluations=2000,
             enable_warmstart=False,
             enable_fallback=False,
             enable_verbose=False,

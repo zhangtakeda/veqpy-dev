@@ -38,6 +38,7 @@ from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile
 from veqpy.model.reactive import Reactive
 from veqpy.model.serial import Serial
+from veqpy.orchestration import resolve_fourier_power
 
 plt.style.use("seaborn-v0_8-paper")
 plt.rcParams.update(
@@ -612,7 +613,7 @@ def _normalize_shape_profiles(shape_profiles: dict[str, Profile]) -> dict[str, P
 def _build_default_shape_profile(name: str) -> Profile:
     power = 0
     if name.startswith(("c", "s")) and name[1:].isdigit():
-        power = int(name[1:])
+        power = resolve_fourier_power(int(name[1:]))
     return Profile(scale=1.0, power=power, envelope_power=1, offset=0.0, coeff=None)
 
 
