@@ -232,7 +232,7 @@ class Operator:
         return self.execution_state.fused_residual_runner(x_eval)
 
     def residual_collocation(self, x: np.ndarray) -> np.ndarray:
-        """返回 grid 配点上的 RMS 归一化 Grad-Shafranov residual `G`."""
+        """返回 grid 配点上的 quadrature 加权 Grad-Shafranov residual `G`."""
         x_eval = self.coerce_x(x)
         self.stage_a_profile(x_eval)
         self.stage_b_geometry()
@@ -241,7 +241,14 @@ class Operator:
         G = self.residual_surface_workspace[0]
         if G.size == 0:
             return np.empty(0, dtype=np.float64)
-        return (G.reshape(-1) / np.sqrt(G.size)).copy()
+        radial_weights = np.asarray(self.grid.weights, dtype=np.float64)
+        if radial_weights.ndim != 1 or radial_weights.size != int(self.grid.Nr):
+            raise ValueError(
+                "Operator.residual_collocation expected one-dimensional radial quadrature weights "
+                f"with length {int(self.grid.Nr)}, got shape {radial_weights.shape}."
+            )
+        sqrt_weights = np.sqrt(radial_weights[:, None] / max(int(self.grid.Nt), 1))
+        return np.ravel(sqrt_weights * G).copy()
 
     def _evaluate_residual(self, x_eval: np.ndarray) -> np.ndarray:
         self.stage_a_profile(x_eval)

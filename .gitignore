@@ -10,9 +10,7 @@ docs
 paper
 scripts
 figures
-tests/demo
-tests/benchmark
-tests/_tmp_plot_regression
+tests
 __pycache__
  
 .backup
