@@ -395,8 +395,8 @@ class Solver:
         solve_config: SolverConfig | None = None,
     ) -> tuple[float, Exception | None]:
         try:
-            residual_fun = self._residual_function_for(self.config if solve_config is None else solve_config)
-            return float(np.linalg.norm(residual_fun(x))), None
+            config_eval = self.config if solve_config is None else solve_config
+            return self.operator.residual_norm(x, residual_form=config_eval.residual_form), None
         except Exception as exc:
             return float("inf"), exc
 
@@ -492,9 +492,9 @@ class Solver:
 
         opt = self._run_solve_full(x_guess, solve_config=solve_config)
         x_opt = self.operator.coerce_x(opt.x)
-        residual_norm = _opt_residual_norm(opt)
+        residual_norm = self._optimizer_residual_norm(opt)
         if residual_norm is None or not np.isfinite(residual_norm):
-            residual_norm, _ = self._safe_residual_norm(x_opt)
+            residual_norm, _ = self._safe_residual_norm(x_opt, solve_config=solve_config)
         accepted_by_residual = _residual_within_acceptance(residual_norm, solve_config)
         accepted = bool(
             accepted_by_residual
@@ -533,14 +533,16 @@ class Solver:
         return self._run_least_squares_full(x_guess, solve_config=solve_config, optimize_method=optimize_method)
 
     def _residual_function_for(self, solve_config: SolverConfig) -> Callable[[np.ndarray], np.ndarray]:
-        if solve_config.residual_form == "variational":
-            return self.operator
-        if solve_config.residual_form == "collocation":
-            residual_fun = getattr(self.operator, "residual_collocation", None)
-            if residual_fun is None:
-                raise ValueError("Operator does not provide residual_collocation required by collocation mode.")
-            return residual_fun
-        raise ValueError(f"Unsupported residual form {solve_config.residual_form!r}.")
+        def residual_fun(x: np.ndarray) -> np.ndarray:
+            return self.operator.residual_vector(x, residual_form=solve_config.residual_form)
+
+        return residual_fun
+
+    def _optimizer_residual_norm(self, opt) -> float | None:
+        fun = getattr(opt, "fun", None)
+        if fun is None:
+            return None
+        return self.operator.residual_array_norm(fun)
 
     def _run_root_once(
         self,
@@ -685,7 +687,7 @@ class Solver:
             residual = np.asarray(residual_fun(self.operator.coerce_x(x_guess)), dtype=np.float64)
         except Exception:
             return None, None
-        return residual, float(np.linalg.norm(residual))
+        return residual, self.operator.residual_array_norm(residual)
 
     def _run_least_squares_full(
         self,
@@ -787,16 +789,6 @@ def _count_opt_attr(opt, name: str) -> int:
     if value is None:
         return 0
     return int(value)
-
-
-def _opt_residual_norm(opt) -> float | None:
-    fun = getattr(opt, "fun", None)
-    if fun is None:
-        return None
-    arr = np.asarray(fun, dtype=np.float64)
-    if arr.ndim == 0:
-        arr = arr.reshape(1)
-    return float(np.linalg.norm(arr))
 
 
 def _uses_least_squares_api(solve_config: SolverConfig) -> bool:

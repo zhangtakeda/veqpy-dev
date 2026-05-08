@@ -45,6 +45,23 @@ class _DummyOperator:
         self.variational_calls += 1
         return self.coerce_x(x)
 
+    def residual_vector(self, x: np.ndarray, *, residual_form: str = "variational") -> np.ndarray:
+        if residual_form == "variational":
+            return self(x)
+        if residual_form == "collocation":
+            return self.residual_collocation(x)
+        raise ValueError(f"Unsupported residual form {residual_form!r}.")
+
+    @staticmethod
+    def residual_array_norm(residual: np.ndarray) -> float:
+        residual_eval = np.asarray(residual, dtype=np.float64)
+        if residual_eval.ndim == 0:
+            residual_eval = residual_eval.reshape(1)
+        return float(np.linalg.norm(residual_eval))
+
+    def residual_norm(self, x: np.ndarray, *, residual_form: str = "variational") -> float:
+        return self.residual_array_norm(self.residual_vector(x, residual_form=residual_form))
+
     def residual_collocation(self, x: np.ndarray) -> np.ndarray:
         self.collocation_calls += 1
         x_eval = self.coerce_x(x)
@@ -107,6 +124,23 @@ def test_operator_collocation_residual_uses_radial_quadrature_weights(monkeypatc
     expected = np.ravel(sqrt_weights * operator.residual_surface_workspace[0])
 
     assert np.allclose(residual, expected)
+
+
+def test_operator_residual_norm_helpers_match_numpy_norm(monkeypatch):
+    operator = object.__new__(Operator)
+
+    monkeypatch.setattr(Operator, "residual", lambda self, x: np.asarray([3.0, 4.0], dtype=np.float64))
+    monkeypatch.setattr(
+        Operator,
+        "residual_collocation",
+        lambda self, x: np.asarray([1.0, 2.0, 2.0], dtype=np.float64),
+    )
+
+    assert operator.residual_array_norm(np.array(5.0)) == 5.0
+    assert operator.residual_norm(np.zeros(1), residual_form="variational") == 5.0
+    assert operator.residual_norm(np.zeros(1), residual_form="collocation") == 3.0
+    with pytest.raises(ValueError, match="Unsupported residual form"):
+        operator.residual_norm(np.zeros(1), residual_form="pointwise")
 
 
 def test_solver_config_removes_homotopy_fields():

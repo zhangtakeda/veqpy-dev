@@ -231,8 +231,29 @@ class Operator:
         x_eval = self.coerce_x(x)
         return self.execution_state.fused_residual_runner(x_eval)
 
+    def residual_vector(self, x: np.ndarray, *, residual_form: str = "variational") -> np.ndarray:
+        """按 residual form 返回求解器使用的残差向量."""
+        residual_form_eval = str(residual_form)
+        if residual_form_eval == "variational":
+            return self.residual(x)
+        if residual_form_eval == "collocation":
+            return self.residual_collocation(x)
+        raise ValueError(f"Unsupported residual form {residual_form_eval!r}.")
+
+    @staticmethod
+    def residual_array_norm(residual: np.ndarray) -> float:
+        """返回 residual 数组的 Euclidean norm, 标量 residual 视作长度 1 向量."""
+        residual_eval = np.asarray(residual, dtype=np.float64)
+        if residual_eval.ndim == 0:
+            residual_eval = residual_eval.reshape(1)
+        return float(np.linalg.norm(residual_eval))
+
+    def residual_norm(self, x: np.ndarray, *, residual_form: str = "variational") -> float:
+        """按 residual form 求 residual vector 的 Euclidean norm."""
+        return self.residual_array_norm(self.residual_vector(x, residual_form=residual_form))
+
     def residual_collocation(self, x: np.ndarray) -> np.ndarray:
-        """返回 grid 配点上的 quadrature 加权 Grad-Shafranov residual `G`."""
+        """返回形状为 ``(Nr * Nt,)`` 的 quadrature 加权 grid 配点 Grad-Shafranov residual `G`."""
         x_eval = self.coerce_x(x)
         self.stage_a_profile(x_eval)
         self.stage_b_geometry()
