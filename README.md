@@ -79,6 +79,22 @@ The main runtime path is:
 6. Stage-C `source`
 7. Stage-D `residual`
 
+`SolverConfig.residual_form` selects the residual equations used by the solver:
+
+- `residual_form="variational"` is the default packed projected residual, mapping packed coefficients `N -> N`.
+- `residual_form="collocation"` uses `Operator.residual_collocation(x)` and solves the RMS-normalized grid residual
+  `G.ravel() / sqrt(Nr * Nt)`, mapping packed coefficients `N -> Nr*Nt`.
+
+Because the collocation residual is generally rectangular, use a least-squares method:
+
+```python
+solver = Solver(operator=operator, config=SolverConfig(residual_form="collocation"))
+```
+
+`residual_form="collocation"` defaults to `method="trf"`; the variational default remains `method="hybr"`.
+For collocation least-squares solves, `success` follows SciPy's least-squares termination status because the
+RMS grid residual is not expected to satisfy the same near-zero packed Galerkin tolerance.
+
 ## Performance Snapshot
 
 Current Fourier-family runtime is driven by `Grid.M_max`, but hot-path kernels only compute up to the current effective active order.

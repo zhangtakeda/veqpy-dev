@@ -135,6 +135,44 @@ def test_operator_case_autoscales_legacy_unscaled_heat_input():
     assert np.allclose(probe.heat_input, source * (4.0e-7 * np.pi))
 
 
+def test_operator_case_defaults_nodes_to_uniform():
+    _, case = _build_operator_case(mode="PF", coordinate="rho", nodes="grid")
+
+    probe = OperatorCase(
+        route=case.route,
+        coordinate=case.coordinate,
+        profile_coeffs=case.profile_coeffs,
+        boundary=case.boundary,
+        heat_input=case.heat_input,
+        current_input=case.current_input,
+    )
+
+    assert probe.nodes == "uniform"
+
+
+def test_operator_case_accepts_zero_length_indicators_and_ndarray_profile_coeffs():
+    _, case = _build_operator_case(mode="PF", coordinate="rho", nodes="uniform")
+    f_coeff = np.array([1.0, 0.25], dtype=np.float64)
+
+    probe = OperatorCase(
+        route=case.route,
+        coordinate=case.coordinate,
+        profile_coeffs={
+            "psin": 3,
+            "h": 1,
+            "F": f_coeff,
+        },
+        boundary=case.boundary,
+        heat_input=case.heat_input,
+        current_input=case.current_input,
+    )
+    f_coeff[0] = 99.0
+
+    assert np.allclose(probe.profile_coeffs["psin"], [0.0, 0.0, 0.0])
+    assert np.allclose(probe.profile_coeffs["h"], [0.0])
+    assert np.allclose(probe.profile_coeffs["F"], [1.0, 0.25])
+
+
 def test_operator_case_autoscales_legacy_unscaled_current_input():
     _, case = _build_operator_case(mode="PI", coordinate="rho", nodes="uniform")
     source = np.full(TEST_SOURCE_SAMPLE_COUNT, 1.0e5)
@@ -598,6 +636,21 @@ def test_pq_psin_route_evaluates_residual_without_active_psin_profile():
     assert equilibrium.grid is grid
     assert equilibrium.F.shape == grid.rho.shape
     assert np.all(np.isfinite(equilibrium.F))
+
+
+def test_operator_collocation_residual_returns_rms_normalized_grid_g():
+    grid, case = _build_operator_case(mode="PF", coordinate="rho", nodes="uniform")
+    operator = Operator(grid=grid, case=case)
+    x = operator.encode_initial_state()
+
+    residual = operator.residual_collocation(x)
+    expected = operator.residual_surface_workspace[0].reshape(-1) / np.sqrt(grid.Nr * grid.Nt)
+
+    assert residual.shape == (grid.Nr * grid.Nt,)
+    assert residual.dtype == np.float64
+    assert np.all(np.isfinite(residual))
+    assert np.allclose(residual, expected)
+    assert not np.shares_memory(residual, operator.residual_surface_workspace)
 
 
 def test_equilibrium_load_rejects_legacy_shape_payload():

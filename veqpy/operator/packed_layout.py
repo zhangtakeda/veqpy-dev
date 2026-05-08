@@ -30,9 +30,13 @@ Notes:
 - 不负责数值核计算, residual 组装, 或 solver 迭代控制.
 """
 
+from numbers import Integral
+
 import numpy as np
 
 from veqpy import orchestration
+
+ProfileCoeffValue = list[float] | np.ndarray | int
 
 PACKED_PROFILE_FAMILY_ORDER = orchestration.PACKED_PROFILE_FAMILY_ORDER
 INTERLEAVE_SHAPE_COEFFS_BY_ORDER = True
@@ -67,7 +71,7 @@ def build_profile_index(profile_names: tuple[str, ...]) -> dict[str, int]:
 
 
 def build_profile_layout(
-    profile_coeffs: dict[str, list[float] | None],
+    profile_coeffs: dict[str, ProfileCoeffValue | None],
     *,
     profile_names: tuple[str, ...],
     prefix_profile_names: tuple[str, ...] | None = None,
@@ -162,7 +166,7 @@ def validate_packed_state(x: np.ndarray, coeff_index: np.ndarray) -> np.ndarray:
 
 
 def encode_packed_state(
-    profile_coeffs: dict[str, list[float] | None],
+    profile_coeffs: dict[str, ProfileCoeffValue | None],
     profile_L: np.ndarray,
     coeff_index: np.ndarray,
     *,
@@ -213,10 +217,20 @@ def decode_packed_blocks(
     return tuple(blocks)
 
 
-def coeff_array_from_list(name: str, coeff: list[float]) -> np.ndarray:
-    """把 profile 系数列表转成受约束的一维数组."""
-    if not isinstance(coeff, list):
-        raise TypeError(f"{name} coeff must be list[float] or None, got {type(coeff).__name__}")
+def coeff_array_from_list(name: str, coeff: ProfileCoeffValue) -> np.ndarray:
+    """把 profile 系数输入转成受约束的一维数组."""
+    if isinstance(coeff, bool):
+        raise TypeError(f"{name} coeff length indicator must be an integer, got bool")
+    if isinstance(coeff, Integral):
+        length = int(coeff)
+        if length <= 0:
+            raise ValueError(f"{name} coeff length indicator must be positive, got {coeff}")
+        return np.zeros(length, dtype=np.float64)
+    if not isinstance(coeff, (list, np.ndarray)):
+        raise TypeError(
+            f"{name} coeff must be list[float], numpy.ndarray, positive int, or None; "
+            f"got {type(coeff).__name__}"
+        )
     coeff_arr = np.asarray(coeff, dtype=np.float64)
     if coeff_arr.ndim != 1:
         raise ValueError(f"{name} coeff must be 1D, got {coeff_arr.shape}")

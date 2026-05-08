@@ -22,12 +22,21 @@ from typing import Callable
 
 import numpy as np
 from rich.console import Console
-from scipy.optimize import least_squares, root
 
 from veqpy.model.equilibrium import Equilibrium
 from veqpy.operator.operator import Operator
 from veqpy.operator.operator_case import OperatorCase
-from veqpy.solver.solver_config import LEAST_SQUARES_METHODS, SolverConfig
+from veqpy.solver.solver_config import (
+    DEFAULT_COLLOCATION_FALLBACK_METHODS,
+    DEFAULT_COLLOCATION_METHOD,
+    DEFAULT_VARIATIONAL_FALLBACK_METHODS,
+    DEFAULT_VARIATIONAL_METHOD,
+    LEAST_SQUARES_METHODS,
+    ROOT_METHODS,
+    SUPPORTED_METHODS,
+    OptimizeMethod,
+    SolverConfig,
+)
 from veqpy.solver.solver_record import SolverRecord
 from veqpy.solver.solver_result import SolverResult
 
@@ -77,6 +86,7 @@ class Solver:
         fallback_methods: tuple[str, ...] | list[str] | None = None,
         enable_verbose: bool | None = None,
         enable_history: bool | None = None,
+        residual_form: str | None = None,
     ) -> np.ndarray:
         """执行一次求解并返回收敛后的 packed x."""
 
@@ -89,7 +99,9 @@ class Solver:
             fallback_methods=fallback_methods,
             enable_verbose=enable_verbose,
             enable_history=enable_history,
+            residual_form=residual_form,
         )
+        _validate_residual_solve_config(solve_config)
 
         if x0 is not None:
             self.x0 = self.operator.coerce_x(x0).copy()
@@ -119,7 +131,7 @@ class Solver:
         x_final = self.operator.coerce_x(x_opt)
         residual_final_exc = None
         if not bool(success) and not np.isfinite(residual_norm_final):
-            residual_norm_final, residual_final_exc = self._safe_residual_norm(x_final)
+            residual_norm_final, residual_final_exc = self._safe_residual_norm(x_final, solve_config=solve_config)
         if residual_final_exc is not None:
             success = False
             message = (
@@ -179,6 +191,7 @@ class Solver:
         fallback_methods: tuple[str, ...] | list[str] | None,
         enable_verbose: bool | None,
         enable_history: bool | None,
+        residual_form: str | None,
     ) -> SolverConfig:
         """基于默认配置生成一次 solve 的临时配置快照."""
 
@@ -199,6 +212,18 @@ class Solver:
             overrides["enable_verbose"] = bool(enable_verbose)
         if enable_history is not None:
             overrides["enable_history"] = bool(enable_history)
+        if residual_form is not None:
+            overrides["residual_form"] = str(residual_form)
+        if residual_form is not None and method is None:
+            target_residual_form = str(residual_form)
+            if target_residual_form == "collocation" and self.config.method == DEFAULT_VARIATIONAL_METHOD:
+                overrides["method"] = DEFAULT_COLLOCATION_METHOD
+                if fallback_methods is None and self.config.fallback_methods == DEFAULT_VARIATIONAL_FALLBACK_METHODS:
+                    overrides["fallback_methods"] = None
+            elif target_residual_form == "variational" and self.config.method == DEFAULT_COLLOCATION_METHOD:
+                overrides["method"] = DEFAULT_VARIATIONAL_METHOD
+                if fallback_methods is None and self.config.fallback_methods == DEFAULT_COLLOCATION_FALLBACK_METHODS:
+                    overrides["fallback_methods"] = None
         if not overrides:
             return self.config
         return replace(self.config, **overrides)
@@ -312,7 +337,7 @@ class Solver:
         try:
             return self._solve_opt_problem(x_guess_eval, solve_config=solve_config), None
         except Exception as exc:
-            residual_norm_x0, residual_exc = self._safe_residual_norm(x_guess_eval)
+            residual_norm_x0, residual_exc = self._safe_residual_norm(x_guess_eval, solve_config=solve_config)
             if residual_exc is None and _residual_within_acceptance(residual_norm_x0, solve_config):
                 return (
                     (
@@ -363,9 +388,15 @@ class Solver:
             return float("inf")
         return residual_norm
 
-    def _safe_residual_norm(self, x: np.ndarray) -> tuple[float, Exception | None]:
+    def _safe_residual_norm(
+        self,
+        x: np.ndarray,
+        *,
+        solve_config: SolverConfig | None = None,
+    ) -> tuple[float, Exception | None]:
         try:
-            return float(np.linalg.norm(self.operator(x))), None
+            residual_fun = self._residual_function_for(self.config if solve_config is None else solve_config)
+            return float(np.linalg.norm(residual_fun(x))), None
         except Exception as exc:
             return float("inf"), exc
 
@@ -495,9 +526,21 @@ class Solver:
         *,
         solve_config: SolverConfig,
     ):
-        if _uses_least_squares_api(solve_config):
-            return self._run_least_squares_full(x_guess, solve_config=solve_config)
-        return self._run_root_full(x_guess, solve_config=solve_config)
+        _validate_residual_method(solve_config)
+        optimize_method = _registered_method_for(solve_config)
+        if solve_config.method in ROOT_METHODS:
+            return self._run_root_full(x_guess, solve_config=solve_config, optimize_method=optimize_method)
+        return self._run_least_squares_full(x_guess, solve_config=solve_config, optimize_method=optimize_method)
+
+    def _residual_function_for(self, solve_config: SolverConfig) -> Callable[[np.ndarray], np.ndarray]:
+        if solve_config.residual_form == "variational":
+            return self.operator
+        if solve_config.residual_form == "collocation":
+            residual_fun = getattr(self.operator, "residual_collocation", None)
+            if residual_fun is None:
+                raise ValueError("Operator does not provide residual_collocation required by collocation mode.")
+            return residual_fun
+        raise ValueError(f"Unsupported residual form {solve_config.residual_form!r}.")
 
     def _run_root_once(
         self,
@@ -505,14 +548,14 @@ class Solver:
         x_guess: np.ndarray,
         *,
         solve_config: SolverConfig,
+        optimize_method: OptimizeMethod,
         options: dict[str, object],
         get_raw_residual: Callable[[np.ndarray], np.ndarray] | None = None,
         decode_x: Callable[[np.ndarray], np.ndarray] | None = None,
     ):
-        opt = root(
+        opt = optimize_method(
             root_fun,
             x_guess,
-            method=_root_method_name_for(solve_config),
             tol=solve_config.max_residual,
             options=options,
         )
@@ -528,6 +571,7 @@ class Solver:
         x_guess: np.ndarray,
         *,
         solve_config: SolverConfig,
+        optimize_method: OptimizeMethod,
     ):
         """在完整 packed x 上调用一次 `scipy.optimize.root`."""
 
@@ -557,6 +601,7 @@ class Solver:
             root_fun,
             x_root_guess,
             solve_config=solve_config,
+            optimize_method=optimize_method,
             options=options,
             get_raw_residual=get_raw_residual,
             decode_x=decode_x,
@@ -629,9 +674,15 @@ class Solver:
 
         return map_z_to_x, x_eval * inv_scale, map_z_to_x
 
-    def _initial_residual_stats(self, x_guess: np.ndarray) -> tuple[np.ndarray | None, float | None]:
+    def _initial_residual_stats(
+        self,
+        x_guess: np.ndarray,
+        *,
+        solve_config: SolverConfig,
+    ) -> tuple[np.ndarray | None, float | None]:
         try:
-            residual = np.asarray(self.operator(self.operator.coerce_x(x_guess)), dtype=np.float64)
+            residual_fun = self._residual_function_for(solve_config)
+            residual = np.asarray(residual_fun(self.operator.coerce_x(x_guess)), dtype=np.float64)
         except Exception:
             return None, None
         return residual, float(np.linalg.norm(residual))
@@ -641,20 +692,21 @@ class Solver:
         x_guess: np.ndarray,
         *,
         solve_config: SolverConfig,
+        optimize_method: OptimizeMethod,
     ):
         """在完整 packed x 上调用一次 `scipy.optimize.least_squares`."""
 
-        least_squares_fun = self.operator
+        least_squares_fun = self._residual_function_for(solve_config)
         get_raw_residual: Callable[[np.ndarray], np.ndarray] | None = None
         kwargs = _least_squares_kwargs_for(solve_config)
-        if solve_config.method == "lm":
+        if solve_config.method == "lm" and solve_config.residual_form == "variational":
             least_squares_fun, get_raw_residual = self._build_residual_transform_wrapper(x_guess, transform="asinh")
             if least_squares_fun is not None:
                 kwargs["x_scale"] = 1.0
             else:
-                least_squares_fun = self.operator
-        elif solve_config.method == "trf":
-            residual0, _ = self._initial_residual_stats(x_guess)
+                least_squares_fun = self._residual_function_for(solve_config)
+        elif solve_config.method == "trf" and solve_config.residual_form == "variational":
+            residual0, _ = self._initial_residual_stats(x_guess, solve_config=solve_config)
             if _should_use_robust_trf_loss(
                 residual0,
                 getattr(self.operator, "active_lengths", None),
@@ -662,7 +714,7 @@ class Solver:
                 kwargs["loss"] = "cauchy"
                 kwargs["f_scale"] = max(_residual_rms(residual0), 1.0)
 
-        opt = least_squares(
+        opt = optimize_method(
             least_squares_fun,
             x_guess,
             **kwargs,
@@ -671,6 +723,36 @@ class Solver:
             x_opt = self.operator.coerce_x(opt.x)
             opt.fun = get_raw_residual(x_opt)
         return opt
+
+
+def _validate_residual_solve_config(solve_config: SolverConfig) -> None:
+    _validate_residual_method(solve_config)
+    if solve_config.residual_form != "collocation" or not solve_config.enable_fallback:
+        return
+
+    root_fallbacks = [method for method in solve_config.fallback_methods if method not in LEAST_SQUARES_METHODS]
+    if root_fallbacks:
+        unsupported = ", ".join(repr(method) for method in root_fallbacks)
+        raise ValueError(
+            "Collocation residual is generally rectangular "
+            f"(x_size -> Nr*Nt) and requires least_squares method 'trf' or 'lm'; "
+            f"unsupported fallback method(s): {unsupported}."
+        )
+
+
+def _validate_residual_method(solve_config: SolverConfig) -> None:
+    if solve_config.residual_form == "collocation" and not _uses_least_squares_api(solve_config):
+        raise ValueError(
+            "Collocation residual is generally rectangular "
+            "(x_size -> Nr*Nt) and requires least_squares method 'trf' or 'lm'."
+        )
+
+
+def _registered_method_for(solve_config: SolverConfig) -> OptimizeMethod:
+    try:
+        return SUPPORTED_METHODS[solve_config.method]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported solver method {solve_config.method!r}.") from exc
 
 
 def _root_options_for(solve_config: SolverConfig) -> dict[str, object]:
@@ -691,7 +773,6 @@ def _least_squares_kwargs_for(solve_config: SolverConfig) -> dict[str, object]:
     """将 `SolverConfig` 映射到 `scipy.optimize.least_squares(...)`."""
 
     kwargs: dict[str, object] = {
-        "method": solve_config.method,
         "ftol": float(solve_config.max_residual),
         "xtol": float(solve_config.max_residual),
         "gtol": float(solve_config.max_residual),
@@ -734,11 +815,9 @@ def _residual_within_acceptance(residual_norm: float | None, solve_config: Solve
     )
 
 
-def _root_method_name_for(solve_config: SolverConfig) -> str:
-    return solve_config.method
-
-
 def _requires_strict_residual_acceptance(solve_config: SolverConfig) -> bool:
+    if solve_config.residual_form == "collocation":
+        return False
     return solve_config.method in {"lm", "trf"}
 
 

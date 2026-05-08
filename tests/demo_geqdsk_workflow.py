@@ -102,17 +102,17 @@ def build_geqdsk_surfaces(geqdsk: Geqdsk, *, levels: tuple[float, ...]) -> dict[
     return surfaces
 
 
-def build_profile_coeffs() -> dict[str, list[float]]:
-    coeffs: dict[str, list[float]] = {
-        "psin": [0.0] * 10,
-        "h": [0.0] * 10,
-        "k": [0.0] * 10,
-        "v": [0.0] * 10,
+def build_profile_coeffs() -> dict[str, int]:
+    coeffs: dict[str, int] = {
+        "psin": 10,
+        "h": 10,
+        "k": 10,
+        "v": 10,
     }
     for order in range(8):
-        coeffs[f"c{order}"] = [0.0] * 5
+        coeffs[f"c{order}"] = 5
     for order in range(1, 9):
-        coeffs[f"s{order}"] = [0.0] * 5
+        coeffs[f"s{order}"] = 5
     return coeffs
 
 

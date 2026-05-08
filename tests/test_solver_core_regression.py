@@ -1,8 +1,17 @@
 import warnings
+from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from veqpy.solver import Solver, SolverConfig
+from veqpy.solver.solver_config import (
+    DEFAULT_COLLOCATION_FALLBACK_METHODS,
+    DEFAULT_COLLOCATION_METHOD,
+    DEFAULT_VARIATIONAL_FALLBACK_METHODS,
+    DEFAULT_VARIATIONAL_METHOD,
+    SUPPORTED_METHODS,
+)
 
 
 class _DummyCase:
@@ -19,6 +28,8 @@ class _DummyOperator:
         self.case = _DummyCase() if case is None else case
         self.source_state_invalidations = 0
         self.active_lengths = np.full(x_size, 1, dtype=np.int64)
+        self.variational_calls = 0
+        self.collocation_calls = 0
 
     def encode_initial_state(self) -> np.ndarray:
         return np.zeros(self.x_size, dtype=np.float64)
@@ -30,7 +41,13 @@ class _DummyOperator:
         return arr
 
     def __call__(self, x: np.ndarray) -> np.ndarray:
+        self.variational_calls += 1
         return self.coerce_x(x)
+
+    def residual_collocation(self, x: np.ndarray) -> np.ndarray:
+        self.collocation_calls += 1
+        x_eval = self.coerce_x(x)
+        return np.concatenate((x_eval, x_eval + 1.0))
 
     def invalidate_source_state(self) -> None:
         self.source_state_invalidations += 1
@@ -102,6 +119,120 @@ def test_solver_config_uses_whole_word_control_names():
     assert config.max_evaluations == 1234
     assert "max_residual" in str(config)
     assert "max_evaluations" in str(config)
+
+
+def test_solver_config_supports_collocation_residual_form():
+    config = SolverConfig(residual_form="collocation")
+
+    assert config.method == DEFAULT_COLLOCATION_METHOD
+    assert config.residual_form == "collocation"
+    assert config.fallback_methods == DEFAULT_COLLOCATION_FALLBACK_METHODS
+    assert "residual_form: collocation" in str(config)
+
+
+def test_solver_config_uses_variational_root_default_with_single_least_squares_fallback():
+    config = SolverConfig()
+
+    assert config.method == DEFAULT_VARIATIONAL_METHOD
+    assert config.residual_form == "variational"
+    assert config.fallback_methods == DEFAULT_VARIATIONAL_FALLBACK_METHODS
+
+
+def test_solver_config_rejects_unknown_residual_form():
+    with pytest.raises(ValueError, match="Unsupported residual form"):
+        SolverConfig(residual_form="pointwise")
+
+
+def test_solver_rejects_collocation_with_root_method():
+    solver = Solver(operator=_DummyOperator(), config=SolverConfig(method="hybr", residual_form="collocation"))
+
+    with pytest.raises(ValueError, match="requires least_squares method"):
+        solver.solve(enable_history=False)
+
+
+def test_solver_rejects_root_fallbacks_for_collocation():
+    solver = Solver(
+        operator=_DummyOperator(),
+        config=SolverConfig(method="trf", residual_form="collocation", fallback_methods=("hybr",)),
+    )
+
+    with pytest.raises(ValueError, match="unsupported fallback"):
+        solver.solve(enable_history=False)
+
+
+def test_solver_routes_collocation_residual_to_least_squares(monkeypatch):
+    operator = _DummyOperator()
+    solver = Solver(
+        operator=operator,
+        config=SolverConfig(method="trf", residual_form="collocation", enable_fallback=False),
+    )
+    observed = {}
+
+    def fake_registered_method(fun, x0, **kwargs):
+        probe = np.array([1.0, 2.0, 3.0], dtype=np.float64)
+        observed["probe_residual"] = np.asarray(fun(probe), dtype=np.float64)
+        observed["method_kwarg"] = kwargs.get("method")
+        return SimpleNamespace(
+            x=np.zeros_like(x0),
+            fun=np.zeros(6, dtype=np.float64),
+            success=True,
+            message="fake collocation solve",
+            nfev=1,
+            njev=0,
+            nit=1,
+        )
+
+    monkeypatch.setitem(SUPPORTED_METHODS, "trf", fake_registered_method)
+
+    solver.solve(enable_history=False)
+
+    assert observed["method_kwarg"] is None
+    assert np.allclose(observed["probe_residual"], [1.0, 2.0, 3.0, 2.0, 3.0, 4.0])
+    assert operator.collocation_calls == 1
+    assert operator.variational_calls == 0
+
+
+def test_solver_accepts_collocation_least_squares_success_without_strict_variational_residual(monkeypatch):
+    solver = Solver(
+        operator=_DummyOperator(),
+        config=SolverConfig(method="trf", residual_form="collocation", enable_fallback=False),
+    )
+
+    def fake_registered_method(fun, x0, **kwargs):
+        fun(np.zeros_like(x0))
+        return SimpleNamespace(
+            x=np.zeros_like(x0),
+            fun=np.ones(6, dtype=np.float64),
+            success=True,
+            message="fake ftol termination",
+            nfev=1,
+            njev=0,
+            nit=1,
+        )
+
+    monkeypatch.setitem(SUPPORTED_METHODS, "trf", fake_registered_method)
+
+    solver.solve(enable_history=False)
+
+    assert solver.result.success is True
+    assert solver.result.residual_norm_final > solver.config.max_residual
+    assert "rejected by residual" not in solver.result.message
+
+
+def test_solver_per_solve_collocation_override_uses_collocation_defaults(monkeypatch):
+    solver = Solver(operator=_DummyOperator())
+    calls = _install_fake_attempts(
+        monkeypatch,
+        solver,
+        [
+            _attempt_result(np.zeros(3, dtype=np.float64), success=True, message="trf converged", residual_norm=0.0),
+        ],
+    )
+
+    solver.solve(residual_form="collocation", enable_history=False)
+
+    assert [method for method, _ in calls] == ["trf"]
+    assert np.allclose(calls[0][1], np.zeros(3, dtype=np.float64))
 
 
 def test_solver_explicit_guess_retries_same_method_after_reset(monkeypatch):

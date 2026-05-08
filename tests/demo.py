@@ -131,12 +131,11 @@ def main() -> None:
     case = OperatorCase(
         route="PF",
         coordinate="psin",
-        nodes="uniform",
         profile_coeffs={
-            "psin": [0.0] * 5,
-            "h": [0.0] * 3,
-            "k": [0.0] * 5,
-            "s1": [0.0] * 3,
+            "psin": 5,
+            "h": 3,
+            "k": 5,
+            "s1": 3,
         },
         boundary=boundary,
         heat_input=heat_input,

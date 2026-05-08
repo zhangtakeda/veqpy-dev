@@ -231,6 +231,18 @@ class Operator:
         x_eval = self.coerce_x(x)
         return self.execution_state.fused_residual_runner(x_eval)
 
+    def residual_collocation(self, x: np.ndarray) -> np.ndarray:
+        """返回 grid 配点上的 RMS 归一化 Grad-Shafranov residual `G`."""
+        x_eval = self.coerce_x(x)
+        self.stage_a_profile(x_eval)
+        self.stage_b_geometry()
+        self.stage_c_source()
+        self._update_residual_surface_workspace()
+        G = self.residual_surface_workspace[0]
+        if G.size == 0:
+            return np.empty(0, dtype=np.float64)
+        return (G.reshape(-1) / np.sqrt(G.size)).copy()
+
     def _evaluate_residual(self, x_eval: np.ndarray) -> np.ndarray:
         self.stage_a_profile(x_eval)
         self.stage_b_geometry()
@@ -273,6 +285,15 @@ class Operator:
         """执行 residual 阶段并返回 packed 残差."""
         packed = self.execution_state.residual_full_stage_runner()
         return packed.copy()
+
+    def _update_residual_surface_workspace(self) -> None:
+        numba_residual.update_residual_compact(
+            self.residual_surface_workspace,
+            self.alpha1,
+            self.alpha2,
+            self.root_fields,
+            self.geometry_surface_workspace,
+        )
 
     def coerce_x(self, x: np.ndarray) -> np.ndarray:
         """校验完整 packed 状态向量形状."""

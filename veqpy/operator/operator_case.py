@@ -16,12 +16,16 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
+from numbers import Integral
 
 import numpy as np
 from rich.console import Console
 from rich.tree import Tree
 
 from veqpy.model.boundary import Boundary
+
+ProfileCoeffInput = list[float] | np.ndarray | int | None
+ProfileCoeff = np.ndarray | None
 
 
 @dataclass(slots=True)
@@ -30,11 +34,11 @@ class OperatorCase:
 
     route: str
     coordinate: str
-    nodes: str
-    profile_coeffs: dict[str, list[float] | None]
+    profile_coeffs: dict[str, ProfileCoeffInput]
     boundary: Boundary
     heat_input: np.ndarray
     current_input: np.ndarray
+    nodes: str = "uniform"
     Ip: float | None = None
     beta: float | None = None
 
@@ -45,10 +49,10 @@ class OperatorCase:
         object.__setattr__(self, "nodes", _normalize_case_value("nodes", self.nodes))
         object.__setattr__(self, "profile_coeffs", _normalize_case_value("profile_coeffs", self.profile_coeffs))
         object.__setattr__(self, "boundary", _normalize_case_value("boundary", self.boundary))
-        for name in _ORDERED_OPTIONAL_FLOAT_FIELD_NAMES:
-            object.__setattr__(self, name, _normalize_case_value(name, getattr(self, name)))
-        for name in _ORDERED_ARRAY_FIELD_NAMES:
-            object.__setattr__(self, name, _normalize_case_value(name, getattr(self, name)))
+        object.__setattr__(self, "Ip", _normalize_case_value("Ip", self.Ip))
+        object.__setattr__(self, "beta", _normalize_case_value("beta", self.beta))
+        object.__setattr__(self, "heat_input", _normalize_case_value("heat_input", self.heat_input))
+        object.__setattr__(self, "current_input", _normalize_case_value("current_input", self.current_input))
         if self.heat_input.shape != self.current_input.shape:
             raise ValueError(
                 f"heat_input and current_input must share the same shape, "
@@ -57,7 +61,17 @@ class OperatorCase:
         _autoscale_legacy_mu0_inputs(self)
 
     def __setattr__(self, name: str, value) -> None:
-        if name in _CASE_FIELD_NAMES:
+        if name in (
+            "profile_coeffs",
+            "route",
+            "boundary",
+            "coordinate",
+            "nodes",
+            "Ip",
+            "beta",
+            "heat_input",
+            "current_input",
+        ):
             value = _normalize_case_value(name, value)
         object.__setattr__(self, name, value)
 
@@ -142,26 +156,30 @@ class OperatorCase:
 
 
 def _normalize_coeffs(
-    profile_coeffs: dict[str, list[float] | None],
-) -> dict[str, list[float] | None]:
-    coeffs: dict[str, list[float] | None] = {}
-    for name, coeff in profile_coeffs.items():
-        if name in coeffs:
-            raise ValueError(f"Duplicate profile coeff entry for {name!r}")
-        if coeff is None:
-            coeffs[name] = None
-            continue
-        if not isinstance(coeff, list):
-            raise TypeError(f"{name} coeff must be list[float] or None, got {type(coeff).__name__}")
-        coeffs[name] = _as_1d_coeff_list(coeff, name=f"{name} coeff")
-    return coeffs
+    profile_coeffs: dict[str, ProfileCoeffInput],
+) -> dict[str, ProfileCoeff]:
+    return {name: _normalize_profile_coeff(name, coeff) for name, coeff in profile_coeffs.items()}
 
 
-def _copy_coeffs(profile_coeffs: dict[str, list[float] | None]) -> dict[str, list[float] | None]:
-    copied: dict[str, list[float] | None] = {}
-    for name, coeff in profile_coeffs.items():
-        copied[name] = None if coeff is None else list(coeff)
-    return copied
+def _normalize_profile_coeff(name: str, coeff: ProfileCoeffInput) -> ProfileCoeff:
+    if coeff is None:
+        return None
+    if isinstance(coeff, bool):
+        raise TypeError(f"{name} coeff length indicator must be an integer, got bool")
+    if isinstance(coeff, Integral):
+        length = int(coeff)
+        if length <= 0:
+            raise ValueError(f"{name} coeff length indicator must be positive, got {coeff}")
+        return np.zeros(length, dtype=np.float64)
+    if isinstance(coeff, (list, np.ndarray)):
+        return _as_1d_array(coeff, name=f"{name} coeff").astype(np.float64, copy=True)
+    raise TypeError(
+        f"{name} coeff must be list[float], numpy.ndarray, positive int, or None; got {type(coeff).__name__}"
+    )
+
+
+def _copy_coeffs(profile_coeffs: dict[str, ProfileCoeffInput]) -> dict[str, ProfileCoeff]:
+    return {name: _normalize_profile_coeff(name, coeff) for name, coeff in profile_coeffs.items()}
 
 
 def _as_1d_array(value: np.ndarray | list[float], *, name: str) -> np.ndarray:
@@ -169,11 +187,6 @@ def _as_1d_array(value: np.ndarray | list[float], *, name: str) -> np.ndarray:
     if arr.ndim != 1:
         raise ValueError(f"{name} must be 1D, got {arr.shape}")
     return arr
-
-
-def _as_1d_coeff_list(value: list[float], *, name: str) -> list[float]:
-    arr = _as_1d_array(value, name=name)
-    return arr.astype(float, copy=False).tolist()
 
 
 def _normalize_case_value(name: str, value):
@@ -189,39 +202,41 @@ def _normalize_case_value(name: str, value):
         raise TypeError(f"boundary must be Boundary or dict, got {type(value).__name__}")
     if name == "coordinate":
         coord = str(value).lower()
-        if coord not in _COORDINATE_FIELD_VALUES:
-            raise ValueError(f"coordinate must be one of {_COORDINATE_FIELD_VALUES}, got {value!r}")
+        if coord not in ("rho", "psin"):
+            raise ValueError(f"coordinate must be one of ('rho', 'psin'), got {value!r}")
         return coord
     if name == "nodes":
         nodes = str(value).lower()
-        if nodes not in _NODE_FIELD_VALUES:
-            raise ValueError(f"nodes must be one of {_NODE_FIELD_VALUES}, got {value!r}")
+        if nodes not in ("uniform", "grid"):
+            raise ValueError(f"nodes must be one of ('uniform', 'grid'), got {value!r}")
         return nodes
-    if name in _OPTIONAL_FLOAT_FIELD_NAMES:
+    if name in ("Ip", "beta"):
         return np.nan if value is None else float(value)
-    if name in _ARRAY_FIELD_NAMES:
+    if name in ("heat_input", "current_input"):
         return _as_1d_array(value, name=name).copy()
     return value
 
 
 def _autoscale_legacy_mu0_inputs(case: OperatorCase) -> None:
     warnings_needed: list[str] = []
+    legacy_unscaled_abs_limit = 1.0e4
+    mu0 = 4.0e-7 * np.pi
 
     max_abs = float(np.max(np.abs(case.heat_input))) if case.heat_input.size else 0.0
-    if max_abs > _LEGACY_UNSCALED_ABS_LIMIT:
-        case.heat_input *= _MU0
+    if max_abs > legacy_unscaled_abs_limit:
+        case.heat_input *= mu0
         warnings_needed.append("heat_input")
 
     if case.route in {"PI", "PJ1", "PJ2"}:
         max_abs = float(np.max(np.abs(case.current_input))) if case.current_input.size else 0.0
-        if max_abs > _LEGACY_UNSCALED_ABS_LIMIT:
-            case.current_input *= _MU0
+        if max_abs > legacy_unscaled_abs_limit:
+            case.current_input *= mu0
             warnings_needed.append("current_input")
 
     if np.isfinite(case.Ip):
         ip_value = float(case.Ip)
-        if abs(ip_value) > _LEGACY_UNSCALED_ABS_LIMIT:
-            object.__setattr__(case, "Ip", ip_value * _MU0)
+        if abs(ip_value) > legacy_unscaled_abs_limit:
+            object.__setattr__(case, "Ip", ip_value * mu0)
             warnings_needed.append("Ip")
 
     if warnings_needed:
@@ -231,22 +246,3 @@ def _autoscale_legacy_mu0_inputs(case: OperatorCase) -> None:
             RuntimeWarning,
             stacklevel=3,
         )
-
-
-_OPTIONAL_FLOAT_FIELD_NAMES = {"Ip", "beta"}
-_ARRAY_FIELD_NAMES = {"heat_input", "current_input"}
-_MU0 = 4.0e-7 * np.pi
-_LEGACY_UNSCALED_ABS_LIMIT = 1.0e4
-_COORDINATE_FIELD_VALUES = ("rho", "psin")
-_NODE_FIELD_VALUES = ("uniform", "grid")
-_ORDERED_OPTIONAL_FLOAT_FIELD_NAMES = ("Ip", "beta")
-_ORDERED_ARRAY_FIELD_NAMES = ("heat_input", "current_input")
-_CASE_FIELD_NAMES = {
-    "profile_coeffs",
-    "route",
-    "boundary",
-    "coordinate",
-    "nodes",
-    *_OPTIONAL_FLOAT_FIELD_NAMES,
-    *_ARRAY_FIELD_NAMES,
-}
