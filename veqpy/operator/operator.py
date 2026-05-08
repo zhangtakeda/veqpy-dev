@@ -253,23 +253,42 @@ class Operator:
         return self.residual_array_norm(self.residual_vector(x, residual_form=residual_form))
 
     def residual_collocation(self, x: np.ndarray) -> np.ndarray:
-        """返回形状为 ``(Nr * Nt,)`` 的 quadrature 加权 grid 配点 Grad-Shafranov residual `G`."""
+        """返回 DESC-style 点值 force-balance collocation residual.
+
+        该 residual 不是把 Galerkin/弱形式残差追加到外部目标, 而是在每个
+        collocation node 上直接约束与 Grad-Shafranov residual `G` 对应的
+        force-balance components `G*psin_R` 和 `G*psin_Z`.
+        返回形状为 ``(2 * Nr * Nt,)`` 的 RMS/quadrature 加权向量.
+        """
+        self._evaluate_collocation_workspace(x)
+        return np.concatenate(
+            (
+                self._weighted_collocation_field(self.residual_surface_workspace[1]),
+                self._weighted_collocation_field(self.residual_surface_workspace[2]),
+            )
+        )
+
+    def _evaluate_collocation_workspace(self, x: np.ndarray) -> None:
         x_eval = self.coerce_x(x)
         self.stage_a_profile(x_eval)
         self.stage_b_geometry()
         self.stage_c_source()
         self._update_residual_surface_workspace()
-        G = self.residual_surface_workspace[0]
-        if G.size == 0:
+
+    def _weighted_collocation_field(self, field: np.ndarray) -> np.ndarray:
+        if field.size == 0:
             return np.empty(0, dtype=np.float64)
+        sqrt_weights = self._collocation_sqrt_weights()
+        return np.ravel(sqrt_weights * field).copy()
+
+    def _collocation_sqrt_weights(self) -> np.ndarray:
         radial_weights = np.asarray(self.grid.weights, dtype=np.float64)
         if radial_weights.ndim != 1 or radial_weights.size != int(self.grid.Nr):
             raise ValueError(
                 "Operator.residual_collocation expected one-dimensional radial quadrature weights "
                 f"with length {int(self.grid.Nr)}, got shape {radial_weights.shape}."
             )
-        sqrt_weights = np.sqrt(radial_weights[:, None] / max(int(self.grid.Nt), 1))
-        return np.ravel(sqrt_weights * G).copy()
+        return np.sqrt(radial_weights[:, None] / max(int(self.grid.Nt), 1))
 
     def _evaluate_residual(self, x_eval: np.ndarray) -> np.ndarray:
         self.stage_a_profile(x_eval)

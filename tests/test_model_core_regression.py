@@ -638,17 +638,27 @@ def test_pq_psin_route_evaluates_residual_without_active_psin_profile():
     assert np.all(np.isfinite(equilibrium.F))
 
 
-def test_operator_collocation_residual_returns_rms_normalized_grid_g():
+def test_operator_collocation_residual_returns_desc_style_pointwise_force_balance():
     grid, case = _build_operator_case(mode="PF", coordinate="rho", nodes="uniform")
     operator = Operator(grid=grid, case=case)
     x = operator.encode_initial_state()
 
+    residual_g = operator.residual_collocation_g(x)
     residual = operator.residual_collocation(x)
-    expected = operator.residual_surface_workspace[0].reshape(-1) / np.sqrt(grid.Nr * grid.Nt)
+    sqrt_weights = np.sqrt(grid.weights[:, None] / grid.Nt)
+    expected_g = np.ravel(sqrt_weights * operator.residual_surface_workspace[0])
+    expected = np.concatenate(
+        (
+            np.ravel(sqrt_weights * operator.residual_surface_workspace[1]),
+            np.ravel(sqrt_weights * operator.residual_surface_workspace[2]),
+        )
+    )
 
-    assert residual.shape == (grid.Nr * grid.Nt,)
+    assert residual_g.shape == (grid.Nr * grid.Nt,)
+    assert residual.shape == (2 * grid.Nr * grid.Nt,)
     assert residual.dtype == np.float64
     assert np.all(np.isfinite(residual))
+    assert np.allclose(residual_g, expected_g)
     assert np.allclose(residual, expected)
     assert not np.shares_memory(residual, operator.residual_surface_workspace)
 

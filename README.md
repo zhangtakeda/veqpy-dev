@@ -82,8 +82,9 @@ The main runtime path is:
 `SolverConfig.residual_form` selects the residual equations used by the solver:
 
 - `residual_form="variational"` is the default packed projected residual, mapping packed coefficients `N -> N`.
-- `residual_form="collocation"` uses `Operator.residual_collocation(x)` and solves the RMS-normalized grid residual
-  `G.ravel() / sqrt(Nr * Nt)`, mapping packed coefficients `N -> Nr*Nt`.
+- `residual_form="collocation"` uses `Operator.residual_collocation(x)` and solves a DESC-style
+  RMS/quadrature-normalized pointwise force-balance residual containing `G*psin_R` and `G*psin_Z`,
+  mapping packed coefficients `N -> 2*Nr*Nt`.
 
 Because the collocation residual is generally rectangular, use a least-squares method:
 

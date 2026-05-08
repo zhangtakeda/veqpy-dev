@@ -109,7 +109,11 @@ def test_operator_collocation_residual_uses_radial_quadrature_weights(monkeypatc
     operator = object.__new__(Operator)
     operator.grid = SimpleNamespace(Nr=2, Nt=3, weights=np.array([0.25, 0.75], dtype=np.float64))
     operator.residual_surface_workspace = np.asarray(
-        [[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]],
+        [
+            [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+            [[0.5, 1.0, 1.5], [2.0, 2.5, 3.0]],
+            [[-1.0, -2.0, -3.0], [-4.0, -5.0, -6.0]],
+        ],
         dtype=np.float64,
     )
 
@@ -119,10 +123,18 @@ def test_operator_collocation_residual_uses_radial_quadrature_weights(monkeypatc
     monkeypatch.setattr(Operator, "stage_c_source", lambda self: None)
     monkeypatch.setattr(Operator, "_update_residual_surface_workspace", lambda self: None)
 
+    residual_g = operator.residual_collocation_g(np.zeros(1, dtype=np.float64))
     residual = operator.residual_collocation(np.zeros(1, dtype=np.float64))
     sqrt_weights = np.sqrt(np.array([[0.25], [0.75]], dtype=np.float64) / 3.0)
-    expected = np.ravel(sqrt_weights * operator.residual_surface_workspace[0])
+    expected_g = np.ravel(sqrt_weights * operator.residual_surface_workspace[0])
+    expected = np.concatenate(
+        (
+            np.ravel(sqrt_weights * operator.residual_surface_workspace[1]),
+            np.ravel(sqrt_weights * operator.residual_surface_workspace[2]),
+        )
+    )
 
+    assert np.allclose(residual_g, expected_g)
     assert np.allclose(residual, expected)
 
 
