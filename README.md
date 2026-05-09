@@ -73,28 +73,32 @@ The main runtime path is:
 
 1. `Solver.solve(...)`
 2. SciPy root or least-squares entry
-3. `Operator.__call__(x)`
+3. `Operator.__call__(x)` / `Operator.residual_var(x)`
 4. Stage-A `profile`
 5. Stage-B `geometry`
 6. Stage-C `source`
 7. Stage-D `residual`
 
-`SolverConfig.residual_form` selects the residual equations used by the solver:
+The default solve uses the packed projected variational residual, mapping packed
+coefficients `N -> N`.  Set `SolverConfig(enable_collocation=True)` (or pass
+`enable_collocation=True` to `solve`) to run a two-stage workflow:
 
-- `residual_form="variational"` is the default packed projected residual, mapping packed coefficients `N -> N`.
-- `residual_form="collocation"` uses `Operator.residual_collocation(x)` and solves a DESC-style
-  RMS/quadrature-normalized pointwise force-balance residual containing `G*psin_R` and `G*psin_Z`,
-  mapping packed coefficients `N -> 2*Nr*Nt`.
+1. solve the normal variational problem;
+2. warm-start a DESC-style collocation polish using `Operator.residual_collocation(x)`.
 
-Because the collocation residual is generally rectangular, use a least-squares method:
+The collocation polish residual is a quadrature-scaled pointwise force-balance
+vector containing `G*psin_R` and `G*psin_Z`, mapping packed coefficients
+`N -> 2*Nr*Nt`.  Because it is generally rectangular, the polish method must be
+a least-squares method:
 
 ```python
-solver = Solver(operator=operator, config=SolverConfig(residual_form="collocation"))
+solver = Solver(operator=operator, config=SolverConfig(enable_collocation=True))
 ```
 
-`residual_form="collocation"` defaults to `method="trf"`; the variational default remains `method="hybr"`.
-For collocation least-squares solves, `success` follows SciPy's least-squares termination status because the
-RMS grid residual is not expected to satisfy the same near-zero packed Galerkin tolerance.
+The variational default remains `method="hybr"`; the collocation polish default
+is `collocation_method="trf"`.  A collocation-enabled `SolverResult` stores one
+record, reports the post-polish coefficients, and includes both stages in
+elapsed time and evaluation counts.
 
 ## Performance Snapshot
 

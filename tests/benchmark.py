@@ -62,11 +62,12 @@ REFERENCE_SUMMARY_GRID = Grid(
 )
 
 CONFIG = SolverConfig(
-    method="lm",
+    method="hybr",
+    enable_collocation=True,
+    collocation_method="lm",
     enable_verbose=False,
     enable_warmstart=False,
     enable_history=False,
-    residual_form="collocation",
 )
 
 # Minimal robust coefficient seeds for benchmark cases.

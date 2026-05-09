@@ -7,7 +7,6 @@ import pytest
 from veqpy.operator.operator import Operator
 from veqpy.solver import Solver, SolverConfig
 from veqpy.solver.solver_config import (
-    DEFAULT_COLLOCATION_FALLBACK_METHODS,
     DEFAULT_COLLOCATION_METHOD,
     DEFAULT_VARIATIONAL_FALLBACK_METHODS,
     DEFAULT_VARIATIONAL_METHOD,
@@ -42,25 +41,11 @@ class _DummyOperator:
         return arr
 
     def __call__(self, x: np.ndarray) -> np.ndarray:
+        return self.residual_var(x)
+
+    def residual_var(self, x: np.ndarray) -> np.ndarray:
         self.variational_calls += 1
         return self.coerce_x(x)
-
-    def residual_vector(self, x: np.ndarray, *, residual_form: str = "variational") -> np.ndarray:
-        if residual_form == "variational":
-            return self(x)
-        if residual_form == "collocation":
-            return self.residual_collocation(x)
-        raise ValueError(f"Unsupported residual form {residual_form!r}.")
-
-    @staticmethod
-    def residual_array_norm(residual: np.ndarray) -> float:
-        residual_eval = np.asarray(residual, dtype=np.float64)
-        if residual_eval.ndim == 0:
-            residual_eval = residual_eval.reshape(1)
-        return float(np.linalg.norm(residual_eval))
-
-    def residual_norm(self, x: np.ndarray, *, residual_form: str = "variational") -> float:
-        return self.residual_array_norm(self.residual_vector(x, residual_form=residual_form))
 
     def residual_collocation(self, x: np.ndarray) -> np.ndarray:
         self.collocation_calls += 1
@@ -94,7 +79,7 @@ def _install_fake_attempts(monkeypatch, solver: Solver, scripted_attempts):
     calls: list[tuple[str, np.ndarray]] = []
     scripted = iter(scripted_attempts)
 
-    def fake_solve_opt_problem(x_guess: np.ndarray, *, solve_config: SolverConfig):
+    def fake_solve_opt_problem(x_guess: np.ndarray, *, solve_config: SolverConfig, residual_kind: str):
         calls.append((solve_config.method, np.asarray(x_guess, dtype=np.float64).copy()))
         outcome = next(scripted)
         if isinstance(outcome, Exception):
@@ -123,10 +108,8 @@ def test_operator_collocation_residual_uses_radial_quadrature_weights(monkeypatc
     monkeypatch.setattr(Operator, "stage_c_source", lambda self: None)
     monkeypatch.setattr(Operator, "_update_residual_surface_workspace", lambda self: None)
 
-    residual_g = operator.residual_collocation_g(np.zeros(1, dtype=np.float64))
     residual = operator.residual_collocation(np.zeros(1, dtype=np.float64))
     sqrt_weights = np.sqrt(np.array([[0.25], [0.75]], dtype=np.float64) / 3.0)
-    expected_g = np.ravel(sqrt_weights * operator.residual_surface_workspace[0])
     expected = np.concatenate(
         (
             np.ravel(sqrt_weights * operator.residual_surface_workspace[1]),
@@ -134,25 +117,24 @@ def test_operator_collocation_residual_uses_radial_quadrature_weights(monkeypatc
         )
     )
 
-    assert np.allclose(residual_g, expected_g)
     assert np.allclose(residual, expected)
 
 
-def test_operator_residual_norm_helpers_match_numpy_norm(monkeypatch):
+def test_operator_exposes_explicit_residual_vectors(monkeypatch):
     operator = object.__new__(Operator)
 
-    monkeypatch.setattr(Operator, "residual", lambda self, x: np.asarray([3.0, 4.0], dtype=np.float64))
+    monkeypatch.setattr(Operator, "residual_var", lambda self, x: np.asarray([3.0, 4.0], dtype=np.float64))
     monkeypatch.setattr(
         Operator,
         "residual_collocation",
         lambda self, x: np.asarray([1.0, 2.0, 2.0], dtype=np.float64),
     )
 
-    assert operator.residual_array_norm(np.array(5.0)) == 5.0
-    assert operator.residual_norm(np.zeros(1), residual_form="variational") == 5.0
-    assert operator.residual_norm(np.zeros(1), residual_form="collocation") == 3.0
-    with pytest.raises(ValueError, match="Unsupported residual form"):
-        operator.residual_norm(np.zeros(1), residual_form="pointwise")
+    assert np.allclose(operator.residual_var(np.zeros(1)), [3.0, 4.0])
+    assert np.allclose(operator.residual_collocation(np.zeros(1)), [1.0, 2.0, 2.0])
+    assert not hasattr(operator, "residual_norm")
+    assert not hasattr(operator, "residual_vector")
+    assert not hasattr(operator, "residual_collocation_g")
 
 
 def test_solver_config_removes_homotopy_fields():
@@ -189,62 +171,55 @@ def test_solver_config_uses_whole_word_control_names():
     assert "max_evaluations" in str(config)
 
 
-def test_solver_config_supports_collocation_residual_form():
-    config = SolverConfig(residual_form="collocation")
+def test_solver_config_supports_collocation_polish_workflow():
+    config = SolverConfig(
+        enable_collocation=True,
+        collocation_method="lm",
+        collocation_max_residual=1.0e-8,
+        collocation_max_evaluations=40,
+    )
 
-    assert config.method == DEFAULT_COLLOCATION_METHOD
-    assert config.residual_form == "collocation"
-    assert config.fallback_methods == DEFAULT_COLLOCATION_FALLBACK_METHODS
-    assert "residual_form: collocation" in str(config)
+    assert config.enable_collocation is True
+    assert config.collocation_method == "lm"
+    assert config.collocation_max_residual == 1.0e-8
+    assert config.collocation_max_evaluations == 40
+    assert not hasattr(config, "residual_form")
+    assert "enable_collocation: True" in str(config)
+    assert "collocation_method: lm" in str(config)
+    assert "collocation_max_residual: 1e-08" in str(config)
+    assert "collocation_max_evaluations: 40" in str(config)
+
+
+def test_solver_config_rejects_root_collocation_polish_method():
+    with pytest.raises(ValueError, match="collocation_method"):
+        SolverConfig(enable_collocation=True, collocation_method="hybr")
 
 
 def test_solver_config_uses_variational_root_default_with_single_least_squares_fallback():
     config = SolverConfig()
 
     assert config.method == DEFAULT_VARIATIONAL_METHOD
-    assert config.residual_form == "variational"
+    assert not hasattr(config, "residual_form")
     assert config.fallback_methods == DEFAULT_VARIATIONAL_FALLBACK_METHODS
+    assert "residual_form" not in str(config)
 
 
-def test_solver_config_rejects_unknown_residual_form():
-    with pytest.raises(ValueError, match="Unsupported residual form"):
-        SolverConfig(residual_form="pointwise")
-
-
-def test_solver_rejects_collocation_with_root_method():
-    solver = Solver(operator=_DummyOperator(), config=SolverConfig(method="hybr", residual_form="collocation"))
-
-    with pytest.raises(ValueError, match="requires least_squares method"):
-        solver.solve(enable_history=False)
-
-
-def test_solver_rejects_root_fallbacks_for_collocation():
-    solver = Solver(
-        operator=_DummyOperator(),
-        config=SolverConfig(method="trf", residual_form="collocation", fallback_methods=("hybr",)),
-    )
-
-    with pytest.raises(ValueError, match="unsupported fallback"):
-        solver.solve(enable_history=False)
-
-
-def test_solver_routes_collocation_residual_to_least_squares(monkeypatch):
+def test_solver_enable_collocation_routes_polish_to_collocation_residual(monkeypatch):
     operator = _DummyOperator()
     solver = Solver(
         operator=operator,
-        config=SolverConfig(method="trf", residual_form="collocation", enable_fallback=False),
+        config=SolverConfig(method="trf", enable_collocation=True, collocation_method="trf", enable_fallback=False),
     )
-    observed = {}
+    observed = {"calls": []}
 
     def fake_registered_method(fun, x0, **kwargs):
         probe = np.array([1.0, 2.0, 3.0], dtype=np.float64)
-        observed["probe_residual"] = np.asarray(fun(probe), dtype=np.float64)
-        observed["method_kwarg"] = kwargs.get("method")
+        observed["calls"].append(np.asarray(fun(probe), dtype=np.float64))
         return SimpleNamespace(
             x=np.zeros_like(x0),
-            fun=np.zeros(6, dtype=np.float64),
+            fun=np.zeros_like(x0) if len(observed["calls"]) == 1 else np.zeros(6, dtype=np.float64),
             success=True,
-            message="fake collocation solve",
+            message="fake solve",
             nfev=1,
             njev=0,
             nit=1,
@@ -254,53 +229,89 @@ def test_solver_routes_collocation_residual_to_least_squares(monkeypatch):
 
     solver.solve(enable_history=False)
 
-    assert observed["method_kwarg"] is None
-    assert np.allclose(observed["probe_residual"], [1.0, 2.0, 3.0, 2.0, 3.0, 4.0])
+    assert len(observed["calls"]) == 2
+    assert np.allclose(observed["calls"][0], [1.0, 2.0, 3.0])
+    assert np.allclose(observed["calls"][1], [1.0, 2.0, 3.0, 2.0, 3.0, 4.0])
     assert operator.collocation_calls == 1
-    assert operator.variational_calls == 0
+    assert operator.variational_calls >= 1
 
 
-def test_solver_accepts_collocation_least_squares_success_without_strict_variational_residual(monkeypatch):
-    solver = Solver(
-        operator=_DummyOperator(),
-        config=SolverConfig(method="trf", residual_form="collocation", enable_fallback=False),
-    )
-
-    def fake_registered_method(fun, x0, **kwargs):
-        fun(np.zeros_like(x0))
-        return SimpleNamespace(
-            x=np.zeros_like(x0),
-            fun=np.ones(6, dtype=np.float64),
-            success=True,
-            message="fake ftol termination",
-            nfev=1,
-            njev=0,
-            nit=1,
-        )
-
-    monkeypatch.setitem(SUPPORTED_METHODS, "trf", fake_registered_method)
-
-    solver.solve(enable_history=False)
-
-    assert solver.result.success is True
-    assert solver.result.residual_norm_final > solver.config.max_residual
-    assert "rejected by residual" not in solver.result.message
-
-
-def test_solver_per_solve_collocation_override_uses_collocation_defaults(monkeypatch):
+def test_solver_enable_collocation_runs_variational_then_warm_started_polish(monkeypatch):
     solver = Solver(operator=_DummyOperator())
-    calls = _install_fake_attempts(
-        monkeypatch,
-        solver,
-        [
-            _attempt_result(np.zeros(3, dtype=np.float64), success=True, message="trf converged", residual_norm=0.0),
-        ],
+    x_initial = np.array([0.5, -0.25, 0.75], dtype=np.float64)
+    x_variational = np.array([1.0, 2.0, 3.0], dtype=np.float64)
+    x_collocation = np.array([4.0, 5.0, 6.0], dtype=np.float64)
+    calls: list[tuple[str, str, bool, float, int, np.ndarray]] = []
+
+    def fake_solve_opt_problem(x_guess: np.ndarray, *, solve_config: SolverConfig, residual_kind: str):
+        calls.append(
+            (
+                residual_kind,
+                solve_config.method,
+                solve_config.enable_fallback,
+                solve_config.max_residual,
+                solve_config.max_evaluations,
+                np.asarray(x_guess, dtype=np.float64).copy(),
+            )
+        )
+        if residual_kind == "variational":
+            return _attempt_result(
+                x_variational,
+                success=True,
+                message="variational converged",
+                residual_norm=1.0e-9,
+                function_evaluations=2,
+            )
+        if residual_kind == "collocation":
+            return (
+                x_collocation.copy(),
+                True,
+                "collocation polished",
+                5,
+                3,
+                4,
+                2.0e-9,
+            )
+        raise AssertionError(f"Unexpected residual kind {residual_kind!r}")
+
+    monkeypatch.setattr(solver, "_solve_opt_problem", fake_solve_opt_problem)
+
+    x_final = solver.solve(
+        x0=x_initial,
+        enable_collocation=True,
+        collocation_method="trf",
+        collocation_max_residual=3.0e-8,
+        collocation_max_evaluations=11,
+        enable_history=True,
+        enable_fallback=False,
     )
 
-    solver.solve(residual_form="collocation", enable_history=False)
-
-    assert [method for method, _ in calls] == ["trf"]
-    assert np.allclose(calls[0][1], np.zeros(3, dtype=np.float64))
+    assert [
+        (form, method, fallback, max_residual, max_evaluations)
+        for form, method, fallback, max_residual, max_evaluations, _ in calls
+    ] == [
+        ("variational", DEFAULT_VARIATIONAL_METHOD, False, 1.0e-6, 1000),
+        ("collocation", DEFAULT_COLLOCATION_METHOD, False, 3.0e-8, 11),
+    ]
+    assert solver.history[0].config_snapshot.collocation_max_residual == 3.0e-8
+    assert solver.history[0].config_snapshot.collocation_max_evaluations == 11
+    assert np.allclose(calls[0][5], x_initial)
+    assert np.allclose(calls[1][5], x_variational)
+    assert np.allclose(x_final, x_collocation)
+    assert solver.result is not None
+    assert np.allclose(solver.result.x0, x_initial)
+    assert np.allclose(solver.result.x, x_collocation)
+    assert solver.result.success is True
+    assert solver.result.function_evaluations == 7
+    assert solver.result.jacobian_evaluations == 3
+    assert solver.result.iterations == 6
+    assert solver.result.residual_norm_final == pytest.approx(2.0e-9)
+    assert "variational stage succeeded" in solver.result.message
+    assert "collocation polish succeeded" in solver.result.message
+    assert len(solver.history) == 1
+    assert solver.history[0].config_snapshot.enable_collocation is True
+    assert solver.history[0].result_snapshot is solver.result
+    assert np.allclose(solver.x0, x_collocation)
 
 
 def test_solver_explicit_guess_retries_same_method_after_reset(monkeypatch):

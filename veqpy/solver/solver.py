@@ -27,10 +27,7 @@ from veqpy.model.equilibrium import Equilibrium
 from veqpy.operator.operator import Operator
 from veqpy.operator.operator_case import OperatorCase
 from veqpy.solver.solver_config import (
-    DEFAULT_COLLOCATION_FALLBACK_METHODS,
     DEFAULT_COLLOCATION_METHOD,
-    DEFAULT_VARIATIONAL_FALLBACK_METHODS,
-    DEFAULT_VARIATIONAL_METHOD,
     LEAST_SQUARES_METHODS,
     ROOT_METHODS,
     SUPPORTED_METHODS,
@@ -86,7 +83,10 @@ class Solver:
         fallback_methods: tuple[str, ...] | list[str] | None = None,
         enable_verbose: bool | None = None,
         enable_history: bool | None = None,
-        residual_form: str | None = None,
+        enable_collocation: bool | None = None,
+        collocation_method: str | None = None,
+        collocation_max_residual: float | None = None,
+        collocation_max_evaluations: int | None = None,
     ) -> np.ndarray:
         """执行一次求解并返回收敛后的 packed x."""
 
@@ -99,9 +99,12 @@ class Solver:
             fallback_methods=fallback_methods,
             enable_verbose=enable_verbose,
             enable_history=enable_history,
-            residual_form=residual_form,
+            enable_collocation=enable_collocation,
+            collocation_method=collocation_method,
+            collocation_max_residual=collocation_max_residual,
+            collocation_max_evaluations=collocation_max_evaluations,
         )
-        _validate_residual_solve_config(solve_config)
+        _validate_stage_solve_config(solve_config, residual_kind="variational")
 
         if x0 is not None:
             self.x0 = self.operator.coerce_x(x0).copy()
@@ -113,25 +116,45 @@ class Solver:
         x_guess = self.x0.copy()
 
         started = perf_counter()
-        (
-            x_opt,
-            success,
-            message,
-            function_evaluations,
-            jacobian_evaluations,
-            iterations,
-            residual_norm_final,
-        ) = self._solve_with_fallbacks(
-            x_guess,
-            solve_config=solve_config,
-            x0_was_provided=x0 is not None,
-        )
+        if solve_config.enable_collocation:
+            (
+                x_opt,
+                success,
+                message,
+                function_evaluations,
+                jacobian_evaluations,
+                iterations,
+                residual_norm_final,
+            ) = self._solve_with_collocation_polish(
+                x_guess,
+                solve_config=solve_config,
+                x0_was_provided=x0 is not None,
+            )
+        else:
+            (
+                x_opt,
+                success,
+                message,
+                function_evaluations,
+                jacobian_evaluations,
+                iterations,
+                residual_norm_final,
+            ) = self._solve_with_fallbacks(
+                x_guess,
+                solve_config=solve_config,
+                residual_kind="variational",
+                x0_was_provided=x0 is not None,
+            )
         elapsed = (perf_counter() - started) * 1e6
 
         x_final = self.operator.coerce_x(x_opt)
         residual_final_exc = None
         if not bool(success) and not np.isfinite(residual_norm_final):
-            residual_norm_final, residual_final_exc = self._safe_residual_norm(x_final, solve_config=solve_config)
+            residual_norm_final, residual_final_exc = self._safe_residual_norm(
+                x_final,
+                solve_config=self._final_residual_config(solve_config),
+                residual_kind=self._final_residual_kind(solve_config),
+            )
         if residual_final_exc is not None:
             success = False
             message = (
@@ -191,7 +214,10 @@ class Solver:
         fallback_methods: tuple[str, ...] | list[str] | None,
         enable_verbose: bool | None,
         enable_history: bool | None,
-        residual_form: str | None,
+        enable_collocation: bool | None,
+        collocation_method: str | None,
+        collocation_max_residual: float | None,
+        collocation_max_evaluations: int | None,
     ) -> SolverConfig:
         """基于默认配置生成一次 solve 的临时配置快照."""
 
@@ -212,27 +238,128 @@ class Solver:
             overrides["enable_verbose"] = bool(enable_verbose)
         if enable_history is not None:
             overrides["enable_history"] = bool(enable_history)
-        if residual_form is not None:
-            overrides["residual_form"] = str(residual_form)
-        if residual_form is not None and method is None:
-            target_residual_form = str(residual_form)
-            if target_residual_form == "collocation" and self.config.method == DEFAULT_VARIATIONAL_METHOD:
-                overrides["method"] = DEFAULT_COLLOCATION_METHOD
-                if fallback_methods is None and self.config.fallback_methods == DEFAULT_VARIATIONAL_FALLBACK_METHODS:
-                    overrides["fallback_methods"] = None
-            elif target_residual_form == "variational" and self.config.method == DEFAULT_COLLOCATION_METHOD:
-                overrides["method"] = DEFAULT_VARIATIONAL_METHOD
-                if fallback_methods is None and self.config.fallback_methods == DEFAULT_COLLOCATION_FALLBACK_METHODS:
-                    overrides["fallback_methods"] = None
+        if enable_collocation is not None:
+            overrides["enable_collocation"] = bool(enable_collocation)
+        if collocation_method is not None:
+            overrides["collocation_method"] = str(collocation_method)
+        if collocation_max_residual is not None:
+            overrides["collocation_max_residual"] = float(collocation_max_residual)
+        if collocation_max_evaluations is not None:
+            overrides["collocation_max_evaluations"] = int(collocation_max_evaluations)
         if not overrides:
             return self.config
         return replace(self.config, **overrides)
+
+    def _solve_with_collocation_polish(
+        self,
+        x_guess: np.ndarray,
+        *,
+        solve_config: SolverConfig,
+        x0_was_provided: bool,
+    ) -> tuple[np.ndarray, bool, str, int, int, int, float]:
+        """先做 variational solve, 再从该结果热启动 collocation polish."""
+
+        variational_config = self._variational_stage_config(solve_config)
+        collocation_config = self._collocation_stage_config(solve_config)
+        _validate_stage_solve_config(variational_config, residual_kind="variational")
+        _validate_stage_solve_config(collocation_config, residual_kind="collocation")
+
+        variational_result = self._solve_with_fallbacks(
+            x_guess,
+            solve_config=variational_config,
+            residual_kind="variational",
+            x0_was_provided=x0_was_provided,
+        )
+        collocation_result, collocation_error = self._try_solve_attempt(
+            variational_result[0],
+            solve_config=collocation_config,
+            residual_kind="collocation",
+        )
+        if collocation_result is None:
+            if collocation_error is not None:
+                raise RuntimeError("Collocation polish failed without a usable result") from collocation_error
+            raise RuntimeError("Collocation polish failed without a usable result")
+
+        return self._combine_variational_collocation_results(
+            variational_result=variational_result,
+            collocation_result=collocation_result,
+            collocation_error=collocation_error,
+        )
+
+    def _variational_stage_config(self, solve_config: SolverConfig) -> SolverConfig:
+        """返回两阶段 workflow 的 variational stage 配置."""
+
+        return replace(solve_config, enable_collocation=False)
+
+    def _collocation_stage_config(self, solve_config: SolverConfig) -> SolverConfig:
+        """返回两阶段 workflow 的 collocation polish 配置."""
+
+        max_residual = (
+            solve_config.max_residual
+            if solve_config.collocation_max_residual is None
+            else solve_config.collocation_max_residual
+        )
+        max_evaluations = (
+            solve_config.max_evaluations
+            if solve_config.collocation_max_evaluations is None
+            else solve_config.collocation_max_evaluations
+        )
+        return replace(
+            solve_config,
+            method=solve_config.collocation_method,
+            max_residual=max_residual,
+            max_evaluations=max_evaluations,
+            enable_collocation=False,
+            enable_fallback=False,
+            fallback_methods=(),
+        )
+
+    def _final_residual_config(self, solve_config: SolverConfig) -> SolverConfig:
+        """返回 SolverResult 最终 x 应使用的 residual 评估配置."""
+
+        if solve_config.enable_collocation:
+            return self._collocation_stage_config(solve_config)
+        return solve_config
+
+    def _final_residual_kind(self, solve_config: SolverConfig) -> str:
+        """返回 SolverResult 最终 x 应使用的 residual kind."""
+
+        if solve_config.enable_collocation:
+            return "collocation"
+        return "variational"
+
+    def _combine_variational_collocation_results(
+        self,
+        *,
+        variational_result: tuple[np.ndarray, bool, str, int, int, int, float],
+        collocation_result: tuple[np.ndarray, bool, str, int, int, int, float],
+        collocation_error: Exception | None,
+    ) -> tuple[np.ndarray, bool, str, int, int, int, float]:
+        """合并两阶段计数, 但成功状态与最终 x 以 collocation stage 为准."""
+
+        variational_status = "succeeded" if bool(variational_result[1]) else "failed"
+        collocation_status = "succeeded" if self._attempt_succeeded(collocation_result, collocation_error) else "failed"
+        message = (
+            f"variational stage {variational_status}: {variational_result[2]}; "
+            f"collocation polish {collocation_status}: "
+            f"{self._format_attempt_failure(method='collocation-polish', result=collocation_result, error=collocation_error)}"
+        )
+        return (
+            collocation_result[0],
+            self._attempt_succeeded(collocation_result, collocation_error),
+            message,
+            int(variational_result[3]) + int(collocation_result[3]),
+            int(variational_result[4]) + int(collocation_result[4]),
+            int(variational_result[5]) + int(collocation_result[5]),
+            float(collocation_result[6]),
+        )
 
     def _solve_with_fallbacks(
         self,
         x_guess: np.ndarray,
         *,
         solve_config: SolverConfig,
+        residual_kind: str,
         x0_was_provided: bool,
     ) -> tuple[np.ndarray, bool, str, int, int, int, float]:
         """按主方法求解, 必要时按配置顺序回退到备用 solver 方法."""
@@ -242,12 +369,17 @@ class Solver:
         attempt_plans = self._build_attempt_plans(
             x_guess,
             solve_config=solve_config,
+            residual_kind=residual_kind,
             x0_was_provided=x0_was_provided,
         )
 
         for idx, attempt_plan in enumerate(attempt_plans):
             label, x_attempt_guess, attempt_config = attempt_plan
-            result, error = self._try_solve_attempt(x_attempt_guess, solve_config=attempt_config)
+            result, error = self._try_solve_attempt(
+                x_attempt_guess,
+                solve_config=attempt_config,
+                residual_kind=residual_kind,
+            )
             attempts.append((label, result, error))
             if self._attempt_succeeded(result, error):
                 if result is None:
@@ -279,6 +411,7 @@ class Solver:
         x_guess: np.ndarray,
         *,
         solve_config: SolverConfig,
+        residual_kind: str,
         x0_was_provided: bool,
     ) -> list[tuple[str, np.ndarray, SolverConfig]]:
         x_initial = self.operator.coerce_x(x_guess).copy()
@@ -330,14 +463,23 @@ class Solver:
         x_guess: np.ndarray,
         *,
         solve_config: SolverConfig,
+        residual_kind: str,
     ) -> tuple[tuple[np.ndarray, bool, str, int, int, int, float] | None, Exception | None]:
         """包装一次 solve stage, 让 fallback 流程也能处理数值异常."""
 
         x_guess_eval = self.operator.coerce_x(x_guess).copy()
         try:
-            return self._solve_opt_problem(x_guess_eval, solve_config=solve_config), None
+            return self._solve_opt_problem(
+                x_guess_eval,
+                solve_config=solve_config,
+                residual_kind=residual_kind,
+            ), None
         except Exception as exc:
-            residual_norm_x0, residual_exc = self._safe_residual_norm(x_guess_eval, solve_config=solve_config)
+            residual_norm_x0, residual_exc = self._safe_residual_norm(
+                x_guess_eval,
+                solve_config=solve_config,
+                residual_kind=residual_kind,
+            )
             if residual_exc is None and _residual_within_acceptance(residual_norm_x0, solve_config):
                 return (
                     (
@@ -393,10 +535,11 @@ class Solver:
         x: np.ndarray,
         *,
         solve_config: SolverConfig | None = None,
+        residual_kind: str = "variational",
     ) -> tuple[float, Exception | None]:
         try:
-            config_eval = self.config if solve_config is None else solve_config
-            return self.operator.residual_norm(x, residual_form=config_eval.residual_form), None
+            _ = self.config if solve_config is None else solve_config
+            return _residual_array_norm(self._residual_function_for(residual_kind)(x)), None
         except Exception as exc:
             return float("inf"), exc
 
@@ -487,14 +630,19 @@ class Solver:
         x_guess: np.ndarray,
         *,
         solve_config: SolverConfig,
+        residual_kind: str,
     ) -> tuple[np.ndarray, bool, str, int, int, int, float]:
         """执行一次完整 nonlinear solve."""
 
-        opt = self._run_solve_full(x_guess, solve_config=solve_config)
+        opt = self._run_solve_full(x_guess, solve_config=solve_config, residual_kind=residual_kind)
         x_opt = self.operator.coerce_x(opt.x)
         residual_norm = self._optimizer_residual_norm(opt)
         if residual_norm is None or not np.isfinite(residual_norm):
-            residual_norm, _ = self._safe_residual_norm(x_opt, solve_config=solve_config)
+            residual_norm, _ = self._safe_residual_norm(
+                x_opt,
+                solve_config=solve_config,
+                residual_kind=residual_kind,
+            )
         accepted_by_residual = _residual_within_acceptance(residual_norm, solve_config)
         accepted = bool(
             accepted_by_residual
@@ -502,13 +650,16 @@ class Solver:
                 bool(opt.success)
                 and residual_norm is not None
                 and np.isfinite(residual_norm)
-                and not _requires_strict_residual_acceptance(solve_config)
+                and not _requires_strict_residual_acceptance(solve_config, residual_kind=residual_kind)
             )
         )
         message = str(opt.message)
         if not bool(opt.success) and accepted:
             message = f"{message} [accepted by residual]"
-        if bool(opt.success) and not accepted and _requires_strict_residual_acceptance(solve_config):
+        if bool(opt.success) and not accepted and _requires_strict_residual_acceptance(
+            solve_config,
+            residual_kind=residual_kind,
+        ):
             message = f"{message} [rejected by residual={residual_norm:.6e}]"
         return (
             x_opt,
@@ -525,16 +676,27 @@ class Solver:
         x_guess: np.ndarray,
         *,
         solve_config: SolverConfig,
+        residual_kind: str,
     ):
-        _validate_residual_method(solve_config)
+        _validate_stage_method(solve_config, residual_kind=residual_kind)
         optimize_method = _registered_method_for(solve_config)
         if solve_config.method in ROOT_METHODS:
             return self._run_root_full(x_guess, solve_config=solve_config, optimize_method=optimize_method)
-        return self._run_least_squares_full(x_guess, solve_config=solve_config, optimize_method=optimize_method)
+        return self._run_least_squares_full(
+            x_guess,
+            solve_config=solve_config,
+            optimize_method=optimize_method,
+            residual_kind=residual_kind,
+        )
 
-    def _residual_function_for(self, solve_config: SolverConfig) -> Callable[[np.ndarray], np.ndarray]:
+    def _residual_function_for(self, residual_kind: str) -> Callable[[np.ndarray], np.ndarray]:
         def residual_fun(x: np.ndarray) -> np.ndarray:
-            return self.operator.residual_vector(x, residual_form=solve_config.residual_form)
+            x_eval = self.operator.coerce_x(x)
+            if residual_kind == "variational":
+                return self.operator.residual_var(x_eval)
+            if residual_kind == "collocation":
+                return self.operator.residual_collocation(x_eval)
+            raise ValueError(f"Unsupported residual kind {residual_kind!r}.")
 
         return residual_fun
 
@@ -542,7 +704,7 @@ class Solver:
         fun = getattr(opt, "fun", None)
         if fun is None:
             return None
-        return self.operator.residual_array_norm(fun)
+        return _residual_array_norm(fun)
 
     def _run_root_once(
         self,
@@ -680,14 +842,14 @@ class Solver:
         self,
         x_guess: np.ndarray,
         *,
-        solve_config: SolverConfig,
+        residual_kind: str,
     ) -> tuple[np.ndarray | None, float | None]:
         try:
-            residual_fun = self._residual_function_for(solve_config)
+            residual_fun = self._residual_function_for(residual_kind)
             residual = np.asarray(residual_fun(self.operator.coerce_x(x_guess)), dtype=np.float64)
         except Exception:
             return None, None
-        return residual, self.operator.residual_array_norm(residual)
+        return residual, _residual_array_norm(residual)
 
     def _run_least_squares_full(
         self,
@@ -695,20 +857,21 @@ class Solver:
         *,
         solve_config: SolverConfig,
         optimize_method: OptimizeMethod,
+        residual_kind: str,
     ):
         """在完整 packed x 上调用一次 `scipy.optimize.least_squares`."""
 
-        least_squares_fun = self._residual_function_for(solve_config)
+        least_squares_fun = self._residual_function_for(residual_kind)
         get_raw_residual: Callable[[np.ndarray], np.ndarray] | None = None
         kwargs = _least_squares_kwargs_for(solve_config)
-        if solve_config.method == "lm" and solve_config.residual_form == "variational":
+        if solve_config.method == "lm" and residual_kind == "variational":
             least_squares_fun, get_raw_residual = self._build_residual_transform_wrapper(x_guess, transform="asinh")
             if least_squares_fun is not None:
                 kwargs["x_scale"] = 1.0
             else:
-                least_squares_fun = self._residual_function_for(solve_config)
-        elif solve_config.method == "trf" and solve_config.residual_form == "variational":
-            residual0, _ = self._initial_residual_stats(x_guess, solve_config=solve_config)
+                least_squares_fun = self._residual_function_for(residual_kind)
+        elif solve_config.method == "trf" and residual_kind == "variational":
+            residual0, _ = self._initial_residual_stats(x_guess, residual_kind=residual_kind)
             if _should_use_robust_trf_loss(
                 residual0,
                 getattr(self.operator, "active_lengths", None),
@@ -727,9 +890,9 @@ class Solver:
         return opt
 
 
-def _validate_residual_solve_config(solve_config: SolverConfig) -> None:
-    _validate_residual_method(solve_config)
-    if solve_config.residual_form != "collocation" or not solve_config.enable_fallback:
+def _validate_stage_solve_config(solve_config: SolverConfig, *, residual_kind: str) -> None:
+    _validate_stage_method(solve_config, residual_kind=residual_kind)
+    if residual_kind != "collocation" or not solve_config.enable_fallback:
         return
 
     root_fallbacks = [method for method in solve_config.fallback_methods if method not in LEAST_SQUARES_METHODS]
@@ -742,12 +905,14 @@ def _validate_residual_solve_config(solve_config: SolverConfig) -> None:
         )
 
 
-def _validate_residual_method(solve_config: SolverConfig) -> None:
-    if solve_config.residual_form == "collocation" and not _uses_least_squares_api(solve_config):
+def _validate_stage_method(solve_config: SolverConfig, *, residual_kind: str) -> None:
+    if residual_kind == "collocation" and not _uses_least_squares_api(solve_config):
         raise ValueError(
             "Collocation residual is generally rectangular "
             "(x_size -> Nr*Nt) and requires least_squares method 'trf' or 'lm'."
         )
+    if residual_kind not in {"variational", "collocation"}:
+        raise ValueError(f"Unsupported residual kind {residual_kind!r}.")
 
 
 def _registered_method_for(solve_config: SolverConfig) -> OptimizeMethod:
@@ -791,6 +956,15 @@ def _count_opt_attr(opt, name: str) -> int:
     return int(value)
 
 
+def _residual_array_norm(residual: np.ndarray) -> float:
+    """返回 residual 数组的 Euclidean norm, 标量 residual 视作长度 1 向量."""
+
+    residual_eval = np.asarray(residual, dtype=np.float64)
+    if residual_eval.ndim == 0:
+        residual_eval = residual_eval.reshape(1)
+    return float(np.linalg.norm(residual_eval))
+
+
 def _uses_least_squares_api(solve_config: SolverConfig) -> bool:
     return solve_config.method in LEAST_SQUARES_METHODS
 
@@ -807,8 +981,8 @@ def _residual_within_acceptance(residual_norm: float | None, solve_config: Solve
     )
 
 
-def _requires_strict_residual_acceptance(solve_config: SolverConfig) -> bool:
-    if solve_config.residual_form == "collocation":
+def _requires_strict_residual_acceptance(solve_config: SolverConfig, *, residual_kind: str) -> bool:
+    if residual_kind == "collocation":
         return False
     return solve_config.method in {"lm", "trf"}
 

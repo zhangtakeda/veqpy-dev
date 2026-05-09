@@ -171,8 +171,8 @@ class Operator:
         self._refresh_runtime_state()
 
     def __call__(self, x: np.ndarray, *args, **kwargs) -> np.ndarray:
-        """调用 residual 求值主入口."""
-        return self.residual(x, *args, **kwargs)
+        """调用 variational residual 求值主入口."""
+        return self.residual_var(x, *args, **kwargs)
 
     @property
     def alpha1(self) -> float:
@@ -223,42 +223,24 @@ class Operator:
             profile_names=self.profile_names,
         )
 
-    def residual(
+    def residual_var(
         self,
         x: np.ndarray,
     ) -> np.ndarray:
-        """完整执行 profile, geometry, source, residual 四阶段求值."""
+        """返回 variational/Galerkin residual 向量."""
         x_eval = self.coerce_x(x)
         return self.execution_state.fused_residual_runner(x_eval)
-
-    def residual_vector(self, x: np.ndarray, *, residual_form: str = "variational") -> np.ndarray:
-        """按 residual form 返回求解器使用的残差向量."""
-        residual_form_eval = str(residual_form)
-        if residual_form_eval == "variational":
-            return self.residual(x)
-        if residual_form_eval == "collocation":
-            return self.residual_collocation(x)
-        raise ValueError(f"Unsupported residual form {residual_form_eval!r}.")
-
-    @staticmethod
-    def residual_array_norm(residual: np.ndarray) -> float:
-        """返回 residual 数组的 Euclidean norm, 标量 residual 视作长度 1 向量."""
-        residual_eval = np.asarray(residual, dtype=np.float64)
-        if residual_eval.ndim == 0:
-            residual_eval = residual_eval.reshape(1)
-        return float(np.linalg.norm(residual_eval))
-
-    def residual_norm(self, x: np.ndarray, *, residual_form: str = "variational") -> float:
-        """按 residual form 求 residual vector 的 Euclidean norm."""
-        return self.residual_array_norm(self.residual_vector(x, residual_form=residual_form))
 
     def residual_collocation(self, x: np.ndarray) -> np.ndarray:
         """返回 DESC-style 点值 force-balance collocation residual.
 
         该 residual 不是把 Galerkin/弱形式残差追加到外部目标, 而是在每个
         collocation node 上直接约束与 Grad-Shafranov residual `G` 对应的
-        force-balance components `G*psin_R` 和 `G*psin_Z`.
-        返回形状为 ``(2 * Nr * Nt,)`` 的 RMS/quadrature 加权向量.
+        force-balance components ``G*psin_R`` 和 ``G*psin_Z``.
+        这里 `G = J/R * GS_residual`; 这两个分量对应体积化后的
+        pointwise force-balance residual, radial/poloidal quadrature 的
+        平方根权重用于离散 least-squares 标度.
+        返回形状为 ``(2 * Nr * Nt,)`` 的向量.
         """
         self._evaluate_collocation_workspace(x)
         return np.concatenate(

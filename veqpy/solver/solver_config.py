@@ -58,12 +58,6 @@ SUPPORTED_METHODS: dict[str, OptimizeMethod] = {
 DEFAULT_VARIATIONAL_METHOD = "hybr"
 DEFAULT_COLLOCATION_METHOD = "trf"
 DEFAULT_VARIATIONAL_FALLBACK_METHODS = ("lm",)
-DEFAULT_COLLOCATION_FALLBACK_METHODS = ("lm",)
-
-RESIDUAL_FORMS = (
-    "variational",
-    "collocation",
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,7 +65,6 @@ class SolverConfig:
     """描述 Solver 的默认配置与单次求解覆盖项."""
 
     method: str | None = None
-    residual_form: str = "variational"
     max_residual: float = 1e-6
     max_evaluations: int = 1000
     enable_warmstart: bool = True
@@ -80,14 +73,16 @@ class SolverConfig:
     enable_verbose: bool = False
     enable_history: bool = True
 
+    enable_collocation: bool = False
+    collocation_method: str = DEFAULT_COLLOCATION_METHOD
+    collocation_max_residual: float | None = None
+    collocation_max_evaluations: int | None = None
+
     def __post_init__(self) -> None:
         """校验方法名与 fallback 相关参数是否合法."""
 
-        residual_form = str(self.residual_form)
-        method = _default_method_for_residual_form(residual_form) if self.method is None else str(self.method)
-        fallback_methods = (
-            _default_fallback_methods(residual_form) if self.fallback_methods is None else self.fallback_methods
-        )
+        method = DEFAULT_VARIATIONAL_METHOD if self.method is None else str(self.method)
+        fallback_methods = DEFAULT_VARIATIONAL_FALLBACK_METHODS if self.fallback_methods is None else self.fallback_methods
         fallback_methods = tuple(str(method_name) for method_name in fallback_methods)
         deduped_fallback_methods: list[str] = []
         seen: set[str] = set()
@@ -105,9 +100,13 @@ class SolverConfig:
                 f"Use root method 'hybr', "
                 f"or use 'lm'/'trf' to call scipy.optimize.least_squares directly."
             )
-        if residual_form not in RESIDUAL_FORMS:
-            supported = ", ".join(RESIDUAL_FORMS)
-            raise ValueError(f"Unsupported residual form {residual_form!r}. Supported residual forms are: {supported}.")
+        collocation_method = str(self.collocation_method)
+        if collocation_method not in LEAST_SQUARES_METHODS:
+            supported = ", ".join(LEAST_SQUARES_METHODS)
+            raise ValueError(
+                f"Unsupported collocation_method {collocation_method!r}. "
+                f"Collocation polish requires a least_squares method: {supported}."
+            )
         unsupported_fallbacks = [
             method_name for method_name in deduped_fallback_methods if method_name not in SUPPORTED_METHODS
         ]
@@ -123,8 +122,29 @@ class SolverConfig:
             raise ValueError(f"SolverConfig.max_residual must be a positive finite float, got {self.max_residual!r}.")
         if max_evaluations < 0:
             raise ValueError(f"SolverConfig.max_evaluations must be non-negative; got {self.max_evaluations!r}.")
+        collocation_max_residual = (
+            None if self.collocation_max_residual is None else float(self.collocation_max_residual)
+        )
+        collocation_max_evaluations = (
+            None if self.collocation_max_evaluations is None else int(self.collocation_max_evaluations)
+        )
+        if collocation_max_residual is not None and (
+            not isfinite(collocation_max_residual) or collocation_max_residual <= 0.0
+        ):
+            raise ValueError(
+                "SolverConfig.collocation_max_residual must be a positive finite float "
+                f"when provided, got {self.collocation_max_residual!r}."
+            )
+        if collocation_max_evaluations is not None and collocation_max_evaluations < 0:
+            raise ValueError(
+                "SolverConfig.collocation_max_evaluations must be non-negative when provided; "
+                f"got {self.collocation_max_evaluations!r}."
+            )
         object.__setattr__(self, "method", method)
-        object.__setattr__(self, "residual_form", residual_form)
+        object.__setattr__(self, "enable_collocation", bool(self.enable_collocation))
+        object.__setattr__(self, "collocation_method", collocation_method)
+        object.__setattr__(self, "collocation_max_residual", collocation_max_residual)
+        object.__setattr__(self, "collocation_max_evaluations", collocation_max_evaluations)
         object.__setattr__(self, "max_residual", max_residual)
         object.__setattr__(self, "max_evaluations", max_evaluations)
         object.__setattr__(self, "enable_fallback", bool(self.enable_fallback))
@@ -133,7 +153,13 @@ class SolverConfig:
     def __rich__(self):
         tree = Tree("[bold blue]SolverConfig[/]")
         tree.add(f"method: {self.method}")
-        tree.add(f"residual_form: {self.residual_form}")
+        tree.add(f"enable_collocation: {self.enable_collocation}")
+        if self.enable_collocation:
+            tree.add(f"collocation_method: {self.collocation_method}")
+            if self.collocation_max_residual is not None:
+                tree.add(f"collocation_max_residual: {self.collocation_max_residual:.6g}")
+            if self.collocation_max_evaluations is not None:
+                tree.add(f"collocation_max_evaluations: {self.collocation_max_evaluations}")
         tree.add(f"max_residual: {self.max_residual:.6g}")
         tree.add(f"max_evaluations: {self.max_evaluations}")
         tree.add(f"enable_warmstart: {self.enable_warmstart}")
@@ -152,15 +178,3 @@ class SolverConfig:
 
     def __repr__(self) -> str:
         return str(self)
-
-
-def _default_method_for_residual_form(residual_form: str) -> str:
-    if residual_form == "collocation":
-        return DEFAULT_COLLOCATION_METHOD
-    return DEFAULT_VARIATIONAL_METHOD
-
-
-def _default_fallback_methods(residual_form: str) -> tuple[str, ...]:
-    if residual_form == "collocation":
-        return DEFAULT_COLLOCATION_FALLBACK_METHODS
-    return DEFAULT_VARIATIONAL_FALLBACK_METHODS
