@@ -63,8 +63,6 @@ REFERENCE_SUMMARY_GRID = Grid(
 
 CONFIG = SolverConfig(
     method="hybr",
-    enable_collocation=True,
-    collocation_method="lm",
     enable_verbose=False,
     enable_warmstart=False,
     enable_history=False,
