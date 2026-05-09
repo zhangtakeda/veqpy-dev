@@ -4,11 +4,12 @@ import numpy as np
 import orjson
 import pytest
 
-from veqpy.model import Boundary, Equilibrium, Geqdsk, Grid, Reactive
+from veqpy.model import Boundary, Equilibrium, Geqdsk, Grid
 from veqpy.operator import Operator, OperatorCase, build_profile_names
 
 GEQDSK_PATH = Path("tests/EFIT.geqdsk")
 TEST_SOURCE_SAMPLE_COUNT = 21
+
 
 def _build_boundary(*, R0, Z0, a, ka, c_offsets, s_offsets, n=721):
     theta = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
@@ -121,7 +122,7 @@ def test_operator_case_autoscales_legacy_unscaled_heat_input():
     _, case = _build_operator_case(mode="PP", coordinate="rho", nodes="uniform")
     source = np.full(TEST_SOURCE_SAMPLE_COUNT, 1.0e5)
 
-    with pytest.warns(RuntimeWarning, match="canonical OperatorCase inputs are mu0-scaled"):
+    with pytest.warns(RuntimeWarning, match="use mu0-scaled inputs"):
         probe = OperatorCase(
             route=case.route,
             coordinate=case.coordinate,
@@ -177,7 +178,7 @@ def test_operator_case_autoscales_legacy_unscaled_current_input():
     _, case = _build_operator_case(mode="PI", coordinate="rho", nodes="uniform")
     source = np.full(TEST_SOURCE_SAMPLE_COUNT, 1.0e5)
 
-    with pytest.warns(RuntimeWarning, match="canonical OperatorCase inputs are mu0-scaled"):
+    with pytest.warns(RuntimeWarning, match="use mu0-scaled inputs"):
         probe = OperatorCase(
             route=case.route,
             coordinate=case.coordinate,
@@ -194,7 +195,7 @@ def test_operator_case_autoscales_legacy_unscaled_current_input():
 def test_operator_case_autoscales_legacy_unscaled_ip_constraint():
     _, case = _build_operator_case(mode="PI", coordinate="rho", nodes="uniform")
 
-    with pytest.warns(RuntimeWarning, match="canonical OperatorCase inputs are mu0-scaled"):
+    with pytest.warns(RuntimeWarning, match="use mu0-scaled inputs"):
         probe = OperatorCase(
             route=case.route,
             coordinate=case.coordinate,
@@ -213,7 +214,7 @@ def test_operator_case_skips_mu0_current_check_for_pq_driver():
     _, case = _build_operator_case(mode="PQ", coordinate="rho", nodes="uniform")
     source = np.full(TEST_SOURCE_SAMPLE_COUNT, 1.0e5)
 
-    with pytest.warns(RuntimeWarning, match="canonical OperatorCase inputs are mu0-scaled"):
+    with pytest.warns(RuntimeWarning, match="use mu0-scaled inputs"):
         probe = OperatorCase(
             route=case.route,
             coordinate=case.coordinate,
@@ -520,15 +521,6 @@ def test_equilibrium_to_geqdsk_rejects_zero_alpha2_for_physical_psi_export():
         )
 
 
-def test_reactive_requires_explicit_root_properties():
-    with pytest.raises(TypeError, match="must define root_properties explicitly"):
-
-        class _BadReactive(Reactive):
-            @property
-            def value(self):
-                return 1
-
-
 def test_equilibrium_exposes_gs_operator_residual_terms():
     x = None
     _, operator = _build_high_order_equilibrium()
@@ -540,7 +532,9 @@ def test_equilibrium_exposes_gs_operator_residual_terms():
     equilibrium = operator.build_equilibrium(x)
 
     geometry = equilibrium.geometry
-    expected_gn1 = geometry.JdivR * (equilibrium.FFn_psin[:, None] + geometry.R**2 * equilibrium.Pn_psin[:, None])
+    expected_gn1 = geometry.JdivR * (
+        equilibrium.FFn_psin[:, None] + geometry.R**2 * equilibrium.Pn_psin[:, None]
+    )
     expected_gn2 = (
         geometry.gttdivJR * equilibrium.psin_rr[:, None]
         + (geometry.gttdivJR_r - geometry.grtdivJR_t) * equilibrium.psin_r[:, None]
@@ -549,7 +543,10 @@ def test_equilibrium_exposes_gs_operator_residual_terms():
     assert np.allclose(equilibrium.Gn1, expected_gn1)
     assert np.allclose(equilibrium.Gn2, expected_gn2)
     assert np.allclose(equilibrium.G, operator.residual_surface_workspace[0])
-    assert np.allclose(equilibrium.G, equilibrium.alpha1 * equilibrium.Gn1 + equilibrium.alpha2 * equilibrium.Gn2)
+    assert np.allclose(
+        equilibrium.G,
+        equilibrium.alpha1 * equilibrium.Gn1 + equilibrium.alpha2 * equilibrium.Gn2,
+    )
 
 
 def test_resampled_equilibrium_preserves_profile_shapes_on_target_grid():
@@ -617,7 +614,8 @@ def test_pj2_psin_route_uses_f_profile_parameterization():
     expected_F = scale * np.sqrt(latent_H)
     expected_F_r = scale * 0.5 * latent_H_r / np.sqrt(latent_H)
     expected_F_rr = scale * (
-        0.5 * latent_H_rr / np.sqrt(latent_H) - 0.25 * latent_H_r * latent_H_r / np.power(latent_H, 1.5)
+        0.5 * latent_H_rr / np.sqrt(latent_H)
+        - 0.25 * latent_H_r * latent_H_r / np.power(latent_H, 1.5)
     )
 
     assert np.allclose(operator.F_profile.u, expected_F)
@@ -669,7 +667,13 @@ def test_equilibrium_load_rejects_legacy_shape_payload():
             "B0": equilibrium.B0,
             "a": equilibrium.a,
             "grid": {
-                "Grid": {"Nr": grid.Nr, "Nt": grid.Nt, "scheme": grid.scheme, "L_max": grid.L_max, "M_max": grid.M_max}
+                "Grid": {
+                    "Nr": grid.Nr,
+                    "Nt": grid.Nt,
+                    "scheme": grid.scheme,
+                    "L_max": grid.L_max,
+                    "M_max": grid.M_max,
+                }
             },
             "shape_profiles": [],
             "shape_profile_names": list(operator.shape_profile_names),
@@ -691,7 +695,9 @@ def test_equilibrium_load_rejects_legacy_shape_payload():
                 "coeff": None if profile.coeff is None else profile.coeff.tolist(),
             }
         }
-        for name, profile in ((name, operator.profiles_by_name[name]) for name in operator.shape_profile_names)
+        for name, profile in (
+            (name, operator.profiles_by_name[name]) for name in operator.shape_profile_names
+        )
     ]
 
     outpath = Path("tests/.tmp-equilibrium-legacy.json")

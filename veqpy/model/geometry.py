@@ -71,7 +71,8 @@ class Geometry:
         """用当前 Grid 和 profile fields 刷新 geometry."""
         if self.R_fields.shape[1:] != (grid.Nr, grid.Nt):
             raise ValueError(
-                f"Expected geometry shape {(self.R_fields.shape[1], self.R_fields.shape[2])}, got {(grid.Nr, grid.Nt)}"
+                f"Expected geometry shape {(self.R_fields.shape[1], self.R_fields.shape[2])}, "
+                f"got {(grid.Nr, grid.Nt)}"
             )
         if c_active_order is None:
             c_active_order = int(c_fields.shape[0] - 1)
@@ -364,9 +365,13 @@ def _geometry_update(
             R_r_ij = a * (h_r_i + cos_tb_ij - rho_i * sin_tb_ij * tb_r_ij)
             R_t_ij = -a * rho_i * sin_tb_ij * tb_t_ij
             R_rr_ij = a * (
-                h_rr_i - 2.0 * sin_tb_ij * tb_r_ij - rho_i * (cos_tb_ij * tb_r_ij * tb_r_ij + sin_tb_ij * tb_rr_ij)
+                h_rr_i
+                - 2.0 * sin_tb_ij * tb_r_ij
+                - rho_i * (cos_tb_ij * tb_r_ij * tb_r_ij + sin_tb_ij * tb_rr_ij)
             )
-            R_rt_ij = -a * (sin_tb_ij * tb_t_ij + rho_i * (cos_tb_ij * tb_r_ij * tb_t_ij + sin_tb_ij * tb_rt_ij))
+            R_rt_ij = -a * (
+                sin_tb_ij * tb_t_ij + rho_i * (cos_tb_ij * tb_r_ij * tb_t_ij + sin_tb_ij * tb_rt_ij)
+            )
             R_tt_ij = -a * rho_i * (cos_tb_ij * tb_t_ij * tb_t_ij + sin_tb_ij * tb_tt_ij)
 
             Z_ij = Z0 + a * (v_i - rho_i * k_i * sin_t)

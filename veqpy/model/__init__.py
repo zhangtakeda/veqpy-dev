@@ -18,14 +18,13 @@ Notes:
 - 不负责 packed runtime ownership, solver policy, 或 backend 选择.
 """
 
+from veqpy.base import Reactive, Serial
 from veqpy.model.boundary import Boundary
 from veqpy.model.equilibrium import Equilibrium
 from veqpy.model.geometry import Geometry
 from veqpy.model.geqdsk import Geqdsk
 from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile
-from veqpy.model.reactive import Reactive
-from veqpy.model.serial import Serial
 
 __all__ = [
     "Equilibrium",

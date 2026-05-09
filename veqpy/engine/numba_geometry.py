@@ -133,9 +133,13 @@ def update_geometry_hot(
             R_r_ij = a * (h_r_i + cos_tb_ij - rho_i * sin_tb_ij * tb_r_ij)
             R_t_ij = -a * rho_i * sin_tb_ij * tb_t_ij
             R_rr_ij = a * (
-                h_rr_i - 2.0 * sin_tb_ij * tb_r_ij - rho_i * (cos_tb_ij * tb_r_ij * tb_r_ij + sin_tb_ij * tb_rr_ij)
+                h_rr_i
+                - 2.0 * sin_tb_ij * tb_r_ij
+                - rho_i * (cos_tb_ij * tb_r_ij * tb_r_ij + sin_tb_ij * tb_rr_ij)
             )
-            R_rt_ij = -a * (sin_tb_ij * tb_t_ij + rho_i * (cos_tb_ij * tb_r_ij * tb_t_ij + sin_tb_ij * tb_rt_ij))
+            R_rt_ij = -a * (
+                sin_tb_ij * tb_t_ij + rho_i * (cos_tb_ij * tb_r_ij * tb_t_ij + sin_tb_ij * tb_rt_ij)
+            )
             R_tt_ij = -a * rho_i * (cos_tb_ij * tb_t_ij * tb_t_ij + sin_tb_ij * tb_tt_ij)
 
             Z_r_ij = a * (v_r_i - (k_i + rho_i * k_r_i) * sin_t)

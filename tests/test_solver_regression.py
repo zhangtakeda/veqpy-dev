@@ -79,7 +79,9 @@ def _install_fake_attempts(monkeypatch, solver: Solver, scripted_attempts):
     calls: list[tuple[str, np.ndarray]] = []
     scripted = iter(scripted_attempts)
 
-    def fake_solve_opt_problem(x_guess: np.ndarray, *, solve_config: SolverConfig, residual_kind: str):
+    def fake_solve_opt_problem(
+        x_guess: np.ndarray, *, solve_config: SolverConfig, residual_kind: str
+    ):
         calls.append((solve_config.method, np.asarray(x_guess, dtype=np.float64).copy()))
         outcome = next(scripted)
         if isinstance(outcome, Exception):
@@ -123,7 +125,9 @@ def test_operator_collocation_residual_uses_radial_quadrature_weights(monkeypatc
 def test_operator_exposes_explicit_residual_vectors(monkeypatch):
     operator = object.__new__(Operator)
 
-    monkeypatch.setattr(Operator, "residual_var", lambda self, x: np.asarray([3.0, 4.0], dtype=np.float64))
+    monkeypatch.setattr(
+        Operator, "residual_var", lambda self, x: np.asarray([3.0, 4.0], dtype=np.float64)
+    )
     monkeypatch.setattr(
         Operator,
         "residual_collocation",
@@ -208,7 +212,9 @@ def test_solver_enable_collocation_routes_polish_to_collocation_residual(monkeyp
     operator = _DummyOperator()
     solver = Solver(
         operator=operator,
-        config=SolverConfig(method="trf", enable_collocation=True, collocation_method="trf", enable_fallback=False),
+        config=SolverConfig(
+            method="trf", enable_collocation=True, collocation_method="trf", enable_fallback=False
+        ),
     )
     observed = {"calls": []}
 
@@ -243,7 +249,9 @@ def test_solver_enable_collocation_runs_variational_then_warm_started_polish(mon
     x_collocation = np.array([4.0, 5.0, 6.0], dtype=np.float64)
     calls: list[tuple[str, str, bool, float, int, np.ndarray]] = []
 
-    def fake_solve_opt_problem(x_guess: np.ndarray, *, solve_config: SolverConfig, residual_kind: str):
+    def fake_solve_opt_problem(
+        x_guess: np.ndarray, *, solve_config: SolverConfig, residual_kind: str
+    ):
         calls.append(
             (
                 residual_kind,
@@ -322,8 +330,12 @@ def test_solver_explicit_guess_retries_same_method_after_reset(monkeypatch):
         monkeypatch,
         solver,
         [
-            _attempt_result(warm_guess, success=False, message="warm attempt failed", residual_norm=1.0),
-            _attempt_result(cold_guess, success=True, message="reset attempt converged", residual_norm=0.0),
+            _attempt_result(
+                warm_guess, success=False, message="warm attempt failed", residual_norm=1.0
+            ),
+            _attempt_result(
+                cold_guess, success=True, message="reset attempt converged", residual_norm=0.0
+            ),
         ],
     )
 
@@ -352,8 +364,12 @@ def test_solver_warmstart_failure_falls_back_from_cold_reset_state(monkeypatch):
         monkeypatch,
         solver,
         [
-            _attempt_result(warm_guess, success=False, message="warm attempt failed", residual_norm=5.0),
-            _attempt_result(cold_guess, success=False, message="reset attempt failed", residual_norm=4.0),
+            _attempt_result(
+                warm_guess, success=False, message="warm attempt failed", residual_norm=5.0
+            ),
+            _attempt_result(
+                cold_guess, success=False, message="reset attempt failed", residual_norm=4.0
+            ),
             _attempt_result(cold_guess, success=False, message="lm failed", residual_norm=3.0),
             _attempt_result(
                 np.array([3.0, 2.0, 1.0], dtype=np.float64),
@@ -387,7 +403,9 @@ def test_solver_cold_start_skips_reset_retry(monkeypatch):
         monkeypatch,
         solver,
         [
-            _attempt_result(cold_guess, success=False, message="cold attempt failed", residual_norm=2.0),
+            _attempt_result(
+                cold_guess, success=False, message="cold attempt failed", residual_norm=2.0
+            ),
             _attempt_result(cold_guess, success=True, message="lm converged", residual_norm=0.0),
         ],
     )

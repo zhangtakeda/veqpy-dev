@@ -7,11 +7,11 @@ Role:
 Public API:
 - Operator
 - OperatorCase
-- Packed-state naming/layout helpers used by callers that need to prepare coefficient vectors
+- Packed-state naming/layout helpers for preparing coefficient vectors
 
 Notes:
-- Runtime layout containers/allocation stay in ``veqpy.operator.runtime_layout`` as implementation data structures.
-- Engine backend selection, solver driving, and document/demo orchestration live outside this package surface.
+- Runtime layout containers/allocation stay in ``veqpy.operator.runtime_layout``.
+- Engine selection, solver driving, and demo orchestration live outside this package.
 """
 
 from veqpy.operator.operator import Operator

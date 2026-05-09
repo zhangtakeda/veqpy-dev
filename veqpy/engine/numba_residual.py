@@ -58,7 +58,10 @@ def update_residual_compact(
 
             R_ij = R_surface[i, j]
             G1n = JdivR_surface[i, j] * (FFn_psin_i + R_ij * R_ij * Pn_psin_i)
-            G2n = gttdivJR_surface[i, j] * psin_rr_i + (gttdivJR_r_surface[i, j] - grtdivJR_t_surface[i, j]) * psin_r_i
+            G2n = (
+                gttdivJR_surface[i, j] * psin_rr_i
+                + (gttdivJR_r_surface[i, j] - grtdivJR_t_surface[i, j]) * psin_r_i
+            )
             G_ij = alpha1 * G1n + alpha2 * G2n
             out_G[i, j] = G_ij
             Gpsin_R = G_ij * psin_R
@@ -187,19 +190,37 @@ def _run_residual_blocks_packed_precomputed(
             _project_scaled2(out_packed, coeff_indices, T, scratch, y, weights, base_scale * a)
         elif code == 2:
             _collapse_field_theta(scratch, Gpsin_Z, sin_theta)
-            _project_scaled3(out_packed, coeff_indices, T, scratch, rho, y, weights, base_scale * (-a))
+            _project_scaled3(
+                out_packed, coeff_indices, T, scratch, rho, y, weights, base_scale * (-a)
+            )
         elif code == 3:
             _collapse_field(scratch, Gpsin_R_sin_tb)
-            _project_scaled3(out_packed, coeff_indices, T, scratch, rho, y, weights, base_scale * (-a))
+            _project_scaled3(
+                out_packed, coeff_indices, T, scratch, rho, y, weights, base_scale * (-a)
+            )
         elif code == 4:
             _collapse_field_theta(scratch, Gpsin_R_sin_tb, cos_ktheta[order])
             _project_scaled3(
-                out_packed, coeff_indices, T, scratch, rho_powers[radial_power + 1], y, weights, base_scale * (-a)
+                out_packed,
+                coeff_indices,
+                T,
+                scratch,
+                rho_powers[radial_power + 1],
+                y,
+                weights,
+                base_scale * (-a),
             )
         elif code == 5:
             _collapse_field_theta(scratch, Gpsin_R_sin_tb, sin_ktheta[order])
             _project_scaled3(
-                out_packed, coeff_indices, T, scratch, rho_powers[radial_power + 1], y, weights, base_scale * (-a)
+                out_packed,
+                coeff_indices,
+                T,
+                scratch,
+                rho_powers[radial_power + 1],
+                y,
+                weights,
+                base_scale * (-a),
             )
         elif code == 6:
             _collapse_g(scratch, G)

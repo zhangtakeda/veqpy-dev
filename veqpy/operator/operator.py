@@ -209,7 +209,9 @@ class Operator:
             profile_L=self.profile_L,
             coeff_index=self.coeff_index,
             order_offsets=self.order_offsets,
-            validate_source_inputs=lambda next_case: orchestration.validate_source_inputs(next_case, self.grid.Nr),
+            validate_source_inputs=lambda next_case: orchestration.validate_source_inputs(
+                next_case, self.grid.Nr
+            ),
         )
         self.case = case
         self._refresh_runtime_state()
@@ -266,10 +268,7 @@ class Operator:
     def _collocation_sqrt_weights(self) -> np.ndarray:
         radial_weights = np.asarray(self.grid.weights, dtype=np.float64)
         if radial_weights.ndim != 1 or radial_weights.size != int(self.grid.Nr):
-            raise ValueError(
-                "Operator.residual_collocation expected one-dimensional radial quadrature weights "
-                f"with length {int(self.grid.Nr)}, got shape {radial_weights.shape}."
-            )
+            raise ValueError(f"Invalid radial weights shape {radial_weights.shape}")
         return np.sqrt(radial_weights[:, None] / max(int(self.grid.Nt), 1))
 
     def _evaluate_residual(self, x_eval: np.ndarray) -> np.ndarray:
@@ -278,9 +277,13 @@ class Operator:
         self.stage_c_source()
         return self.stage_d_residual()
 
-    def build_coeffs(self, x: np.ndarray, *, include_none: bool = True) -> dict[str, list[float] | None]:
+    def build_coeffs(
+        self, x: np.ndarray, *, include_none: bool = True
+    ) -> dict[str, list[float] | None]:
         """把 packed 状态向量还原成 profile 系数字典."""
-        blocks = decode_packed_blocks(x, self.profile_L, self.coeff_index, profile_names=self.profile_names)
+        blocks = decode_packed_blocks(
+            x, self.profile_L, self.coeff_index, profile_names=self.profile_names
+        )
         coeffs: dict[str, list[float] | None] = {}
         for name, block in zip(self.profile_names, blocks, strict=True):
             if include_none or block is not None:
@@ -354,8 +357,8 @@ class Operator:
 
     def _build_residual_binding_layout(self) -> ResidualBindingLayout:
         active_profile_names = tuple(self.profile_names[int(p)] for p in self.active_profile_ids)
-        active_residual_block_codes, active_residual_block_orders = orchestration.build_residual_block_metadata(
-            active_profile_names
+        active_residual_block_codes, active_residual_block_orders = (
+            orchestration.build_residual_block_metadata(active_profile_names)
         )
         active_residual_block_radial_powers = orchestration.build_residual_block_radial_powers(
             active_profile_names,
@@ -493,7 +496,9 @@ class Operator:
         eps = 1.0e-10
 
         def runner() -> None:
-            numba_operator.convert_f_squared_fields_to_f(self.runtime_layout.F_profile_fields, eps=eps)
+            numba_operator.convert_f_squared_fields_to_f(
+                self.runtime_layout.F_profile_fields, eps=eps
+            )
 
         return runner
 
@@ -522,8 +527,12 @@ class Operator:
         self.execution_state.geometry_stage_runner = self._build_geometry_stage_runner()
         self.execution_state.source_eval_runner = self._build_source_eval_runner()
         self.execution_state.source_stage_runner = self._build_bound_source_stage_runner()
-        self.execution_state.residual_pack_stage_runner = self._build_bound_residual_pack_stage_runner()
-        self.execution_state.residual_full_stage_runner = self._build_bound_residual_full_stage_runner()
+        self.execution_state.residual_pack_stage_runner = (
+            self._build_bound_residual_pack_stage_runner()
+        )
+        self.execution_state.residual_full_stage_runner = (
+            self._build_bound_residual_full_stage_runner()
+        )
         self.execution_state.fused_residual_runner = self._build_fused_residual_runner()
         fixed_profile_ids = np.flatnonzero(~self.active_profile_mask).astype(np.int64, copy=False)
         for p in fixed_profile_ids:

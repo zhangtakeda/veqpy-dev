@@ -24,7 +24,10 @@ from numba import njit
 import veqpy.engine.backend_abi as backend_abi
 from veqpy.engine.numba_geometry import update_geometry_hot
 from veqpy.engine.numba_profile import update_profiles_packed_bulk
-from veqpy.engine.numba_residual import run_residual_blocks_packed_precomputed, update_residual_compact
+from veqpy.engine.numba_residual import (
+    run_residual_blocks_packed_precomputed,
+    update_residual_compact,
+)
 from veqpy.engine.numba_source import (
     _linear_uniform_interpolate_pair,
     _local_barycentric_interpolate_pair,
@@ -64,7 +67,9 @@ _FUSED_ROUTE_BINDINGS: dict[tuple[str, str, str], _FusedRouteBindingSpec] = {
     ("PP", "psin", "grid"): _FusedRouteBindingSpec("single_pass"),
     ("PI", "rho", "uniform"): _FusedRouteBindingSpec("single_pass"),
     ("PI", "rho", "grid"): _FusedRouteBindingSpec("single_pass"),
-    ("PI", "psin", "uniform"): _FusedRouteBindingSpec("profile_owned", skip_projection_finalize=True),
+    ("PI", "psin", "uniform"): _FusedRouteBindingSpec(
+        "profile_owned", skip_projection_finalize=True
+    ),
     ("PI", "psin", "grid"): _FusedRouteBindingSpec("single_pass"),
     ("PJ1", "rho", "uniform"): _FusedRouteBindingSpec("single_pass"),
     ("PJ1", "rho", "grid"): _FusedRouteBindingSpec("single_pass"),
@@ -631,7 +636,9 @@ def _bind_single_pass_residual_runner_core(
             root_fields,
             surface_workspace,
         )
-        return _pack_residual_output(residual_pack_binding=residual_pack_binding, scratch_holder=scratch_holder)
+        return _pack_residual_output(
+            residual_pack_binding=residual_pack_binding, scratch_holder=scratch_holder
+        )
 
     return runner
 
@@ -737,7 +744,9 @@ def _bind_profile_owned_psin_residual_runner_core(
             root_fields,
             surface_workspace,
         )
-        return _pack_residual_output(residual_pack_binding=residual_pack_binding, scratch_holder=scratch_holder)
+        return _pack_residual_output(
+            residual_pack_binding=residual_pack_binding, scratch_holder=scratch_holder
+        )
 
     return runner
 
@@ -893,7 +902,9 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
             root_fields,
             surface_workspace,
         )
-        return _pack_residual_output(residual_pack_binding=residual_pack_binding, scratch_holder=scratch_holder)
+        return _pack_residual_output(
+            residual_pack_binding=residual_pack_binding, scratch_holder=scratch_holder
+        )
 
     return runner
 
@@ -1003,7 +1014,9 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
 
     def runner(x: np.ndarray) -> np.ndarray:
         _refresh_hot_runtime(x, hot_runtime_binding=hot_runtime_binding)
-        if (not fixed_point_psin_binding.allow_query_warmstart) or fixed_point_psin_binding.source_psin_query[0] < 0.0:
+        if (
+            not fixed_point_psin_binding.allow_query_warmstart
+        ) or fixed_point_psin_binding.source_psin_query[0] < 0.0:
             _normalize_psin_query(
                 fixed_point_psin_binding.source_psin_query,
                 fixed_point_psin_binding.psin_profile_u,
@@ -1105,6 +1118,8 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
             root_fields,
             surface_workspace,
         )
-        return _pack_residual_output(residual_pack_binding=residual_pack_binding, scratch_holder=scratch_holder)
+        return _pack_residual_output(
+            residual_pack_binding=residual_pack_binding, scratch_holder=scratch_holder
+        )
 
     return runner

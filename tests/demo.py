@@ -98,18 +98,30 @@ def compute_rz_limits(
     return (r_min - r_pad, r_max + r_pad), (z_min - z_pad, z_max + z_pad)
 
 
-def plot_equilibrium_surfaces(ax: plt.Axes, equilibrium, *, levels: tuple[float, ...] = DEFAULT_LEVELS) -> None:
+def plot_equilibrium_surfaces(
+    ax: plt.Axes, equilibrium, *, levels: tuple[float, ...] = DEFAULT_LEVELS
+) -> None:
     first_label = "veqpy surfaces"
     for index, level in enumerate(levels):
         surface = build_surface_from_psin(equilibrium, float(level))
         color = DEFAULT_SURFACE_COLORS[min(index, len(DEFAULT_SURFACE_COLORS) - 1)]
-        ax.plot(close_curve(surface)[:, 0], close_curve(surface)[:, 1], color=color, linewidth=1.1, label=first_label)
+        ax.plot(
+            close_curve(surface)[:, 0],
+            close_curve(surface)[:, 1],
+            color=color,
+            linewidth=1.1,
+            label=first_label,
+        )
         first_label = None
     boundary = build_surface_from_psin(equilibrium, 1.0)
-    ax.plot(close_curve(boundary)[:, 0], close_curve(boundary)[:, 1], color="#111111", linewidth=1.8)
+    ax.plot(
+        close_curve(boundary)[:, 0], close_curve(boundary)[:, 1], color="#111111", linewidth=1.8
+    )
 
 
-def style_surface_axis(ax: plt.Axes, *, title: str, rz_limits: tuple[tuple[float, float], tuple[float, float]]) -> None:
+def style_surface_axis(
+    ax: plt.Axes, *, title: str, rz_limits: tuple[tuple[float, float], tuple[float, float]]
+) -> None:
     ax.set_title(title)
     ax.set_xlabel("R [m]")
     ax.set_ylabel("Z [m]")
@@ -143,7 +155,9 @@ def main() -> None:
         Ip=MU0 * 3.0e6,
     )
     solve_grid = Grid(Nr=16, Nt=16, scheme="legendre")
-    plot_grid = Grid(Nr=128, Nt=256, scheme="uniform", L_max=solve_grid.L_max, M_max=solve_grid.M_max)
+    plot_grid = Grid(
+        Nr=128, Nt=256, scheme="uniform", L_max=solve_grid.L_max, M_max=solve_grid.M_max
+    )
     solver = Solver(
         operator=Operator(grid=solve_grid, case=case),
         config=SolverConfig(
@@ -168,7 +182,13 @@ def main() -> None:
     fig, ax = plt.subplots(figsize=(7.4, 6.6), constrained_layout=True)
     plot_equilibrium_surfaces(ax, plot_equilibrium, levels=DEFAULT_LEVELS)
     ax.scatter(
-        [equilibrium.R0], [equilibrium.Z0], marker="x", color="#d62728", s=42, linewidths=1.4, label="Boundary (R0, Z0)"
+        [equilibrium.R0],
+        [equilibrium.Z0],
+        marker="x",
+        color="#d62728",
+        s=42,
+        linewidths=1.4,
+        label="Boundary (R0, Z0)",
     )
     style_surface_axis(ax, title="veqpy Demo Flux Surfaces", rz_limits=rz_limits)
     ax.legend(loc="upper right")

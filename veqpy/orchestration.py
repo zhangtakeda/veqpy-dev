@@ -70,18 +70,21 @@ def validate_profile_family_order(
     family_order: tuple[str, ...] = PACKED_PROFILE_FAMILY_ORDER,
 ) -> tuple[str, ...]:
     family_order = tuple(family_order)
-    if len(family_order) != len(ALL_PROFILE_FAMILIES) or set(family_order) != set(ALL_PROFILE_FAMILIES):
-        raise ValueError(
-            "PACKED_PROFILE_FAMILY_ORDER must contain each family exactly once: "
-            f"{ALL_PROFILE_FAMILIES!r}, got {family_order!r}"
-        )
+    if len(family_order) != len(ALL_PROFILE_FAMILIES) or set(family_order) != set(
+        ALL_PROFILE_FAMILIES
+    ):
+        raise ValueError(f"Invalid PACKED_PROFILE_FAMILY_ORDER {family_order!r}")
     return family_order
 
 
 def get_prefix_profile_names(
     family_order: tuple[str, ...] = PACKED_PROFILE_FAMILY_ORDER,
 ) -> tuple[str, ...]:
-    return tuple(family for family in validate_profile_family_order(family_order) if family in PREFIX_PROFILE_FAMILIES)
+    return tuple(
+        family
+        for family in validate_profile_family_order(family_order)
+        if family in PREFIX_PROFILE_FAMILIES
+    )
 
 
 def expand_profile_family(family: str, M_max: int) -> tuple[str, ...]:
@@ -190,7 +193,9 @@ def build_residual_block_metadata(profile_names: tuple[str, ...]) -> tuple[np.nd
     return block_codes, block_orders
 
 
-def build_residual_block_radial_powers(profile_names: tuple[str, ...], *, K_max: int | None) -> np.ndarray:
+def build_residual_block_radial_powers(
+    profile_names: tuple[str, ...], *, K_max: int | None
+) -> np.ndarray:
     radial_powers = np.zeros(len(profile_names), dtype=np.int64)
     for i, name in enumerate(profile_names):
         if name.startswith(("c", "s")) and name[1:].isdigit():
@@ -411,7 +416,9 @@ def build_source_plan(
 
     if policy is not None:
         endpoint_policy = (
-            policy.current_ip_endpoint_policy if has_ip_constraint else policy.current_other_endpoint_policy
+            policy.current_ip_endpoint_policy
+            if has_ip_constraint
+            else policy.current_other_endpoint_policy
         )
         projection_domain = policy.domain
         heat_projection_degree = int(policy.heat_degree)
@@ -450,9 +457,15 @@ def validate_source_plan_profile_support(
 ) -> None:
     has_active_psin = int(profile_L[profile_index["psin"]]) >= 0
     if source_plan.strategy == "profile_owned_psin" and not has_active_psin:
-        raise ValueError(f"{case.route} requires an active psin profile because psin is optimized externally")
-    if case.coordinate == "psin" and source_plan.strategy != "profile_owned_psin" and has_active_psin:
-        raise ValueError(f"{case.route} does not accept an active psin profile because psin is source-owned")
+        raise ValueError(f"{case.route} requires an active psin profile")
+    if (
+        case.coordinate == "psin"
+        and source_plan.strategy != "profile_owned_psin"
+        and has_active_psin
+    ):
+        raise ValueError(
+            f"{case.route} does not accept an active psin profile because psin is source-owned"
+        )
 
 
 def validate_source_inputs(case: "OperatorCase", nr: int) -> None:
@@ -464,7 +477,9 @@ def validate_source_inputs(case: "OperatorCase", nr: int) -> None:
     if case.nodes == "grid" and case.heat_input.shape[0] != nr:
         raise ValueError(f"Expected grid inputs to have shape ({nr},), got {case.heat_input.shape}")
     if case.heat_input.shape[0] < 1:
-        raise ValueError(f"Expected {case.coordinate}-coordinate inputs to contain at least one sample")
+        raise ValueError(
+            f"Expected {case.coordinate}-coordinate inputs to contain at least one sample"
+        )
 
 
 def refresh_source_runtime(
@@ -500,9 +515,13 @@ def refresh_source_runtime(
             )
             if not source_plan.has_projection_policy:
                 source_const_state.heat_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
-                source_const_state.current_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
+                source_const_state.current_projection_fit_matrix = np.empty(
+                    (0, 0), dtype=np.float64
+                )
             else:
-                source_axis = np.linspace(0.0, 1.0, int(source_plan.source_sample_count), dtype=np.float64)
+                source_axis = np.linspace(
+                    0.0, 1.0, int(source_plan.source_sample_count), dtype=np.float64
+                )
                 source_query = np.empty_like(source_axis)
                 np.copyto(source_query, source_axis)
                 np.clip(source_query, 0.0, 1.0, out=source_query)
@@ -514,14 +533,18 @@ def refresh_source_runtime(
                     source_query *= 2.0
                     source_query -= 1.0
                 else:
-                    raise ValueError(f"Unsupported source projection domain {source_plan.projection_domain!r}")
+                    raise ValueError(
+                        f"Unsupported source projection domain {source_plan.projection_domain!r}"
+                    )
                 if source_plan.heat_projection_degree < 0:
                     raise ValueError(
-                        f"Projection degree must be non-negative, got {source_plan.heat_projection_degree}"
+                        f"Projection degree must be non-negative, "
+                        f"got {source_plan.heat_projection_degree}"
                     )
                 if source_plan.current_projection_degree < 0:
                     raise ValueError(
-                        f"Projection degree must be non-negative, got {source_plan.current_projection_degree}"
+                        f"Projection degree must be non-negative, "
+                        f"got {source_plan.current_projection_degree}"
                     )
                 source_const_state.heat_projection_fit_matrix = np.linalg.pinv(
                     chebvander(source_query, source_plan.heat_projection_degree)
@@ -534,12 +557,16 @@ def refresh_source_runtime(
         source_aux_state.heat_projection_coeff = np.empty(0, dtype=np.float64)
         source_aux_state.current_projection_coeff = np.empty(0, dtype=np.float64)
     else:
-        source_aux_state.heat_projection_coeff = source_const_state.heat_projection_fit_matrix @ np.asarray(
-            source_plan.heat_input,
-            dtype=np.float64,
+        source_aux_state.heat_projection_coeff = (
+            source_const_state.heat_projection_fit_matrix
+            @ np.asarray(
+                source_plan.heat_input,
+                dtype=np.float64,
+            )
         )
-        source_aux_state.current_projection_coeff = source_const_state.current_projection_fit_matrix @ np.asarray(
-            source_plan.current_input, dtype=np.float64
+        source_aux_state.current_projection_coeff = (
+            source_const_state.current_projection_fit_matrix
+            @ np.asarray(source_plan.current_input, dtype=np.float64)
         )
     if source_plan.is_grid_nodes or not source_plan.is_psin_coordinate:
         if source_plan.is_grid_nodes:
@@ -694,10 +721,18 @@ def _build_source_stage_runner_shared(operator_core: Any) -> Callable:
                     np.copyto(source_work_state.parameter_query, source_psin_query)
                 elif source_plan.parameterization == "sqrt_psin":
                     np.copyto(source_work_state.parameter_query, source_psin_query)
-                    np.maximum(source_work_state.parameter_query, 0.0, out=source_work_state.parameter_query)
-                    np.sqrt(source_work_state.parameter_query, out=source_work_state.parameter_query)
+                    np.maximum(
+                        source_work_state.parameter_query,
+                        0.0,
+                        out=source_work_state.parameter_query,
+                    )
+                    np.sqrt(
+                        source_work_state.parameter_query, out=source_work_state.parameter_query
+                    )
                 else:
-                    raise ValueError(f"Unsupported source parameterization {source_plan.parameterization!r}")
+                    raise ValueError(
+                        f"Unsupported source parameterization {source_plan.parameterization!r}"
+                    )
                 resolve_source_inputs(
                     source_work_state.materialized_heat_input,
                     source_work_state.materialized_current_input,
@@ -733,7 +768,9 @@ def _build_source_stage_runner_shared(operator_core: Any) -> Callable:
     return runner
 
 
-def _build_pj2_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[[], tuple[float, float]]:
+def _build_pj2_psin_uniform_source_stage_runner(
+    operator_core: Any,
+) -> Callable[[], tuple[float, float]]:
     source_plan = operator_core.source_plan
     source_eval_runner = operator_core.execution_state.source_eval_runner
     runtime_layout = operator_core.runtime_layout
@@ -751,7 +788,8 @@ def _build_pj2_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[
             np.copyto(source_work_state.psin_query, np.asarray(psin_profile_u, dtype=np.float64))
             if source_work_state.psin_query.ndim != 1 or source_work_state.psin_query.size < 2:
                 raise ValueError(
-                    f"Expected psin query to be 1D with at least two points, got {source_work_state.psin_query.shape}"
+                    f"Expected psin query to be 1D with at least two points, "
+                    f"got {source_work_state.psin_query.shape}"
                 )
             offset = float(source_work_state.psin_query[0])
             scale = float(source_work_state.psin_query[-1] - offset)
@@ -768,10 +806,14 @@ def _build_pj2_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[
                 np.copyto(source_work_state.parameter_query, source_work_state.psin_query)
             elif source_plan.parameterization == "sqrt_psin":
                 np.copyto(source_work_state.parameter_query, source_work_state.psin_query)
-                np.maximum(source_work_state.parameter_query, 0.0, out=source_work_state.parameter_query)
+                np.maximum(
+                    source_work_state.parameter_query, 0.0, out=source_work_state.parameter_query
+                )
                 np.sqrt(source_work_state.parameter_query, out=source_work_state.parameter_query)
             else:
-                raise ValueError(f"Unsupported source parameterization {source_plan.parameterization!r}")
+                raise ValueError(
+                    f"Unsupported source parameterization {source_plan.parameterization!r}"
+                )
             resolve_source_inputs(
                 source_work_state.materialized_heat_input,
                 source_work_state.materialized_current_input,
@@ -791,7 +833,9 @@ def _build_pj2_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[
                 source_work_state.materialized_current_input,
                 float(operator_core.case.R0),
             )
-            if update_fixed_point_psin_query(source_work_state.psin_query, target_root_fields[0], max_residual):
+            if update_fixed_point_psin_query(
+                source_work_state.psin_query, target_root_fields[0], max_residual
+            ):
                 break
         np.copyto(source_work_state.psin_query, target_root_fields[0])
         for _ in range(8):
@@ -814,7 +858,9 @@ def _build_pj2_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[
                 source_work_state.materialized_current_input,
                 float(operator_core.case.R0),
             )
-            if update_fixed_point_psin_query(source_work_state.psin_query, target_root_fields[0], max_residual):
+            if update_fixed_point_psin_query(
+                source_work_state.psin_query, target_root_fields[0], max_residual
+            ):
                 break
         np.copyto(operator_core.psin, target_root_fields[0])
         np.copyto(operator_core.psin_r, target_root_fields[1])
@@ -824,7 +870,9 @@ def _build_pj2_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[
     return runner
 
 
-def _build_pq_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[[], tuple[float, float]]:
+def _build_pq_psin_uniform_source_stage_runner(
+    operator_core: Any,
+) -> Callable[[], tuple[float, float]]:
     source_plan = operator_core.source_plan
     source_eval_runner = operator_core.execution_state.source_eval_runner
     runtime_layout = operator_core.runtime_layout
@@ -843,7 +891,8 @@ def _build_pq_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[[
             np.copyto(source_work_state.psin_query, np.asarray(psin_profile_u, dtype=np.float64))
             if source_work_state.psin_query.ndim != 1 or source_work_state.psin_query.size < 2:
                 raise ValueError(
-                    f"Expected psin query to be 1D with at least two points, got {source_work_state.psin_query.shape}"
+                    f"Expected psin query to be 1D with at least two points, "
+                    f"got {source_work_state.psin_query.shape}"
                 )
             offset = float(source_work_state.psin_query[0])
             scale = float(source_work_state.psin_query[-1] - offset)
@@ -860,10 +909,14 @@ def _build_pq_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[[
                 np.copyto(source_work_state.parameter_query, source_work_state.psin_query)
             elif source_plan.parameterization == "sqrt_psin":
                 np.copyto(source_work_state.parameter_query, source_work_state.psin_query)
-                np.maximum(source_work_state.parameter_query, 0.0, out=source_work_state.parameter_query)
+                np.maximum(
+                    source_work_state.parameter_query, 0.0, out=source_work_state.parameter_query
+                )
                 np.sqrt(source_work_state.parameter_query, out=source_work_state.parameter_query)
             else:
-                raise ValueError(f"Unsupported source parameterization {source_plan.parameterization!r}")
+                raise ValueError(
+                    f"Unsupported source parameterization {source_plan.parameterization!r}"
+                )
             resolve_source_inputs(
                 source_work_state.materialized_heat_input,
                 source_work_state.materialized_current_input,
@@ -883,7 +936,9 @@ def _build_pq_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[[
                 source_work_state.materialized_current_input,
                 float(operator_core.case.R0),
             )
-            if update_fixed_point_psin_query(source_work_state.psin_query, target_root_fields[0], max_residual):
+            if update_fixed_point_psin_query(
+                source_work_state.psin_query, target_root_fields[0], max_residual
+            ):
                 break
         np.copyto(source_work_state.psin_query, target_root_fields[0])
         for _ in range(16):
@@ -906,7 +961,9 @@ def _build_pq_psin_uniform_source_stage_runner(operator_core: Any) -> Callable[[
                 source_work_state.materialized_current_input,
                 float(operator_core.case.R0),
             )
-            if update_fixed_point_psin_query(source_work_state.psin_query, target_root_fields[0], max_residual):
+            if update_fixed_point_psin_query(
+                source_work_state.psin_query, target_root_fields[0], max_residual
+            ):
                 break
         np.copyto(operator_core.psin, target_root_fields[0])
         np.copyto(operator_core.psin_r, target_root_fields[1])

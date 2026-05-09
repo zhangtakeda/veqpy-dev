@@ -47,12 +47,16 @@ class OperatorCase:
         object.__setattr__(self, "route", _normalize_case_value("route", self.route))
         object.__setattr__(self, "coordinate", _normalize_case_value("coordinate", self.coordinate))
         object.__setattr__(self, "nodes", _normalize_case_value("nodes", self.nodes))
-        object.__setattr__(self, "profile_coeffs", _normalize_case_value("profile_coeffs", self.profile_coeffs))
+        object.__setattr__(
+            self, "profile_coeffs", _normalize_case_value("profile_coeffs", self.profile_coeffs)
+        )
         object.__setattr__(self, "boundary", _normalize_case_value("boundary", self.boundary))
         object.__setattr__(self, "Ip", _normalize_case_value("Ip", self.Ip))
         object.__setattr__(self, "beta", _normalize_case_value("beta", self.beta))
         object.__setattr__(self, "heat_input", _normalize_case_value("heat_input", self.heat_input))
-        object.__setattr__(self, "current_input", _normalize_case_value("current_input", self.current_input))
+        object.__setattr__(
+            self, "current_input", _normalize_case_value("current_input", self.current_input)
+        )
         if self.heat_input.shape != self.current_input.shape:
             raise ValueError(
                 f"heat_input and current_input must share the same shape, "
@@ -86,7 +90,8 @@ class OperatorCase:
         )
         tree.add(
             f"current_input: shape={self.current_input.shape}, "
-            f"min={float(np.min(self.current_input)):.3f}, max={float(np.max(self.current_input)):.3f}"
+            f"min={float(np.min(self.current_input)):.3f}, "
+            f"max={float(np.max(self.current_input)):.3f}"
         )
         if np.isfinite(self.Ip):
             tree.add(f"Ip(mu0-scaled): {self.Ip:.3e}")
@@ -96,7 +101,9 @@ class OperatorCase:
         return tree
 
     def __str__(self) -> str:
-        console = Console(color_system=None, force_terminal=False, width=120, record=True, soft_wrap=False)
+        console = Console(
+            color_system=None, force_terminal=False, width=120, record=True, soft_wrap=False
+        )
         with console.capture() as capture:
             console.print(self.__rich__())
         return capture.get().rstrip()
@@ -174,7 +181,7 @@ def _normalize_profile_coeff(name: str, coeff: ProfileCoeffInput) -> ProfileCoef
     if isinstance(coeff, (list, np.ndarray)):
         return _as_1d_array(coeff, name=f"{name} coeff").astype(np.float64, copy=True)
     raise TypeError(
-        f"{name} coeff must be list[float], numpy.ndarray, positive int, or None; got {type(coeff).__name__}"
+        f"Invalid {name} coeff type {type(coeff).__name__}"
     )
 
 
@@ -242,7 +249,7 @@ def _autoscale_legacy_mu0_inputs(case: OperatorCase) -> None:
     if warnings_needed:
         fields = ", ".join(warnings_needed)
         warnings.warn(
-            f"Auto-scaled legacy inputs for {fields}; canonical OperatorCase inputs are mu0-scaled.",
+            f"Auto-scaled legacy {fields}; use mu0-scaled inputs.",
             RuntimeWarning,
             stacklevel=3,
         )

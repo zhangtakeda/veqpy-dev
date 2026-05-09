@@ -17,9 +17,9 @@ from dataclasses import InitVar, dataclass, field
 
 import numpy as np
 
+from veqpy.base import Serial
 from veqpy.engine.numba_profile import update_profile
 from veqpy.model.grid import Grid
-from veqpy.model.serial import Serial
 
 
 @dataclass(slots=True)
@@ -77,7 +77,9 @@ class Profile(Serial):
             if value is None:
                 continue
             if expected in {float, int} and not isinstance(value, (expected, np.generic)):
-                raise TypeError(f"Attribute '{key}' must be {expected.__name__}, got {type(value).__name__}")
+                raise TypeError(
+                    f"Attribute '{key}' must be {expected.__name__}, got {type(value).__name__}"
+                )
             if isinstance(value, np.ndarray) and value.ndim != 1:
                 raise ValueError(f"Attribute '{key}' must be 1D, got {value.shape}")
 
@@ -101,9 +103,11 @@ class Profile(Serial):
         if grid is not None:
             self._prepare_runtime_cache(grid)
         if self.T_fields is None:
-            raise RuntimeError("Profile runtime cache is not initialized; pass grid on first update().")
+            raise RuntimeError(
+                "Profile runtime cache is not initialized; pass grid on first update()."
+            )
         if self.u_fields is None:
-            raise RuntimeError("Profile output buffers are not initialized; pass grid on first update().")
+            raise RuntimeError("Profile buffers not initialized; pass grid first.")
         _fill_profile_outputs(
             self.u_fields,
             self.T_fields,

@@ -259,7 +259,9 @@ def allocate_runtime_state(
     materialized_heat_input = np.empty(nr, dtype=np.float64)
     materialized_current_input = np.empty(nr, dtype=np.float64)
     needs_psin_query = bool(source_plan.requires_psin_query_workspace)
-    psin_query = np.empty(nr, dtype=np.float64) if needs_psin_query else np.empty(0, dtype=np.float64)
+    psin_query = (
+        np.empty(nr, dtype=np.float64) if needs_psin_query else np.empty(0, dtype=np.float64)
+    )
     if source_plan.requires_source_parameter_query:
         parameter_query = np.empty(nr, dtype=np.float64)
     else:

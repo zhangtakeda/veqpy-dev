@@ -231,6 +231,97 @@ Keep the distinction between these file types clear:
 
 Do not treat demo or benchmark scripts as substitutes for regression coverage.
 
+Only Python tests and GEQDSK fixtures should be reviewable outputs under
+[`tests/`](../tests). Generated JSON, pickle, image, cache, benchmark, and demo
+artifacts should remain ignored unless a future change explicitly promotes one
+of them to a maintained fixture.
+
+## Module Style Rules
+
+New or reorganized modules should follow the style established in
+[`veqpy/base/`](../veqpy/base):
+
+- Use an English module docstring with this shape:
+
+  ```python
+  """
+  Module: package.module
+
+  Role:
+  - ...
+
+  Public API:
+  - ...
+
+  Notes:
+  - ...
+  """
+  ```
+
+- Keep `Module`, `Role`, and `Public API` when applicable.
+- Omit `Notes` only when there are no useful implementation notes.
+- Use English for module docstrings, class/function docstrings, section
+  comments, helper comments, and inline comments.
+
+Use these main section separators exactly:
+
+```python
+# -----------------------------------------------------------------------------
+# Public interface
+# -----------------------------------------------------------------------------
+```
+
+```python
+# -----------------------------------------------------------------------------
+# Private implementation
+# -----------------------------------------------------------------------------
+```
+
+Inside `Private implementation`, use short single-line helper group comments
+instead of another long separator, for example:
+
+```python
+# Dispatch helpers
+# Type helpers
+# JSON conversion helpers
+# Object construction helpers
+```
+
+### Naming Rules
+
+Public APIs use normal Python names and must be listed in the module docstring's
+`Public API` section or exported through a package `__all__` when they are
+package-level entry points.
+
+Private implementation rules:
+
+- private functions use a leading underscore, for example `_check_type`
+- private type aliases do not use a leading underscore
+- private module-level state does not use a leading underscore
+- private callable/decorator type aliases use lowercase names
+- `TypeVar` names may keep conventional uppercase names, for example `Key` and
+  `Value`
+
+Examples:
+
+```python
+serializer_handler = Callable[..., Any]
+serializer_registry = Mapping[str, serializer_handler]
+
+read_serializer_registry = Registry(str, Callable)
+write_serializer_registry = Registry(str, Callable)
+serial_type_registry: dict[str, type] = {}
+
+orjson_loads = orjson.loads
+orjson_dumps = orjson.dumps
+orjson_write_options = orjson.OPT_SERIALIZE_NUMPY
+reactive_deps_attr = "_reactive_deps"
+```
+
+This project intentionally defines public/private module boundaries through
+module docstrings, package exports, and documented conventions rather than by
+adding leading underscores to every private module-level type or state value.
+
 ## Comment And Documentation Rules
 
 Use comments to explain:

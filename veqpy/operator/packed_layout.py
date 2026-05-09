@@ -139,7 +139,9 @@ def build_active_profile_metadata(
     profile_L = np.asarray(profile_L, dtype=np.int64)
     expected_size = len(tuple(profile_names))
     if profile_L.ndim != 1 or profile_L.shape[0] != expected_size:
-        raise ValueError(f"Expected profile_L to have shape ({expected_size},), got {profile_L.shape}")
+        raise ValueError(
+            f"Expected profile_L to have shape ({expected_size},), got {profile_L.shape}"
+        )
 
     active_profile_mask = profile_L >= 0
     active_profile_ids = np.flatnonzero(active_profile_mask).astype(np.int64, copy=False)
@@ -186,7 +188,9 @@ def encode_packed_state(
 
         coeff_arr = coeff_array_from_list(name, coeff)
         if coeff_arr.size != L + 1:
-            raise ValueError(f"{name} coeff shape mismatch: expected {(L + 1,)}, got {coeff_arr.shape}")
+            raise ValueError(
+                f"{name} coeff shape mismatch: expected {(L + 1,)}, got {coeff_arr.shape}"
+            )
 
         for k in range(L + 1):
             x[coeff_index[p, k]] = coeff_arr[k]
@@ -228,8 +232,7 @@ def coeff_array_from_list(name: str, coeff: ProfileCoeffValue) -> np.ndarray:
         return np.zeros(length, dtype=np.float64)
     if not isinstance(coeff, (list, np.ndarray)):
         raise TypeError(
-            f"{name} coeff must be list[float], numpy.ndarray, positive int, or None; "
-            f"got {type(coeff).__name__}"
+            f"Invalid {name} coeff type {type(coeff).__name__}"
         )
     coeff_arr = np.asarray(coeff, dtype=np.float64)
     if coeff_arr.ndim != 1:

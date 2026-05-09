@@ -1,9 +1,9 @@
 """
-Module: model.serial
+Module: base.serial
 
 Role:
-- 负责提供统一序列化框架.
-- 负责处理 JSON, Pickle 与嵌套对象序列化.
+- Provide the shared serialization framework.
+- Handle JSON, Pickle, and nested object serialization.
 
 Public API:
 - Serial
@@ -11,15 +11,15 @@ Public API:
 - write_serializer
 
 Notes:
-- 子类通过 `serial_attributes()` 声明可序列化字段.
-- dataclass 默认可以推断 serial 字段类型.
+- Subclasses declare serializable fields through ``serial_attributes()``.
+- Dataclasses can infer serializable field types by default.
 """
 
 import inspect
 import os
 import pickle
 import types
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import fields as dataclass_fields
 from dataclasses import is_dataclass
@@ -29,45 +29,47 @@ from typing import Any, Literal, Self, get_args, get_origin, get_type_hints
 import numpy as np
 import orjson
 
-_read_handlers: dict[str, Callable] = {}
-_write_handlers: dict[str, Callable] = {}
-_type_registry: dict[str, type] = {}
+from veqpy.base.registry import Registry
 
-_orjson_loads = orjson.loads
-_orjson_dumps = orjson.dumps
-_OPT_NP = orjson.OPT_SERIALIZE_NUMPY
+serializer_handler = Callable[..., Any]
+serializer_registry = Mapping[str, serializer_handler]
+
+read_serializer_registry: Registry[str, serializer_handler] = Registry(str, Callable)
+write_serializer_registry: Registry[str, serializer_handler] = Registry(str, Callable)
+serial_type_registry: dict[str, type] = {}
+
+read_serializer_handlers = read_serializer_registry.registry
+write_serializer_handlers = write_serializer_registry.registry
+
+orjson_loads = orjson.loads
+orjson_dumps = orjson.dumps
+orjson_write_options = orjson.OPT_SERIALIZE_NUMPY
+
+# -----------------------------------------------------------------------------
+# Public interface
+# -----------------------------------------------------------------------------
 
 
-def read_serializer(*exts: str):
-    """注册读取处理器."""
+def read_serializer(*exts: str) -> Callable[[serializer_handler], serializer_handler]:
+    """Registry a read handler for one or more file extensions."""
 
-    def wrapper(func: Callable) -> Callable:
-        for ext in exts:
-            _read_handlers[ext] = func
-        return func
-
-    return wrapper
+    return read_serializer_registry(*exts)
 
 
-def write_serializer(*exts: str):
-    """注册写入处理器."""
+def write_serializer(*exts: str) -> Callable[[serializer_handler], serializer_handler]:
+    """Registry a write handler for one or more file extensions."""
 
-    def wrapper(func: Callable) -> Callable:
-        for ext in exts:
-            _write_handlers[ext] = func
-        return func
-
-    return wrapper
+    return write_serializer_registry(*exts)
 
 
 class Serial:
-    """统一序列化基类."""
+    """Base class for unified serialization."""
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
         if getattr(cls, "__abstractmethods__", None):
             return
-        _type_registry.setdefault(cls.__name__, cls)
+        serial_type_registry.setdefault(cls.__name__, cls)
 
     @classmethod
     def serial_attributes(cls) -> dict[str, type]:
@@ -80,15 +82,17 @@ class Serial:
 
     @classmethod
     def load(cls, file: str, **kwargs) -> Self:
-        """从文件反序列化为实例."""
-        ext = _resolve_ext(file, _read_handlers)
+        """Deserialize a file into a new instance."""
+        ext = _resolve_ext(file, read_serializer_handlers)
 
         if ext in ("json", "jsonl"):
             with open(file, "rb") as f:
-                data = _orjson_loads(f.read())
+                data = orjson_loads(f.read())
             instance = _json_to_python(data, cls)
             if not _check_type(instance, cls):
-                raise TypeError(f"Deserialized object is {type(instance).__name__}, expected {cls.__name__}")
+                raise TypeError(
+                    f"Deserialized object is {type(instance).__name__}, expected {cls.__name__}"
+                )
             return instance
 
         if ext in ("pkl", "pickle"):
@@ -96,15 +100,17 @@ class Serial:
                 data = pickle.load(f)
             instance = _instantiate_serial(cls, data)
             if not _check_type(instance, cls):
-                raise TypeError(f"Deserialized object is {type(instance).__name__}, expected {cls.__name__}")
+                raise TypeError(
+                    f"Deserialized object is {type(instance).__name__}, expected {cls.__name__}"
+                )
             return instance
 
         instance = cls.__new__(cls)
         instance.read(file, **kwargs)
         return instance
 
-    def read(self, file: str, func: Callable | str | None = None, **kwargs) -> Self:
-        """读取文件到当前实例."""
+    def read(self, file: str, func: serializer_handler | str | None = None, **kwargs) -> Self:
+        """Read a file into the current instance."""
         if func is None:
             _dispatch("read", self, file, **kwargs)
         elif isinstance(func, str):
@@ -113,8 +119,8 @@ class Serial:
             func(self, file, **kwargs)
         return self
 
-    def write(self, file: str, func: Callable | str | None = None, **kwargs) -> None:
-        """将当前实例写入文件."""
+    def write(self, file: str, func: serializer_handler | str | None = None, **kwargs) -> None:
+        """Write the current instance to a file."""
         if func is None:
             _dispatch("write", self, file, **kwargs)
         elif isinstance(func, str):
@@ -123,7 +129,7 @@ class Serial:
             func(self, file, **kwargs)
 
     def check(self) -> None:
-        """校验 serial_attributes 的存在性, 类型和非空性."""
+        """Validate that serial attributes exist, match their types, and are non-empty."""
         spec = type(self).serial_attributes()
         cls = type(self)
         prop_names = {n for n, o in cls.__dict__.items() if isinstance(o, property)}
@@ -137,7 +143,10 @@ class Serial:
             value = getattr(self, key)
 
             if not _check_type(value, expected):
-                raise TypeError(f"Attribute '{key}': expected {_type_name(expected)}, got {type(value).__name__}")
+                raise TypeError(
+                    f"Attribute '{key}': expected {_type_name(expected)}, "
+                    f"got {type(value).__name__}"
+                )
 
             if isinstance(value, np.ndarray):
                 if value.size == 0:
@@ -148,9 +157,12 @@ class Serial:
 
     @read_serializer("json", "jsonl")
     def read_json(self, file: str) -> Self:
-        """将 JSON 内容读入已存在的实例 (frozen dataclass 请使用 Serial.load)"""
+        """Read JSON content into an existing instance.
+
+        Use ``Serial.load`` for frozen dataclasses.
+        """
         with open(file, "rb") as f:
-            data = _orjson_loads(f.read())
+            data = orjson_loads(f.read())
 
         attrs_data = _unwrap_typed_dict(data, type(self).__name__)
         _restore_serial_fields(self, attrs_data, decoder=_json_to_python)
@@ -161,7 +173,7 @@ class Serial:
         self.check()
         data = _python_to_json(self)
         with open(file, "wb") as f:
-            f.write(_orjson_dumps(data, option=_OPT_NP))
+            f.write(orjson_dumps(data, option=orjson_write_options))
 
     @read_serializer("pkl", "pickle")
     def read_pickle(self, file: str) -> Self:
@@ -178,8 +190,15 @@ class Serial:
             pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
-def _resolve_ext(file: str, registry: dict) -> str:
-    """从文件名解析扩展名并在注册表中查找"""
+# -----------------------------------------------------------------------------
+# Private implementation
+# -----------------------------------------------------------------------------
+
+# Dispatch helpers
+
+
+def _resolve_ext(file: str, registry: serializer_registry) -> str:
+    """Resolve a file extension and verify that it exists in the registry."""
     suffix = Path(file).suffix.lstrip(".")
     if suffix in registry:
         return suffix
@@ -190,24 +209,18 @@ def _resolve_ext(file: str, registry: dict) -> str:
 
 
 def _dispatch(op: str, instance: Serial, file: str, **kwargs) -> None:
-    registry = _read_handlers if op == "read" else _write_handlers
+    registry = read_serializer_handlers if op == "read" else write_serializer_handlers
     if op == "read" and not os.path.exists(file):
         raise FileNotFoundError(f"File not found: {file}")
     ext = _resolve_ext(file, registry)
     registry[ext](instance, file, **kwargs)
 
 
-def _unwrap_typed_dict(data: Any, expected_name: str) -> dict:
-    """如果 data 是 {TypeName: {attrs}} 且 TypeName 匹配, 剥离外层"""
-    if isinstance(data, dict) and len(data) == 1:
-        key = next(iter(data))
-        if key == expected_name:
-            return data[key]
-    return data if isinstance(data, dict) else {}
+# Type helpers
 
 
 def _normalize_union(t) -> tuple | None:
-    """将 tuple 或 types.UnionType (int | float) 统一转为 tuple, 非联合返回 None"""
+    """Normalize tuple and ``types.UnionType`` values to tuple members."""
     if isinstance(t, tuple):
         return t
     if isinstance(t, types.UnionType):
@@ -223,7 +236,7 @@ def _type_name(t) -> str:
 
 
 def _check_type(value: Any, expected: type | tuple) -> bool:
-    """递归类型检查, 支持 Union / List / Tuple / Literal 及自定义 Serial 类型"""
+    """Recursively check values against Union, list, tuple, Literal, and Serial types."""
     if expected is Any:
         return True
 
@@ -275,7 +288,9 @@ def _check_type(value: Any, expected: type | tuple) -> bool:
         pass
 
     vt = type(value)
-    if vt.__name__ == expected.__name__ and getattr(vt, "__module__", None) == getattr(expected, "__module__", None):
+    if vt.__name__ == expected.__name__ and getattr(vt, "__module__", None) == getattr(
+        expected, "__module__", None
+    ):
         return True
 
     try:
@@ -284,8 +299,20 @@ def _check_type(value: Any, expected: type | tuple) -> bool:
         return False
 
 
+# JSON conversion helpers
+
+
+def _unwrap_typed_dict(data: Any, expected_name: str) -> dict:
+    """Remove the outer type tag when data is ``{TypeName: {attrs}}``."""
+    if isinstance(data, dict) and len(data) == 1:
+        key = next(iter(data))
+        if key == expected_name:
+            return data[key]
+    return data if isinstance(data, dict) else {}
+
+
 def _python_to_json(value: Any) -> Any:
-    """将 Python 对象递归转换为 JSON 可序列化结构"""
+    """Recursively convert a Python object into a JSON-serializable structure."""
     if hasattr(value, "serial_attributes"):
         spec = type(value).serial_attributes()
         return {type(value).__name__: {k: _python_to_json(getattr(value, k)) for k in spec}}
@@ -313,7 +340,7 @@ def _python_to_json(value: Any) -> Any:
 
 
 def _json_to_python(data: Any, expected: type | tuple) -> Any:
-    """将 JSON 数据递归转换为指定 Python 类型"""
+    """Recursively convert JSON data into the expected Python type."""
     if expected is Any:
         return data
 
@@ -344,7 +371,10 @@ def _json_to_python(data: Any, expected: type | tuple) -> Any:
         args = get_args(expected)
         if len(args) == 2:
             key_t, value_t = args
-            return {_json_to_python(key, key_t): _json_to_python(value, value_t) for key, value in data.items()}
+            return {
+                _json_to_python(key, key_t): _json_to_python(value, value_t)
+                for key, value in data.items()
+            }
         return dict(data)
 
     if origin is Literal:
@@ -365,21 +395,21 @@ def _json_to_python(data: Any, expected: type | tuple) -> Any:
     return data
 
 
-def _json_to_python_union(data: Any, types: tuple) -> Any:
-    """处理 Union 类型"""
+def _json_to_python_union(data: Any, members: tuple) -> Any:
+    """Convert JSON data for a Union type."""
     if isinstance(data, dict) and len(data) == 1:
         key = next(iter(data))
-        for t in types:
+        for t in members:
             if getattr(t, "__name__", None) == key:
                 return _json_to_python(data, t)
 
-    for t in types:
+    for t in members:
         if t is np.ndarray and isinstance(data, list):
             return np.array(data)
         if t in {int, float, str, bool} and isinstance(data, (int, float, str, bool)):
             return t(data)
 
-    for t in types:
+    for t in members:
         try:
             candidate = _json_to_python(data, t)
             if _check_type(candidate, t):
@@ -390,10 +420,13 @@ def _json_to_python_union(data: Any, types: tuple) -> Any:
     return data
 
 
+# Object construction helpers
+
+
 def _try_instantiate_from_tagged_dict(data: dict) -> Any | None:
-    """尝试从 {"TypeName": {attrs}} 结构实例化对象"""
+    """Try to instantiate an object from a ``{"TypeName": {attrs}}`` structure."""
     type_name = next(iter(data))
-    cls = _type_registry.get(type_name)
+    cls = serial_type_registry.get(type_name)
     if cls is None:
         return None
 
@@ -405,7 +438,7 @@ def _try_instantiate_from_tagged_dict(data: dict) -> Any | None:
 
 
 def _instantiate_serial(cls: type, attrs: dict) -> Any:
-    """从属性字典实例化一个 Serial 子类"""
+    """Instantiate a Serial subclass from an attribute dictionary."""
     spec = cls.serial_attributes()
     field_values: dict[str, Any] = {}
     for key, expected in spec.items():
@@ -414,7 +447,7 @@ def _instantiate_serial(cls: type, attrs: dict) -> Any:
 
 
 def _instantiate_dataclass(cls: type, attrs: dict) -> Any:
-    """从属性字典实例化一个 dataclass 对象."""
+    """Instantiate a dataclass object from an attribute dictionary."""
 
     spec = _dataclass_attribute_types(cls)
     field_values = {k: _json_to_python(attrs.get(k), t) for k, t in spec.items()}
@@ -433,7 +466,9 @@ def _construct_object(cls: type, field_values: dict[str, Any]) -> Any:
         raise TypeError(f"Unable to instantiate {cls.__name__}: cannot inspect __init__")
 
     init_params = {
-        name for name, p in sig.parameters.items() if name != "self" and p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD)
+        name
+        for name, p in sig.parameters.items()
+        if name != "self" and p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD)
     }
     init_kwargs = {k: v for k, v in field_values.items() if k in init_params}
 

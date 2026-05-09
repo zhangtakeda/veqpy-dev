@@ -49,12 +49,20 @@ class SolverResult:
         tree.add(f"jacobian_evaluations: {self.jacobian_evaluations}")
         tree.add(f"iterations: {self.iterations}")
         tree.add(Text(f"elapsed: {(self.elapsed / 1000):.3f} [ms]"))
-        tree.add(f"x0: shape={self.x0.shape}, min={float(np.min(self.x0)):.3f}, max={float(np.max(self.x0)):.3f}")
-        tree.add(f"x: shape={self.x.shape}, min={float(np.min(self.x)):.3f}, max={float(np.max(self.x)):.3f}")
+        tree.add(
+            f"x0: shape={self.x0.shape}, min={float(np.min(self.x0)):.3f}, "
+            f"max={float(np.max(self.x0)):.3f}"
+        )
+        tree.add(
+            f"x: shape={self.x.shape}, min={float(np.min(self.x)):.3f}, "
+            f"max={float(np.max(self.x)):.3f}"
+        )
         return tree
 
     def __str__(self) -> str:
-        console = Console(color_system=None, force_terminal=False, width=120, record=True, soft_wrap=False)
+        console = Console(
+            color_system=None, force_terminal=False, width=120, record=True, soft_wrap=False
+        )
         with console.capture() as capture:
             console.print(self.__rich__())
         return capture.get().rstrip()

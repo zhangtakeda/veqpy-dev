@@ -32,12 +32,11 @@ from rich.console import Console
 from rich.text import Text
 from rich.tree import Tree
 
+from veqpy.base import Reactive, Serial
 from veqpy.model.geometry import Geometry
 from veqpy.model.geqdsk import Geqdsk
 from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile
-from veqpy.model.reactive import Reactive
-from veqpy.model.serial import Serial
 from veqpy.orchestration import resolve_fourier_power
 
 plt.style.use("seaborn-v0_8-paper")
@@ -98,7 +97,9 @@ def _regularize_axis_linear_profile(
     values = np.array(values, dtype=np.float64, copy=copy)
     rho = np.asarray(rho, dtype=np.float64)
     if values.ndim != 1 or rho.ndim != 1 or values.shape != rho.shape:
-        raise ValueError(f"Expected values/rho to share a 1D shape, got {values.shape} and {rho.shape}")
+        raise ValueError(
+            f"Expected values/rho to share a 1D shape, got {values.shape} and {rho.shape}"
+        )
     if values.size < 3 or abs(rho[0]) >= 1e-10:
         return values
 
@@ -124,7 +125,7 @@ def _regularize_axis_linear_surface(
     rho = np.asarray(rho, dtype=np.float64)
     if values.ndim != 2 or rho.ndim != 1 or values.shape[0] != rho.shape[0]:
         raise ValueError(
-            f"Expected values to have shape (Nr, Nt) with rho shape (Nr,), got {values.shape} and {rho.shape}"
+            f"values/rho shape mismatch: {values.shape} vs {rho.shape}"
         )
     if values.shape[0] < 3 or abs(rho[0]) >= 1e-10:
         return values
@@ -217,7 +218,9 @@ class Equilibrium(Reactive, Serial):
         return tree
 
     def __str__(self) -> str:
-        console = Console(color_system=None, force_terminal=False, width=120, record=True, soft_wrap=False)
+        console = Console(
+            color_system=None, force_terminal=False, width=120, record=True, soft_wrap=False
+        )
         with console.capture() as capture:
             console.print(self.__rich__())
         return capture.get().rstrip()
@@ -438,7 +441,10 @@ class Equilibrium(Reactive, Serial):
             jtor = (
                 -self.alpha1
                 / (MU0 * self.S_r)
-                * (2.0 * np.pi * self.FFn_psin * self.Ln_r + self.V_r * self.Pn_psin / (2.0 * np.pi))
+                * (
+                    2.0 * np.pi * self.FFn_psin * self.Ln_r
+                    + self.V_r * self.Pn_psin / (2.0 * np.pi)
+                )
             )
         return _regularize_axis_linear_profile(jtor, self.rho)
 
@@ -447,7 +453,9 @@ class Equilibrium(Reactive, Serial):
         """平行电流密度 <j.B>/B0, model-side diagnostic."""
         F_r = self.grid.corrected_even_derivative(self.F)
         term_r = (
-            self.Kn_r * self.psin_r / self.F + self.Kn * self.psin_rr / self.F - self.Kn * self.psin_r * F_r / self.F**2
+            self.Kn_r * self.psin_r / self.F
+            + self.Kn * self.psin_rr / self.F
+            - self.Kn * self.psin_r * F_r / self.F**2
         )
 
         with np.errstate(divide="ignore", invalid="ignore"):
@@ -459,7 +467,9 @@ class Equilibrium(Reactive, Serial):
         """局部环向电流密度 j_phi(R, Z)."""
         R = self.geometry.R
         with np.errstate(divide="ignore", invalid="ignore"):
-            jphi = -self.alpha1 / (MU0 * R) * (self.FFn_psin[:, None] + R**2 * self.Pn_psin[:, None])
+            jphi = (
+                -self.alpha1 / (MU0 * R) * (self.FFn_psin[:, None] + R**2 * self.Pn_psin[:, None])
+            )
         return _regularize_axis_linear_surface(jphi, self.rho)
 
     @property
@@ -547,7 +557,7 @@ class Equilibrium(Reactive, Serial):
         psi_axis = float(psi_axis)
         psi_scale = float(self.alpha2)
         if abs(psi_scale) <= 1.0e-14:
-            raise ValueError("Cannot export physical psi when alpha2 is zero; solve a physical equilibrium first.")
+            raise ValueError("alpha2 is zero")
         psi_bound = psi_axis + psi_scale
         psi_outside_value = psi_bound if psi_outside is None else float(psi_outside)
         boundary = np.column_stack((geometry.R[-1], geometry.Z[-1])).astype(np.float64, copy=False)
@@ -573,8 +583,12 @@ class Equilibrium(Reactive, Serial):
             psi_bound=psi_bound,
             F=_sample_profile_on_uniform_psin(self.psin, self.F, psin_uniform),
             P=_sample_profile_on_uniform_psin(self.psin, self.P, psin_uniform),
-            FF_psi=_sample_profile_on_uniform_psin(self.psin, self.alpha1 * self.FFn_psin, psin_uniform),
-            P_psi=_sample_profile_on_uniform_psin(self.psin, self.alpha1 * self.Pn_psin / MU0, psin_uniform),
+            FF_psi=_sample_profile_on_uniform_psin(
+                self.psin, self.alpha1 * self.FFn_psin, psin_uniform
+            ),
+            P_psi=_sample_profile_on_uniform_psin(
+                self.psin, self.alpha1 * self.Pn_psin / MU0, psin_uniform
+            ),
             q=_sample_profile_on_uniform_psin(self.psin, self.q, psin_uniform),
             psi=_interpolate_psin_to_rectilinear_grid(
                 geometry,
@@ -594,7 +608,9 @@ class Equilibrium(Reactive, Serial):
 
 def _normalize_shape_profiles(shape_profiles: dict[str, Profile]) -> dict[str, Profile]:
     if not isinstance(shape_profiles, dict):
-        raise TypeError(f"shape_profiles must be dict[str, Profile], got {type(shape_profiles).__name__}")
+        raise TypeError(
+            f"shape_profiles must be dict[str, Profile], got {type(shape_profiles).__name__}"
+        )
     for name, profile in shape_profiles.items():
         if not isinstance(name, str):
             raise TypeError(f"shape profile names must be str, got {type(name).__name__}")
@@ -638,7 +654,9 @@ def _shape_profile_plot_meta(name: str) -> dict[str, str | None]:
     else:
         label = name
         style = {"linestyle": "-", "marker": None}
-    color = _EXTRA_SHAPE_PROFILE_COLORS[sum(ord(ch) for ch in name) % len(_EXTRA_SHAPE_PROFILE_COLORS)]
+    color = _EXTRA_SHAPE_PROFILE_COLORS[
+        sum(ord(ch) for ch in name) % len(_EXTRA_SHAPE_PROFILE_COLORS)
+    ]
     return {"color": color, "label": label, **style}
 
 
@@ -685,7 +703,11 @@ def _compare_equilibrium(
     ref_plot = _build_resampled_equilibrium(reference, grid=compare_grid)
     other_plot = _build_resampled_equilibrium(other, grid=compare_grid)
 
-    shape_keys = [key for key in ["h", "k", "s1"] if key in ref_plot.shape_profiles or key in other_plot.shape_profiles]
+    shape_keys = [
+        key
+        for key in ["h", "k", "s1"]
+        if key in ref_plot.shape_profiles or key in other_plot.shape_profiles
+    ]
     source_groups = [
         ("psi_r", r"$\psi_\rho$", None),
         ("FF_psi", r"$FF_\psi$", None),
@@ -711,7 +733,9 @@ def _compare_equilibrium(
 
     ref_surface_data = _build_surface_panel_data(ref_plot)
     other_surface_data = _build_surface_panel_data(other_plot)
-    shared_boundary = _merge_surface_boundaries(ref_surface_data["boundary"], other_surface_data["boundary"])
+    shared_boundary = _merge_surface_boundaries(
+        ref_surface_data["boundary"], other_surface_data["boundary"]
+    )
     surface_ax = fig.add_subplot(gs[:, 0])
     _render_comparison_surface_overlay_panel(
         surface_ax,
@@ -739,7 +763,14 @@ def _compare_equilibrium(
         ax.set_ylabel(ylabel)
         ax.grid(True, linestyle=":", alpha=0.5)
         _add_top_headroom(ax, 0.15)
-        ax.text(0.03, 0.97, f"err = {errors[f'rel_{key}_max']:.1e}", transform=ax.transAxes, ha="left", va="top")
+        ax.text(
+            0.03,
+            0.97,
+            f"err = {errors[f'rel_{key}_max']:.1e}",
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+        )
         if i == 0:
             ax.set_title("(b) Shape Parameters", fontsize=SUBPLOT_TITLE_FONTSIZE)
             ax.legend(loc="best", frameon=False)
@@ -762,7 +793,14 @@ def _compare_equilibrium(
         ax.set_ylabel(ylabel)
         ax.grid(True, linestyle=":", alpha=0.5)
         _add_top_headroom(ax, 0.15)
-        ax.text(0.03, 0.97, f"err = {errors[f'rel_{key}_max']:.1e}", transform=ax.transAxes, ha="left", va="top")
+        ax.text(
+            0.03,
+            0.97,
+            f"err = {errors[f'rel_{key}_max']:.1e}",
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+        )
         if i == 0:
             ax.set_title("(c) Source Profiles", fontsize=SUBPLOT_TITLE_FONTSIZE)
         if i == len(source_groups) - 1:
@@ -786,7 +824,9 @@ def _build_resampled_equilibrium(
     grid: Grid | None,
 ) -> Equilibrium:
     source_grid = equilibrium.grid
-    plot_grid = grid or Grid(Nr=64, Nt=64, scheme="uniform", L_max=source_grid.L_max, M_max=source_grid.M_max)
+    plot_grid = grid or Grid(
+        Nr=64, Nt=64, scheme="uniform", L_max=source_grid.L_max, M_max=source_grid.M_max
+    )
 
     psin_r = _resample_profile_linear(
         source_grid.rho,
@@ -967,7 +1007,9 @@ def _merge_surface_boundaries(*boundaries: dict) -> dict:
 
 def _build_shape_panel_data(equilibrium: Equilibrium) -> dict:
     values = {
-        key: profile.u for key, profile in equilibrium.shape_profiles.items() if _include_shape_panel_profile(key)
+        key: profile.u
+        for key, profile in equilibrium.shape_profiles.items()
+        if _include_shape_panel_profile(key)
     }
     return {"shape": {"rho": equilibrium.rho, "values": values}}
 
@@ -1033,7 +1075,7 @@ def _resample_profile_linear(
     y_src = np.asarray(y_src, dtype=np.float64)
     rho_eval = np.asarray(rho_eval, dtype=np.float64)
     if rho_src.ndim != 1 or y_src.ndim != 1 or rho_eval.ndim != 1 or rho_src.shape != y_src.shape:
-        raise ValueError("rho_src, y_src, rho_eval must be 1D arrays and source arrays must share shape")
+        raise ValueError("Expected 1D rho_src/y_src/rho_eval with matching source shape")
     left_val = float(y_src[0]) if left is None else float(left)
     right_val = float(y_src[-1]) if right is None else float(right)
     return np.interp(rho_eval, rho_src, y_src, left=left_val, right=right_val)
@@ -1071,7 +1113,9 @@ def _build_geqdsk_rectilinear_grid(
     return R_nodes, Z_nodes, Rmin, Rmax, Zmin, Zmax
 
 
-def _prepare_profile_interp_axis(psin_src: np.ndarray, values_src: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _prepare_profile_interp_axis(
+    psin_src: np.ndarray, values_src: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
     psin_arr = np.asarray(psin_src, dtype=np.float64)
     values_arr = np.asarray(values_src, dtype=np.float64)
     if psin_arr.ndim != 1 or values_arr.ndim != 1 or psin_arr.shape != values_arr.shape:
@@ -1094,7 +1138,9 @@ def _sample_profile_on_uniform_psin(
 ) -> np.ndarray:
     psin_axis, values_axis = _prepare_profile_interp_axis(psin_src, values_src)
     psin_eval = np.asarray(psin_eval, dtype=np.float64)
-    return np.interp(psin_eval, psin_axis, values_axis, left=float(values_axis[0]), right=float(values_axis[-1]))
+    return np.interp(
+        psin_eval, psin_axis, values_axis, left=float(values_axis[0]), right=float(values_axis[-1])
+    )
 
 
 def _interpolate_psin_to_rectilinear_grid(
@@ -1131,7 +1177,9 @@ def _interpolate_psin_to_rectilinear_grid(
     psi_grid = np.full(R_grid.shape, float(psi_outside), dtype=np.float64)
     inside = np.isfinite(rho2_grid)
     if np.any(inside):
-        psi_grid[inside] = float(psi_axis) + float(psi_scale) * np.interp(rho2_grid[inside], rho2_src, psin)
+        psi_grid[inside] = float(psi_axis) + float(psi_scale) * np.interp(
+            rho2_grid[inside], rho2_src, psin
+        )
     return psi_grid
 
 
@@ -1144,12 +1192,17 @@ def _interpolate_rho2_to_rectilinear_grid(
 ) -> np.ndarray:
     if R_surfaces.ndim != 2 or Z_surfaces.ndim != 2 or R_surfaces.shape != Z_surfaces.shape:
         raise ValueError(
-            f"Expected R_surfaces/Z_surfaces to share a 2D shape, got {R_surfaces.shape} and {Z_surfaces.shape}"
+            f"Expected R_surfaces/Z_surfaces to share a 2D shape, "
+            f"got {R_surfaces.shape} and {Z_surfaces.shape}"
         )
     if rho2_surfaces.ndim != 1 or rho2_surfaces.shape[0] != R_surfaces.shape[0]:
-        raise ValueError(f"rho2_surfaces must have shape ({R_surfaces.shape[0]},), got {rho2_surfaces.shape}")
+        raise ValueError(
+            f"rho2_surfaces must have shape ({R_surfaces.shape[0]},), got {rho2_surfaces.shape}"
+        )
 
-    points_R, points_Z, point_values, triangles = _build_flux_mesh_triangulation(R_surfaces, Z_surfaces, rho2_surfaces)
+    points_R, points_Z, point_values, triangles = _build_flux_mesh_triangulation(
+        R_surfaces, Z_surfaces, rho2_surfaces
+    )
     triangle_mask = _build_degenerate_triangle_mask(points_R, points_Z, triangles)
     rho2_grid = np.full(R_grid.shape, np.nan, dtype=np.float64)
     R_nodes = np.asarray(R_grid[:, 0], dtype=np.float64)
@@ -1211,9 +1264,17 @@ def _build_flux_mesh_triangulation(
 
     for i in range(1, nr - 1):
         for j in range(nt):
-            triangles[cursor] = [vertex_index(i, j), vertex_index(i + 1, j), vertex_index(i + 1, j + 1)]
+            triangles[cursor] = [
+                vertex_index(i, j),
+                vertex_index(i + 1, j),
+                vertex_index(i + 1, j + 1),
+            ]
             cursor += 1
-            triangles[cursor] = [vertex_index(i, j), vertex_index(i + 1, j + 1), vertex_index(i, j + 1)]
+            triangles[cursor] = [
+                vertex_index(i, j),
+                vertex_index(i + 1, j + 1),
+                vertex_index(i, j + 1),
+            ]
             cursor += 1
 
     return points_R, points_Z, point_values, triangles
@@ -1227,9 +1288,9 @@ def _build_degenerate_triangle_mask(
     p0 = triangles[:, 0]
     p1 = triangles[:, 1]
     p2 = triangles[:, 2]
-    twice_area = (points_R[p1] - points_R[p0]) * (points_Z[p2] - points_Z[p0]) - (points_R[p2] - points_R[p0]) * (
-        points_Z[p1] - points_Z[p0]
-    )
+    twice_area = (points_R[p1] - points_R[p0]) * (points_Z[p2] - points_Z[p0]) - (
+        points_R[p2] - points_R[p0]
+    ) * (points_Z[p1] - points_Z[p0])
     scale = np.maximum(
         np.maximum(np.abs(points_R[p0]), np.abs(points_R[p1])),
         np.maximum(np.abs(points_Z[p0]), np.abs(points_Z[p1])),
@@ -1280,7 +1341,9 @@ def _rasterize_triangle_to_grid(
 
 
 def _coerce_optional_point_array(value, *, name: str) -> np.ndarray:
-    arr = np.asarray(value if value is not None else np.empty((0, 2), dtype=np.float64), dtype=np.float64)
+    arr = np.asarray(
+        value if value is not None else np.empty((0, 2), dtype=np.float64), dtype=np.float64
+    )
     if arr.size == 0:
         return np.empty((0, 2), dtype=np.float64)
     if arr.ndim != 2 or arr.shape[1] != 2:
@@ -1301,7 +1364,9 @@ def _apply_rz_limits(ax: plt.Axes, boundary_data: dict):
 
 def _get_trunc_inferno() -> mcolors.LinearSegmentedColormap:
     cmap = plt.get_cmap("inferno")
-    return mcolors.LinearSegmentedColormap.from_list("trunc_inferno", cmap(np.linspace(0.15, 0.92, 256)))
+    return mcolors.LinearSegmentedColormap.from_list(
+        "trunc_inferno", cmap(np.linspace(0.15, 0.92, 256))
+    )
 
 
 def _get_gs_residual_cmap() -> mcolors.LinearSegmentedColormap:
@@ -1346,7 +1411,9 @@ def _render_panel_a_surfaces(ax: plt.Axes, fig: plt.Figure, data: dict):
 
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="5%", pad=0.1)
-    sm = plt.cm.ScalarMappable(cmap=_get_trunc_inferno(), norm=mcolors.Normalize(vmin=0.0, vmax=1.0))
+    sm = plt.cm.ScalarMappable(
+        cmap=_get_trunc_inferno(), norm=mcolors.Normalize(vmin=0.0, vmax=1.0)
+    )
     cbar = fig.colorbar(sm, cax=cax)
     cbar.set_label(r"$\rho$")
     cbar.locator = ticker.MaxNLocator(nbins=2)
@@ -1466,7 +1533,9 @@ def _render_panel_d_jphi(ax: plt.Axes, fig: plt.Figure, data: dict, boundary: di
     norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
 
     ax.set_facecolor(cmap(norm(0.0)))
-    pcm = ax.contourf(R_plot, Z_plot, j_plot, levels=np.linspace(vmin, vmax, 128), cmap=cmap, norm=norm)
+    pcm = ax.contourf(
+        R_plot, Z_plot, j_plot, levels=np.linspace(vmin, vmax, 128), cmap=cmap, norm=norm
+    )
     _apply_rz_limits(ax, boundary)
 
     divider = make_axes_locatable(ax)
@@ -1489,7 +1558,9 @@ def _render_panel_g_gs_residual(ax: plt.Axes, fig: plt.Figure, data: dict, bound
     norm = mcolors.TwoSlopeNorm(vmin=vmin, vcenter=0.0, vmax=vmax)
 
     ax.set_facecolor(cmap(norm(0.0)))
-    pcm = ax.contourf(R_plot, Z_plot, G_plot, levels=np.linspace(vmin, vmax, 129), cmap=cmap, norm=norm)
+    pcm = ax.contourf(
+        R_plot, Z_plot, G_plot, levels=np.linspace(vmin, vmax, 129), cmap=cmap, norm=norm
+    )
     _apply_rz_limits(ax, boundary)
 
     divider = make_axes_locatable(ax)

@@ -27,7 +27,6 @@ from veqpy.model.equilibrium import Equilibrium
 from veqpy.operator.operator import Operator
 from veqpy.operator.operator_case import OperatorCase
 from veqpy.solver.solver_config import (
-    DEFAULT_COLLOCATION_METHOD,
     LEAST_SQUARES_METHODS,
     ROOT_METHODS,
     SUPPORTED_METHODS,
@@ -233,7 +232,9 @@ class Solver:
         if enable_fallback is not None:
             overrides["enable_fallback"] = bool(enable_fallback)
         if fallback_methods is not None:
-            overrides["fallback_methods"] = tuple(str(method_name) for method_name in fallback_methods)
+            overrides["fallback_methods"] = tuple(
+                str(method_name) for method_name in fallback_methods
+            )
         if enable_verbose is not None:
             overrides["enable_verbose"] = bool(enable_verbose)
         if enable_history is not None:
@@ -277,7 +278,9 @@ class Solver:
         )
         if collocation_result is None:
             if collocation_error is not None:
-                raise RuntimeError("Collocation polish failed without a usable result") from collocation_error
+                raise RuntimeError(
+                    "Collocation polish failed without a usable result"
+                ) from collocation_error
             raise RuntimeError("Collocation polish failed without a usable result")
 
         return self._combine_variational_collocation_results(
@@ -338,11 +341,21 @@ class Solver:
         """合并两阶段计数, 但成功状态与最终 x 以 collocation stage 为准."""
 
         variational_status = "succeeded" if bool(variational_result[1]) else "failed"
-        collocation_status = "succeeded" if self._attempt_succeeded(collocation_result, collocation_error) else "failed"
+        collocation_status = (
+            "succeeded"
+            if self._attempt_succeeded(collocation_result, collocation_error)
+            else "failed"
+        )
         message = (
             f"variational stage {variational_status}: {variational_result[2]}; "
             f"collocation polish {collocation_status}: "
-            f"{self._format_attempt_failure(method='collocation-polish', result=collocation_result, error=collocation_error)}"
+            f"{
+                self._format_attempt_failure(
+                    method='collocation-polish',
+                    result=collocation_result,
+                    error=collocation_error,
+                )
+            }"
         )
         return (
             collocation_result[0],
@@ -364,7 +377,9 @@ class Solver:
     ) -> tuple[np.ndarray, bool, str, int, int, int, float]:
         """按主方法求解, 必要时按配置顺序回退到备用 solver 方法."""
 
-        attempts: list[tuple[str, tuple[np.ndarray, bool, str, int, int, int, float] | None, Exception | None]] = []
+        attempts: list[
+            tuple[str, tuple[np.ndarray, bool, str, int, int, int, float] | None, Exception | None]
+        ] = []
 
         attempt_plans = self._build_attempt_plans(
             x_guess,
@@ -399,7 +414,10 @@ class Solver:
             )
             if solve_config.enable_verbose:
                 warnings.warn(
-                    (f"Solve with method={label!r} failed ({failure}). Retrying with {next_label!r}."),
+                    (
+                        f"Solve with method={label!r} failed ({failure}). "
+                        f"Retrying with {next_label!r}."
+                    ),
                     RuntimeWarning,
                     stacklevel=2,
                 )
@@ -485,7 +503,8 @@ class Solver:
                     (
                         x_guess_eval.copy(),
                         True,
-                        f"{type(exc).__name__}: {exc} [accepted by x0 residual={residual_norm_x0:.6e}]",
+                        f"{type(exc).__name__}: {exc} "
+                        f"[accepted by x0 residual={residual_norm_x0:.6e}]",
                         0,
                         0,
                         0,
@@ -548,7 +567,12 @@ class Solver:
         attempt: tuple[np.ndarray, bool, str, int, int, int, float] | None,
         error: Exception | None,
     ) -> bool:
-        return bool(error is None and attempt is not None and bool(attempt[1]) and np.isfinite(float(attempt[6])))
+        return bool(
+            error is None
+            and attempt is not None
+            and bool(attempt[1])
+            and np.isfinite(float(attempt[6]))
+        )
 
     def _display_attempt_label(self, solve_config: SolverConfig, *, start_kind: str) -> str:
         return f"{self._display_method_label(solve_config)} [{start_kind}]"
@@ -572,33 +596,44 @@ class Solver:
 
     def _finalize_attempts(
         self,
-        attempts: list[tuple[str, tuple[np.ndarray, bool, str, int, int, int, float] | None, Exception | None]],
+        attempts: list[
+            tuple[str, tuple[np.ndarray, bool, str, int, int, int, float] | None, Exception | None]
+        ],
     ) -> tuple[np.ndarray, bool, str, int, int, int, float]:
         for label, result, error in reversed(attempts):
             if self._attempt_succeeded(result, error):
-                return self._build_attempts_result(attempts, selected_label=label, selected_result=result)
+                return self._build_attempts_result(
+                    attempts, selected_label=label, selected_result=result
+                )
 
         candidate_idx = self._best_attempt_index(attempts)
         if candidate_idx is None:
             tail_label, _, tail_exc = attempts[-1]
             if tail_exc is not None:
-                raise RuntimeError(f"All solve attempts failed; last method={tail_label}") from tail_exc
+                raise RuntimeError(
+                    f"All solve attempts failed; last method={tail_label}"
+                ) from tail_exc
             raise RuntimeError("All solve attempts failed without a usable result")
 
         selected_label, selected_result, _ = attempts[candidate_idx]
         if selected_result is None:
             raise RuntimeError("Selected solve attempt has no result")
-        return self._build_attempts_result(attempts, selected_label=selected_label, selected_result=selected_result)
+        return self._build_attempts_result(
+            attempts, selected_label=selected_label, selected_result=selected_result
+        )
 
     def _build_attempts_result(
         self,
-        attempts: list[tuple[str, tuple[np.ndarray, bool, str, int, int, int, float] | None, Exception | None]],
+        attempts: list[
+            tuple[str, tuple[np.ndarray, bool, str, int, int, int, float] | None, Exception | None]
+        ],
         *,
         selected_label: str,
         selected_result: tuple[np.ndarray, bool, str, int, int, int, float],
     ) -> tuple[np.ndarray, bool, str, int, int, int, float]:
         message = "; ".join(
-            f"attempt(method={label}) {'succeeded' if self._attempt_succeeded(res, err) else 'failed'}: "
+            f"attempt(method={label}) "
+            f"{'succeeded' if self._attempt_succeeded(res, err) else 'failed'}: "
             f"{self._format_attempt_failure(method=label, result=res, error=err)}"
             for label, res, err in attempts
         )
@@ -614,13 +649,19 @@ class Solver:
 
     def _best_attempt_index(
         self,
-        attempts: list[tuple[str, tuple[np.ndarray, bool, str, int, int, int, float] | None, Exception | None]],
+        attempts: list[
+            tuple[str, tuple[np.ndarray, bool, str, int, int, int, float] | None, Exception | None]
+        ],
     ) -> int | None:
         candidate_indices = [
-            idx for idx, (_, result, error) in enumerate(attempts) if result is not None and error is None
+            idx
+            for idx, (_, result, error) in enumerate(attempts)
+            if result is not None and error is None
         ]
         if not candidate_indices:
-            candidate_indices = [idx for idx, (_, result, _) in enumerate(attempts) if result is not None]
+            candidate_indices = [
+                idx for idx, (_, result, _) in enumerate(attempts) if result is not None
+            ]
         if not candidate_indices:
             return None
         return min(candidate_indices, key=lambda idx: self._attempt_residual_norm(attempts[idx][1]))
@@ -650,15 +691,21 @@ class Solver:
                 bool(opt.success)
                 and residual_norm is not None
                 and np.isfinite(residual_norm)
-                and not _requires_strict_residual_acceptance(solve_config, residual_kind=residual_kind)
+                and not _requires_strict_residual_acceptance(
+                    solve_config, residual_kind=residual_kind
+                )
             )
         )
         message = str(opt.message)
         if not bool(opt.success) and accepted:
             message = f"{message} [accepted by residual]"
-        if bool(opt.success) and not accepted and _requires_strict_residual_acceptance(
-            solve_config,
-            residual_kind=residual_kind,
+        if (
+            bool(opt.success)
+            and not accepted
+            and _requires_strict_residual_acceptance(
+                solve_config,
+                residual_kind=residual_kind,
+            )
         ):
             message = f"{message} [rejected by residual={residual_norm:.6e}]"
         return (
@@ -681,7 +728,9 @@ class Solver:
         _validate_stage_method(solve_config, residual_kind=residual_kind)
         optimize_method = _registered_method_for(solve_config)
         if solve_config.method in ROOT_METHODS:
-            return self._run_root_full(x_guess, solve_config=solve_config, optimize_method=optimize_method)
+            return self._run_root_full(
+                x_guess, solve_config=solve_config, optimize_method=optimize_method
+            )
         return self._run_least_squares_full(
             x_guess,
             solve_config=solve_config,
@@ -751,6 +800,7 @@ class Solver:
         x_transform_fun, x_root_guess, decode_x = self._build_x_transform_wrapper(x_guess)
         if x_transform_fun is not None:
             if scaled_fun is not None:
+
                 def root_fun(z_eval: np.ndarray) -> np.ndarray:
                     return scaled_fun(x_transform_fun(z_eval))
             else:
@@ -776,7 +826,9 @@ class Solver:
         x_guess: np.ndarray,
         *,
         transform: str,
-    ) -> tuple[Callable[[np.ndarray], np.ndarray] | None, Callable[[np.ndarray], np.ndarray] | None]:
+    ) -> tuple[
+        Callable[[np.ndarray], np.ndarray] | None, Callable[[np.ndarray], np.ndarray] | None
+    ]:
         """为 solver 层构造带 block scaling 的残差变换 wrapper."""
 
         block_lengths = getattr(self.operator, "active_lengths", None)
@@ -809,7 +861,11 @@ class Solver:
 
         def get_raw_residual(x: np.ndarray) -> np.ndarray:
             x_eval = self.operator.coerce_x(x)
-            if last_x is not None and last_raw_residual is not None and np.array_equal(last_x, x_eval):
+            if (
+                last_x is not None
+                and last_raw_residual is not None
+                and np.array_equal(last_x, x_eval)
+            ):
                 return last_raw_residual.copy()
             return np.asarray(self.operator(x_eval), dtype=np.float64)
 
@@ -865,7 +921,9 @@ class Solver:
         get_raw_residual: Callable[[np.ndarray], np.ndarray] | None = None
         kwargs = _least_squares_kwargs_for(solve_config)
         if solve_config.method == "lm" and residual_kind == "variational":
-            least_squares_fun, get_raw_residual = self._build_residual_transform_wrapper(x_guess, transform="asinh")
+            least_squares_fun, get_raw_residual = self._build_residual_transform_wrapper(
+                x_guess, transform="asinh"
+            )
             if least_squares_fun is not None:
                 kwargs["x_scale"] = 1.0
             else:
@@ -895,22 +953,20 @@ def _validate_stage_solve_config(solve_config: SolverConfig, *, residual_kind: s
     if residual_kind != "collocation" or not solve_config.enable_fallback:
         return
 
-    root_fallbacks = [method for method in solve_config.fallback_methods if method not in LEAST_SQUARES_METHODS]
+    root_fallbacks = [
+        method for method in solve_config.fallback_methods if method not in LEAST_SQUARES_METHODS
+    ]
     if root_fallbacks:
         unsupported = ", ".join(repr(method) for method in root_fallbacks)
         raise ValueError(
-            "Collocation residual is generally rectangular "
-            f"(x_size -> Nr*Nt) and requires least_squares method 'trf' or 'lm'; "
-            f"unsupported fallback method(s): {unsupported}."
+            "Collocation needs least_squares ('trf' or 'lm'); "
+            f"bad fallback(s): {unsupported}."
         )
 
 
 def _validate_stage_method(solve_config: SolverConfig, *, residual_kind: str) -> None:
     if residual_kind == "collocation" and not _uses_least_squares_api(solve_config):
-        raise ValueError(
-            "Collocation residual is generally rectangular "
-            "(x_size -> Nr*Nt) and requires least_squares method 'trf' or 'lm'."
-        )
+        raise ValueError("Collocation needs least_squares ('trf' or 'lm').")
     if residual_kind not in {"variational", "collocation"}:
         raise ValueError(f"Unsupported residual kind {residual_kind!r}.")
 
@@ -1005,7 +1061,12 @@ def _residual_rms(residual: np.ndarray) -> float:
 def _block_rms_values(residual: np.ndarray, block_lengths: np.ndarray) -> np.ndarray | None:
     residual_eval = np.asarray(residual, dtype=np.float64)
     lengths_eval = np.asarray(block_lengths, dtype=np.int64)
-    if residual_eval.ndim != 1 or lengths_eval.ndim != 1 or residual_eval.size == 0 or lengths_eval.size == 0:
+    if (
+        residual_eval.ndim != 1
+        or lengths_eval.ndim != 1
+        or residual_eval.size == 0
+        or lengths_eval.size == 0
+    ):
         return None
     if int(np.sum(lengths_eval)) != int(residual_eval.size):
         return None
@@ -1107,12 +1168,18 @@ def _build_x_block_scale_vector(operator, x_guess: np.ndarray) -> np.ndarray | N
     offsets_eval = np.asarray(active_offsets, dtype=np.float64)
     scales_eval = np.asarray(active_scales, dtype=np.float64)
     coeff_rows_eval = np.asarray(active_coeff_index_rows, dtype=np.int64)
-    if lengths_eval.ndim != 1 or offsets_eval.shape != lengths_eval.shape or scales_eval.shape != lengths_eval.shape:
+    if (
+        lengths_eval.ndim != 1
+        or offsets_eval.shape != lengths_eval.shape
+        or scales_eval.shape != lengths_eval.shape
+    ):
         return None
 
     scale = np.ones_like(x_eval)
     floor = _x_scale_floor()
-    for slot, (p, block_len) in enumerate(zip(operator.active_profile_ids, lengths_eval, strict=False)):
+    for slot, (p, block_len) in enumerate(
+        zip(operator.active_profile_ids, lengths_eval, strict=False)
+    ):
         length = int(block_len)
         if length <= 0:
             continue
@@ -1122,7 +1189,9 @@ def _build_x_block_scale_vector(operator, x_guess: np.ndarray) -> np.ndarray | N
         block_guess = x_eval[coeff_indices]
         guess_rms = float(np.linalg.norm(block_guess) / np.sqrt(length))
         profile_name = operator.profile_names[int(p)]
-        offset_scale = abs(float(offsets_eval[slot])) if _use_offset_for_x_scale(profile_name) else 0.0
+        offset_scale = (
+            abs(float(offsets_eval[slot])) if _use_offset_for_x_scale(profile_name) else 0.0
+        )
         profile_scale = abs(float(scales_eval[slot]))
         profile_prior = _x_scale_profile_prior(profile_name)
         if abs(profile_scale - 1.0) <= 1.0e-12:

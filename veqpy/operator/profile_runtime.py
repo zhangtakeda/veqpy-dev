@@ -49,14 +49,20 @@ def make_profile(
             offset_spec = profile_offset_specs[name]
         except KeyError as exc:
             raise KeyError(f"Unknown profile name {name!r}") from exc
-        kwargs["offset"] = float(getattr(case, offset_spec)) if isinstance(offset_spec, str) else float(offset_spec)
+        kwargs["offset"] = (
+            float(getattr(case, offset_spec))
+            if isinstance(offset_spec, str)
+            else float(offset_spec)
+        )
 
     kwargs["scale"] = _profile_scale(case, name)
 
     p = profile_index[name]
     L = int(profile_L[p])
     coeff = case.profile_coeffs.get(name)
-    kwargs["coeff"] = None if L < 0 or coeff is None else np.asarray(coeff, dtype=np.float64)[: L + 1].copy()
+    kwargs["coeff"] = (
+        None if L < 0 or coeff is None else np.asarray(coeff, dtype=np.float64)[: L + 1].copy()
+    )
     return Profile(**kwargs)
 
 
@@ -84,20 +90,28 @@ def refresh_profile_runtime(
         profile.envelope_power = int(static_kwargs.get("envelope_power", 1))
         if name.startswith("c") and name[1:].isdigit():
             order = int(name[1:])
-            profile.offset = 0.0 if order >= case.c_offsets.shape[0] else float(case.c_offsets[order])
+            profile.offset = (
+                0.0 if order >= case.c_offsets.shape[0] else float(case.c_offsets[order])
+            )
         elif name.startswith("s") and name[1:].isdigit():
             order = int(name[1:])
-            profile.offset = 0.0 if order >= case.s_offsets.shape[0] else float(case.s_offsets[order])
+            profile.offset = (
+                0.0 if order >= case.s_offsets.shape[0] else float(case.s_offsets[order])
+            )
         else:
             offset_spec = profile_offset_specs[name]
             profile.offset = (
-                float(getattr(case, offset_spec)) if isinstance(offset_spec, str) else float(offset_spec)
+                float(getattr(case, offset_spec))
+                if isinstance(offset_spec, str)
+                else float(offset_spec)
             )
         profile.scale = _profile_scale(case, name)
         p = profile_index[name]
         L = int(profile_L[p])
         coeff = case.profile_coeffs.get(name)
-        profile.coeff = None if L < 0 or coeff is None else np.asarray(coeff, dtype=np.float64)[: L + 1].copy()
+        profile.coeff = (
+            None if L < 0 or coeff is None else np.asarray(coeff, dtype=np.float64)[: L + 1].copy()
+        )
         profile._prepare_runtime_cache(grid)
         profile.update()
     refresh_fourier_family_base_fields()
@@ -210,7 +224,11 @@ def refresh_fourier_family_metadata(
         if profile_coeffs.get(name) is not None:
             c_effective_order = max(c_effective_order, order)
             continue
-        if c_offsets is not None and order < c_offsets.shape[0] and abs(float(c_offsets[order])) > 1e-14:
+        if (
+            c_offsets is not None
+            and order < c_offsets.shape[0]
+            and abs(float(c_offsets[order])) > 1e-14
+        ):
             c_effective_order = max(c_effective_order, order)
 
     s_effective_order = 0
@@ -219,7 +237,11 @@ def refresh_fourier_family_metadata(
         if profile_coeffs.get(name) is not None:
             s_effective_order = max(s_effective_order, order)
             continue
-        if s_offsets is not None and order < s_offsets.shape[0] and abs(float(s_offsets[order])) > 1e-14:
+        if (
+            s_offsets is not None
+            and order < s_offsets.shape[0]
+            and abs(float(s_offsets[order])) > 1e-14
+        ):
             s_effective_order = max(s_effective_order, order)
 
     if c_effective_order + 1 < c_family_fields.shape[0]:

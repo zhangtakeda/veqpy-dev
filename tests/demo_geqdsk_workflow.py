@@ -93,7 +93,9 @@ def build_geqdsk_surfaces(geqdsk: Geqdsk, *, levels: tuple[float, ...]) -> dict[
         plt.close(fig)
         for idx, level in enumerate(contour_levels):
             candidates = [
-                np.asarray(segment, dtype=np.float64) for segment in contour.allsegs[idx] if len(segment) >= 8
+                np.asarray(segment, dtype=np.float64)
+                for segment in contour.allsegs[idx]
+                if len(segment) >= 8
             ]
             if candidates:
                 surfaces[level] = max(candidates, key=len)
@@ -116,7 +118,9 @@ def build_profile_coeffs() -> dict[str, int]:
     return coeffs
 
 
-def style_surface_axis(ax: plt.Axes, *, title: str, rz_limits: tuple[tuple[float, float], tuple[float, float]]) -> None:
+def style_surface_axis(
+    ax: plt.Axes, *, title: str, rz_limits: tuple[tuple[float, float], tuple[float, float]]
+) -> None:
     ax.set_title(title)
     ax.set_xlabel("R [m]")
     ax.set_ylabel("Z [m]")
@@ -153,7 +157,9 @@ def main() -> None:
         Ip=MU0 * float(geqdsk.Ip),
     )
     solve_grid = Grid(Nr=32, Nt=32, scheme="legendre")
-    plot_grid = Grid(Nr=128, Nt=256, scheme="uniform", L_max=solve_grid.L_max, M_max=solve_grid.M_max)
+    plot_grid = Grid(
+        Nr=128, Nt=256, scheme="uniform", L_max=solve_grid.L_max, M_max=solve_grid.M_max
+    )
     solver = Solver(
         operator=Operator(grid=solve_grid, case=case),
         config=SolverConfig(
@@ -170,14 +176,19 @@ def main() -> None:
         solver.solve()
         solver.reset()
 
-    solver.solve(enable_verbose=False, enable_history=False, enable_warmstart=False, enable_fallback=False)
+    solver.solve(
+        enable_verbose=False, enable_history=False, enable_warmstart=False, enable_fallback=False
+    )
     print(solver.result)
     equilibrium = solver.build_equilibrium()
     plot_equilibrium = equilibrium.resample(grid=plot_grid)
 
     geqdsk_surfaces = build_geqdsk_surfaces(geqdsk, levels=DEFAULT_LEVELS)
     shared_levels = [level for level in DEFAULT_LEVELS if level in geqdsk_surfaces]
-    veqpy_surfaces = {float(level): build_surface_from_psin(plot_equilibrium, float(level)) for level in shared_levels}
+    veqpy_surfaces = {
+        float(level): build_surface_from_psin(plot_equilibrium, float(level))
+        for level in shared_levels
+    }
     rz_limits = compute_rz_limits(list(geqdsk_surfaces.values()) + list(veqpy_surfaces.values()))
 
     fig, ax = plt.subplots(figsize=(7.6, 6.8), constrained_layout=True)

@@ -82,7 +82,11 @@ class SolverConfig:
         """校验方法名与 fallback 相关参数是否合法."""
 
         method = DEFAULT_VARIATIONAL_METHOD if self.method is None else str(self.method)
-        fallback_methods = DEFAULT_VARIATIONAL_FALLBACK_METHODS if self.fallback_methods is None else self.fallback_methods
+        fallback_methods = (
+            DEFAULT_VARIATIONAL_FALLBACK_METHODS
+            if self.fallback_methods is None
+            else self.fallback_methods
+        )
         fallback_methods = tuple(str(method_name) for method_name in fallback_methods)
         deduped_fallback_methods: list[str] = []
         seen: set[str] = set()
@@ -95,49 +99,55 @@ class SolverConfig:
         if method not in SUPPORTED_METHODS:
             supported = ", ".join(SUPPORTED_METHODS)
             raise ValueError(
-                f"Unsupported solver method {method!r}. "
-                f"Supported methods are: {supported}. "
-                f"Use root method 'hybr', "
-                f"or use 'lm'/'trf' to call scipy.optimize.least_squares directly."
+                f"Unsupported solver method {method!r}; supported: {supported}."
             )
         collocation_method = str(self.collocation_method)
         if collocation_method not in LEAST_SQUARES_METHODS:
             supported = ", ".join(LEAST_SQUARES_METHODS)
             raise ValueError(
-                f"Unsupported collocation_method {collocation_method!r}. "
-                f"Collocation polish requires a least_squares method: {supported}."
+                f"Unsupported collocation_method {collocation_method!r}; supported: {supported}."
             )
         unsupported_fallbacks = [
-            method_name for method_name in deduped_fallback_methods if method_name not in SUPPORTED_METHODS
+            method_name
+            for method_name in deduped_fallback_methods
+            if method_name not in SUPPORTED_METHODS
         ]
         if unsupported_fallbacks:
             supported = ", ".join(SUPPORTED_METHODS)
             unsupported = ", ".join(repr(method_name) for method_name in unsupported_fallbacks)
             raise ValueError(
-                f"Unsupported fallback solver method(s): {unsupported}. Supported methods are: {supported}."
+                f"Unsupported fallback solver method(s): {unsupported}. "
+                f"Supported methods are: {supported}."
             )
         max_residual = float(self.max_residual)
         max_evaluations = int(self.max_evaluations)
         if not isfinite(max_residual) or max_residual <= 0.0:
-            raise ValueError(f"SolverConfig.max_residual must be a positive finite float, got {self.max_residual!r}.")
+            raise ValueError(
+                f"SolverConfig.max_residual must be a positive finite float, "
+                f"got {self.max_residual!r}."
+            )
         if max_evaluations < 0:
-            raise ValueError(f"SolverConfig.max_evaluations must be non-negative; got {self.max_evaluations!r}.")
+            raise ValueError(
+                f"SolverConfig.max_evaluations must be non-negative; got {self.max_evaluations!r}."
+            )
         collocation_max_residual = (
             None if self.collocation_max_residual is None else float(self.collocation_max_residual)
         )
         collocation_max_evaluations = (
-            None if self.collocation_max_evaluations is None else int(self.collocation_max_evaluations)
+            None
+            if self.collocation_max_evaluations is None
+            else int(self.collocation_max_evaluations)
         )
         if collocation_max_residual is not None and (
             not isfinite(collocation_max_residual) or collocation_max_residual <= 0.0
         ):
             raise ValueError(
-                "SolverConfig.collocation_max_residual must be a positive finite float "
-                f"when provided, got {self.collocation_max_residual!r}."
+                "collocation_max_residual must be positive finite; "
+                f"got {self.collocation_max_residual!r}."
             )
         if collocation_max_evaluations is not None and collocation_max_evaluations < 0:
             raise ValueError(
-                "SolverConfig.collocation_max_evaluations must be non-negative when provided; "
+                "collocation_max_evaluations must be non-negative; "
                 f"got {self.collocation_max_evaluations!r}."
             )
         object.__setattr__(self, "method", method)
@@ -171,7 +181,9 @@ class SolverConfig:
         return tree
 
     def __str__(self) -> str:
-        console = Console(color_system=None, force_terminal=False, width=120, record=True, soft_wrap=False)
+        console = Console(
+            color_system=None, force_terminal=False, width=120, record=True, soft_wrap=False
+        )
         with console.capture() as capture:
             console.print(self.__rich__())
         return capture.get().rstrip()

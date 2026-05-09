@@ -38,7 +38,13 @@ class SolverRecord:
         return tree
 
     def __str__(self) -> str:
-        console = Console(color_system=None, force_terminal=False, width=120, record=True, soft_wrap=False)
+        console = Console(
+            color_system=None,
+            force_terminal=False,
+            width=120,
+            record=True,
+            soft_wrap=False,
+        )
         with console.capture() as capture:
             console.print(self.__rich__())
         return capture.get().rstrip()

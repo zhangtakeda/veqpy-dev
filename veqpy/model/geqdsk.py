@@ -13,7 +13,7 @@ from dataclasses import InitVar, dataclass, field
 
 import numpy as np
 
-from veqpy.model.serial import Serial, read_serializer, write_serializer
+from veqpy.base import Serial, read_serializer, write_serializer
 
 
 @dataclass(slots=True)
@@ -163,8 +163,14 @@ class Geqdsk(Serial):
         self.check()
         with open(file, "w", encoding="utf-8") as handle:
             handle.write(_header_line(self.header, self.NR, self.NZ))
-            handle.write(_float_line([self.Rmax - self.Rmin, self.Zmax - self.Zmin, self.R0, self.Rmin, self.Z0]))
-            handle.write(_float_line([self.Raxis, self.Zaxis, self.psi_axis, self.psi_bound, self.Bt0]))
+            handle.write(
+                _float_line(
+                    [self.Rmax - self.Rmin, self.Zmax - self.Zmin, self.R0, self.Rmin, self.Z0]
+                )
+            )
+            handle.write(
+                _float_line([self.Raxis, self.Zaxis, self.psi_axis, self.psi_bound, self.Bt0])
+            )
             handle.write(_float_line([self.Ip, self.psi_axis, 0.0, self.Raxis, 0.0]))
             handle.write(_float_line([self.Zaxis, 0.0, self.psi_bound, 0.0, 0.0]))
             handle.write(_format_float_block(self.F))
@@ -211,7 +217,9 @@ class Geqdsk(Serial):
         file.readline()
         payload = _sanitize_line(file.read().replace("\n", " "))
         fields = re.split(r"\s+", payload.strip())
-        data = np.array([_safe_float_conversion(value) for value in fields if value], dtype=np.float64)
+        data = np.array(
+            [_safe_float_conversion(value) for value in fields if value], dtype=np.float64
+        )
 
         nr = self.NR
         nz = self.NZ
