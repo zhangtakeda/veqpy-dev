@@ -16,6 +16,12 @@ Notes:
 import numpy as np
 from numba import njit
 
+from veqpy.math.fast import (
+    project_rows_to_packed,
+    sum2d_axis1_into,
+    weighted_sum2d_axis1_into,
+)
+
 
 @njit(cache=True, fastmath=True, nogil=True)
 def update_residual_compact(
@@ -71,22 +77,6 @@ def update_residual_compact(
 
 
 @njit(cache=True, fastmath=True, nogil=True)
-def _project_rows_to_packed(
-    out_packed: np.ndarray,
-    coeff_indices: np.ndarray,
-    T: np.ndarray,
-    weighted_rho: np.ndarray,
-) -> None:
-    rows = coeff_indices.shape[0]
-    cols = weighted_rho.shape[0]
-    for i in range(rows):
-        total = 0.0
-        for j in range(cols):
-            total += T[i, j] * weighted_rho[j]
-        out_packed[coeff_indices[i]] = total
-
-
-@njit(cache=True, fastmath=True, nogil=True)
 def _project_scaled2(
     out_packed: np.ndarray,
     coeff_indices: np.ndarray,
@@ -98,7 +88,7 @@ def _project_scaled2(
 ) -> None:
     for i in range(collapsed.shape[0]):
         collapsed[i] *= weight_a[i] * weight_b[i] * scalar
-    _project_rows_to_packed(out_packed, coeff_indices, T, collapsed)
+    project_rows_to_packed(out_packed, coeff_indices, T, collapsed)
 
 
 @njit(cache=True, fastmath=True, nogil=True)
@@ -114,37 +104,7 @@ def _project_scaled3(
 ) -> None:
     for i in range(collapsed.shape[0]):
         collapsed[i] *= weight_a[i] * weight_b[i] * weight_c[i] * scalar
-    _project_rows_to_packed(out_packed, coeff_indices, T, collapsed)
-
-
-@njit(cache=True, fastmath=True, nogil=True)
-def _collapse_g(out: np.ndarray, G: np.ndarray) -> None:
-    nr, nt = G.shape
-    for i in range(nr):
-        collapsed = 0.0
-        for j in range(nt):
-            collapsed += G[i, j]
-        out[i] = collapsed
-
-
-@njit(cache=True, fastmath=True, nogil=True)
-def _collapse_field(out: np.ndarray, field: np.ndarray) -> None:
-    nr, nt = field.shape
-    for i in range(nr):
-        collapsed = 0.0
-        for j in range(nt):
-            collapsed += field[i, j]
-        out[i] = collapsed
-
-
-@njit(cache=True, fastmath=True, nogil=True)
-def _collapse_field_theta(out: np.ndarray, field: np.ndarray, theta_weight: np.ndarray) -> None:
-    nr, nt = field.shape
-    for i in range(nr):
-        collapsed = 0.0
-        for j in range(nt):
-            collapsed += field[i, j] * theta_weight[j]
-        out[i] = collapsed
+    project_rows_to_packed(out_packed, coeff_indices, T, collapsed)
 
 
 @njit(cache=True, fastmath=True, nogil=True)
@@ -183,23 +143,23 @@ def _run_residual_blocks_packed_precomputed(
         order = block_orders[slot]
         radial_power = block_radial_powers[slot]
         if code == 0:
-            _collapse_field(scratch, Gpsin_R)
+            sum2d_axis1_into(scratch, Gpsin_R)
             _project_scaled2(out_packed, coeff_indices, T, scratch, y, weights, base_scale * a)
         elif code == 1:
-            _collapse_field(scratch, Gpsin_Z)
+            sum2d_axis1_into(scratch, Gpsin_Z)
             _project_scaled2(out_packed, coeff_indices, T, scratch, y, weights, base_scale * a)
         elif code == 2:
-            _collapse_field_theta(scratch, Gpsin_Z, sin_theta)
+            weighted_sum2d_axis1_into(scratch, Gpsin_Z, sin_theta)
             _project_scaled3(
                 out_packed, coeff_indices, T, scratch, rho, y, weights, base_scale * (-a)
             )
         elif code == 3:
-            _collapse_field(scratch, Gpsin_R_sin_tb)
+            sum2d_axis1_into(scratch, Gpsin_R_sin_tb)
             _project_scaled3(
                 out_packed, coeff_indices, T, scratch, rho, y, weights, base_scale * (-a)
             )
         elif code == 4:
-            _collapse_field_theta(scratch, Gpsin_R_sin_tb, cos_ktheta[order])
+            weighted_sum2d_axis1_into(scratch, Gpsin_R_sin_tb, cos_ktheta[order])
             _project_scaled3(
                 out_packed,
                 coeff_indices,
@@ -211,7 +171,7 @@ def _run_residual_blocks_packed_precomputed(
                 base_scale * (-a),
             )
         elif code == 5:
-            _collapse_field_theta(scratch, Gpsin_R_sin_tb, sin_ktheta[order])
+            weighted_sum2d_axis1_into(scratch, Gpsin_R_sin_tb, sin_ktheta[order])
             _project_scaled3(
                 out_packed,
                 coeff_indices,
@@ -223,10 +183,10 @@ def _run_residual_blocks_packed_precomputed(
                 base_scale * (-a),
             )
         elif code == 6:
-            _collapse_g(scratch, G)
+            sum2d_axis1_into(scratch, G)
             _project_scaled3(out_packed, coeff_indices, T, scratch, rho2, y, weights, base_scale)
         elif code == 7:
-            _collapse_g(scratch, G)
+            sum2d_axis1_into(scratch, G)
             _project_scaled3(
                 out_packed,
                 coeff_indices,

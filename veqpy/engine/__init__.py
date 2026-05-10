@@ -22,9 +22,9 @@ from veqpy.engine.numba_source import (
     full_differentiation,
     full_integration,
     quadrature,
-    theta_reduction,
     validate_route,
 )
+from veqpy.math.fast import theta_reduction
 
 __all__ = [
     "RHO_AXIS",
