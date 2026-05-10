@@ -17,9 +17,9 @@ import numpy as np
 from numba import njit
 
 from veqpy.math.fast import (
-    project_rows_to_packed,
-    sum2d_axis1_into,
-    weighted_sum2d_axis1_into,
+    indexed_matvec_into,
+    rowwise_sum_into,
+    rowwise_weighted_sum_into,
 )
 
 
@@ -88,7 +88,7 @@ def _project_scaled2(
 ) -> None:
     for i in range(collapsed.shape[0]):
         collapsed[i] *= weight_a[i] * weight_b[i] * scalar
-    project_rows_to_packed(out_packed, coeff_indices, T, collapsed)
+    indexed_matvec_into(out_packed, coeff_indices, T, collapsed)
 
 
 @njit(cache=True, fastmath=True, nogil=True)
@@ -104,7 +104,7 @@ def _project_scaled3(
 ) -> None:
     for i in range(collapsed.shape[0]):
         collapsed[i] *= weight_a[i] * weight_b[i] * weight_c[i] * scalar
-    project_rows_to_packed(out_packed, coeff_indices, T, collapsed)
+    indexed_matvec_into(out_packed, coeff_indices, T, collapsed)
 
 
 @njit(cache=True, fastmath=True, nogil=True)
@@ -143,23 +143,23 @@ def _run_residual_blocks_packed_precomputed(
         order = block_orders[slot]
         radial_power = block_radial_powers[slot]
         if code == 0:
-            sum2d_axis1_into(scratch, Gpsin_R)
+            rowwise_sum_into(scratch, Gpsin_R)
             _project_scaled2(out_packed, coeff_indices, T, scratch, y, weights, base_scale * a)
         elif code == 1:
-            sum2d_axis1_into(scratch, Gpsin_Z)
+            rowwise_sum_into(scratch, Gpsin_Z)
             _project_scaled2(out_packed, coeff_indices, T, scratch, y, weights, base_scale * a)
         elif code == 2:
-            weighted_sum2d_axis1_into(scratch, Gpsin_Z, sin_theta)
+            rowwise_weighted_sum_into(scratch, Gpsin_Z, sin_theta)
             _project_scaled3(
                 out_packed, coeff_indices, T, scratch, rho, y, weights, base_scale * (-a)
             )
         elif code == 3:
-            sum2d_axis1_into(scratch, Gpsin_R_sin_tb)
+            rowwise_sum_into(scratch, Gpsin_R_sin_tb)
             _project_scaled3(
                 out_packed, coeff_indices, T, scratch, rho, y, weights, base_scale * (-a)
             )
         elif code == 4:
-            weighted_sum2d_axis1_into(scratch, Gpsin_R_sin_tb, cos_ktheta[order])
+            rowwise_weighted_sum_into(scratch, Gpsin_R_sin_tb, cos_ktheta[order])
             _project_scaled3(
                 out_packed,
                 coeff_indices,
@@ -171,7 +171,7 @@ def _run_residual_blocks_packed_precomputed(
                 base_scale * (-a),
             )
         elif code == 5:
-            weighted_sum2d_axis1_into(scratch, Gpsin_R_sin_tb, sin_ktheta[order])
+            rowwise_weighted_sum_into(scratch, Gpsin_R_sin_tb, sin_ktheta[order])
             _project_scaled3(
                 out_packed,
                 coeff_indices,
@@ -183,10 +183,10 @@ def _run_residual_blocks_packed_precomputed(
                 base_scale * (-a),
             )
         elif code == 6:
-            sum2d_axis1_into(scratch, G)
+            rowwise_sum_into(scratch, G)
             _project_scaled3(out_packed, coeff_indices, T, scratch, rho2, y, weights, base_scale)
         elif code == 7:
-            sum2d_axis1_into(scratch, G)
+            rowwise_sum_into(scratch, G)
             _project_scaled3(
                 out_packed,
                 coeff_indices,

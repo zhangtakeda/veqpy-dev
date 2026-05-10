@@ -25,14 +25,13 @@ from rich.tree import Tree
 import veqpy.math.differentiate as math_differentiate
 import veqpy.math.integrate as math_integrate
 from veqpy.base import Serial
+from veqpy.math.fast import dot, rowwise_sum_into, colwise_weighted_sum_into
 from veqpy.engine import (
     RHO_AXIS,
     THETA_AXIS,
     corrected_integration,
     full_differentiation,
     full_integration,
-    quadrature,
-    theta_reduction,
 )
 from veqpy.math.quadrature import quadrature_generator
 
@@ -125,12 +124,8 @@ class Grid(Serial):
         y = 1.0 - rho2
 
         if scheme == "uniform":
-            integration_matrix = math_integrate.uniform_variable_limit_integration_matrix(
-                self.Nr
-            )
-            differentiation_matrix = math_differentiate.uniform_differentiation_matrix(
-                self.Nr
-            )
+            integration_matrix = math_integrate.uniform_variable_limit_integration_matrix(self.Nr)
+            differentiation_matrix = math_differentiate.uniform_differentiation_matrix(self.Nr)
         else:
             integration_matrix = math_integrate.variable_limit_integration_matrix(rho)
             differentiation_matrix = math_differentiate.differentiation_matrix(rho)
@@ -144,11 +139,11 @@ class Grid(Serial):
             differentiation_matrix,
             p=2,
         )
-        corrected_linear_derivative_matrix = (
-            math_differentiate.corrected_linear_derivative_matrix(rho, differentiation_matrix)
+        corrected_linear_derivative_matrix = math_differentiate.corrected_linear_derivative_matrix(
+            rho, differentiation_matrix
         )
-        corrected_even_derivative_matrix = (
-            math_differentiate.corrected_even_derivative_matrix(rho, differentiation_matrix)
+        corrected_even_derivative_matrix = math_differentiate.corrected_even_derivative_matrix(
+            rho, differentiation_matrix
         )
         ff_r_regularization_matrix = _build_ff_r_regularization_matrix(rho)
 
@@ -316,7 +311,16 @@ class Grid(Serial):
         """在当前 Grid 上执行求积."""
         if out is None:
             if axis is None:
-                return quadrature(f, self.weights)
+                if f.ndim == 1:
+                    return dot(f, self.weights)
+                if f.ndim != 2:
+                    raise ValueError(f"Expected a 1D or 2D array, got shape {f.shape}")
+                scratch = np.empty(f.shape[1], dtype=f.dtype)
+                colwise_weighted_sum_into(scratch, f, self.weights)
+                total = 0.0
+                for j in range(f.shape[1]):
+                    total += scratch[j]
+                return (2.0 * np.pi / f.shape[1]) * total
 
             if f.ndim != 2:
                 raise ValueError(f"Expected a 2D array when axis={axis}, got {f.shape}")
@@ -327,7 +331,15 @@ class Grid(Serial):
             else:
                 raise ValueError(f"Unsupported quadrature axis {axis}")
 
-        return theta_reduction(out, f, self.weights, axis)
+        if axis == RHO_AXIS:
+            colwise_weighted_sum_into(out, f, self.weights)
+        elif axis == THETA_AXIS:
+            nt = f.shape[1]
+            rowwise_sum_into(out, f)
+            out *= 2.0 * np.pi / nt
+        else:
+            raise ValueError(f"Unsupported quadrature axis {axis}")
+        return out
 
 
 def _build_rho_and_weights(Nr: int, scheme: str) -> tuple[np.ndarray, np.ndarray]:

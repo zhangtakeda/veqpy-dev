@@ -21,10 +21,8 @@ from veqpy.engine.numba_source import (
     corrected_linear_derivative,
     full_differentiation,
     full_integration,
-    quadrature,
     validate_route,
 )
-from veqpy.math.fast import theta_reduction
 
 __all__ = [
     "RHO_AXIS",
@@ -34,8 +32,6 @@ __all__ = [
     "RHO_COORDINATE",
     "validate_route",
     "full_differentiation",
-    "theta_reduction",
-    "quadrature",
     "full_integration",
     "corrected_integration",
     "corrected_linear_derivative",
