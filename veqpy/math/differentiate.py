@@ -64,9 +64,7 @@ def corrected_linear_derivative_matrix(
     nodes = np.asarray(nodes, dtype=np.float64)
     return _linear_operator_matrix(
         nodes.shape[0],
-        lambda out, arr: _corrected_linear_derivative(
-            out, arr, base_differentiation_matrix, nodes
-        ),
+        lambda out, arr: _corrected_linear_derivative(out, arr, base_differentiation_matrix, nodes),
     )
 
 
@@ -78,9 +76,7 @@ def corrected_even_derivative_matrix(
     nodes = np.asarray(nodes, dtype=np.float64)
     return _linear_operator_matrix(
         nodes.shape[0],
-        lambda out, arr: _corrected_even_derivative(
-            out, arr, base_differentiation_matrix, nodes
-        ),
+        lambda out, arr: _corrected_even_derivative(out, arr, base_differentiation_matrix, nodes),
     )
 
 

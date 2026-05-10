@@ -176,6 +176,7 @@ def main() -> None:
     print(solver.result)
     equilibrium = solver.build_equilibrium()
     plot_equilibrium = equilibrium.resample(grid=plot_grid)
+    plot_equilibrium.plot("tests/demo/demo_equilibrium.png")
 
     boundary_curve = build_surface_from_psin(plot_equilibrium, 1.0)
     rz_limits = compute_rz_limits([boundary_curve])

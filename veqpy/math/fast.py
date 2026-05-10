@@ -31,33 +31,15 @@ Public API:
 import numba as nb
 import numpy as np
 
+# -----------------------------------------------------------------------------
+# Public implementation
+# -----------------------------------------------------------------------------
+
+
 scalar = nb.float64
 array = nb.float64[::1]
 matrix = nb.float64[:, ::1]
 indices = nb.intp[::1]
-
-
-__all__ = (
-    "matmul_into",
-    "matvec_into",
-    "indexed_matvec_into",
-    "dot",
-    "weighted_dot",
-    "weighted_ratio_dot",
-    "rowwise_sum_into",
-    "rowwise_weighted_sum_into",
-    "rowwise_dot_into",
-    "colwise_sum_into",
-    "colwise_weighted_sum_into",
-    "colwise_dot_into",
-    "copy_into",
-    "product_into",
-    "scale_into",
-    "scaled_product_into",
-    "scaled_ratio_into",
-    "scaled_product_ratio_into",
-    "maximum_floor_into",
-)
 
 
 def fast_kernel(signature):
