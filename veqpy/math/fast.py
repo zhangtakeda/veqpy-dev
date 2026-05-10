@@ -24,6 +24,7 @@ Public API:
 - quadrature_product_ratio
 - sum2d_axis1_into
 - theta_reduction
+- weighted_sum2d_axis0_into
 - weighted_sum2d_axis1_into
 """
 
@@ -249,6 +250,30 @@ def weighted_sum2d_axis1_into(out: np.ndarray, a: np.ndarray, weights: np.ndarra
         out[i] = total
 
 
+@nb.njit(
+    nb.void(
+        nb.float64[::1],
+        nb.float64[:, ::1],
+        nb.float64[::1],
+    ),
+    cache=True,
+    fastmath=True,
+    nogil=True,
+    inline="always",
+)
+def weighted_sum2d_axis0_into(out: np.ndarray, a: np.ndarray, weights: np.ndarray) -> None:
+    nrows = a.shape[0]
+    ncols = a.shape[1]
+
+    for j in range(ncols):
+        total = 0.0
+
+        for i in range(nrows):
+            total += weights[i] * a[i, j]
+
+        out[j] = total
+
+
 @nb.njit(cache=True, nogil=True)
 def theta_reduction(out: np.ndarray, arr: np.ndarray, weights: np.ndarray, axis: int) -> np.ndarray:
     if axis == 0:
@@ -415,3 +440,19 @@ def maximum_floor_out(out: np.ndarray, arr: np.ndarray, floor: float) -> np.ndar
         out[i] = value if value > floor else floor
 
     return out
+
+
+# -----------------------------------------------------------------------------
+# New neutral names (Phase 1d)
+# -----------------------------------------------------------------------------
+
+copy_into = copy_vector
+scale_into = fill_scaled_vector
+product_into = fill_pointwise_product
+scaled_product_into = fill_scaled_product
+scaled_ratio_into = fill_scaled_ratio
+scaled_product_ratio_into = fill_product_ratio
+maximum_floor_into = maximum_floor_out
+indexed_matvec_into = project_rows_to_packed
+weighted_product_sum = quadrature_product
+weighted_product_ratio_sum = quadrature_product_ratio

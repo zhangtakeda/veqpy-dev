@@ -81,6 +81,16 @@ ENDPOINT_POLICY_RIGHT = 1
 ENDPOINT_POLICY_BOTH = 2
 ENDPOINT_POLICY_AFFINE_BOTH = 3
 
+# Scratch slot indices into SourceWorkState.scratch_1d (8 rows × Nr)
+_SLOT_INTEGRAND = 0
+_SLOT_AUX0 = 1
+_SLOT_AUX1 = 2
+_SLOT_AUX2 = 3
+_SLOT_PNr = 4
+_SLOT_Pr = 5
+_SLOT_Fr = 6
+_SLOT_PSIN_R_SAFE = 7
+
 
 @dataclass(frozen=True, slots=True)
 class _SourceRouteSpec:
@@ -1386,6 +1396,7 @@ def _update_pj2_from_psin_inputs_with_scratch(
     Ip: float,
     beta: float,
     source_scratch_1d: np.ndarray,
+    source_scratch_2d: np.ndarray,
 ) -> tuple[float, float]:
     out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
     V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(
@@ -1705,6 +1716,7 @@ def _update_pq_from_psin_inputs_with_scratch(
     Ip: float,
     beta: float,
     source_scratch_1d: np.ndarray,
+    source_scratch_2d: np.ndarray,
 ) -> tuple[float, float]:
     out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
     V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(
@@ -2495,8 +2507,718 @@ def resolve_source_inputs(
     return out_heat_input, out_current_input
 
 
+# ---------------------------------------------------------------------------
+# Zero-allocation scratch variants (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+@njit(cache=True, nogil=True)
+def _update_pf_from_rho_inputs_with_scratch(
+    out_root_fields: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+    source_scratch_1d: np.ndarray,
+    source_scratch_2d: np.ndarray,
+) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, _, Ln_r, _, R, JdivR = _source_geometry_workspace_views(
+        radial_workspace, surface_workspace
+    )
+    has_Ip = not np.isnan(Ip)
+    has_beta = not np.isnan(beta)
+    if (not has_Ip) and (not has_beta):
+        zero_heat = True
+        zero_current = True
+        for i in range(heat_input.shape[0]):
+            if abs(heat_input[i]) > 1e-14:
+                zero_heat = False
+                break
+        for i in range(current_input.shape[0]):
+            if abs(current_input[i]) > 1e-14:
+                zero_current = False
+                break
+        if zero_heat and zero_current:
+            for i in range(rho.shape[0]):
+                out_psin[i] = rho[i]
+                out_psin_r[i] = 1.0
+                out_psin_rr[i] = 0.0
+                out_FFn_psin[i] = 0.0
+                out_Pn_psin[i] = 0.0
+            return 0.0, 0.0
+    integrand = source_scratch_1d[_SLOT_INTEGRAND]
+    _fill_pf_rho_integrand(integrand, Kn, current_input, Ln_r, V_r, heat_input)
+    corrected_integration(out_psin_r, integrand, integration_matrix, 1, rho, differentiation_matrix)
+    out_psin_r *= -2.0
+    for i in range(out_psin_r.shape[0]):
+        if out_psin_r[i] < 0.0:
+            out_psin_r[i] = 0.0
+    out_psin_r[:] = np.sqrt(out_psin_r)
+    out_psin_r /= Kn
+    _enforce_axis_linear_psin_r(out_psin_r, rho)
+    prof = out_psin_r
+    integral_prof = quadrature(prof, weights)
+    out_psin_r /= integral_prof
+    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
+    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
+    maximum_floor_out(psin_r_safe, out_psin_r, 1e-10)
+    if (not has_Ip) and (not has_beta):
+        alpha2 = integral_prof
+        alpha1 = -quadrature(heat_input, weights) / alpha2
+        fill_scaled_ratio(out_Pn_psin, heat_input, psin_r_safe, 1.0 / (alpha1 * alpha2))
+        fill_scaled_ratio(out_FFn_psin, current_input, psin_r_safe, 1.0 / (alpha1 * alpha2))
+        return alpha1, alpha2
+    c2 = integral_prof * integral_prof
+    if has_Ip and (not has_beta):
+        g1n_integrand = source_scratch_2d[0]
+        _fill_g1n_rho_integrand(g1n_integrand, JdivR, current_input, R, heat_input, psin_r_safe)
+        G1n_integral = quadrature(g1n_integrand, weights)
+        alpha1 = -Ip / G1n_integral
+    elif has_beta and (not has_Ip):
+        scratch_aux = source_scratch_1d[_SLOT_AUX0]
+        _compute_Pn_out(scratch_aux, heat_input, integration_matrix, weights)
+        c1 = 0.5 * beta * B0**2 * quadrature(V_r, weights) / quadrature(scratch_aux * V_r, weights)
+        alpha1 = np.sqrt(c1 / c2)
+    else:
+        raise ValueError("PF does not support applying Ip and beta constraints simultaneously")
+    alpha2 = c2 * alpha1
+    fill_scaled_ratio(out_Pn_psin, heat_input, psin_r_safe, 1.0)
+    fill_scaled_ratio(out_FFn_psin, current_input, psin_r_safe, 1.0)
+    return alpha1, alpha2
+
+
+@njit(cache=True, nogil=True)
+def _update_pf_from_psin_inputs_with_scratch(
+    out_root_fields: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+    source_scratch_1d: np.ndarray,
+    source_scratch_2d: np.ndarray,
+) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, _, Ln_r, _, R, JdivR = _source_geometry_workspace_views(
+        radial_workspace, surface_workspace
+    )
+    has_Ip = not np.isnan(Ip)
+    has_beta = not np.isnan(beta)
+    integrand = source_scratch_1d[_SLOT_INTEGRAND]
+    _fill_pf_psin_integrand(integrand, current_input, Ln_r, V_r, heat_input)
+    corrected_integration(out_psin_r, integrand, integration_matrix, 1, rho, differentiation_matrix)
+    out_psin_r *= -2.0
+    for i in range(out_psin_r.shape[0]):
+        if out_psin_r[i] < 0.0:
+            out_psin_r[i] = 0.0
+    out_psin_r[:] = np.sqrt(out_psin_r)
+    _enforce_axis_linear_psin_r(out_psin_r, rho)
+    prof = out_psin_r
+    integral_prof = quadrature(prof, weights)
+    out_psin_r /= integral_prof
+    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
+    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
+    maximum_floor_out(psin_r_safe, out_psin_r, 1e-10)
+    c2 = integral_prof * integral_prof
+    if has_Ip and (not has_beta):
+        g1n_integrand = source_scratch_2d[0]
+        _fill_g1n_psin_integrand(g1n_integrand, JdivR, current_input, R, heat_input, psin_r_safe)
+        G1n_integral = quadrature(g1n_integrand, weights)
+        alpha1 = -Ip / G1n_integral
+        alpha2 = c2 * alpha1
+        fill_scaled_ratio(out_Pn_psin, heat_input, psin_r_safe, 1.0 / (alpha1 * alpha2))
+        fill_scaled_ratio(out_FFn_psin, current_input, psin_r_safe, 1.0 / (alpha1 * alpha2))
+        return alpha1, alpha2
+    if (not has_Ip) and (not has_beta):
+        pressure_profile = source_scratch_1d[_SLOT_AUX0]
+        alpha2 = integral_prof
+        alpha1 = -quadrature(heat_input, weights) / alpha2
+        fill_scaled_ratio(out_Pn_psin, heat_input, psin_r_safe, 1.0 / (alpha1 * alpha2))
+        fill_scaled_ratio(out_FFn_psin, current_input, psin_r_safe, 1.0 / (alpha1 * alpha2))
+        return alpha1, alpha2
+    if has_beta and (not has_Ip):
+        pressure_profile = source_scratch_1d[_SLOT_AUX0]
+        scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
+        copy_vector(pressure_profile, heat_input)
+        copy_vector(out_Pn_psin, heat_input)
+        copy_vector(out_FFn_psin, current_input)
+        fill_pointwise_product(scratch_Pn_r, out_Pn_psin, out_psin_r)
+        scratch_aux = source_scratch_1d[_SLOT_AUX1]
+        _compute_Pn_out(scratch_aux, scratch_Pn_r, integration_matrix, weights)
+        c1 = 0.5 * beta * B0**2 * quadrature(V_r, weights) / quadrature(scratch_aux * V_r, weights)
+        alpha1 = np.sqrt(c1 / c2)
+        alpha2 = c2 * alpha1
+        return alpha1, alpha2
+    raise ValueError("PF does not support applying Ip and beta constraints simultaneously")
+
+
+@njit(cache=True, nogil=True)
+def _update_pp_from_rho_inputs_with_scratch(
+    out_root_fields: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+    source_scratch_1d: np.ndarray,
+    source_scratch_2d: np.ndarray,
+) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(
+        radial_workspace, surface_workspace
+    )
+    has_Ip = not np.isnan(Ip)
+    has_beta = not np.isnan(beta)
+    if has_Ip:
+        copy_vector(out_psin_r, current_input)
+        alpha2 = Ip / (2.0 * np.pi * Kn[-1] * out_psin_r[-1])
+    else:
+        alpha2 = quadrature(current_input, weights)
+        fill_scaled_vector(out_psin_r, current_input, 1.0 / alpha2)
+    _enforce_axis_linear_psin_r(out_psin_r, rho)
+    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
+    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
+    maximum_floor_out(psin_r_safe, out_psin_r, 1e-10)
+    if has_beta:
+        fill_scaled_ratio(out_Pn_psin, heat_input, psin_r_safe, 1.0)
+        scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
+        fill_pointwise_product(scratch_Pn_r, out_Pn_psin, out_psin_r)
+        scratch_aux = source_scratch_1d[_SLOT_AUX0]
+        _compute_Pn_out(scratch_aux, scratch_Pn_r, integration_matrix, weights)
+        alpha1 = (
+            0.5 * beta * B0**2 / alpha2 * quadrature(V_r, weights) / quadrature(scratch_aux * V_r, weights)
+        )
+    else:
+        scratch_Pr = source_scratch_1d[_SLOT_Pr]
+        copy_vector(scratch_Pr, heat_input)
+        alpha1 = -quadrature(scratch_Pr, weights) / alpha2
+        fill_scaled_ratio(out_Pn_psin, scratch_Pr, psin_r_safe, 1.0 / (alpha1 * alpha2))
+    _fill_pp_ffn_psin(
+        out_FFn_psin, out_psin_r, psin_r_safe, Kn_r, Kn,
+        out_psin_rr, V_r, out_Pn_psin, Ln_r, alpha2 / alpha1,
+    )
+    return alpha1, alpha2
+
+
+@njit(cache=True, nogil=True)
+def _update_pp_from_psin_inputs_with_scratch(
+    out_root_fields: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+    source_scratch_1d: np.ndarray,
+    source_scratch_2d: np.ndarray,
+) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(
+        radial_workspace, surface_workspace
+    )
+    has_Ip = not np.isnan(Ip)
+    has_beta = not np.isnan(beta)
+    if has_Ip:
+        copy_vector(out_psin_r, current_input)
+        alpha2 = Ip / (2.0 * np.pi * Kn[-1] * out_psin_r[-1])
+    else:
+        alpha2 = quadrature(current_input, weights)
+        fill_scaled_vector(out_psin_r, current_input, 1.0 / alpha2)
+    _enforce_axis_linear_psin_r(out_psin_r, rho)
+    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
+    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
+    maximum_floor_out(psin_r_safe, out_psin_r, 1e-10)
+    if has_beta:
+        copy_vector(out_Pn_psin, heat_input)
+        scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
+        fill_pointwise_product(scratch_Pn_r, out_Pn_psin, out_psin_r)
+        scratch_aux = source_scratch_1d[_SLOT_AUX0]
+        _compute_Pn_out(scratch_aux, scratch_Pn_r, integration_matrix, weights)
+        alpha1 = (
+            0.5 * beta * B0**2 / alpha2 * quadrature(V_r, weights) / quadrature(scratch_aux * V_r, weights)
+        )
+    else:
+        scratch_Pr = source_scratch_1d[_SLOT_Pr]
+        fill_scaled_product(scratch_Pr, heat_input, out_psin_r, alpha2)
+        alpha1 = -quadrature(scratch_Pr, weights) / alpha2
+        fill_scaled_ratio(out_Pn_psin, scratch_Pr, psin_r_safe, 1.0 / (alpha1 * alpha2))
+    _fill_pp_ffn_psin(
+        out_FFn_psin, out_psin_r, psin_r_safe, Kn_r, Kn,
+        out_psin_rr, V_r, out_Pn_psin, Ln_r, alpha2 / alpha1,
+    )
+    return alpha1, alpha2
+
+
+@njit(cache=True, nogil=True)
+def _update_pi_from_rho_inputs_with_scratch(
+    out_root_fields: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+    source_scratch_1d: np.ndarray,
+    source_scratch_2d: np.ndarray,
+) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(
+        radial_workspace, surface_workspace
+    )
+    has_Ip = not np.isnan(Ip)
+    has_beta = not np.isnan(beta)
+    Itor = source_scratch_1d[_SLOT_AUX0]
+    if has_Ip:
+        fill_scaled_vector(Itor, current_input, Ip / current_input[-1])
+    else:
+        copy_vector(Itor, current_input)
+    _enforce_axis_quadratic_itor(Itor, rho)
+    itor_floor = max(Itor[-1], 1.0) * 1e-12
+    maximum_floor_out(Itor, Itor, itor_floor)
+    itor_over_kn = source_scratch_1d[_SLOT_INTEGRAND]
+    fill_scaled_ratio(itor_over_kn, Itor, Kn, 1.0 / (2.0 * np.pi))
+    alpha2 = quadrature(itor_over_kn, weights)
+    fill_scaled_ratio(out_psin_r, Itor, Kn, 1.0 / (2.0 * np.pi * alpha2))
+    _enforce_axis_linear_psin_r(out_psin_r, rho)
+    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
+    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
+    maximum_floor_out(psin_r_safe, out_psin_r, 1e-10)
+    Itor_r = source_scratch_1d[_SLOT_AUX1]
+    corrected_even_derivative(Itor_r, Itor, differentiation_matrix, rho=rho)
+    if has_beta:
+        fill_scaled_ratio(out_Pn_psin, heat_input, psin_r_safe, 1.0)
+        scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
+        fill_pointwise_product(scratch_Pn_r, out_Pn_psin, out_psin_r)
+        scratch_aux = source_scratch_1d[_SLOT_AUX2]
+        _compute_Pn_out(scratch_aux, scratch_Pn_r, integration_matrix, weights)
+        alpha1 = (
+            0.5 * beta * B0**2 / alpha2 * quadrature(V_r, weights) / quadrature(scratch_aux * V_r, weights)
+        )
+    else:
+        scratch_Pr = source_scratch_1d[_SLOT_Pr]
+        copy_vector(scratch_Pr, heat_input)
+        alpha1 = -quadrature(scratch_Pr, weights) / alpha2
+        fill_scaled_ratio(out_Pn_psin, scratch_Pr, psin_r_safe, 1.0 / (alpha1 * alpha2))
+    _fill_pi_ffn_psin(out_FFn_psin, Itor_r, V_r, out_Pn_psin, Ln_r, 1.0 / (2.0 * np.pi * alpha1))
+    return alpha1, alpha2
+
+
+@njit(cache=True, nogil=True)
+def _update_pi_from_psin_inputs_with_scratch(
+    out_root_fields: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+    source_scratch_1d: np.ndarray,
+    source_scratch_2d: np.ndarray,
+) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(
+        radial_workspace, surface_workspace
+    )
+    has_Ip = not np.isnan(Ip)
+    has_beta = not np.isnan(beta)
+    Itor = source_scratch_1d[_SLOT_AUX0]
+    if has_Ip:
+        fill_scaled_vector(Itor, current_input, Ip / current_input[-1])
+    else:
+        copy_vector(Itor, current_input)
+    _enforce_axis_quadratic_itor(Itor, rho)
+    itor_floor = max(Itor[-1], 1.0) * 1e-12
+    maximum_floor_out(Itor, Itor, itor_floor)
+    itor_over_kn = source_scratch_1d[_SLOT_INTEGRAND]
+    fill_scaled_ratio(itor_over_kn, Itor, Kn, 1.0 / (2.0 * np.pi))
+    alpha2 = quadrature(itor_over_kn, weights)
+    fill_scaled_ratio(out_psin_r, Itor, Kn, 1.0 / (2.0 * np.pi * alpha2))
+    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
+    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
+    maximum_floor_out(psin_r_safe, out_psin_r, 1e-10)
+    Itor_r = source_scratch_1d[_SLOT_AUX1]
+    corrected_even_derivative(Itor_r, Itor, differentiation_matrix, rho=rho)
+    if has_beta:
+        copy_vector(out_Pn_psin, heat_input)
+        scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
+        fill_pointwise_product(scratch_Pn_r, out_Pn_psin, out_psin_r)
+        scratch_aux = source_scratch_1d[_SLOT_AUX2]
+        _compute_Pn_out(scratch_aux, scratch_Pn_r, integration_matrix, weights)
+        alpha1 = (
+            0.5 * beta * B0**2 / alpha2 * quadrature(V_r, weights) / quadrature(scratch_aux * V_r, weights)
+        )
+    else:
+        scratch_Pr = source_scratch_1d[_SLOT_Pr]
+        fill_scaled_product(scratch_Pr, heat_input, out_psin_r, alpha2)
+        alpha1 = -quadrature(scratch_Pr, weights) / alpha2
+        fill_scaled_ratio(out_Pn_psin, scratch_Pr, psin_r_safe, 1.0 / (alpha1 * alpha2))
+    _fill_pi_ffn_psin(out_FFn_psin, Itor_r, V_r, out_Pn_psin, Ln_r, 1.0 / (2.0 * np.pi * alpha1))
+    return alpha1, alpha2
+
+
+@njit(cache=True, nogil=True)
+def _update_pj1_from_rho_inputs_with_scratch(
+    out_root_fields: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+    source_scratch_1d: np.ndarray,
+    source_scratch_2d: np.ndarray,
+) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(
+        radial_workspace, surface_workspace
+    )
+    has_Ip = not np.isnan(Ip)
+    has_beta = not np.isnan(beta)
+    integrand_j = source_scratch_1d[_SLOT_INTEGRAND]
+    fill_pointwise_product(integrand_j, current_input, S_r)
+    corrected_integration(out_psin_r, integrand_j, integration_matrix, 1, rho, differentiation_matrix)
+    I_tor_prof = source_scratch_1d[_SLOT_AUX0]
+    copy_vector(I_tor_prof, out_psin_r)
+    _enforce_axis_quadratic_itor(I_tor_prof, rho)
+    I_tor = source_scratch_1d[_SLOT_AUX1]
+    jtor = source_scratch_1d[_SLOT_AUX2]
+    if has_Ip:
+        fill_scaled_vector(I_tor, I_tor_prof, Ip / I_tor_prof[-1])
+        fill_scaled_vector(jtor, current_input, Ip / I_tor_prof[-1])
+    else:
+        copy_vector(I_tor, I_tor_prof)
+        copy_vector(jtor, current_input)
+    _enforce_axis_even_profile(jtor, rho)
+    itor_floor = max(I_tor[-1], 1.0) * 1e-12
+    maximum_floor_out(I_tor, I_tor, itor_floor)
+    itor_over_kn = source_scratch_1d[_SLOT_INTEGRAND]
+    fill_scaled_ratio(itor_over_kn, I_tor, Kn, 1.0 / (2.0 * np.pi))
+    alpha2 = quadrature(itor_over_kn, weights)
+    fill_scaled_ratio(out_psin_r, I_tor, Kn, 1.0 / (2.0 * np.pi * alpha2))
+    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
+    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
+    maximum_floor_out(psin_r_safe, out_psin_r, 1e-10)
+    if has_beta:
+        fill_scaled_ratio(out_Pn_psin, heat_input, psin_r_safe, 1.0)
+        scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
+        fill_pointwise_product(scratch_Pn_r, out_Pn_psin, out_psin_r)
+        scratch_aux = source_scratch_1d[_SLOT_INTEGRAND]
+        _compute_Pn_out(scratch_aux, scratch_Pn_r, integration_matrix, weights)
+        alpha1 = (
+            0.5 * beta * B0**2 / alpha2 * quadrature(V_r, weights) / quadrature(scratch_aux * V_r, weights)
+        )
+    else:
+        scratch_Pr = source_scratch_1d[_SLOT_Pr]
+        copy_vector(scratch_Pr, heat_input)
+        alpha1 = -quadrature(scratch_Pr, weights) / alpha2
+        fill_scaled_ratio(out_Pn_psin, scratch_Pr, psin_r_safe, 1.0 / (alpha1 * alpha2))
+    _fill_pj_ffn_psin(
+        out_FFn_psin, jtor, S_r, V_r, out_Pn_psin,
+        out_psin_r, psin_r_safe, Ln_r, 1.0 / (2.0 * np.pi * alpha1),
+    )
+    return alpha1, alpha2
+
+
+@njit(cache=True, nogil=True)
+def _update_pj1_from_psin_inputs_with_scratch(
+    out_root_fields: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+    source_scratch_1d: np.ndarray,
+    source_scratch_2d: np.ndarray,
+) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(
+        radial_workspace, surface_workspace
+    )
+    has_Ip = not np.isnan(Ip)
+    has_beta = not np.isnan(beta)
+    integrand_j = source_scratch_1d[_SLOT_INTEGRAND]
+    fill_pointwise_product(integrand_j, current_input, S_r)
+    corrected_integration(out_psin_r, integrand_j, integration_matrix, 1, rho, differentiation_matrix)
+    I_tor_prof = source_scratch_1d[_SLOT_AUX0]
+    copy_vector(I_tor_prof, out_psin_r)
+    _enforce_axis_quadratic_itor(I_tor_prof, rho)
+    I_tor = source_scratch_1d[_SLOT_AUX1]
+    jtor = source_scratch_1d[_SLOT_AUX2]
+    if has_Ip:
+        fill_scaled_vector(I_tor, I_tor_prof, Ip / I_tor_prof[-1])
+        fill_scaled_vector(jtor, current_input, Ip / I_tor_prof[-1])
+    else:
+        copy_vector(I_tor, I_tor_prof)
+        copy_vector(jtor, current_input)
+    _enforce_axis_even_profile(jtor, rho)
+    itor_floor = max(I_tor[-1], 1.0) * 1e-12
+    maximum_floor_out(I_tor, I_tor, itor_floor)
+    itor_over_kn = source_scratch_1d[_SLOT_INTEGRAND]
+    fill_scaled_ratio(itor_over_kn, I_tor, Kn, 1.0 / (2.0 * np.pi))
+    alpha2 = quadrature(itor_over_kn, weights)
+    fill_scaled_ratio(out_psin_r, I_tor, Kn, 1.0 / (2.0 * np.pi * alpha2))
+    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
+    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
+    maximum_floor_out(psin_r_safe, out_psin_r, 1e-10)
+    if has_beta:
+        copy_vector(out_Pn_psin, heat_input)
+        scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
+        fill_pointwise_product(scratch_Pn_r, out_Pn_psin, out_psin_r)
+        scratch_aux = source_scratch_1d[_SLOT_INTEGRAND]
+        _compute_Pn_out(scratch_aux, scratch_Pn_r, integration_matrix, weights)
+        alpha1 = (
+            0.5 * beta * B0**2 / alpha2 * quadrature(V_r, weights) / quadrature(scratch_aux * V_r, weights)
+        )
+    else:
+        scratch_Pr = source_scratch_1d[_SLOT_Pr]
+        fill_scaled_product(scratch_Pr, heat_input, out_psin_r, alpha2)
+        alpha1 = -quadrature(scratch_Pr, weights) / alpha2
+        fill_scaled_ratio(out_Pn_psin, scratch_Pr, psin_r_safe, 1.0 / (alpha1 * alpha2))
+    _fill_pj_ffn_psin(
+        out_FFn_psin, jtor, S_r, V_r, out_Pn_psin,
+        out_psin_r, psin_r_safe, Ln_r, 1.0 / (2.0 * np.pi * alpha1),
+    )
+    return alpha1, alpha2
+
+
+@njit(cache=True, nogil=True)
+def _update_pj2_from_rho_inputs_with_scratch(
+    out_root_fields: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+    source_scratch_1d: np.ndarray,
+    source_scratch_2d: np.ndarray,
+) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(
+        radial_workspace, surface_workspace
+    )
+    has_Ip = not np.isnan(Ip)
+    has_beta = not np.isnan(beta)
+    integrand = source_scratch_1d[_SLOT_INTEGRAND]
+    fill_product_ratio(integrand, Ln_r, current_input, F, 1.0)
+    corrected_integration(out_psin_r, integrand, integration_matrix, 1, rho, differentiation_matrix)
+    integral_val = source_scratch_1d[_SLOT_AUX0]
+    copy_vector(integral_val, out_psin_r)
+    I_tor = source_scratch_1d[_SLOT_AUX1]
+    if has_Ip:
+        fill_scaled_product(I_tor, F, integral_val, Ip / (F[-1] * integral_val[-1]))
+    else:
+        fill_scaled_product(I_tor, F, integral_val, 2.0 * np.pi)
+    itor_over_kn = source_scratch_1d[_SLOT_INTEGRAND]
+    fill_scaled_ratio(itor_over_kn, I_tor, Kn, 1.0 / (2.0 * np.pi))
+    alpha2 = quadrature(itor_over_kn, weights)
+    fill_scaled_ratio(out_psin_r, I_tor, Kn, 1.0 / (2.0 * np.pi * alpha2))
+    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
+    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
+    maximum_floor_out(psin_r_safe, out_psin_r, 1e-10)
+    if has_beta:
+        fill_scaled_ratio(out_Pn_psin, heat_input, psin_r_safe, 1.0)
+        scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
+        fill_pointwise_product(scratch_Pn_r, out_Pn_psin, out_psin_r)
+        scratch_aux = source_scratch_1d[_SLOT_AUX2]
+        _compute_Pn_out(scratch_aux, scratch_Pn_r, integration_matrix, weights)
+        alpha1 = (
+            0.5 * beta * B0**2 / alpha2 * quadrature(V_r, weights) / quadrature(scratch_aux * V_r, weights)
+        )
+    else:
+        scratch_Pr = source_scratch_1d[_SLOT_Pr]
+        copy_vector(scratch_Pr, heat_input)
+        alpha1 = -quadrature(scratch_Pr, weights) / alpha2
+        fill_scaled_ratio(out_Pn_psin, scratch_Pr, psin_r_safe, 1.0 / (alpha1 * alpha2))
+    F_r = source_scratch_1d[_SLOT_Fr]
+    corrected_even_derivative(F_r, F, differentiation_matrix, rho=rho)
+    fill_scaled_product(out_FFn_psin, F, F_r, 1.0 / (alpha1 * alpha2))
+    fill_scaled_ratio(out_FFn_psin, out_FFn_psin, psin_r_safe, 1.0)
+    return alpha1, alpha2
+
+
+@njit(cache=True, nogil=True)
+def _update_pq_from_rho_inputs_with_scratch(
+    out_root_fields: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiation_matrix: np.ndarray,
+    integration_matrix: np.ndarray,
+    rho: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+    source_scratch_1d: np.ndarray,
+    source_scratch_2d: np.ndarray,
+) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(
+        radial_workspace, surface_workspace
+    )
+    has_Ip = not np.isnan(Ip)
+    has_beta = not np.isnan(beta)
+    q_prof = source_scratch_1d[_SLOT_AUX0]
+    if has_Ip:
+        q_scale = (2.0 * np.pi * F[-1]) / Ip
+        fill_scaled_vector(
+            q_prof, current_input, q_scale * (Kn[-1] * Ln_r[-1] / current_input[-1])
+        )
+    else:
+        copy_vector(q_prof, current_input)
+    integrand_alpha2 = source_scratch_1d[_SLOT_INTEGRAND]
+    fill_product_ratio(integrand_alpha2, F, Ln_r, q_prof, 1.0)
+    alpha2 = quadrature(integrand_alpha2, weights)
+    fill_product_ratio(out_psin_r, F, Ln_r, q_prof, 1.0 / alpha2)
+    corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
+    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
+    maximum_floor_out(psin_r_safe, out_psin_r, 1e-10)
+    if has_beta:
+        fill_scaled_ratio(out_Pn_psin, heat_input, psin_r_safe, 1.0)
+        scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
+        fill_pointwise_product(scratch_Pn_r, out_Pn_psin, out_psin_r)
+        scratch_aux = source_scratch_1d[_SLOT_AUX1]
+        _compute_Pn_out(scratch_aux, scratch_Pn_r, integration_matrix, weights)
+        alpha1_num = 0.5 * beta * B0**2 * quadrature(V_r, weights)
+        alpha1_den = alpha2 * quadrature(scratch_aux * V_r, weights)
+        alpha1 = alpha1_num / alpha1_den
+    else:
+        scratch_Pr = source_scratch_1d[_SLOT_Pr]
+        copy_vector(scratch_Pr, heat_input)
+        alpha1 = -quadrature(scratch_Pr, weights) / alpha2
+        fill_scaled_ratio(out_Pn_psin, scratch_Pr, psin_r_safe, 1.0 / (alpha1 * alpha2))
+    F_r = source_scratch_1d[_SLOT_Fr]
+    corrected_even_derivative(F_r, F, differentiation_matrix, rho=rho)
+    fill_pointwise_product(out_FFn_psin, F, F_r)
+    fill_scaled_ratio(out_FFn_psin, out_FFn_psin, psin_r_safe, 1.0 / (alpha1 * alpha2))
+    return alpha1, alpha2
+
+
 _SOURCE_SCRATCH_KERNELS: dict[str, Callable] = {
+    "update_PF_RHO": _update_pf_from_rho_inputs_with_scratch,
+    "update_PF_PSIN": _update_pf_from_psin_inputs_with_scratch,
+    "update_PP_RHO": _update_pp_from_rho_inputs_with_scratch,
+    "update_PP_PSIN": _update_pp_from_psin_inputs_with_scratch,
+    "update_PI_RHO": _update_pi_from_rho_inputs_with_scratch,
+    "update_PI_PSIN": _update_pi_from_psin_inputs_with_scratch,
+    "update_PJ1_RHO": _update_pj1_from_rho_inputs_with_scratch,
+    "update_PJ1_PSIN": _update_pj1_from_psin_inputs_with_scratch,
+    "update_PJ2_RHO": _update_pj2_from_rho_inputs_with_scratch,
     "update_PJ2_PSIN": _update_pj2_from_psin_inputs_with_scratch,
+    "update_PQ_RHO": _update_pq_from_rho_inputs_with_scratch,
     "update_PQ_PSIN": _update_pq_from_psin_inputs_with_scratch,
 }
 

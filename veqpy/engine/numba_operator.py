@@ -238,6 +238,7 @@ def _call_source_kernel_with_scratch(
     Ip: float,
     beta: float,
     source_scratch_1d: np.ndarray,
+    source_scratch_2d: np.ndarray,
 ) -> tuple[float, float]:
     return scratch_source_kernel(
         root_fields,
@@ -258,6 +259,7 @@ def _call_source_kernel_with_scratch(
         Ip,
         beta,
         source_scratch_1d,
+        source_scratch_2d,
     )
 
 
@@ -288,6 +290,7 @@ def _run_fixed_point_linear_with_scratch_impl(
     Ip: float,
     beta: float,
     source_scratch_1d: np.ndarray,
+    source_scratch_2d: np.ndarray,
 ) -> tuple[float, float]:
     _linear_uniform_interpolate_pair(
         materialized_heat_input,
@@ -319,6 +322,7 @@ def _run_fixed_point_linear_with_scratch_impl(
             Ip,
             beta,
             source_scratch_1d,
+            source_scratch_2d,
         )
         if _update_fixed_point_psin_query_and_linear_uniform_inputs_impl(
             source_psin_query,
@@ -361,6 +365,7 @@ def _run_fixed_point_barycentric_with_scratch_impl(
     Ip: float,
     beta: float,
     source_scratch_1d: np.ndarray,
+    source_scratch_2d: np.ndarray,
 ) -> tuple[float, float]:
     _local_barycentric_interpolate_pair(
         materialized_heat_input,
@@ -393,6 +398,7 @@ def _run_fixed_point_barycentric_with_scratch_impl(
             Ip,
             beta,
             source_scratch_1d,
+            source_scratch_2d,
         )
         if _update_fixed_point_psin_query_and_local_barycentric_inputs_impl(
             source_psin_query,
@@ -439,6 +445,7 @@ def _run_projected_finalize_with_scratch_impl(
     Ip: float,
     beta: float,
     source_scratch_1d: np.ndarray,
+    source_scratch_2d: np.ndarray,
 ) -> tuple[float, float]:
     for i in range(source_psin_query.shape[0]):
         source_psin_query[i] = psin[i]
@@ -478,6 +485,7 @@ def _run_projected_finalize_with_scratch_impl(
             Ip,
             beta,
             source_scratch_1d,
+            source_scratch_2d,
         )
         if _update_fixed_point_psin_query_and_projected_inputs_impl(
             source_psin_query,
@@ -833,6 +841,7 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
                 fixed_point_psin_binding.Ip,
                 fixed_point_psin_binding.beta,
                 fixed_point_psin_binding.source_scratch_1d,
+            fixed_point_psin_binding.source_scratch_2d,
             )
         else:
             alpha1, alpha2 = _run_fixed_point_linear_with_scratch_impl(
@@ -861,6 +870,7 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
                 fixed_point_psin_binding.Ip,
                 fixed_point_psin_binding.beta,
                 fixed_point_psin_binding.source_scratch_1d,
+            fixed_point_psin_binding.source_scratch_2d,
             )
         alpha1, alpha2 = _run_projected_finalize_with_scratch_impl(
             _update_pj2_from_psin_inputs_with_scratch,
@@ -892,6 +902,7 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
             fixed_point_psin_binding.Ip,
             fixed_point_psin_binding.beta,
             fixed_point_psin_binding.source_scratch_1d,
+            fixed_point_psin_binding.source_scratch_2d,
         )
         alpha_state[0] = alpha1
         alpha_state[1] = alpha2
@@ -960,6 +971,7 @@ def _bind_source_eval_runner_for_fused_backend(
             source_eval_binding.Ip,
             source_eval_binding.beta,
             source_eval_binding.source_scratch_1d,
+            source_eval_binding.source_scratch_2d,
         )
 
     return runner
@@ -1049,6 +1061,7 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
                 fixed_point_psin_binding.Ip,
                 fixed_point_psin_binding.beta,
                 fixed_point_psin_binding.source_scratch_1d,
+            fixed_point_psin_binding.source_scratch_2d,
             )
         else:
             alpha1, alpha2 = _run_fixed_point_linear_with_scratch_impl(
@@ -1077,6 +1090,7 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
                 fixed_point_psin_binding.Ip,
                 fixed_point_psin_binding.beta,
                 fixed_point_psin_binding.source_scratch_1d,
+            fixed_point_psin_binding.source_scratch_2d,
             )
         alpha1, alpha2 = _run_projected_finalize_with_scratch_impl(
             _update_pq_from_psin_inputs_with_scratch,
@@ -1108,6 +1122,7 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
             fixed_point_psin_binding.Ip,
             fixed_point_psin_binding.beta,
             fixed_point_psin_binding.source_scratch_1d,
+            fixed_point_psin_binding.source_scratch_2d,
         )
         alpha_state[0] = alpha1
         alpha_state[1] = alpha2

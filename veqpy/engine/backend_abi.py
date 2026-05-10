@@ -104,6 +104,7 @@ class FusedSourceEvalABI:
     Ip: float
     beta: float
     source_scratch_1d: np.ndarray
+    source_scratch_2d: np.ndarray
     B0: float
 
 
@@ -210,6 +211,7 @@ def build_fused_source_eval_abi(
         Ip=float(source_plan.Ip),
         beta=float(source_plan.beta),
         source_scratch_1d=source_work_state.scratch_1d,
+        source_scratch_2d=source_work_state.scratch_2d,
         B0=B0,
     )
 
@@ -262,6 +264,7 @@ def _build_fixed_point_psin_source_abi(
         materialized_heat_input=source_work_state.materialized_heat_input,
         materialized_current_input=source_work_state.materialized_current_input,
         source_scratch_1d=source_work_state.scratch_1d,
+        source_scratch_2d=source_work_state.scratch_2d,
         heat_projection_coeff=source_aux_state.heat_projection_coeff,
         current_projection_coeff=source_aux_state.current_projection_coeff,
         endpoint_blend=source_runtime_state.const_state.endpoint_blend,

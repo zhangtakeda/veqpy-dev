@@ -31,7 +31,7 @@ from veqpy.operator import (
 )
 from veqpy.solver import Solver, SolverConfig
 
-PLOT = True
+PLOT = False
 SHOW_PROGRESS = True
 
 # Reference solve: high-resolution baseline used to derive downstream cases.
