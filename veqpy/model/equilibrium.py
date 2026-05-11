@@ -124,9 +124,7 @@ def _regularize_axis_linear_surface(
     values = np.array(values, dtype=np.float64, copy=copy)
     rho = np.asarray(rho, dtype=np.float64)
     if values.ndim != 2 or rho.ndim != 1 or values.shape[0] != rho.shape[0]:
-        raise ValueError(
-            f"values/rho shape mismatch: {values.shape} vs {rho.shape}"
-        )
+        raise ValueError(f"values/rho shape mismatch: {values.shape} vs {rho.shape}")
     if values.shape[0] < 3 or abs(rho[0]) >= 1e-10:
         return values
 
@@ -451,7 +449,7 @@ class Equilibrium(Reactive, Serial):
     @property
     def jpara(self) -> np.ndarray:
         """平行电流密度 <j.B>/B0, model-side diagnostic."""
-        F_r = self.grid.corrected_even_derivative(self.F)
+        F_r = self.grid.derivative(self.F)
         term_r = (
             self.Kn_r * self.psin_r / self.F
             + self.Kn * self.psin_rr / self.F
