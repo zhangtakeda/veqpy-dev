@@ -449,7 +449,7 @@ class Equilibrium(Reactive, Serial):
     @property
     def jpara(self) -> np.ndarray:
         """平行电流密度 <j.B>/B0, model-side diagnostic."""
-        F_r = self.grid.derivative(self.F)
+        F_r = self.grid.differentiate(self.F)
         term_r = (
             self.Kn_r * self.psin_r / self.F
             + self.Kn * self.psin_rr / self.F

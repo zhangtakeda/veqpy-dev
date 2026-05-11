@@ -32,8 +32,8 @@ from veqpy.math.fast import (
     scaled_product_into,
     scaled_product_ratio_into,
     scaled_ratio_into,
-    weighted_ratio_dot,
     weighted_dot,
+    weighted_ratio_dot,
 )
 
 DEFAULT_LOCAL_BARYCENTRIC_STENCIL = 8

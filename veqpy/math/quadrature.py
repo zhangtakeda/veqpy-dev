@@ -26,6 +26,22 @@ Builder = Callable[[int], tuple[np.ndarray, np.ndarray]]
 quadrature_generator: Registry[str, Builder] = Registry(str, Callable)
 
 
+def make_quadrature(scheme: str, n: int) -> tuple[np.ndarray, np.ndarray]:
+    """Build quadrature nodes and weights for a named scheme."""
+
+    try:
+        builder = quadrature_generator[scheme]
+    except KeyError as exc:
+        raise ValueError(f"Unknown grid scheme: {scheme}") from exc
+    return builder(n)
+
+
+def available_quadrature_schemes() -> tuple[str, ...]:
+    """Return registered quadrature scheme names."""
+
+    return tuple(quadrature_generator)
+
+
 @quadrature_generator("chebyshev")
 def chebyshev_quadrature(n: int) -> tuple[np.ndarray, np.ndarray]:
     """Build Chebyshev-distributed nodes and interpolatory weights on ``[0, 1]``."""

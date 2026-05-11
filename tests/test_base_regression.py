@@ -28,6 +28,20 @@ def test_registry_decorator_populates_read_only_mapping():
         registry.registry["gamma"] = handler
 
 
+def test_registry_normalizes_string_keys_to_lowercase():
+    registry = Registry(str, type(lambda: None))
+
+    @registry("Alpha")
+    def handler():
+        return "ok"
+
+    assert "alpha" in registry
+    assert "ALPHA" in registry
+    assert registry["alpha"] is handler
+    assert registry["ALPHA"] is handler
+    assert list(registry) == ["alpha"]
+
+
 def test_registry_validates_key_and_value_types():
     registry = Registry(str, type(lambda: None))
 

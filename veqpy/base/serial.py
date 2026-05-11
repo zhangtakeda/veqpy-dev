@@ -31,35 +31,24 @@ import orjson
 
 from veqpy.base.registry import Registry
 
-serializer_handler = Callable[..., Any]
-serializer_registry = Mapping[str, serializer_handler]
-
-read_serializer_registry: Registry[str, serializer_handler] = Registry(str, Callable)
-write_serializer_registry: Registry[str, serializer_handler] = Registry(str, Callable)
-serial_type_registry: dict[str, type] = {}
-
-read_serializer_handlers = read_serializer_registry.registry
-write_serializer_handlers = write_serializer_registry.registry
-
-orjson_loads = orjson.loads
-orjson_dumps = orjson.dumps
-orjson_write_options = orjson.OPT_SERIALIZE_NUMPY
-
 # -----------------------------------------------------------------------------
 # Public interface
 # -----------------------------------------------------------------------------
 
 
-def read_serializer(*exts: str) -> Callable[[serializer_handler], serializer_handler]:
-    """Registry a read handler for one or more file extensions."""
+serializer_handler = Callable[..., Any]
+serializer_registry = Mapping[str, serializer_handler]
 
-    return read_serializer_registry(*exts)
+read_serializer: Registry[str, serializer_handler] = Registry(str, Callable)
+write_serializer: Registry[str, serializer_handler] = Registry(str, Callable)
+SERIAL_TYPE_REGISTRY: dict[str, type] = {}
 
+READ_SERIALIZER_HANDLERS = read_serializer.registry
+WRITE_SERIALIZER_HANDLERS = write_serializer.registry
 
-def write_serializer(*exts: str) -> Callable[[serializer_handler], serializer_handler]:
-    """Registry a write handler for one or more file extensions."""
-
-    return write_serializer_registry(*exts)
+ORJSON_LOADS = orjson.loads
+ORJSON_DUMPS = orjson.dumps
+ORJSON_WRITE_OPTIONS = orjson.OPT_SERIALIZE_NUMPY
 
 
 class Serial:
@@ -69,7 +58,7 @@ class Serial:
         super().__init_subclass__(**kwargs)
         if getattr(cls, "__abstractmethods__", None):
             return
-        serial_type_registry.setdefault(cls.__name__, cls)
+        SERIAL_TYPE_REGISTRY.setdefault(cls.__name__, cls)
 
     @classmethod
     def serial_attributes(cls) -> dict[str, type]:
@@ -83,11 +72,11 @@ class Serial:
     @classmethod
     def load(cls, file: str, **kwargs) -> Self:
         """Deserialize a file into a new instance."""
-        ext = _resolve_ext(file, read_serializer_handlers)
+        ext = _resolve_ext(file, READ_SERIALIZER_HANDLERS)
 
         if ext in ("json", "jsonl"):
             with open(file, "rb") as f:
-                data = orjson_loads(f.read())
+                data = ORJSON_LOADS(f.read())
             instance = _json_to_python(data, cls)
             if not _check_type(instance, cls):
                 raise TypeError(
@@ -162,7 +151,7 @@ class Serial:
         Use ``Serial.load`` for frozen dataclasses.
         """
         with open(file, "rb") as f:
-            data = orjson_loads(f.read())
+            data = ORJSON_LOADS(f.read())
 
         attrs_data = _unwrap_typed_dict(data, type(self).__name__)
         _restore_serial_fields(self, attrs_data, decoder=_json_to_python)
@@ -173,7 +162,7 @@ class Serial:
         self.check()
         data = _python_to_json(self)
         with open(file, "wb") as f:
-            f.write(orjson_dumps(data, option=orjson_write_options))
+            f.write(ORJSON_DUMPS(data, option=ORJSON_WRITE_OPTIONS))
 
     @read_serializer("pkl", "pickle")
     def read_pickle(self, file: str) -> Self:
@@ -209,7 +198,7 @@ def _resolve_ext(file: str, registry: serializer_registry) -> str:
 
 
 def _dispatch(op: str, instance: Serial, file: str, **kwargs) -> None:
-    registry = read_serializer_handlers if op == "read" else write_serializer_handlers
+    registry = READ_SERIALIZER_HANDLERS if op == "read" else WRITE_SERIALIZER_HANDLERS
     if op == "read" and not os.path.exists(file):
         raise FileNotFoundError(f"File not found: {file}")
     ext = _resolve_ext(file, registry)
@@ -426,7 +415,7 @@ def _json_to_python_union(data: Any, members: tuple) -> Any:
 def _try_instantiate_from_tagged_dict(data: dict) -> Any | None:
     """Try to instantiate an object from a ``{"TypeName": {attrs}}`` structure."""
     type_name = next(iter(data))
-    cls = serial_type_registry.get(type_name)
+    cls = SERIAL_TYPE_REGISTRY.get(type_name)
     if cls is None:
         return None
 

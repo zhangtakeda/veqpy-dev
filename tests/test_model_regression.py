@@ -29,6 +29,18 @@ def _max_bidirectional_distance(points_a, points_b):
     return max(distances.min(axis=1).max(), distances.min(axis=0).max())
 
 
+def test_grid_calculus_string_switches_base_matrices():
+    compact_grid = Grid(Nr=8, Nt=16, scheme="uniform", calculus="compact", M_max=4)
+    spectral_grid = Grid(Nr=8, Nt=16, scheme="uniform", calculus="spectral", M_max=4)
+
+    assert compact_grid.calculus == "compact"
+    assert spectral_grid.calculus == "spectral"
+    assert not np.allclose(
+        compact_grid.differentiation_matrix,
+        spectral_grid.differentiation_matrix,
+    )
+
+
 def _build_high_order_equilibrium() -> tuple[Equilibrium, Operator]:
     grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=4)
     profile_coeffs = {name: None for name in build_profile_names(grid.M_max)}

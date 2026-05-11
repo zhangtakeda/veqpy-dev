@@ -39,7 +39,7 @@ REFERENCE_SOURCE_SAMPLE_COUNT = 51
 TEST_SOURCE_SAMPLE_COUNT = 51
 BENCHMARK_REPEAT_COUNT = 100
 SHAPE_MATCH_TOL = 1e-2
-REFERENCE_CACHE_VERSION = 2
+REFERENCE_CACHE_VERSION = 3
 DIAGNOSTIC_SIGN_CHANGE_WINDOW = 12
 MU0 = 4.0e-7 * np.pi
 
@@ -390,6 +390,7 @@ def _reference_cache_signature() -> dict[str, object]:
             "Nr": int(REFERENCE_GRID.Nr),
             "Nt": int(REFERENCE_GRID.Nt),
             "scheme": REFERENCE_GRID.scheme,
+            "calculus": REFERENCE_GRID.calculus,
             "L_max": int(REFERENCE_GRID.L_max),
             "M_max": int(REFERENCE_GRID.M_max),
         },
@@ -409,6 +410,28 @@ def _reference_cache_signature() -> dict[str, object]:
     }
 
 
+def _is_reference_equilibrium_cache_compatible(equilibrium: object) -> bool:
+    grid = getattr(equilibrium, "grid", None)
+    if grid is None:
+        return False
+
+    rho = np.asarray(getattr(grid, "rho", None), dtype=np.float64)
+    psin = np.asarray(getattr(equilibrium, "psin", None), dtype=np.float64)
+    psin_r = np.asarray(getattr(equilibrium, "psin_r", None), dtype=np.float64)
+    ffn_psin = np.asarray(getattr(equilibrium, "FFn_psin", None), dtype=np.float64)
+    pn_psin = np.asarray(getattr(equilibrium, "Pn_psin", None), dtype=np.float64)
+
+    if rho.ndim != 1:
+        return False
+
+    expected_shape = rho.shape
+    for profile in (psin, psin_r, ffn_psin, pn_psin):
+        if profile.ndim != 1 or profile.shape != expected_shape:
+            return False
+
+    return True
+
+
 def _load_reference_cache() -> ReferenceBundle | None:
     path = _reference_cache_path()
     if not path.exists():
@@ -425,12 +448,15 @@ def _load_reference_cache() -> ReferenceBundle | None:
     bundle = payload.get("bundle")
     if not isinstance(bundle, dict):
         return None
+    equilibrium = bundle.get("equilibrium")
+    if not _is_reference_equilibrium_cache_compatible(equilibrium):
+        return None
 
     rho_axis = _as_float64_array(bundle["rho_axis"])
     psin_axis = _as_float64_array(bundle["psin_axis"])
     return ReferenceBundle(
         result=bundle["result"],
-        equilibrium=bundle["equilibrium"],
+        equilibrium=equilibrium,
         ref_profiles=bundle["ref_profiles"],
         reference_shape_x=_as_float64_array(bundle["reference_shape_x"]),
         rho_axis=rho_axis,

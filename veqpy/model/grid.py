@@ -22,10 +22,7 @@ import numpy as np
 from rich.console import Console
 from rich.tree import Tree
 
-import veqpy.math.differentiate as math_differentiate
-import veqpy.math.integrate as math_integrate
 from veqpy.base import Serial
-from veqpy.math.fast import dot, rowwise_sum_into, colwise_weighted_sum_into
 from veqpy.engine import (
     RHO_AXIS,
     THETA_AXIS,
@@ -33,7 +30,14 @@ from veqpy.engine import (
     full_differentiation,
     full_integration,
 )
-from veqpy.math.quadrature import quadrature_generator
+from veqpy.math.calculus import (
+    corrected_even_derivative_matrix,
+    corrected_integration_matrix,
+    corrected_linear_derivative_matrix,
+    make_calculus,
+)
+from veqpy.math.fast import colwise_weighted_sum_into, dot, rowwise_sum_into
+from veqpy.math.quadrature import available_quadrature_schemes, make_quadrature
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,9 +46,10 @@ class Grid(Serial):
 
     Nr: int
     Nt: int
-    scheme: Literal["legendre", "chebyshev", "lobatto", "radau", "uniform"]
     M_max: int = 20
     L_max: int = 20
+    scheme: str = "legendre"
+    calculus: str = "spectral"
 
     rho: np.ndarray = field(init=False)
     rho_powers: np.ndarray = field(init=False)
@@ -77,6 +82,7 @@ class Grid(Serial):
             "Nr": int,
             "Nt": int,
             "scheme": str,
+            "calculus": str,
             "L_max": int,
             "M_max": int,
         }
@@ -84,9 +90,11 @@ class Grid(Serial):
     def __post_init__(self):
         """根据根参数构造网格与谱表."""
         scheme = self.scheme.lower()
-        if scheme not in quadrature_generator:
+        if scheme not in available_quadrature_schemes():
             raise ValueError(f"Unknown grid scheme: {scheme}")
         object.__setattr__(self, "scheme", scheme)
+        calculus = "compact" if self.calculus is None else self.calculus.lower()
+        object.__setattr__(self, "calculus", calculus)
 
         if scheme == "lobatto":
             warnings.warn(
@@ -123,28 +131,24 @@ class Grid(Serial):
         x = 2.0 * rho2 - 1.0
         y = 1.0 - rho2
 
-        if scheme == "uniform":
-            integration_matrix = math_integrate.uniform_variable_limit_integration_matrix(self.Nr)
-            differentiation_matrix = math_differentiate.uniform_differentiation_matrix(self.Nr)
-        else:
-            integration_matrix = math_integrate.variable_limit_integration_matrix(rho)
-            differentiation_matrix = math_differentiate.differentiation_matrix(rho)
-        corrected_integration_matrix_p1 = math_integrate.corrected_integration_matrix(
+        integration_matrix, differentiation_matrix = make_calculus(
+            rho,
+            calculus=calculus,
+        )
+        corrected_integration_matrix_p1 = corrected_integration_matrix(
             rho,
             differentiation_matrix,
             p=1,
         )
-        corrected_integration_matrix_p2 = math_integrate.corrected_integration_matrix(
+        corrected_integration_matrix_p2 = corrected_integration_matrix(
             rho,
             differentiation_matrix,
             p=2,
         )
-        corrected_linear_derivative_matrix = math_differentiate.corrected_linear_derivative_matrix(
+        corrected_linear_derivative = corrected_linear_derivative_matrix(
             rho, differentiation_matrix
         )
-        corrected_even_derivative_matrix = math_differentiate.corrected_even_derivative_matrix(
-            rho, differentiation_matrix
-        )
+        corrected_even_derivative = corrected_even_derivative_matrix(rho, differentiation_matrix)
         ff_r_regularization_matrix = _build_ff_r_regularization_matrix(rho)
 
         T_fields = _build_chebyshev_tables(rho, x, self.L_max)
@@ -190,12 +194,12 @@ class Grid(Serial):
         object.__setattr__(
             self,
             "corrected_linear_derivative_matrix",
-            np.asarray(corrected_linear_derivative_matrix, dtype=np.float64),
+            np.asarray(corrected_linear_derivative, dtype=np.float64),
         )
         object.__setattr__(
             self,
             "corrected_even_derivative_matrix",
-            np.asarray(corrected_even_derivative_matrix, dtype=np.float64),
+            np.asarray(corrected_even_derivative, dtype=np.float64),
         )
         object.__setattr__(
             self,
@@ -218,6 +222,7 @@ class Grid(Serial):
         tree.add(f"Nr: {self.Nr}")
         tree.add(f"Nt: {self.Nt}")
         tree.add(f"scheme: {self.scheme}")
+        tree.add(f"calculus: {self.calculus}")
         return tree
 
     def __str__(self) -> str:
@@ -343,11 +348,7 @@ class Grid(Serial):
 
 
 def _build_rho_and_weights(Nr: int, scheme: str) -> tuple[np.ndarray, np.ndarray]:
-    try:
-        builder = quadrature_generator[scheme]
-    except KeyError as exc:
-        raise ValueError(f"Unknown grid scheme: {scheme}") from exc
-    return builder(Nr)
+    return make_quadrature(scheme, Nr)
 
 
 def _build_ff_r_regularization_matrix(rho: np.ndarray, *, degree: int = 3) -> np.ndarray:

@@ -58,7 +58,8 @@ class Registry(Generic[Key, Value]):
     def __call__(self, *keys: Key) -> Callable[[Value], Value]:
         if not keys:
             raise ValueError("At least one registry key is required")
-        for key in keys:
+        normalized_keys = tuple(self._normalize_key(key) for key in keys)
+        for key in normalized_keys:
             if not isinstance(key, self.key_type):
                 raise TypeError(
                     f"Registry key must be {_type_name(self.key_type)}, "
@@ -71,20 +72,25 @@ class Registry(Generic[Key, Value]):
                     f"Registry value must be {_type_name(self.value_type)}, "
                     f"got {type(func).__name__}: {func!r}"
                 )
-            for key in keys:
+            for key in normalized_keys:
                 self._registry[key] = func
             return func
 
         return wrapper
 
     def __contains__(self, key: object) -> bool:
-        return key in self._registry
+        return self._normalize_key(key) in self._registry
 
     def __getitem__(self, key: Key) -> Value:
-        return self._registry[key]
+        return self._registry[self._normalize_key(key)]
 
     def __iter__(self) -> Iterator[Key]:
         return iter(self._registry)
+
+    def _normalize_key(self, key: object) -> object:
+        if isinstance(key, str):
+            return key.lower()
+        return key
 
 
 # -----------------------------------------------------------------------------
