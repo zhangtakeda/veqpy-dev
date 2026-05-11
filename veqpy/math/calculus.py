@@ -24,6 +24,8 @@ from veqpy.math.interpolate import barycentric_log_weights, interpolation_matrix
 CalculusBuilder = Callable[[np.ndarray], tuple[np.ndarray, np.ndarray]]
 calculus_generator: Registry[str, CalculusBuilder] = Registry(str, Callable)
 
+DEFAULT_CALCULUS = "spectral"
+
 
 def make_calculus(
     nodes: np.ndarray,
@@ -31,6 +33,9 @@ def make_calculus(
     calculus: str | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Build ``(accumulator, differentiator)`` for a calculus scheme."""
+
+    if calculus is None:
+        calculus = DEFAULT_CALCULUS
 
     calculus = calculus.lower()
     if calculus not in calculus_generator:

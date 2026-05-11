@@ -35,7 +35,9 @@ if TYPE_CHECKING:
 @dataclass(frozen=True, slots=True)
 class FusedHotRuntimeABI:
     active_profile_slab: np.ndarray
-    T_fields: np.ndarray
+    T: np.ndarray
+    T_r: np.ndarray
+    T_rr: np.ndarray
     active_offsets: np.ndarray
     active_scales: np.ndarray
     active_coeff_index_rows: np.ndarray
@@ -82,7 +84,7 @@ class FusedResidualPackABI:
     cos_mtheta: np.ndarray
     rho_powers: np.ndarray
     y: np.ndarray
-    T_fields: np.ndarray
+    T: np.ndarray
     quadrature: np.ndarray
     a: float
     R0: float
@@ -122,7 +124,9 @@ def build_fused_hot_runtime_abi(
     runtime_layout = backend_state.runtime_layout
     return FusedHotRuntimeABI(
         active_profile_slab=runtime_layout.active_profile_slab,
-        T_fields=static_layout.T_fields,
+        T=static_layout.T,
+        T_r=static_layout.T_r,
+        T_rr=static_layout.T_rr,
         active_offsets=runtime_layout.active_offsets,
         active_scales=runtime_layout.active_scales,
         active_coeff_index_rows=runtime_layout.active_coeff_index_rows,
@@ -179,7 +183,7 @@ def build_fused_residual_pack_abi(
         cos_mtheta=static_layout.cos_mtheta,
         rho_powers=static_layout.rho_powers,
         y=static_layout.y,
-        T_fields=static_layout.T_fields,
+        T=static_layout.T,
         quadrature=static_layout.quadrature,
         a=a,
         R0=R0,

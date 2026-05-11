@@ -33,7 +33,9 @@ class Profile(Serial):
     offset: float = 0.0
     coeff: np.ndarray | None = None
     u_fields: np.ndarray | None = field(init=False, default=None, repr=False)
-    T_fields: np.ndarray | None = field(init=False, default=None, repr=False)
+    T: np.ndarray | None = field(init=False, default=None, repr=False)
+    T_r: np.ndarray | None = field(init=False, default=None, repr=False)
+    T_rr: np.ndarray | None = field(init=False, default=None, repr=False)
     rp_fields: np.ndarray | None = field(init=False, default=None, repr=False)
     env_fields: np.ndarray | None = field(init=False, default=None, repr=False)
 
@@ -93,7 +95,9 @@ class Profile(Serial):
             coeff=_copy_optional_array(self.coeff),
         )
         out.u_fields = _copy_optional_array(self.u_fields)
-        out.T_fields = self.T_fields
+        out.T = self.T
+        out.T_r = self.T_r
+        out.T_rr = self.T_rr
         out.rp_fields = self.rp_fields
         out.env_fields = self.env_fields
         return out
@@ -102,7 +106,7 @@ class Profile(Serial):
         """刷新当前 Grid 上的 profile fields."""
         if grid is not None:
             self._prepare_runtime_cache(grid)
-        if self.T_fields is None:
+        if self.T is None:
             raise RuntimeError(
                 "Profile runtime cache is not initialized; pass grid on first update()."
             )
@@ -110,7 +114,9 @@ class Profile(Serial):
             raise RuntimeError("Profile buffers not initialized; pass grid first.")
         _fill_profile_outputs(
             self.u_fields,
-            self.T_fields,
+            self.T,
+            self.T_r,
+            self.T_rr,
             self.rp_fields,
             self.env_fields,
             self.offset,
@@ -118,9 +124,11 @@ class Profile(Serial):
             self.scale,
         )
 
-    def _prepare_runtime_cache(self, grid: Grid) -> None:
-        """绑定 Grid 并准备 runtime 缓存."""
-        self.T_fields = grid.T_fields
+    def _prepare_runtime_cache(self, grid) -> None:
+        """绑定 grid 快照 (Grid 或 StaticLayout) 并准备 runtime 缓存."""
+        self.T = grid.T
+        self.T_r = grid.T_r
+        self.T_rr = grid.T_rr
         self.rp_fields = _power_terms(grid.rho, self.power)
         self.env_fields = _envelope_terms(grid.rho, grid.rho_powers[2], grid.y, self.envelope_power)
         self.rp_fields.flags.writeable = False
@@ -149,7 +157,9 @@ def _copy_optional_array(value: np.ndarray | None) -> np.ndarray | None:
 
 def _fill_profile_outputs(
     u_fields: np.ndarray,
-    T_fields: np.ndarray,
+    T: np.ndarray,
+    T_r: np.ndarray,
+    T_rr: np.ndarray,
     rp_fields: np.ndarray,
     env_fields: np.ndarray,
     offset: float,
@@ -158,12 +168,7 @@ def _fill_profile_outputs(
 ) -> None:
     """根据 coeff 刷新单个 profile fields."""
     update_profile(
-        u_fields,
-        T_fields,
-        rp_fields,
-        env_fields,
-        offset,
-        coeff,
+        u_fields, T, T_r, T_rr, rp_fields, env_fields, offset, coeff
     )
     if scale != 1.0:
         np.multiply(u_fields, scale, out=u_fields)

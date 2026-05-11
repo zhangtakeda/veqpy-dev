@@ -21,7 +21,9 @@ from numba import njit
 @njit(cache=True, fastmath=True, nogil=True)
 def update_profile(
     out_fields: np.ndarray,
-    T_fields: np.ndarray,
+    T: np.ndarray,
+    T_r: np.ndarray,
+    T_rr: np.ndarray,
     rp_fields: np.ndarray,
     env_fields: np.ndarray,
     offset: float,
@@ -44,9 +46,9 @@ def update_profile(
         series_rr = 0.0
         for k in range(coeff_size):
             c = coeff[k]
-            series += c * T_fields[0, k, i]
-            series_r += c * T_fields[1, k, i]
-            series_rr += c * T_fields[2, k, i]
+            series += c * T[k, i]
+            series_r += c * T_r[k, i]
+            series_rr += c * T_rr[k, i]
 
         env = env_fields[0, i]
         env_r = env_fields[1, i]
@@ -67,7 +69,9 @@ def update_profile(
 @njit(cache=True, fastmath=True, nogil=True)
 def update_profiles_packed_bulk(
     active_profile_slab: np.ndarray,
-    T_fields: np.ndarray,
+    T: np.ndarray,
+    T_r: np.ndarray,
+    T_rr: np.ndarray,
     offsets: np.ndarray,
     scales: np.ndarray,
     x: np.ndarray,
@@ -93,9 +97,9 @@ def update_profiles_packed_bulk(
 
             for k in range(coeff_size):
                 c = x[coeff_index_rows[p, k]]
-                series += c * T_fields[0, k, i]
-                series_r += c * T_fields[1, k, i]
-                series_rr += c * T_fields[2, k, i]
+                series += c * T[k, i]
+                series_r += c * T_r[k, i]
+                series_rr += c * T_rr[k, i]
 
             env = env_fields_all[p, 0, i]
             env_r = env_fields_all[p, 1, i]

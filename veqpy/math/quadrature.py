@@ -24,27 +24,25 @@ from veqpy.base.registry import Registry
 Builder = Callable[[int], tuple[np.ndarray, np.ndarray]]
 quadrature_generator: Registry[str, Builder] = Registry(str, Callable)
 
+DEFAULT_QUADRATURE = "legendre"
+
 
 def make_quadrature(
     n: int,
     *,
-    scheme: str | None = None,
+    quadrature: str | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Build quadrature nodes and weights for a named scheme."""
+    """Build quadrature ``(nodes, weights)`` for a quadrature scheme."""
 
-    try:
-        if scheme is None:
-            scheme = list(quadrature_generator)[0]
-        builder = quadrature_generator[scheme]
-    except KeyError as exc:
-        raise ValueError(f"Unknown grid scheme: {scheme}") from exc
-    return builder(n)
+    if quadrature is None:
+        quadrature = DEFAULT_QUADRATURE
 
+    quadrature = quadrature.lower()
+    if quadrature not in quadrature_generator:
+        available = ", ".join(sorted(quadrature_generator.registry))
+        raise ValueError(f"Unknown quadrature scheme: {quadrature}. Available schemes: {available}")
 
-def available_quadrature_schemes() -> tuple[str, ...]:
-    """Return registered quadrature scheme names."""
-
-    return tuple(quadrature_generator)
+    return quadrature_generator[quadrature](n)
 
 
 @quadrature_generator("chebyshev")

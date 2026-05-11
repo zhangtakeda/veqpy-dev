@@ -29,7 +29,7 @@ from veqpy.engine import (
 )
 from veqpy.math.calculus import make_calculus
 from veqpy.math.fast import colwise_weighted_sum_into, dot, rowwise_sum_into
-from veqpy.math.quadrature import available_quadrature_schemes, make_quadrature
+from veqpy.math.quadrature import make_quadrature
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,10 +81,8 @@ class Grid(Serial):
     def __post_init__(self):
         """根据根参数构造网格与谱表."""
         scheme = self.scheme.lower()
-        if scheme not in available_quadrature_schemes():
-            raise ValueError(f"Unknown grid scheme: {scheme}")
         object.__setattr__(self, "scheme", scheme)
-        calculus = "compact" if self.calculus is None else self.calculus.lower()
+        calculus = self.calculus.lower()
         object.__setattr__(self, "calculus", calculus)
 
         if self.Nr < 4:
@@ -95,10 +93,12 @@ class Grid(Serial):
             raise ValueError("L_max must be non-negative")
         if self.M_max < 2:
             raise ValueError("M_max must be at least 2")
+        if self.K_max is not None and self.K_max < 2:
+            raise ValueError("K_max must be at least 2")
         K_max = _normalize_fourier_power_K_max(self.K_max)
         object.__setattr__(self, "K_max", K_max)
 
-        rho, quadrature = make_quadrature(self.Nr, scheme=scheme)
+        rho, quadrature = make_quadrature(self.Nr, quadrature=scheme)
         theta = np.linspace(0.0, 2.0 * np.pi, self.Nt, endpoint=False)
         harmonics = np.arange(self.M_max + 1, dtype=np.float64)[:, None]
         ktheta = harmonics * theta[None, :]

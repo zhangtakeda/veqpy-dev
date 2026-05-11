@@ -37,27 +37,177 @@ if TYPE_CHECKING:
     from veqpy.model.profile import Profile
 
 
+# ---- block layout convention -----------------------------------------------
+#   radial_block (8+K_max+3*L_max, Nr)
+#     rho           (Nr,)
+#     x             (Nr,)
+#     y             (Nr,)
+#     rho_powers    (K_max+2, Nr)
+#     T             (L_max+1, Nr)
+#     T_r           (L_max+1, Nr)
+#     T_rr          (L_max+1, Nr)
+#
+#   poloidal_block (7+6*M_max, Nt)
+#     theta         (Nt,)
+#     cos_mtheta    (M_max+1, Nt)
+#     sin_mtheta    (M_max+1, Nt)
+#     m_cos_mtheta  (M_max+1, Nt)
+#     m_sin_mtheta  (M_max+1, Nt)
+#     m2_cos_mtheta (M_max+1, Nt)
+#     m2_sin_mtheta (M_max+1, Nt)
+#
+
+
+def _pack_radial_block(
+    rho: np.ndarray,
+    x: np.ndarray,
+    y: np.ndarray,
+    rho_powers: np.ndarray,
+    T: np.ndarray,
+    T_r: np.ndarray,
+    T_rr: np.ndarray,
+) -> np.ndarray:
+    """按规范压合径向场为 (R, Nr) 2D 只读数组."""
+    Nr = rho.shape[0]
+    K_max = rho_powers.shape[0] - 2
+    L_max = T.shape[0] - 1
+
+    block = np.empty((8 + K_max + 3 * L_max, Nr), dtype=np.float64)
+    block[0] = rho
+    block[1] = x
+    block[2] = y
+    block[3 : 5 + K_max] = rho_powers
+    block[5 + K_max : 6 + K_max + L_max] = T
+    block[6 + K_max + L_max : 7 + K_max + 2 * L_max] = T_r
+    block[7 + K_max + 2 * L_max : 8 + K_max + 3 * L_max] = T_rr
+    block.flags.writeable = False
+    return block
+
+
+def _pack_poloidal_block(
+    theta: np.ndarray,
+    cos_mtheta: np.ndarray,
+    sin_mtheta: np.ndarray,
+    m_cos_mtheta: np.ndarray,
+    m_sin_mtheta: np.ndarray,
+    m2_cos_mtheta: np.ndarray,
+    m2_sin_mtheta: np.ndarray,
+) -> np.ndarray:
+    """按规范压合极向场为 (P, Nt) 2D 只读数组."""
+    Nt = theta.shape[0]
+    M_max = cos_mtheta.shape[0] - 1
+
+    block = np.empty((7 + 6 * M_max, Nt), dtype=np.float64)
+    block[0] = theta
+    block[1 : 2 + M_max] = cos_mtheta
+    block[2 + M_max : 3 + 2 * M_max] = sin_mtheta
+    block[3 + 2 * M_max : 4 + 3 * M_max] = m_cos_mtheta
+    block[4 + 3 * M_max : 5 + 4 * M_max] = m_sin_mtheta
+    block[5 + 4 * M_max : 6 + 5 * M_max] = m2_cos_mtheta
+    block[6 + 5 * M_max : 7 + 6 * M_max] = m2_sin_mtheta
+    block.flags.writeable = False
+    return block
+
+
 @dataclass(frozen=True, slots=True)
 class StaticLayout:
-    """绑定到固定 grid/backend 的只读静态表."""
+    """operator 层 Grid 快照 — engine ABI 所需的数组+元数据.
+
+    K_max 已规范化：Grid.K_max=None 映射为 M_max.
+    """
 
     Nr: int
     Nt: int
     M_max: int
-    T_fields: np.ndarray
-    rho: np.ndarray
-    theta: np.ndarray
-    cos_mtheta: np.ndarray
-    sin_mtheta: np.ndarray
-    m_cos_mtheta: np.ndarray
-    m_sin_mtheta: np.ndarray
-    m2_cos_mtheta: np.ndarray
-    m2_sin_mtheta: np.ndarray
+    L_max: int
+    K_max: int
+    scheme: str
+    calculus: str
+    K_values: np.ndarray
     quadrature: np.ndarray
     differentiator: np.ndarray
     accumulator: np.ndarray
-    rho_powers: np.ndarray
-    y: np.ndarray
+    radial_block: np.ndarray  # (8+K_max+3*L_max, Nr)
+    poloidal_block: np.ndarray  # (7+6*M_max, Nt)
+
+    @property
+    def rho(self) -> np.ndarray:
+        return self.radial_block[0]
+
+    @property
+    def x(self) -> np.ndarray:
+        return self.radial_block[1]
+
+    @property
+    def y(self) -> np.ndarray:
+        return self.radial_block[2]
+
+    @property
+    def rho_powers(self) -> np.ndarray:
+        return self.radial_block[3 : 5 + self.K_max]
+
+    @property
+    def T(self) -> np.ndarray:
+        return self.radial_block[5 + self.K_max : 6 + self.K_max + self.L_max]
+
+    @property
+    def T_r(self) -> np.ndarray:
+        return self.radial_block[6 + self.K_max + self.L_max : 7 + self.K_max + 2 * self.L_max]
+
+    @property
+    def T_rr(self) -> np.ndarray:
+        return self.radial_block[7 + self.K_max + 2 * self.L_max : 8 + self.K_max + 3 * self.L_max]
+
+    @property
+    def theta(self) -> np.ndarray:
+        return self.poloidal_block[0]
+
+    @property
+    def cos_mtheta(self) -> np.ndarray:
+        return self.poloidal_block[1 : 2 + self.M_max]
+
+    @property
+    def sin_mtheta(self) -> np.ndarray:
+        return self.poloidal_block[2 + self.M_max : 3 + 2 * self.M_max]
+
+    @property
+    def m_cos_mtheta(self) -> np.ndarray:
+        return self.poloidal_block[3 + 2 * self.M_max : 4 + 3 * self.M_max]
+
+    @property
+    def m_sin_mtheta(self) -> np.ndarray:
+        return self.poloidal_block[4 + 3 * self.M_max : 5 + 4 * self.M_max]
+
+    @property
+    def m2_cos_mtheta(self) -> np.ndarray:
+        return self.poloidal_block[5 + 4 * self.M_max : 6 + 5 * self.M_max]
+
+    @property
+    def m2_sin_mtheta(self) -> np.ndarray:
+        return self.poloidal_block[6 + 5 * self.M_max : 7 + 6 * self.M_max]
+
+    def resolve_fourier_power(self, order: int) -> int:
+        """返回 Fourier shape profile 的径向 prefactor 幂次."""
+        order = int(order)
+        if order <= 0:
+            return 0
+        if order <= self.M_max:
+            return int(self.K_values[order])
+        return min(order, self.K_max)
+
+    def to_grid(self) -> Grid:
+        """从快照重建完整 Grid（用于 Equilibrium 物化等需要真实 Grid 的场景）."""
+        from veqpy.model.grid import Grid
+
+        return Grid(
+            Nr=self.Nr,
+            Nt=self.Nt,
+            L_max=self.L_max,
+            M_max=self.M_max,
+            K_max=self.K_max,
+            scheme=self.scheme,
+            calculus=self.calculus,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,7 +364,6 @@ class RuntimeAllocationBundle:
 
 def allocate_runtime_state(
     *,
-    grid: Grid,
     static_layout: StaticLayout,
     source_plan,
     profile_names: tuple[str, ...],
@@ -227,6 +376,7 @@ def allocate_runtime_state(
     """分配并绑定 Operator runtime 所需的 mutable arrays/state."""
     nr = static_layout.Nr
     nt = static_layout.Nt
+    M_max = static_layout.M_max
     n_active = int(active_profile_ids.size)
     max_active_len = 0
     if n_active > 0:
@@ -307,7 +457,7 @@ def allocate_runtime_state(
     active_lengths = np.empty(n_active, dtype=np.int64)
     active_coeff_index_rows = np.full((n_active, max_active_len), -1, dtype=np.int64)
 
-    family_field_slab = np.empty((4, grid.M_max + 1, 3, nr), dtype=np.float64)
+    family_field_slab = np.empty((4, M_max + 1, 3, nr), dtype=np.float64)
     c_family_fields = family_field_slab[0]
     s_family_fields = family_field_slab[1]
     c_family_base_fields = family_field_slab[2]
@@ -320,9 +470,9 @@ def allocate_runtime_state(
     for slot, p in enumerate(active_profile_ids):
         active_slot_by_profile_id[int(p)] = int(slot)
 
-    c_family_source_slots = np.full(grid.M_max + 1, -1, dtype=np.int64)
-    s_family_source_slots = np.full(grid.M_max + 1, -1, dtype=np.int64)
-    for order in range(grid.M_max + 1):
+    c_family_source_slots = np.full(M_max + 1, -1, dtype=np.int64)
+    s_family_source_slots = np.full(M_max + 1, -1, dtype=np.int64)
+    for order in range(M_max + 1):
         c_name = f"c{order}"
         if c_name in profile_index:
             c_family_source_slots[order] = active_slot_by_profile_id[profile_index[c_name]]

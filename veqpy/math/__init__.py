@@ -7,10 +7,9 @@ Role:
 
 from veqpy.math.calculus import make_calculus
 from veqpy.math.interpolate import barycentric_log_weights, interpolation_matrix
-from veqpy.math.quadrature import available_quadrature_schemes, make_quadrature
+from veqpy.math.quadrature import make_quadrature
 
 __all__ = [
-    "available_quadrature_schemes",
     "barycentric_log_weights",
     "interpolation_matrix",
     "make_calculus",

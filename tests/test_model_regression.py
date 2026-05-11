@@ -686,7 +686,9 @@ def test_pq_psin_route_evaluates_residual_without_active_psin_profile():
     operator = Operator(grid=grid, case=case)
     equilibrium = operator.build_equilibrium(operator.encode_initial_state())
 
-    assert equilibrium.grid is grid
+    assert equilibrium.grid.Nr == grid.Nr
+    assert equilibrium.grid.Nt == grid.Nt
+    assert equilibrium.grid.M_max == grid.M_max
     assert equilibrium.F.shape == grid.rho.shape
     assert np.all(np.isfinite(equilibrium.F))
 
@@ -728,6 +730,8 @@ def test_equilibrium_load_rejects_legacy_shape_payload():
                     "scheme": grid.scheme,
                     "L_max": grid.L_max,
                     "M_max": grid.M_max,
+                    "calculus": grid.calculus,
+                    "K_max": grid.K_max,
                 }
             },
             "shape_profiles": [],

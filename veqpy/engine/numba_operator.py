@@ -139,7 +139,9 @@ def _refresh_hot_runtime(
 ) -> None:
     update_profiles_packed_bulk(
         hot_runtime_binding.active_profile_slab,
-        hot_runtime_binding.T_fields,
+        hot_runtime_binding.T,
+        hot_runtime_binding.T_r,
+        hot_runtime_binding.T_rr,
         hot_runtime_binding.active_offsets,
         hot_runtime_binding.active_scales,
         x,
@@ -208,7 +210,7 @@ def _pack_residual_output(
         residual_pack_binding.cos_mtheta,
         residual_pack_binding.rho_powers,
         residual_pack_binding.y,
-        residual_pack_binding.T_fields,
+        residual_pack_binding.T,
         residual_pack_binding.quadrature,
         residual_pack_binding.a,
         residual_pack_binding.R0,

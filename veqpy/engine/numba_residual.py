@@ -121,7 +121,7 @@ def _run_residual_blocks_packed_precomputed(
     cos_mtheta: np.ndarray,
     rho_powers: np.ndarray,
     y: np.ndarray,
-    T_fields: np.ndarray,
+    T: np.ndarray,
     weights: np.ndarray,
     a: float,
     R0: float,
@@ -131,7 +131,6 @@ def _run_residual_blocks_packed_precomputed(
     Gpsin_R = residual_workspace[1]
     Gpsin_Z = residual_workspace[2]
     Gpsin_R_sin_tb = residual_workspace[3]
-    T = T_fields[0]
     sin_theta = sin_mtheta[1]
     rho = rho_powers[1]
     rho2 = rho_powers[2]

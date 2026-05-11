@@ -13,16 +13,16 @@ from typing import Callable
 import numpy as np
 
 from veqpy.engine.numba_source import validate_route
-from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile
 from veqpy.operator.operator_case import OperatorCase
 from veqpy.operator.packed_layout import build_profile_layout
+from veqpy.operator.runtime_layout import StaticLayout
 
 
 def make_profile(
     *,
     case: OperatorCase,
-    grid: Grid | None = None,
+    operator_grid: StaticLayout | None = None,
     name: str,
     profile_L: np.ndarray,
     profile_names: tuple[str, ...],
@@ -34,7 +34,7 @@ def make_profile(
     static_kwargs = profile_static_kwargs_by_name.get(name)
     if static_kwargs is None and name.startswith(("c", "s")) and name[1:].isdigit():
         order = int(name[1:])
-        static_kwargs = {} if order == 0 else {"power": _resolve_fourier_power(grid, order)}
+        static_kwargs = {} if order == 0 else {"power": _resolve_fourier_power(operator_grid, order)}
     if static_kwargs is not None:
         kwargs.update(static_kwargs)
 
@@ -69,7 +69,7 @@ def make_profile(
 def refresh_profile_runtime(
     *,
     case: OperatorCase,
-    grid: Grid,
+    operator_grid: StaticLayout,
     profile_names: tuple[str, ...],
     profile_index: dict[str, int],
     profile_L: np.ndarray,
@@ -83,7 +83,7 @@ def refresh_profile_runtime(
         static_kwargs = profile_static_kwargs_by_name.get(name)
         if static_kwargs is None and name.startswith(("c", "s")) and name[1:].isdigit():
             order = int(name[1:])
-            static_kwargs = {} if order == 0 else {"power": grid.resolve_fourier_power(order)}
+            static_kwargs = {} if order == 0 else {"power": operator_grid.resolve_fourier_power(order)}
         elif static_kwargs is None:
             static_kwargs = {}
         profile.power = int(static_kwargs.get("power", 0))
@@ -112,7 +112,7 @@ def refresh_profile_runtime(
         profile.coeff = (
             None if L < 0 or coeff is None else np.asarray(coeff, dtype=np.float64)[: L + 1].copy()
         )
-        profile._prepare_runtime_cache(grid)
+        profile._prepare_runtime_cache(operator_grid)
         profile.update()
     refresh_fourier_family_base_fields()
 
@@ -123,10 +123,10 @@ def _profile_scale(case: OperatorCase, name: str) -> float:
     return 1.0
 
 
-def _resolve_fourier_power(grid: Grid | None, order: int) -> int:
-    if grid is None:
+def _resolve_fourier_power(operator_grid: StaticLayout | None, order: int) -> int:
+    if operator_grid is None:
         return int(order)
-    return grid.resolve_fourier_power(order)
+    return operator_grid.resolve_fourier_power(order)
 
 
 def refresh_stage_a_runtime(
@@ -169,7 +169,9 @@ def build_profile_stage_runner(
     *,
     active_profile_ids: np.ndarray,
     active_profile_slab: np.ndarray,
-    T_fields: np.ndarray,
+    T: np.ndarray,
+    T_r: np.ndarray,
+    T_rr: np.ndarray,
     active_offsets: np.ndarray,
     active_scales: np.ndarray,
     active_coeff_index_rows: np.ndarray,
@@ -182,7 +184,9 @@ def build_profile_stage_runner(
     def runner(x: np.ndarray) -> None:
         update_profiles_packed_bulk(
             active_profile_slab,
-            T_fields,
+            T,
+            T_r,
+            T_rr,
             active_offsets,
             active_scales,
             x,

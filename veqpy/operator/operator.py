@@ -15,7 +15,7 @@ Notes:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from typing import Callable
 
 import numpy as np
@@ -55,6 +55,8 @@ from veqpy.operator.runtime_layout import (
     RuntimeLayout,
     SourceRuntimeState,
     StaticLayout,
+    _pack_poloidal_block,
+    _pack_radial_block,
     allocate_runtime_state,
 )
 
@@ -63,7 +65,7 @@ from veqpy.operator.runtime_layout import (
 class Operator:
     """封装固定 case, grid 与 runtime 的 residual 求值器."""
 
-    grid: Grid = field(repr=False)
+    grid: InitVar[Grid]
     case: OperatorCase = field(repr=False)
     static_layout: StaticLayout = field(init=False, repr=False)
     residual_binding_layout: ResidualBindingLayout = field(init=False, repr=False)
@@ -127,17 +129,20 @@ class Operator:
     profile_static_kwargs_by_name: dict[str, dict[str, int]] = field(init=False, repr=False)
     profile_offset_specs: dict[str, float | str] = field(init=False, repr=False)
 
-    def __post_init__(self) -> None:
-        """完成 layout 构造, 运行时缓冲区分配和 case 绑定."""
+    def __post_init__(self, grid: Grid) -> None:
+        """完成 layout 构造, 运行时缓冲区分配和 case 绑定.
+
+        grid 在构造时被降低为 StaticLayout 快照，之后 Operator 不再读取实时 Grid.
+        """
+        self.static_layout = self._build_static_layout(grid)
         self._refresh_operator_identity()
         self.prefix_profile_names = get_prefix_profile_names()
-        self.shape_profile_names = build_shape_profile_names(self.grid.M_max)
-        self.profile_names = build_profile_names(self.grid.M_max)
+        self.shape_profile_names = build_shape_profile_names(self.static_layout.M_max)
+        self.profile_names = build_profile_names(self.static_layout.M_max)
         self.profile_index = build_profile_index(self.profile_names)
-        fourier_profile_names = build_fourier_profile_names(self.grid.M_max)
+        fourier_profile_names = build_fourier_profile_names(self.static_layout.M_max)
         self.c_profile_names = tuple(name for name in fourier_profile_names if name.startswith("c"))
         self.s_profile_names = tuple(name for name in fourier_profile_names if name.startswith("s"))
-        self.static_layout = self._build_static_layout()
 
         self.profile_L, self.coeff_index, self.order_offsets = build_profile_layout(
             self.case.profile_coeffs,
@@ -207,7 +212,7 @@ class Operator:
             coeff_index=self.coeff_index,
             order_offsets=self.order_offsets,
             validate_source_inputs=lambda next_case: orchestration.validate_source_inputs(
-                next_case, self.grid.Nr
+                next_case, self.static_layout.Nr
             ),
         )
         self.case = case
@@ -263,10 +268,10 @@ class Operator:
         return np.ravel(sqrt_weights * field).copy()
 
     def _collocation_sqrt_weights(self) -> np.ndarray:
-        radial_weights = np.asarray(self.grid.quadrature, dtype=np.float64)
-        if radial_weights.ndim != 1 or radial_weights.size != int(self.grid.Nr):
+        radial_weights = np.asarray(self.static_layout.quadrature, dtype=np.float64)
+        if radial_weights.ndim != 1 or radial_weights.size != int(self.static_layout.Nr):
             raise ValueError(f"Invalid radial weights shape {radial_weights.shape}")
-        return np.sqrt(radial_weights[:, None] / max(int(self.grid.Nt), 1))
+        return np.sqrt(radial_weights[:, None] / max(int(self.static_layout.Nt), 1))
 
     def _evaluate_residual(self, x_eval: np.ndarray) -> np.ndarray:
         self.stage_a_profile(x_eval)
@@ -331,25 +336,31 @@ class Operator:
             raise ValueError(f"Expected x to have shape ({self.x_size},), got {arr.shape}")
         return arr
 
-    def _build_static_layout(self) -> StaticLayout:
+    def _build_static_layout(self, grid: Grid) -> StaticLayout:
         return StaticLayout(
-            Nr=int(self.grid.Nr),
-            Nt=int(self.grid.Nt),
-            M_max=int(self.grid.M_max),
-            T_fields=self.grid.T_fields,
-            rho=self.grid.rho,
-            theta=self.grid.theta,
-            cos_mtheta=self.grid.cos_mtheta,
-            sin_mtheta=self.grid.sin_mtheta,
-            m_cos_mtheta=self.grid.m_cos_mtheta,
-            m_sin_mtheta=self.grid.m_sin_mtheta,
-            m2_cos_mtheta=self.grid.m2_cos_mtheta,
-            m2_sin_mtheta=self.grid.m2_sin_mtheta,
-            quadrature=self.grid.quadrature,
-            differentiator=self.grid.differentiator,
-            accumulator=self.grid.accumulator,
-            rho_powers=self.grid.rho_powers,
-            y=self.grid.y,
+            Nr=int(grid.Nr),
+            Nt=int(grid.Nt),
+            M_max=int(grid.M_max),
+            L_max=int(grid.L_max),
+            K_max=grid.K_max or grid.M_max,
+            scheme=grid.scheme,
+            calculus=grid.calculus,
+            K_values=grid.K_values,
+            quadrature=grid.quadrature,
+            differentiator=grid.differentiator,
+            accumulator=grid.accumulator,
+            radial_block=_pack_radial_block(
+                grid.rho, grid.x, grid.y, grid.rho_powers, grid.T, grid.T_r, grid.T_rr
+            ),
+            poloidal_block=_pack_poloidal_block(
+                grid.theta,
+                grid.cos_mtheta,
+                grid.sin_mtheta,
+                grid.m_cos_mtheta,
+                grid.m_sin_mtheta,
+                grid.m2_cos_mtheta,
+                grid.m2_sin_mtheta,
+            ),
         )
 
     def _build_residual_binding_layout(self) -> ResidualBindingLayout:
@@ -359,7 +370,7 @@ class Operator:
         )
         active_residual_block_radial_powers = orchestration.build_residual_block_radial_powers(
             active_profile_names,
-            K_values=self.grid.K_values,
+            K_values=self.static_layout.K_values,
         )
         return ResidualBindingLayout(
             active_profile_names=active_profile_names,
@@ -399,7 +410,6 @@ class Operator:
 
     def _setup_runtime_state(self) -> None:
         bundle = allocate_runtime_state(
-            grid=self.grid,
             static_layout=self.static_layout,
             source_plan=self.source_plan,
             profile_names=self.profile_names,
@@ -409,7 +419,7 @@ class Operator:
             x_size=self.x_size,
             make_profile=lambda name: make_profile(
                 case=self.case,
-                grid=self.grid,
+                operator_grid=self.static_layout,
                 name=name,
                 profile_L=self.profile_L,
                 profile_names=self.profile_names,
@@ -461,7 +471,7 @@ class Operator:
         self._refresh_fourier_family_metadata()
         orchestration.refresh_source_runtime(
             case=self.case,
-            grid_rho=self.grid.rho,
+            grid_rho=self.static_layout.rho,
             source_plan=self.source_plan,
             source_runtime_state=self.source_runtime_state,
             psin=self.psin,
@@ -486,7 +496,7 @@ class Operator:
         for name in self.c_profile_names + self.s_profile_names:
             order = int(name[1:])
             self.profile_static_kwargs_by_name[name] = (
-                {} if order == 0 else {"power": self.grid.resolve_fourier_power(order)}
+                {} if order == 0 else {"power": self.static_layout.resolve_fourier_power(order)}
             )
         self.profile_offset_specs = dict(orchestration.PROFILE_OFFSET_SPECS)
 
@@ -503,7 +513,7 @@ class Operator:
     def _refresh_profile_runtime(self) -> None:
         refresh_profile_runtime(
             case=self.case,
-            grid=self.grid,
+            operator_grid=self.static_layout,
             profile_names=self.profile_names,
             profile_index=self.profile_index,
             profile_L=self.profile_L,
@@ -511,7 +521,7 @@ class Operator:
             profile_static_kwargs_by_name=self.profile_static_kwargs_by_name,
             profile_offset_specs=self.profile_offset_specs,
             refresh_fourier_family_base_fields=lambda: refresh_fourier_family_base_fields(
-                M_max=self.grid.M_max,
+                M_max=self.static_layout.M_max,
                 profile_index=self.profile_index,
                 profiles_by_name=self.profiles_by_name,
                 c_family_base_fields=self.c_family_base_fields,
@@ -568,7 +578,9 @@ class Operator:
         return build_profile_stage_runner(
             active_profile_ids=self.active_profile_ids,
             active_profile_slab=self.active_profile_slab,
-            T_fields=self.grid.T_fields,
+            T=self.static_layout.T,
+            T_r=self.static_layout.T_r,
+            T_rr=self.static_layout.T_rr,
             active_offsets=self.active_offsets,
             active_scales=self.active_scales,
             active_coeff_index_rows=self.active_coeff_index_rows,
@@ -595,14 +607,14 @@ class Operator:
             Z0=self.case.Z0,
             surface_workspace=self.geometry_surface_workspace,
             radial_workspace=self.geometry_radial_workspace,
-            rho=self.grid.rho,
-            theta=self.grid.theta,
-            cos_mtheta=self.grid.cos_mtheta,
-            sin_mtheta=self.grid.sin_mtheta,
-            m_cos_mtheta=self.grid.m_cos_mtheta,
-            m_sin_mtheta=self.grid.m_sin_mtheta,
-            m2_cos_mtheta=self.grid.m2_cos_mtheta,
-            m2_sin_mtheta=self.grid.m2_sin_mtheta,
+            rho=self.static_layout.rho,
+            theta=self.static_layout.theta,
+            cos_mtheta=self.static_layout.cos_mtheta,
+            sin_mtheta=self.static_layout.sin_mtheta,
+            m_cos_mtheta=self.static_layout.m_cos_mtheta,
+            m_sin_mtheta=self.static_layout.m_sin_mtheta,
+            m2_cos_mtheta=self.static_layout.m2_cos_mtheta,
+            m2_sin_mtheta=self.static_layout.m2_sin_mtheta,
         )
 
     def _build_bound_source_stage_runner(self) -> Callable:
@@ -620,12 +632,12 @@ class Operator:
         root_fields = self.root_fields
         surface_workspace = self.geometry_surface_workspace
         residual_workspace = self.residual_surface_workspace
-        sin_mtheta = self.grid.sin_mtheta
-        cos_mtheta = self.grid.cos_mtheta
-        rho_powers = self.grid.rho_powers
-        y = self.grid.y
-        T_fields = self.grid.T_fields
-        quadrature = self.grid.quadrature
+        sin_mtheta = self.static_layout.sin_mtheta
+        cos_mtheta = self.static_layout.cos_mtheta
+        rho_powers = self.static_layout.rho_powers
+        y = self.static_layout.y
+        T = self.static_layout.T
+        quadrature = self.static_layout.quadrature
         a = self.case.a
         R0 = self.case.R0
         B0 = self.case.B0
@@ -639,7 +651,7 @@ class Operator:
                 surface_workspace,
             )
             packed = np.zeros(self.x_size, dtype=np.float64)
-            scratch = np.empty(self.grid.Nr, dtype=np.float64)
+            scratch = np.empty(self.static_layout.Nr, dtype=np.float64)
             numba_residual.run_residual_blocks_packed_precomputed(
                 packed,
                 scratch,
@@ -653,7 +665,7 @@ class Operator:
                 cos_mtheta,
                 rho_powers,
                 y,
-                T_fields,
+                T,
                 quadrature,
                 a,
                 R0,
@@ -669,12 +681,12 @@ class Operator:
         root_fields = self.root_fields
         surface_workspace = self.geometry_surface_workspace
         residual_workspace = self.residual_surface_workspace
-        sin_mtheta = self.grid.sin_mtheta
-        cos_mtheta = self.grid.cos_mtheta
-        rho_powers = self.grid.rho_powers
-        y = self.grid.y
-        T_fields = self.grid.T_fields
-        quadrature = self.grid.quadrature
+        sin_mtheta = self.static_layout.sin_mtheta
+        cos_mtheta = self.static_layout.cos_mtheta
+        rho_powers = self.static_layout.rho_powers
+        y = self.static_layout.y
+        T = self.static_layout.T
+        quadrature = self.static_layout.quadrature
         a = self.case.a
         R0 = self.case.R0
         B0 = self.case.B0
@@ -688,7 +700,7 @@ class Operator:
                 surface_workspace,
             )
             packed_residual.fill(0.0)
-            scratch = np.empty(self.grid.Nr, dtype=np.float64)
+            scratch = np.empty(self.static_layout.Nr, dtype=np.float64)
             numba_residual.run_residual_blocks_packed_precomputed(
                 packed_residual,
                 scratch,
@@ -702,7 +714,7 @@ class Operator:
                 cos_mtheta,
                 rho_powers,
                 y,
-                T_fields,
+                T,
                 quadrature,
                 a,
                 R0,
@@ -748,7 +760,7 @@ class Operator:
         return snapshot_equilibrium_from_runtime(
             x,
             case=self.case,
-            grid=self.grid,
+            grid=self.static_layout.to_grid(),
             profile_L=self.profile_L,
             coeff_index=self.coeff_index,
             profile_names=self.profile_names,

@@ -2,7 +2,7 @@ import numpy as np
 
 import veqpy.math as math_api
 from veqpy.math.interpolate import interpolation_matrix
-from veqpy.math.quadrature import available_quadrature_schemes, legendre_quadrature, make_quadrature
+from veqpy.math.quadrature import legendre_quadrature, make_quadrature
 
 HIGH_ORDER_NODE_COUNT = 129
 
@@ -176,8 +176,8 @@ def test_high_order_quadrature_rules_preserve_expected_moments():
         128: 1.0 / 129.0,
     }
 
-    for scheme in available_quadrature_schemes():
-        nodes, weights = make_quadrature(HIGH_ORDER_NODE_COUNT, scheme=scheme)
+    for scheme in ["legendre", "chebyshev", "lobatto", "radau", "uniform"]:
+        nodes, weights = make_quadrature(HIGH_ORDER_NODE_COUNT, quadrature=scheme)
         assert np.all(np.isfinite(nodes))
         assert np.all(np.isfinite(weights))
         assert np.all(np.diff(nodes) > 0.0)

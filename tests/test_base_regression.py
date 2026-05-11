@@ -87,7 +87,6 @@ def test_reactive_caches_and_invalidates_downstream_dependencies():
     sample = _SampleReactive(1)
 
     assert _SampleReactive.dependency_graph == {"y": {"x"}, "z": {"y"}}
-    assert _SampleReactive.downstream_map["x"] == {"y", "z"}
     assert sample.y == 2
     assert sample.y == 2
     assert sample.calls == 1
@@ -115,7 +114,6 @@ def test_reactive_depends_on_declares_non_ast_dependencies():
             return 10
 
     assert _ExplicitReactive.dependency_graph == {"alias": {"raw"}}
-    assert _ExplicitReactive.downstream_map["raw"] == {"alias"}
 
 
 def test_reactive_rejects_circular_property_dependencies():
