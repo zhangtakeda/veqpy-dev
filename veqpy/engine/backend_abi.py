@@ -97,6 +97,8 @@ class FusedSourceEvalABI:
     weights: np.ndarray
     differentiation_matrix: np.ndarray
     integration_matrix: np.ndarray
+    odd_integration_matrix: np.ndarray
+    even_integration_matrix: np.ndarray
     rho: np.ndarray
     radial_workspace: np.ndarray
     surface_workspace: np.ndarray
@@ -204,6 +206,8 @@ def build_fused_source_eval_abi(
         weights=static_layout.weights,
         differentiation_matrix=static_layout.differentiation_matrix,
         integration_matrix=static_layout.integration_matrix,
+        odd_integration_matrix=static_layout.odd_integration_matrix,
+        even_integration_matrix=static_layout.even_integration_matrix,
         rho=static_layout.rho,
         radial_workspace=runtime_layout.geometry_radial_workspace,
         surface_workspace=runtime_layout.geometry_surface_workspace,

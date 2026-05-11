@@ -351,6 +351,8 @@ class Operator:
             weights=self.grid.weights,
             differentiation_matrix=self.grid.differentiation_matrix,
             integration_matrix=self.grid.integration_matrix,
+            odd_integration_matrix=self.grid.odd_integration_matrix,
+            even_integration_matrix=self.grid.even_integration_matrix,
             rho_powers=self.grid.rho_powers,
             y=self.grid.y,
         )

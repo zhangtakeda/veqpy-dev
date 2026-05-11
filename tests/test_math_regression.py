@@ -216,21 +216,21 @@ def test_uniform_spectral_calculus_matches_trapezoid_for_linear_data():
 def test_corrected_integration_matrix_matches_engine_kernel():
     nodes, _ = legendre_quadrature(6)
     values = nodes**2 + nodes
-    base_integration, base_differentiation = _spectral_calculus(nodes)
+    _, base_differentiation = _spectral_calculus(nodes)
+    matrix = math_api.corrected_integration_matrix(
+        nodes,
+        base_differentiation,
+        p=2,
+    )
     expected = np.empty_like(values)
 
     corrected_integration(
         expected,
         values,
-        base_integration,
+        matrix,
         2,
         nodes,
         base_differentiation,
-    )
-    matrix = math_api.corrected_integration_matrix(
-        nodes,
-        base_differentiation,
-        p=2,
     )
 
     assert np.allclose(matrix @ values, expected)
@@ -239,21 +239,21 @@ def test_corrected_integration_matrix_matches_engine_kernel():
 def test_high_order_corrected_integration_matrix_matches_engine_kernel():
     nodes, _ = legendre_quadrature(HIGH_ORDER_NODE_COUNT)
     values = nodes**3 + nodes
-    base_integration, base_differentiation = _spectral_calculus(nodes)
+    _, base_differentiation = _spectral_calculus(nodes)
+    matrix = math_api.corrected_integration_matrix(
+        nodes,
+        base_differentiation,
+        p=2,
+    )
     expected = np.empty_like(values)
 
     corrected_integration(
         expected,
         values,
-        base_integration,
+        matrix,
         2,
         nodes,
         base_differentiation,
-    )
-    matrix = math_api.corrected_integration_matrix(
-        nodes,
-        base_differentiation,
-        p=2,
     )
 
     assert np.all(np.isfinite(matrix))

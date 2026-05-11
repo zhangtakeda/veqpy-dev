@@ -286,8 +286,9 @@ def _has_uniform_spacing(nodes: np.ndarray) -> bool:
     return bool(np.all(np.abs(spacing - spacing[0]) < 1.0e-6))
 
 
-
-def _linear_operator_matrix(n: int, operator: Callable[[np.ndarray, np.ndarray], np.ndarray]) -> np.ndarray:
+def _linear_operator_matrix(
+    n: int, operator: Callable[[np.ndarray, np.ndarray], np.ndarray]
+) -> np.ndarray:
     matrix = np.empty((n, n), dtype=np.float64)
     basis = np.zeros(n, dtype=np.float64)
     out = np.empty(n, dtype=np.float64)
@@ -399,6 +400,7 @@ def _enforce_axis_power_profile(values: np.ndarray, nodes: np.ndarray, *, p: int
         return _regularize_axis_reduced_profile(values, nodes)
     values[0] = 0.0
     return values
+
 
 def _validated_square_matrix(matrix: np.ndarray, *, size: int, name: str) -> np.ndarray:
     matrix = np.asarray(matrix, dtype=np.float64)

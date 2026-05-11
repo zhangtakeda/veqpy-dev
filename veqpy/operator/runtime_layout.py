@@ -56,6 +56,8 @@ class StaticLayout:
     weights: np.ndarray
     differentiation_matrix: np.ndarray
     integration_matrix: np.ndarray
+    odd_integration_matrix: np.ndarray
+    even_integration_matrix: np.ndarray
     rho_powers: np.ndarray
     y: np.ndarray
 

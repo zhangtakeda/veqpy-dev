@@ -209,6 +209,8 @@ def update_PF_rho(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -233,6 +235,8 @@ def update_PF_psin(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -257,6 +261,8 @@ def update_PP_RHO(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -281,6 +287,8 @@ def update_PP_PSIN(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -305,6 +313,8 @@ def update_PI_RHO(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -329,6 +339,8 @@ def update_PI_PSIN(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -353,6 +365,8 @@ def update_PJ1_RHO(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -377,6 +391,8 @@ def update_PJ1_PSIN(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -400,6 +416,8 @@ def _update_pj2_from_psin_inputs_with_scratch(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -423,7 +441,7 @@ def _update_pj2_from_psin_inputs_with_scratch(
     scratch_aux = source_scratch_1d[5]
 
     scaled_product_ratio_into(integrand, Ln_r, current_input, F, 1.0)
-    corrected_integration(out_psin_r, integrand, integration_matrix, 1, rho, differentiation_matrix)
+    full_integration(out_psin_r, integrand, odd_integration_matrix)
     copy_into(integral_val, out_psin_r)
 
     if has_Ip:
@@ -434,7 +452,7 @@ def _update_pj2_from_psin_inputs_with_scratch(
     alpha2 = dot(integrand, weights)
     scale_into(out_psin_r, integrand, 1.0 / alpha2)
     full_differentiation(out_psin_rr, out_psin_r, differentiation_matrix)
-    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    _update_psin_coordinate(out_psin, out_psin_r, even_integration_matrix)
     maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
 
     if has_beta:
@@ -477,6 +495,8 @@ def update_PJ2_RHO(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -501,6 +521,8 @@ def update_PJ2_PSIN(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -524,6 +546,8 @@ def _update_pq_from_psin_inputs_with_scratch(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -554,7 +578,7 @@ def _update_pq_from_psin_inputs_with_scratch(
         scaled_product_ratio_into(out_psin_r, F, Ln_r, current_input, 1.0 / alpha2)
 
     corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
-    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    _update_psin_coordinate(out_psin, out_psin_r, even_integration_matrix)
     maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
 
     if has_beta:
@@ -597,6 +621,8 @@ def update_PQ_RHO(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -621,6 +647,8 @@ def update_PQ_PSIN(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -737,19 +765,9 @@ def corrected_integration(
     rho: np.ndarray,
     differentiation_matrix: np.ndarray,
 ) -> np.ndarray:
-    """执行原点修正后的径向积分."""
-    n = arr.shape[0]
-    rho_safe = np.empty_like(rho)
-    for i in range(n):
-        rho_safe[i] = rho[i] if rho[i] > 1e-10 else 1e-10
+    """Apply a precomputed corrected radial integration matrix."""
 
-    q_int = arr / (rho_safe**p)
-    system = rho[:, None] * differentiation_matrix
-    for i in range(n):
-        system[i, i] += float(p + 1)
-
-    q_solution = np.linalg.solve(system, q_int)
-    out[:] = q_solution * (rho ** (p + 1))
+    matvec_into(out, integration_matrix, arr)
     return out
 
 
@@ -834,11 +852,9 @@ def corrected_even_derivative(
 def _update_psin_coordinate(
     out_psin: np.ndarray,
     psin_r: np.ndarray,
-    integration_matrix: np.ndarray,
-    rho: np.ndarray,
-    differentiation_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
 ) -> np.ndarray:
-    corrected_integration(out_psin, psin_r, integration_matrix, 2, rho, differentiation_matrix)
+    full_integration(out_psin, psin_r, even_integration_matrix)
     return _normalize_psin_coordinate_inplace(out_psin)
 
 
@@ -1270,6 +1286,8 @@ def _update_pf_from_rho_inputs_with_scratch(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -1306,7 +1324,7 @@ def _update_pf_from_rho_inputs_with_scratch(
             return 0.0, 0.0
     integrand = source_scratch_1d[_SLOT_INTEGRAND]
     _fill_pf_rho_integrand(integrand, Kn, current_input, Ln_r, V_r, heat_input)
-    corrected_integration(out_psin_r, integrand, integration_matrix, 1, rho, differentiation_matrix)
+    full_integration(out_psin_r, integrand, odd_integration_matrix)
     out_psin_r *= -2.0
     for i in range(out_psin_r.shape[0]):
         if out_psin_r[i] < 0.0:
@@ -1318,7 +1336,7 @@ def _update_pf_from_rho_inputs_with_scratch(
     integral_prof = dot(prof, weights)
     out_psin_r /= integral_prof
     corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
-    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    _update_psin_coordinate(out_psin, out_psin_r, even_integration_matrix)
     psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
     maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
     if (not has_Ip) and (not has_beta):
@@ -1369,6 +1387,8 @@ def _update_pf_from_psin_inputs_with_scratch(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -1405,14 +1425,14 @@ def _update_pf_from_psin_inputs_with_scratch(
             return 0.0, 0.0
     integrand = source_scratch_1d[_SLOT_INTEGRAND]
     _fill_pf_psin_integrand(integrand, current_input, Ln_r, V_r, heat_input)
-    corrected_integration(out_psin_r, integrand, integration_matrix, 1, rho, differentiation_matrix)
+    full_integration(out_psin_r, integrand, odd_integration_matrix)
     out_psin_r *= -1.0
     out_psin_r /= Kn
     prof = out_psin_r
     integral_prof = dot(prof, weights)
     out_psin_r /= integral_prof
     corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
-    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    _update_psin_coordinate(out_psin, out_psin_r, even_integration_matrix)
     psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
     maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
     if (not has_Ip) and (not has_beta):
@@ -1467,6 +1487,8 @@ def _update_pp_from_rho_inputs_with_scratch(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -1490,7 +1512,7 @@ def _update_pp_from_rho_inputs_with_scratch(
         scale_into(out_psin_r, current_input, 1.0 / alpha2)
     _enforce_axis_linear_psin_r(out_psin_r, rho)
     corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
-    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    _update_psin_coordinate(out_psin, out_psin_r, even_integration_matrix)
     psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
     maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
     if has_beta:
@@ -1540,6 +1562,8 @@ def _update_pp_from_psin_inputs_with_scratch(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -1563,7 +1587,7 @@ def _update_pp_from_psin_inputs_with_scratch(
         scale_into(out_psin_r, current_input, 1.0 / alpha2)
     _enforce_axis_linear_psin_r(out_psin_r, rho)
     corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
-    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    _update_psin_coordinate(out_psin, out_psin_r, even_integration_matrix)
     psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
     maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
     if has_beta:
@@ -1613,6 +1637,8 @@ def _update_pi_from_rho_inputs_with_scratch(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -1642,7 +1668,7 @@ def _update_pi_from_rho_inputs_with_scratch(
     scaled_ratio_into(out_psin_r, Itor, Kn, 1.0 / (2.0 * np.pi * alpha2))
     _enforce_axis_linear_psin_r(out_psin_r, rho)
     corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
-    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    _update_psin_coordinate(out_psin, out_psin_r, even_integration_matrix)
     psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
     maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
     Itor_r = source_scratch_1d[_SLOT_AUX1]
@@ -1683,6 +1709,8 @@ def _update_pi_from_psin_inputs_with_scratch(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -1711,7 +1739,7 @@ def _update_pi_from_psin_inputs_with_scratch(
     alpha2 = dot(itor_over_kn, weights)
     scaled_ratio_into(out_psin_r, Itor, Kn, 1.0 / (2.0 * np.pi * alpha2))
     corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
-    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    _update_psin_coordinate(out_psin, out_psin_r, even_integration_matrix)
     psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
     maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
     Itor_r = source_scratch_1d[_SLOT_AUX1]
@@ -1752,6 +1780,8 @@ def _update_pj1_from_rho_inputs_with_scratch(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -1769,9 +1799,7 @@ def _update_pj1_from_rho_inputs_with_scratch(
     has_beta = not np.isnan(beta)
     integrand_j = source_scratch_1d[_SLOT_INTEGRAND]
     product_into(integrand_j, current_input, S_r)
-    corrected_integration(
-        out_psin_r, integrand_j, integration_matrix, 1, rho, differentiation_matrix
-    )
+    full_integration(out_psin_r, integrand_j, odd_integration_matrix)
     I_tor_prof = source_scratch_1d[_SLOT_AUX0]
     copy_into(I_tor_prof, out_psin_r)
     _enforce_axis_quadratic_itor(I_tor_prof, rho)
@@ -1791,7 +1819,7 @@ def _update_pj1_from_rho_inputs_with_scratch(
     alpha2 = dot(itor_over_kn, weights)
     scaled_ratio_into(out_psin_r, I_tor, Kn, 1.0 / (2.0 * np.pi * alpha2))
     corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
-    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    _update_psin_coordinate(out_psin, out_psin_r, even_integration_matrix)
     psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
     maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
     if has_beta:
@@ -1840,6 +1868,8 @@ def _update_pj1_from_psin_inputs_with_scratch(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -1857,9 +1887,7 @@ def _update_pj1_from_psin_inputs_with_scratch(
     has_beta = not np.isnan(beta)
     integrand_j = source_scratch_1d[_SLOT_INTEGRAND]
     product_into(integrand_j, current_input, S_r)
-    corrected_integration(
-        out_psin_r, integrand_j, integration_matrix, 1, rho, differentiation_matrix
-    )
+    full_integration(out_psin_r, integrand_j, odd_integration_matrix)
     I_tor_prof = source_scratch_1d[_SLOT_AUX0]
     copy_into(I_tor_prof, out_psin_r)
     _enforce_axis_quadratic_itor(I_tor_prof, rho)
@@ -1879,7 +1907,7 @@ def _update_pj1_from_psin_inputs_with_scratch(
     alpha2 = dot(itor_over_kn, weights)
     scaled_ratio_into(out_psin_r, I_tor, Kn, 1.0 / (2.0 * np.pi * alpha2))
     corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
-    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    _update_psin_coordinate(out_psin, out_psin_r, even_integration_matrix)
     psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
     maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
     if has_beta:
@@ -1928,6 +1956,8 @@ def _update_pj2_from_rho_inputs_with_scratch(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -1945,7 +1975,7 @@ def _update_pj2_from_rho_inputs_with_scratch(
     has_beta = not np.isnan(beta)
     integrand = source_scratch_1d[_SLOT_INTEGRAND]
     scaled_product_ratio_into(integrand, Ln_r, current_input, F, 1.0)
-    corrected_integration(out_psin_r, integrand, integration_matrix, 1, rho, differentiation_matrix)
+    full_integration(out_psin_r, integrand, odd_integration_matrix)
     integral_val = source_scratch_1d[_SLOT_AUX0]
     copy_into(integral_val, out_psin_r)
     I_tor = source_scratch_1d[_SLOT_AUX1]
@@ -1958,7 +1988,7 @@ def _update_pj2_from_rho_inputs_with_scratch(
     alpha2 = dot(itor_over_kn, weights)
     scaled_ratio_into(out_psin_r, I_tor, Kn, 1.0 / (2.0 * np.pi * alpha2))
     corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
-    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    _update_psin_coordinate(out_psin, out_psin_r, even_integration_matrix)
     psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
     maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
     if has_beta:
@@ -2000,6 +2030,8 @@ def _update_pq_from_rho_inputs_with_scratch(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -2026,7 +2058,7 @@ def _update_pq_from_rho_inputs_with_scratch(
     alpha2 = dot(integrand_alpha2, weights)
     scaled_product_ratio_into(out_psin_r, F, Ln_r, q_prof, 1.0 / alpha2)
     corrected_linear_derivative(out_psin_rr, out_psin_r, differentiation_matrix, rho=rho)
-    _update_psin_coordinate(out_psin, out_psin_r, integration_matrix, rho, differentiation_matrix)
+    _update_psin_coordinate(out_psin, out_psin_r, even_integration_matrix)
     psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
     maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
     if has_beta:

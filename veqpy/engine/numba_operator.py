@@ -231,6 +231,8 @@ def _call_source_kernel_with_scratch(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -252,6 +254,8 @@ def _call_source_kernel_with_scratch(
         weights,
         differentiation_matrix,
         integration_matrix,
+        odd_integration_matrix,
+        even_integration_matrix,
         rho,
         radial_workspace,
         surface_workspace,
@@ -283,6 +287,8 @@ def _run_fixed_point_linear_with_scratch_impl(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -315,6 +321,8 @@ def _run_fixed_point_linear_with_scratch_impl(
             weights,
             differentiation_matrix,
             integration_matrix,
+            odd_integration_matrix,
+            even_integration_matrix,
             rho,
             radial_workspace,
             surface_workspace,
@@ -358,6 +366,8 @@ def _run_fixed_point_barycentric_with_scratch_impl(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -391,6 +401,8 @@ def _run_fixed_point_barycentric_with_scratch_impl(
             weights,
             differentiation_matrix,
             integration_matrix,
+            odd_integration_matrix,
+            even_integration_matrix,
             rho,
             radial_workspace,
             surface_workspace,
@@ -438,6 +450,8 @@ def _run_projected_finalize_with_scratch_impl(
     weights: np.ndarray,
     differentiation_matrix: np.ndarray,
     integration_matrix: np.ndarray,
+    odd_integration_matrix: np.ndarray,
+    even_integration_matrix: np.ndarray,
     rho: np.ndarray,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
@@ -478,6 +492,8 @@ def _run_projected_finalize_with_scratch_impl(
             weights,
             differentiation_matrix,
             integration_matrix,
+            odd_integration_matrix,
+            even_integration_matrix,
             rho,
             radial_workspace,
             surface_workspace,
@@ -781,6 +797,8 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
     weights = static_layout.weights
     differentiation_matrix = static_layout.differentiation_matrix
     integration_matrix = static_layout.integration_matrix
+    odd_integration_matrix = static_layout.odd_integration_matrix
+    even_integration_matrix = static_layout.even_integration_matrix
     root_fields = runtime_layout.root_fields
     hot_runtime_binding = backend_abi.build_fused_hot_runtime_abi(
         backend_state=backend_state,
@@ -834,6 +852,8 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
                 weights,
                 differentiation_matrix,
                 integration_matrix,
+                odd_integration_matrix,
+                even_integration_matrix,
                 rho,
                 radial_workspace,
                 surface_workspace,
@@ -863,6 +883,8 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
                 weights,
                 differentiation_matrix,
                 integration_matrix,
+                odd_integration_matrix,
+                even_integration_matrix,
                 rho,
                 radial_workspace,
                 surface_workspace,
@@ -895,6 +917,8 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
             weights,
             differentiation_matrix,
             integration_matrix,
+            odd_integration_matrix,
+            even_integration_matrix,
             rho,
             radial_workspace,
             surface_workspace,
@@ -945,6 +969,8 @@ def _bind_source_eval_runner_for_fused_backend(
                 source_eval_binding.weights,
                 source_eval_binding.differentiation_matrix,
                 source_eval_binding.integration_matrix,
+                source_eval_binding.odd_integration_matrix,
+                source_eval_binding.even_integration_matrix,
                 source_eval_binding.rho,
                 source_eval_binding.radial_workspace,
                 source_eval_binding.surface_workspace,
@@ -964,6 +990,8 @@ def _bind_source_eval_runner_for_fused_backend(
             source_eval_binding.weights,
             source_eval_binding.differentiation_matrix,
             source_eval_binding.integration_matrix,
+            source_eval_binding.odd_integration_matrix,
+            source_eval_binding.even_integration_matrix,
             source_eval_binding.rho,
             source_eval_binding.radial_workspace,
             source_eval_binding.surface_workspace,
@@ -999,6 +1027,8 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
     weights = static_layout.weights
     differentiation_matrix = static_layout.differentiation_matrix
     integration_matrix = static_layout.integration_matrix
+    odd_integration_matrix = static_layout.odd_integration_matrix
+    even_integration_matrix = static_layout.even_integration_matrix
     root_fields = runtime_layout.root_fields
     hot_runtime_binding = backend_abi.build_fused_hot_runtime_abi(
         backend_state=backend_state,
@@ -1054,6 +1084,8 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
                 weights,
                 differentiation_matrix,
                 integration_matrix,
+                odd_integration_matrix,
+                even_integration_matrix,
                 rho,
                 radial_workspace,
                 surface_workspace,
@@ -1083,6 +1115,8 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
                 weights,
                 differentiation_matrix,
                 integration_matrix,
+                odd_integration_matrix,
+                even_integration_matrix,
                 rho,
                 radial_workspace,
                 surface_workspace,
@@ -1115,6 +1149,8 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
             weights,
             differentiation_matrix,
             integration_matrix,
+            odd_integration_matrix,
+            even_integration_matrix,
             rho,
             radial_workspace,
             surface_workspace,
