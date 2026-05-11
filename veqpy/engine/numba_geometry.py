@@ -26,12 +26,12 @@ def update_geometry_hot(
     Z0: float,
     rho: np.ndarray,
     theta: np.ndarray,
-    cos_ktheta: np.ndarray,
-    sin_ktheta: np.ndarray,
-    k_cos_ktheta: np.ndarray,
-    k_sin_ktheta: np.ndarray,
-    k2_cos_ktheta: np.ndarray,
-    k2_sin_ktheta: np.ndarray,
+    cos_mtheta: np.ndarray,
+    sin_mtheta: np.ndarray,
+    m_cos_mtheta: np.ndarray,
+    m_sin_mtheta: np.ndarray,
+    m2_cos_mtheta: np.ndarray,
+    m2_sin_mtheta: np.ndarray,
     h_fields: np.ndarray,
     v_fields: np.ndarray,
     k_fields: np.ndarray,
@@ -60,8 +60,8 @@ def update_geometry_hot(
     theta_scale = 2.0 * np.pi / nt
     mean_scale = 1.0 / nt
     two_pi = 2.0 * np.pi
-    c_limit = min(c_active_order + 1, c_fields.shape[0], cos_ktheta.shape[0])
-    s_limit = min(s_active_order + 1, s_fields.shape[0], sin_ktheta.shape[0])
+    c_limit = min(c_active_order + 1, c_fields.shape[0], cos_mtheta.shape[0])
+    s_limit = min(s_active_order + 1, s_fields.shape[0], sin_mtheta.shape[0])
     for i in range(nr):
         rho_i = rho[i]
         h_i = h_fields[0, i]
@@ -83,8 +83,8 @@ def update_geometry_hot(
         sum_JdivR = 0.0
 
         for j in range(nt):
-            sin_t = sin_ktheta[1, j]
-            cos_t = cos_ktheta[1, j]
+            sin_t = sin_mtheta[1, j]
+            cos_t = cos_mtheta[1, j]
 
             tb_ij = theta[j] + c0_i
             tb_r_ij = c0_r_i
@@ -94,9 +94,9 @@ def update_geometry_hot(
             tb_tt_ij = 0.0
 
             for order in range(1, c_limit):
-                cos_kt = cos_ktheta[order, j]
-                k_sin_kt = k_sin_ktheta[order, j]
-                k2_cos_kt = k2_cos_ktheta[order, j]
+                cos_kt = cos_mtheta[order, j]
+                k_sin_kt = m_sin_mtheta[order, j]
+                k2_cos_kt = m2_cos_mtheta[order, j]
                 c_i = c_fields[order, 0, i]
                 c_r_i = c_fields[order, 1, i]
                 c_rr_i = c_fields[order, 2, i]
@@ -109,9 +109,9 @@ def update_geometry_hot(
                 tb_tt_ij -= c_i * k2_cos_kt
 
             for order in range(1, s_limit):
-                sin_kt = sin_ktheta[order, j]
-                k_cos_kt = k_cos_ktheta[order, j]
-                k2_sin_kt = k2_sin_ktheta[order, j]
+                sin_kt = sin_mtheta[order, j]
+                k_cos_kt = m_cos_mtheta[order, j]
+                k2_sin_kt = m2_sin_mtheta[order, j]
                 s_i = s_fields[order, 0, i]
                 s_r_i = s_fields[order, 1, i]
                 s_rr_i = s_fields[order, 2, i]

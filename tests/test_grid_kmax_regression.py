@@ -38,7 +38,7 @@ def test_grid_owns_fourier_radial_power_cap() -> None:
     grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=5, K_max=2)
 
     assert grid.K_max == 2
-    np.testing.assert_array_equal(grid.fourier_radial_powers, np.array([0, 1, 2, 2, 2, 2]))
+    np.testing.assert_array_equal(grid.K_values, np.array([0, 1, 2, 2, 2, 2]))
     assert grid.rho_powers.shape == (4, 8)
     np.testing.assert_allclose(grid.rho_powers[3], grid.rho**3)
     assert grid.resolve_fourier_power(5) == 2

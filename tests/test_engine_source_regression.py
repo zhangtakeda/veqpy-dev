@@ -2,8 +2,8 @@ import ast
 from pathlib import Path
 
 
-def test_psin_coordinate_update_uses_linear_axis_integration_matrix():
-    """psin_r is axis-linear, so route kernels must integrate it with p=1/odd Q."""
+def test_psin_coordinate_update_uses_base_accumulator():
+    """Route kernels should integrate psin_r with the base grid integration matrix."""
 
     source = Path("veqpy/engine/numba_source.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -20,4 +20,4 @@ def test_psin_coordinate_update_uses_linear_axis_integration_matrix():
         call_args.append(ast.unparse(node.args[2]))
 
     assert call_args
-    assert set(call_args) == {"odd_integration_matrix"}
+    assert set(call_args) == {"accumulator"}

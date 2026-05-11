@@ -14,7 +14,6 @@ Notes:
 - 不负责 source route, residual 组装, 或 solver runtime 状态.
 """
 
-import warnings
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -28,11 +27,7 @@ from veqpy.engine import (
     full_differentiation,
     full_integration,
 )
-from veqpy.math.calculus import (
-    corrected_differentiation_matrix,
-    corrected_integration_matrix,
-    make_calculus,
-)
+from veqpy.math.calculus import make_calculus
 from veqpy.math.fast import colwise_weighted_sum_into, dot, rowwise_sum_into
 from veqpy.math.quadrature import available_quadrature_schemes, make_quadrature
 
@@ -50,28 +45,24 @@ class Grid(Serial):
     calculus: str = "spectral"
 
     rho: np.ndarray = field(init=False)
-    rho_powers: np.ndarray = field(init=False)
-    fourier_radial_powers: np.ndarray = field(init=False)
     theta: np.ndarray = field(init=False)
-    cos_ktheta: np.ndarray = field(init=False)
-    sin_ktheta: np.ndarray = field(init=False)
-    k_cos_ktheta: np.ndarray = field(init=False)
-    k_sin_ktheta: np.ndarray = field(init=False)
-    k2_cos_ktheta: np.ndarray = field(init=False)
-    k2_sin_ktheta: np.ndarray = field(init=False)
-
-    weights: np.ndarray = field(init=False)
-    integration_matrix: np.ndarray = field(init=False, default=None)
-    differentiation_matrix: np.ndarray = field(init=False, default=None)
-    odd_integration_matrix: np.ndarray = field(init=False, default=None)
-    even_integration_matrix: np.ndarray = field(init=False, default=None)
-    odd_differentiation_matrix: np.ndarray = field(init=False, default=None)
-    even_differentiation_matrix: np.ndarray = field(init=False, default=None)
-    ff_r_regularization_matrix: np.ndarray = field(init=False, default=None)
 
     x: np.ndarray = field(init=False)
     y: np.ndarray = field(init=False)
+    rho_powers: np.ndarray = field(init=False)
+    K_values: np.ndarray = field(init=False)
     T_fields: np.ndarray = field(init=False)
+
+    cos_mtheta: np.ndarray = field(init=False)
+    sin_mtheta: np.ndarray = field(init=False)
+    m_cos_mtheta: np.ndarray = field(init=False)
+    m_sin_mtheta: np.ndarray = field(init=False)
+    m2_cos_mtheta: np.ndarray = field(init=False)
+    m2_sin_mtheta: np.ndarray = field(init=False)
+
+    differentiator: np.ndarray = field(init=False, default=None)
+    accumulator: np.ndarray = field(init=False, default=None)
+    quadrature: np.ndarray = field(init=False)
 
     @classmethod
     def serial_attributes(cls) -> dict[str, type]:
@@ -96,13 +87,6 @@ class Grid(Serial):
         calculus = "compact" if self.calculus is None else self.calculus.lower()
         object.__setattr__(self, "calculus", calculus)
 
-        if scheme == "lobatto":
-            warnings.warn(
-                "'lobatto' grid scheme is deprecated.",
-                FutureWarning,
-                stacklevel=2,
-            )
-
         if self.Nr < 4:
             raise ValueError("Nr must be at least 4 for stable spectral methods")
         if self.Nt < 1:
@@ -114,20 +98,20 @@ class Grid(Serial):
         K_max = _normalize_fourier_power_K_max(self.K_max)
         object.__setattr__(self, "K_max", K_max)
 
-        rho, weights = make_quadrature(self.Nr, scheme=scheme)
+        rho, quadrature = make_quadrature(self.Nr, scheme=scheme)
         theta = np.linspace(0.0, 2.0 * np.pi, self.Nt, endpoint=False)
         harmonics = np.arange(self.M_max + 1, dtype=np.float64)[:, None]
         ktheta = harmonics * theta[None, :]
-        cos_ktheta = np.cos(ktheta)
-        sin_ktheta = np.sin(ktheta)
-        k_cos_ktheta = harmonics * cos_ktheta
-        k_sin_ktheta = harmonics * sin_ktheta
+        cos_mtheta = np.cos(ktheta)
+        sin_mtheta = np.sin(ktheta)
+        m_cos_mtheta = harmonics * cos_mtheta
+        m_sin_mtheta = harmonics * sin_mtheta
         k2 = harmonics * harmonics
-        k2_cos_ktheta = k2 * cos_ktheta
-        k2_sin_ktheta = k2 * sin_ktheta
+        m2_cos_mtheta = k2 * cos_mtheta
+        m2_sin_mtheta = k2 * sin_mtheta
         rho2 = rho * rho
-        fourier_radial_powers = _build_fourier_radial_powers(self.M_max, K_max)
-        max_rho_power = max(2, int(np.max(fourier_radial_powers)) + 1)
+        K_values = _build_K_values(self.M_max, K_max)
+        max_rho_power = max(2, int(np.max(K_values)) + 1)
         rho_powers = np.empty((max_rho_power + 1, self.Nr), dtype=np.float64)
         rho_powers[0].fill(1.0)
         for power in range(1, max_rho_power + 1):
@@ -135,41 +119,20 @@ class Grid(Serial):
         x = 2.0 * rho2 - 1.0
         y = 1.0 - rho2
 
-        integration_matrix, differentiation_matrix = make_calculus(
+        accumulator, differentiator = make_calculus(
             rho,
             calculus=calculus,
         )
-        odd_integration_matrix = corrected_integration_matrix(
-            rho,
-            differentiation_matrix,
-            p=1,
-        )
-        even_integration_matrix = corrected_integration_matrix(
-            rho,
-            differentiation_matrix,
-            p=2,
-        )
-        corrected_linear_derivative = corrected_differentiation_matrix(
-            rho,
-            differentiation_matrix,
-            p=1,
-        )
-        corrected_even_derivative = corrected_differentiation_matrix(
-            rho,
-            differentiation_matrix,
-            p=2,
-        )
-        ff_r_regularization_matrix = _build_ff_r_regularization_matrix(rho)
 
         T_fields = _build_chebyshev_tables(rho, x, self.L_max)
 
         trig_tables = (
-            np.asarray(cos_ktheta, dtype=np.float64),
-            np.asarray(sin_ktheta, dtype=np.float64),
-            np.asarray(k_cos_ktheta, dtype=np.float64),
-            np.asarray(k_sin_ktheta, dtype=np.float64),
-            np.asarray(k2_cos_ktheta, dtype=np.float64),
-            np.asarray(k2_sin_ktheta, dtype=np.float64),
+            np.asarray(cos_mtheta, dtype=np.float64),
+            np.asarray(sin_mtheta, dtype=np.float64),
+            np.asarray(m_cos_mtheta, dtype=np.float64),
+            np.asarray(m_sin_mtheta, dtype=np.float64),
+            np.asarray(m2_cos_mtheta, dtype=np.float64),
+            np.asarray(m2_sin_mtheta, dtype=np.float64),
         )
         for table in trig_tables:
             table.flags.writeable = False
@@ -177,57 +140,23 @@ class Grid(Serial):
         object.__setattr__(self, "rho", np.asarray(rho, dtype=np.float64))
         rho_powers.flags.writeable = False
         object.__setattr__(self, "rho_powers", rho_powers)
-        fourier_radial_powers.flags.writeable = False
-        object.__setattr__(self, "fourier_radial_powers", fourier_radial_powers)
+        K_values.flags.writeable = False
+        object.__setattr__(self, "K_values", K_values)
         object.__setattr__(self, "theta", np.asarray(theta, dtype=np.float64))
-        object.__setattr__(self, "cos_ktheta", trig_tables[0])
-        object.__setattr__(self, "sin_ktheta", trig_tables[1])
-        object.__setattr__(self, "k_cos_ktheta", trig_tables[2])
-        object.__setattr__(self, "k_sin_ktheta", trig_tables[3])
-        object.__setattr__(self, "k2_cos_ktheta", trig_tables[4])
-        object.__setattr__(self, "k2_sin_ktheta", trig_tables[5])
-        object.__setattr__(self, "weights", np.asarray(weights, dtype=np.float64))
-        object.__setattr__(
-            self, "integration_matrix", np.asarray(integration_matrix, dtype=np.float64)
-        )
-        object.__setattr__(
-            self, "differentiation_matrix", np.asarray(differentiation_matrix, dtype=np.float64)
-        )
-        object.__setattr__(
-            self,
-            "odd_integration_matrix",
-            np.asarray(odd_integration_matrix, dtype=np.float64),
-        )
-        object.__setattr__(
-            self,
-            "even_integration_matrix",
-            np.asarray(even_integration_matrix, dtype=np.float64),
-        )
-        object.__setattr__(
-            self,
-            "odd_differentiation_matrix",
-            np.asarray(corrected_linear_derivative, dtype=np.float64),
-        )
-        object.__setattr__(
-            self,
-            "even_differentiation_matrix",
-            np.asarray(corrected_even_derivative, dtype=np.float64),
-        )
-        object.__setattr__(
-            self,
-            "ff_r_regularization_matrix",
-            np.asarray(ff_r_regularization_matrix, dtype=np.float64),
-        )
+        object.__setattr__(self, "cos_mtheta", trig_tables[0])
+        object.__setattr__(self, "sin_mtheta", trig_tables[1])
+        object.__setattr__(self, "m_cos_mtheta", trig_tables[2])
+        object.__setattr__(self, "m_sin_mtheta", trig_tables[3])
+        object.__setattr__(self, "m2_cos_mtheta", trig_tables[4])
+        object.__setattr__(self, "m2_sin_mtheta", trig_tables[5])
+        object.__setattr__(self, "quadrature", np.asarray(quadrature, dtype=np.float64))
+        object.__setattr__(self, "accumulator", np.asarray(accumulator, dtype=np.float64))
+        object.__setattr__(self, "differentiator", np.asarray(differentiator, dtype=np.float64))
         object.__setattr__(self, "x", np.asarray(x, dtype=np.float64))
         object.__setattr__(self, "y", np.asarray(y, dtype=np.float64))
         object.__setattr__(self, "T_fields", np.asarray(T_fields, dtype=np.float64))
-        self.integration_matrix.flags.writeable = False
-        self.differentiation_matrix.flags.writeable = False
-        self.odd_integration_matrix.flags.writeable = False
-        self.even_integration_matrix.flags.writeable = False
-        self.odd_differentiation_matrix.flags.writeable = False
-        self.even_differentiation_matrix.flags.writeable = False
-        self.ff_r_regularization_matrix.flags.writeable = False
+        self.accumulator.flags.writeable = False
+        self.differentiator.flags.writeable = False
 
     def __rich__(self):
         tree = Tree("[bold blue]Grid[/]")
@@ -256,7 +185,7 @@ class Grid(Serial):
         if order <= 0:
             return 0
         if order <= self.M_max:
-            return int(self.fourier_radial_powers[order])
+            return int(self.K_values[order])
         if self.K_max is None:
             return order
         return min(order, int(self.K_max))
@@ -273,64 +202,29 @@ class Grid(Serial):
     def T_rr(self) -> np.ndarray:
         return self.T_fields[2]
 
-    def differentiate(self, f_1D: np.ndarray, *, out: np.ndarray | None = None) -> np.ndarray:
+    def differentiate(
+        self,
+        f_1D: np.ndarray,
+        *,
+        out: np.ndarray | None = None,
+    ) -> np.ndarray:
         """在当前 Grid 上对 1D 场做谱微分."""
         if out is None:
             out = np.empty_like(f_1D)
-        return full_differentiation(out, f_1D, self.differentiation_matrix)
+        return full_differentiation(out, f_1D, self.differentiator)
+
+    def accumulate(
+        self,
+        f_1D: np.ndarray,
+        *,
+        out: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """在当前 Grid 上对 1D 场做前缀积分。"""
+        if out is None:
+            out = np.empty_like(f_1D)
+        return full_integration(out, f_1D, self.accumulator)
 
     def integrate(
-        self, f_1D: np.ndarray, *, p: int | None = None, out: np.ndarray | None = None
-    ) -> np.ndarray:
-        """在当前 Grid 上对 1D 场做积分."""
-        if out is None:
-            out = np.empty_like(f_1D)
-        if p is None:
-            return full_integration(out, f_1D, self.integration_matrix)
-        if p == 1:
-            np.matmul(self.odd_integration_matrix, f_1D, out=out)
-            return out
-        if p == 2:
-            np.matmul(self.even_integration_matrix, f_1D, out=out)
-            return out
-
-        matrix = corrected_integration_matrix(
-            self.rho,
-            self.differentiation_matrix,
-            p=p,
-        )
-        np.matmul(matrix, f_1D, out=out)
-        return out
-
-    def corrected_linear_derivative(
-        self, f_1D: np.ndarray, *, out: np.ndarray | None = None
-    ) -> np.ndarray:
-        """在当前 Grid 上对轴心线性起始量做预计算修正微分."""
-        if out is None:
-            out = np.empty_like(f_1D)
-        np.matmul(self.odd_differentiation_matrix, f_1D, out=out)
-        return out
-
-    def corrected_even_derivative(
-        self, f_1D: np.ndarray, *, out: np.ndarray | None = None
-    ) -> np.ndarray:
-        """在当前 Grid 上对轴心偶函数量做预计算修正微分."""
-        if out is None:
-            out = np.empty_like(f_1D)
-        if not np.all(np.isfinite(f_1D)):
-            out.fill(0.0)
-            return out
-        np.matmul(self.even_differentiation_matrix, f_1D, out=out)
-        return out
-
-    def regularize_ff_r(self, f_1D: np.ndarray, *, out: np.ndarray | None = None) -> np.ndarray:
-        """将 FF_r 投影到共享的轴心/边界正则基底上."""
-        if out is None:
-            out = np.empty_like(f_1D)
-        np.matmul(self.ff_r_regularization_matrix, f_1D, out=out)
-        return out
-
-    def quadrature(
         self,
         f: np.ndarray,
         *,
@@ -341,11 +235,11 @@ class Grid(Serial):
         if out is None:
             if axis is None:
                 if f.ndim == 1:
-                    return dot(f, self.weights)
+                    return dot(f, self.quadrature)
                 if f.ndim != 2:
                     raise ValueError(f"Expected a 1D or 2D array, got shape {f.shape}")
                 scratch = np.empty(f.shape[1], dtype=f.dtype)
-                colwise_weighted_sum_into(scratch, f, self.weights)
+                colwise_weighted_sum_into(scratch, f, self.quadrature)
                 total = 0.0
                 for j in range(f.shape[1]):
                     total += scratch[j]
@@ -361,7 +255,7 @@ class Grid(Serial):
                 raise ValueError(f"Unsupported quadrature axis {axis}")
 
         if axis == RHO_AXIS:
-            colwise_weighted_sum_into(out, f, self.weights)
+            colwise_weighted_sum_into(out, f, self.quadrature)
         elif axis == THETA_AXIS:
             nt = f.shape[1]
             rowwise_sum_into(out, f)
@@ -369,12 +263,6 @@ class Grid(Serial):
         else:
             raise ValueError(f"Unsupported quadrature axis {axis}")
         return out
-
-
-def _build_ff_r_regularization_matrix(rho: np.ndarray, *, degree: int = 3) -> np.ndarray:
-    s = np.asarray(rho, dtype=np.float64) ** 2
-    basis = np.column_stack([rho * (1.0 - s) * (s**k) for k in range(degree + 1)])
-    return basis @ np.linalg.pinv(basis)
 
 
 def _normalize_fourier_power_K_max(value: int | None) -> int | None:
@@ -387,7 +275,7 @@ def _normalize_fourier_power_K_max(value: int | None) -> int | None:
     return K_max
 
 
-def _build_fourier_radial_powers(M_max: int, K_max: int | None) -> np.ndarray:
+def _build_K_values(M_max: int, K_max: int | None) -> np.ndarray:
     powers = np.arange(int(M_max) + 1, dtype=np.int64)
     powers[0] = 0
     if K_max is not None:

@@ -31,7 +31,7 @@ from veqpy.operator import (
 )
 from veqpy.solver import Solver, SolverConfig
 
-PLOT = False
+PLOT = True
 SHOW_PROGRESS = True
 
 # Reference solve: high-resolution baseline used to derive downstream cases.
@@ -39,7 +39,7 @@ REFERENCE_SOURCE_SAMPLE_COUNT = 51
 TEST_SOURCE_SAMPLE_COUNT = 51
 BENCHMARK_REPEAT_COUNT = 100
 SHAPE_MATCH_TOL = 1e-2
-REFERENCE_CACHE_VERSION = 3
+REFERENCE_CACHE_VERSION = 4
 DIAGNOSTIC_SIGN_CHANGE_WINDOW = 12
 MU0 = 4.0e-7 * np.pi
 
@@ -413,6 +413,13 @@ def _reference_cache_signature() -> dict[str, object]:
 def _is_reference_equilibrium_cache_compatible(equilibrium: object) -> bool:
     grid = getattr(equilibrium, "grid", None)
     if grid is None:
+        return False
+    if not isinstance(getattr(grid, "L_max", None), int):
+        return False
+    if not isinstance(getattr(grid, "M_max", None), int):
+        return False
+    K_max = getattr(grid, "K_max", None)
+    if K_max is not None and not isinstance(K_max, int):
         return False
 
     rho = np.asarray(getattr(grid, "rho", None), dtype=np.float64)

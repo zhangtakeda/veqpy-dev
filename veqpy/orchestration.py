@@ -197,14 +197,14 @@ def build_residual_block_radial_powers(
     profile_names: tuple[str, ...],
     *,
     K_max: int | None = None,
-    fourier_radial_powers: np.ndarray | None = None,
+    K_values: np.ndarray | None = None,
 ) -> np.ndarray:
     radial_powers = np.zeros(len(profile_names), dtype=np.int64)
     for i, name in enumerate(profile_names):
         if name.startswith(("c", "s")) and name[1:].isdigit():
             order = int(name[1:])
-            if fourier_radial_powers is not None and order < fourier_radial_powers.size:
-                radial_powers[i] = int(fourier_radial_powers[order])
+            if K_values is not None and order < K_values.size:
+                radial_powers[i] = int(K_values[order])
             else:
                 radial_powers[i] = resolve_fourier_power(order, K_max)
     return radial_powers
@@ -1001,12 +1001,12 @@ def build_geometry_stage_runner(
     radial_workspace: np.ndarray,
     rho: np.ndarray,
     theta: np.ndarray,
-    cos_ktheta: np.ndarray,
-    sin_ktheta: np.ndarray,
-    k_cos_ktheta: np.ndarray,
-    k_sin_ktheta: np.ndarray,
-    k2_cos_ktheta: np.ndarray,
-    k2_sin_ktheta: np.ndarray,
+    cos_mtheta: np.ndarray,
+    sin_mtheta: np.ndarray,
+    m_cos_mtheta: np.ndarray,
+    m_sin_mtheta: np.ndarray,
+    m2_cos_mtheta: np.ndarray,
+    m2_sin_mtheta: np.ndarray,
 ) -> Callable[[], None]:
     c_effective_order = int(c_effective_order)
     s_effective_order = int(s_effective_order)
@@ -1034,12 +1034,12 @@ def build_geometry_stage_runner(
             Z0,
             rho,
             theta,
-            cos_ktheta,
-            sin_ktheta,
-            k_cos_ktheta,
-            k_sin_ktheta,
-            k2_cos_ktheta,
-            k2_sin_ktheta,
+            cos_mtheta,
+            sin_mtheta,
+            m_cos_mtheta,
+            m_sin_mtheta,
+            m2_cos_mtheta,
+            m2_sin_mtheta,
             h_fields,
             v_fields,
             k_fields,

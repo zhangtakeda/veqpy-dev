@@ -263,7 +263,7 @@ class Operator:
         return np.ravel(sqrt_weights * field).copy()
 
     def _collocation_sqrt_weights(self) -> np.ndarray:
-        radial_weights = np.asarray(self.grid.weights, dtype=np.float64)
+        radial_weights = np.asarray(self.grid.quadrature, dtype=np.float64)
         if radial_weights.ndim != 1 or radial_weights.size != int(self.grid.Nr):
             raise ValueError(f"Invalid radial weights shape {radial_weights.shape}")
         return np.sqrt(radial_weights[:, None] / max(int(self.grid.Nt), 1))
@@ -339,17 +339,15 @@ class Operator:
             T_fields=self.grid.T_fields,
             rho=self.grid.rho,
             theta=self.grid.theta,
-            cos_ktheta=self.grid.cos_ktheta,
-            sin_ktheta=self.grid.sin_ktheta,
-            k_cos_ktheta=self.grid.k_cos_ktheta,
-            k_sin_ktheta=self.grid.k_sin_ktheta,
-            k2_cos_ktheta=self.grid.k2_cos_ktheta,
-            k2_sin_ktheta=self.grid.k2_sin_ktheta,
-            weights=self.grid.weights,
-            differentiation_matrix=self.grid.differentiation_matrix,
-            integration_matrix=self.grid.integration_matrix,
-            odd_integration_matrix=self.grid.odd_integration_matrix,
-            even_integration_matrix=self.grid.even_integration_matrix,
+            cos_mtheta=self.grid.cos_mtheta,
+            sin_mtheta=self.grid.sin_mtheta,
+            m_cos_mtheta=self.grid.m_cos_mtheta,
+            m_sin_mtheta=self.grid.m_sin_mtheta,
+            m2_cos_mtheta=self.grid.m2_cos_mtheta,
+            m2_sin_mtheta=self.grid.m2_sin_mtheta,
+            quadrature=self.grid.quadrature,
+            differentiator=self.grid.differentiator,
+            accumulator=self.grid.accumulator,
             rho_powers=self.grid.rho_powers,
             y=self.grid.y,
         )
@@ -361,7 +359,7 @@ class Operator:
         )
         active_residual_block_radial_powers = orchestration.build_residual_block_radial_powers(
             active_profile_names,
-            fourier_radial_powers=self.grid.fourier_radial_powers,
+            K_values=self.grid.K_values,
         )
         return ResidualBindingLayout(
             active_profile_names=active_profile_names,
@@ -599,12 +597,12 @@ class Operator:
             radial_workspace=self.geometry_radial_workspace,
             rho=self.grid.rho,
             theta=self.grid.theta,
-            cos_ktheta=self.grid.cos_ktheta,
-            sin_ktheta=self.grid.sin_ktheta,
-            k_cos_ktheta=self.grid.k_cos_ktheta,
-            k_sin_ktheta=self.grid.k_sin_ktheta,
-            k2_cos_ktheta=self.grid.k2_cos_ktheta,
-            k2_sin_ktheta=self.grid.k2_sin_ktheta,
+            cos_mtheta=self.grid.cos_mtheta,
+            sin_mtheta=self.grid.sin_mtheta,
+            m_cos_mtheta=self.grid.m_cos_mtheta,
+            m_sin_mtheta=self.grid.m_sin_mtheta,
+            m2_cos_mtheta=self.grid.m2_cos_mtheta,
+            m2_sin_mtheta=self.grid.m2_sin_mtheta,
         )
 
     def _build_bound_source_stage_runner(self) -> Callable:
@@ -622,12 +620,12 @@ class Operator:
         root_fields = self.root_fields
         surface_workspace = self.geometry_surface_workspace
         residual_workspace = self.residual_surface_workspace
-        sin_ktheta = self.grid.sin_ktheta
-        cos_ktheta = self.grid.cos_ktheta
+        sin_mtheta = self.grid.sin_mtheta
+        cos_mtheta = self.grid.cos_mtheta
         rho_powers = self.grid.rho_powers
         y = self.grid.y
         T_fields = self.grid.T_fields
-        weights = self.grid.weights
+        quadrature = self.grid.quadrature
         a = self.case.a
         R0 = self.case.R0
         B0 = self.case.B0
@@ -651,12 +649,12 @@ class Operator:
                 self.active_coeff_index_rows,
                 self.active_lengths,
                 residual_workspace,
-                sin_ktheta,
-                cos_ktheta,
+                sin_mtheta,
+                cos_mtheta,
                 rho_powers,
                 y,
                 T_fields,
-                weights,
+                quadrature,
                 a,
                 R0,
                 B0,
@@ -671,12 +669,12 @@ class Operator:
         root_fields = self.root_fields
         surface_workspace = self.geometry_surface_workspace
         residual_workspace = self.residual_surface_workspace
-        sin_ktheta = self.grid.sin_ktheta
-        cos_ktheta = self.grid.cos_ktheta
+        sin_mtheta = self.grid.sin_mtheta
+        cos_mtheta = self.grid.cos_mtheta
         rho_powers = self.grid.rho_powers
         y = self.grid.y
         T_fields = self.grid.T_fields
-        weights = self.grid.weights
+        quadrature = self.grid.quadrature
         a = self.case.a
         R0 = self.case.R0
         B0 = self.case.B0
@@ -700,12 +698,12 @@ class Operator:
                 self.active_coeff_index_rows,
                 self.active_lengths,
                 residual_workspace,
-                sin_ktheta,
-                cos_ktheta,
+                sin_mtheta,
+                cos_mtheta,
                 rho_powers,
                 y,
                 T_fields,
-                weights,
+                quadrature,
                 a,
                 R0,
                 B0,
@@ -794,11 +792,6 @@ def snapshot_equilibrium_from_runtime(
         profile_index=profile_index,
         profiles_by_name=profiles_by_name,
     )
-    ffn_psin_snapshot = np.asarray(FFn_psin, dtype=np.float64).copy()
-    if _should_regularize_snapshot_ffn_psin(case):
-        ff_r = ffn_psin_snapshot * np.asarray(psin_r, dtype=np.float64)
-        ff_r = grid.regularize_ff_r(ff_r)
-        ffn_psin_snapshot = ff_r / np.maximum(np.asarray(psin_r, dtype=np.float64), 1.0e-10)
     return Equilibrium(
         R0=case.R0,
         Z0=case.Z0,
@@ -807,24 +800,13 @@ def snapshot_equilibrium_from_runtime(
         grid=grid,
         shape_profiles=shape_profiles,
         psin=psin.copy(),
-        FFn_psin=ffn_psin_snapshot,
+        FFn_psin=np.asarray(FFn_psin, dtype=np.float64).copy(),
         Pn_psin=Pn_psin.copy(),
         psin_r=psin_r.copy(),
         psin_rr=psin_rr.copy(),
         alpha1=float(alpha1),
         alpha2=float(alpha2),
     )
-
-
-def _should_regularize_snapshot_ffn_psin(case: OperatorCase) -> bool:
-    has_ip = case.Ip is not None and np.isfinite(case.Ip)
-    if case.route == "PP" and case.nodes == "uniform":
-        return True
-    if case.route == "PJ2" and case.coordinate == "psin" and case.nodes == "uniform":
-        return True
-    if case.route == "PQ" and case.coordinate == "psin" and case.nodes == "uniform" and has_ip:
-        return True
-    return False
 
 
 def snapshot_equilibrium_profiles(

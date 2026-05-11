@@ -255,11 +255,11 @@ class Equilibrium(Reactive, Serial):
 
     @property
     def cos_theta(self) -> np.ndarray:
-        return self.grid.cos_ktheta[1]
+        return self.grid.cos_mtheta[1]
 
     @property
     def sin_theta(self) -> np.ndarray:
-        return self.grid.sin_ktheta[1]
+        return self.grid.sin_mtheta[1]
 
     @property
     def R(self) -> np.ndarray:
@@ -307,43 +307,43 @@ class Equilibrium(Reactive, Serial):
     def S(self) -> np.ndarray:
         """磁面面积 S = -int R*Z_t dtheta."""
         R, Z_t = self.geometry.R, self.geometry.Z_t
-        return -self.grid.quadrature(R * Z_t, axis=1)
+        return -self.grid.integrate(R * Z_t, axis=1)
 
     @property
     def S_r(self) -> np.ndarray:
         """磁面面积微分 S_r = int J dtheta."""
         J = self.geometry.J
-        return self.grid.quadrature(J, axis=1)
+        return self.grid.integrate(J, axis=1)
 
     @property
     def V(self) -> np.ndarray:
         """磁面体积 V = -pi*int R**2*Z_t dtheta."""
         R, Z_t = self.geometry.R, self.geometry.Z_t
-        return -np.pi * self.grid.quadrature(R**2 * Z_t, axis=1)
+        return -np.pi * self.grid.integrate(R**2 * Z_t, axis=1)
 
     @property
     def V_r(self) -> np.ndarray:
         """磁面体积微分 V_r = 2pi * int J*R dtheta."""
         R, J = self.geometry.R, self.geometry.J
-        return (2 * np.pi) * self.grid.quadrature(J * R, axis=1)
+        return (2 * np.pi) * self.grid.integrate(J * R, axis=1)
 
     @property
     def Kn(self) -> np.ndarray:
         """归一化几何因子 Kn = int gttdivJR dtheta/(2pi)."""
         gttdivJR = self.geometry.gttdivJR
-        return self.grid.quadrature(gttdivJR, axis=1) / (2 * np.pi)
+        return self.grid.integrate(gttdivJR, axis=1) / (2 * np.pi)
 
     @property
     def Kn_r(self) -> np.ndarray:
         """Kn 的径向导数."""
         gttdivJR_r = self.geometry.gttdivJR_r
-        return self.grid.quadrature(gttdivJR_r, axis=1) / (2 * np.pi)
+        return self.grid.integrate(gttdivJR_r, axis=1) / (2 * np.pi)
 
     @property
     def Ln_r(self) -> np.ndarray:
         """归一化几何因子 Ln_r = int JdivR dtheta/(2pi)."""
         JdivR = self.geometry.JdivR
-        return self.grid.quadrature(JdivR, axis=1) / (2 * np.pi)
+        return self.grid.integrate(JdivR, axis=1) / (2 * np.pi)
 
     @property
     def FF_r(self) -> np.ndarray:
@@ -357,7 +357,7 @@ class Equilibrium(Reactive, Serial):
     @property
     def F2(self) -> np.ndarray:
         """物理 F^2 剖面."""
-        FF_int = self.grid.integrate(self.FF_r, p=1)
+        FF_int = self.grid.accumulate(self.FF_r)
         return (self.R0 * self.B0) ** 2 + 2.0 * (FF_int - FF_int[-1])
 
     @property
@@ -379,13 +379,13 @@ class Equilibrium(Reactive, Serial):
     @property
     def P(self) -> np.ndarray:
         """物理压强剖面 P."""
-        P_int = self.grid.integrate(self.P_r, p=1)
+        P_int = self.grid.accumulate(self.P_r)
         return P_int - P_int[-1]
 
     @property
     def beta_t(self) -> np.ndarray:
         """环向比压 beta_t = 2*mu0*<P> / B0^2."""
-        P_avg = float(self.grid.quadrature(self.P * self.V_r) / self.grid.quadrature(self.V_r))
+        P_avg = float(self.grid.integrate(self.P * self.V_r) / self.grid.integrate(self.V_r))
         return float(2.0 * MU0 * P_avg / self.B0**2)
 
     @property
@@ -411,7 +411,7 @@ class Equilibrium(Reactive, Serial):
     @property
     def Ip(self) -> np.ndarray:
         """总等离子体电流 Ip (Amps)."""
-        return -self.alpha1 * self.grid.quadrature(self.Gn1) / MU0
+        return -self.alpha1 * self.grid.integrate(self.Gn1) / MU0
 
     @property
     def q(self) -> np.ndarray:
@@ -423,7 +423,7 @@ class Equilibrium(Reactive, Serial):
     @property
     def s(self) -> np.ndarray:
         """磁剪切 s, model-side diagnostic."""
-        q_r = self.grid.corrected_even_derivative(self.q)
+        q_r = self.grid.differentiate(self.q)
         return self.rho * q_r / self.q
 
     @property
@@ -477,7 +477,7 @@ class Equilibrium(Reactive, Serial):
     @property
     def Phi(self) -> np.ndarray:
         """环向磁通 Phi."""
-        return 2.0 * np.pi * self.grid.integrate(self.F * self.Ln_r, p=1)
+        return 2.0 * np.pi * self.grid.accumulate(self.F * self.Ln_r)
 
     def plot(
         self,
@@ -666,8 +666,12 @@ def _plot_equilibrium(
     grid: Grid | None = None,
 ):
     """Render the legacy 6-panel equilibrium summary for one model-side equilibrium."""
-    plot_eq = _build_resampled_equilibrium(equilibrium, grid=grid)
-    fig = _render_equilibrium_summary(equilibrium=plot_eq, plot_residual=plot_residual)
+    surface_equilibrium = _build_resampled_equilibrium(equilibrium, grid=grid)
+    fig = _render_equilibrium_summary(
+        surface_equilibrium=surface_equilibrium,
+        profile_equilibrium=equilibrium,
+        plot_residual=plot_residual,
+    )
 
     if outpath is not None:
         fig.savefig(Path(outpath), dpi=300, facecolor="white")
@@ -872,7 +876,7 @@ def _build_resampled_equilibrium(
         FFn_psin=FFn_psin,
         Pn_psin=Pn_psin,
         psin_r=psin_r,
-        psin_rr=plot_grid.corrected_linear_derivative(psin_r),
+        psin_rr=plot_grid.differentiate(psin_r),
         alpha1=equilibrium.alpha1,
         alpha2=equilibrium.alpha2,
     )
@@ -900,9 +904,13 @@ def _build_comparison_profile_data(
 
 def _render_equilibrium_summary(
     *,
-    equilibrium: Equilibrium,
+    surface_equilibrium: Equilibrium,
+    profile_equilibrium: Equilibrium | None = None,
     plot_residual: bool = False,
 ):
+    if profile_equilibrium is None:
+        profile_equilibrium = surface_equilibrium
+
     if plot_residual:
         fig = plt.figure(figsize=(22, 6.5))
         gs = GridSpec(
@@ -934,12 +942,12 @@ def _render_equilibrium_summary(
             right=0.975,
         )
 
-    panel_a = _build_surface_panel_data(equilibrium)
-    panel_b = _build_shape_panel_data(equilibrium)
-    panel_c = _build_source_panel_data(equilibrium)
-    panel_d = _build_jphi_panel_data(equilibrium)
-    panel_e = _build_current_panel_data(equilibrium)
-    panel_f = _build_safety_panel_data(equilibrium)
+    panel_a = _build_surface_panel_data(surface_equilibrium)
+    panel_b = _build_shape_panel_data(profile_equilibrium)
+    panel_c = _build_source_panel_data(profile_equilibrium)
+    panel_d = _build_jphi_panel_data(surface_equilibrium)
+    panel_e = _build_current_panel_data(profile_equilibrium)
+    panel_f = _build_safety_panel_data(profile_equilibrium)
     _render_panel_a_surfaces(fig.add_subplot(gs[:, 0]), fig, panel_a)
     _render_panel_b_shapes(fig.add_subplot(gs[0, 2]), panel_b)
     _render_panel_c_sources(fig.add_subplot(gs[1, 2]), panel_c)
@@ -947,7 +955,7 @@ def _render_equilibrium_summary(
     _render_panel_e_current_1d(fig.add_subplot(gs[0, 6]), panel_e)
     _render_panel_f_safety(fig.add_subplot(gs[1, 6]), panel_f)
     if plot_residual:
-        panel_g = _build_gs_residual_panel_data(equilibrium)
+        panel_g = _build_gs_residual_panel_data(surface_equilibrium)
         _render_panel_g_gs_residual(fig.add_subplot(gs[:, 8]), fig, panel_g, panel_a["boundary"])
     return fig
 

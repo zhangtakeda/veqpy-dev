@@ -47,17 +47,15 @@ class StaticLayout:
     T_fields: np.ndarray
     rho: np.ndarray
     theta: np.ndarray
-    cos_ktheta: np.ndarray
-    sin_ktheta: np.ndarray
-    k_cos_ktheta: np.ndarray
-    k_sin_ktheta: np.ndarray
-    k2_cos_ktheta: np.ndarray
-    k2_sin_ktheta: np.ndarray
-    weights: np.ndarray
-    differentiation_matrix: np.ndarray
-    integration_matrix: np.ndarray
-    odd_integration_matrix: np.ndarray
-    even_integration_matrix: np.ndarray
+    cos_mtheta: np.ndarray
+    sin_mtheta: np.ndarray
+    m_cos_mtheta: np.ndarray
+    m_sin_mtheta: np.ndarray
+    m2_cos_mtheta: np.ndarray
+    m2_sin_mtheta: np.ndarray
+    quadrature: np.ndarray
+    differentiator: np.ndarray
+    accumulator: np.ndarray
     rho_powers: np.ndarray
     y: np.ndarray
 

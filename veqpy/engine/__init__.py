@@ -16,9 +16,6 @@ from veqpy.engine.numba_source import (
     RHO_AXIS,
     RHO_COORDINATE,
     THETA_AXIS,
-    corrected_even_derivative,
-    corrected_integration,
-    corrected_linear_derivative,
     full_differentiation,
     full_integration,
     validate_route,
@@ -33,7 +30,4 @@ __all__ = [
     "validate_route",
     "full_differentiation",
     "full_integration",
-    "corrected_integration",
-    "corrected_linear_derivative",
-    "corrected_even_derivative",
 ]

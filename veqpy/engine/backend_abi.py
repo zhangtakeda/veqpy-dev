@@ -51,12 +51,12 @@ class FusedHotRuntimeABI:
     geometry_radial_workspace: np.ndarray
     rho: np.ndarray
     theta: np.ndarray
-    cos_ktheta: np.ndarray
-    sin_ktheta: np.ndarray
-    k_cos_ktheta: np.ndarray
-    k_sin_ktheta: np.ndarray
-    k2_cos_ktheta: np.ndarray
-    k2_sin_ktheta: np.ndarray
+    cos_mtheta: np.ndarray
+    sin_mtheta: np.ndarray
+    m_cos_mtheta: np.ndarray
+    m_sin_mtheta: np.ndarray
+    m2_cos_mtheta: np.ndarray
+    m2_sin_mtheta: np.ndarray
     h_fields: np.ndarray
     v_fields: np.ndarray
     k_fields: np.ndarray
@@ -78,12 +78,12 @@ class FusedResidualPackABI:
     active_residual_block_radial_powers: np.ndarray
     active_coeff_index_rows: np.ndarray
     active_lengths: np.ndarray
-    sin_ktheta: np.ndarray
-    cos_ktheta: np.ndarray
+    sin_mtheta: np.ndarray
+    cos_mtheta: np.ndarray
     rho_powers: np.ndarray
     y: np.ndarray
     T_fields: np.ndarray
-    weights: np.ndarray
+    quadrature: np.ndarray
     a: float
     R0: float
     B0: float
@@ -94,11 +94,9 @@ class FusedSourceEvalABI:
     source_kernel: Callable
     scratch_source_kernel: Callable | None
     coordinate_code: int
-    weights: np.ndarray
-    differentiation_matrix: np.ndarray
-    integration_matrix: np.ndarray
-    odd_integration_matrix: np.ndarray
-    even_integration_matrix: np.ndarray
+    quadrature: np.ndarray
+    differentiator: np.ndarray
+    accumulator: np.ndarray
     rho: np.ndarray
     radial_workspace: np.ndarray
     surface_workspace: np.ndarray
@@ -140,12 +138,12 @@ def build_fused_hot_runtime_abi(
         geometry_radial_workspace=runtime_layout.geometry_radial_workspace,
         rho=static_layout.rho,
         theta=static_layout.theta,
-        cos_ktheta=static_layout.cos_ktheta,
-        sin_ktheta=static_layout.sin_ktheta,
-        k_cos_ktheta=static_layout.k_cos_ktheta,
-        k_sin_ktheta=static_layout.k_sin_ktheta,
-        k2_cos_ktheta=static_layout.k2_cos_ktheta,
-        k2_sin_ktheta=static_layout.k2_sin_ktheta,
+        cos_mtheta=static_layout.cos_mtheta,
+        sin_mtheta=static_layout.sin_mtheta,
+        m_cos_mtheta=static_layout.m_cos_mtheta,
+        m_sin_mtheta=static_layout.m_sin_mtheta,
+        m2_cos_mtheta=static_layout.m2_cos_mtheta,
+        m2_sin_mtheta=static_layout.m2_sin_mtheta,
         h_fields=runtime_layout.h_fields,
         v_fields=runtime_layout.v_fields,
         k_fields=runtime_layout.k_fields,
@@ -177,12 +175,12 @@ def build_fused_residual_pack_abi(
         active_residual_block_radial_powers=residual_binding_layout.active_residual_block_radial_powers,
         active_coeff_index_rows=runtime_layout.active_coeff_index_rows,
         active_lengths=runtime_layout.active_lengths,
-        sin_ktheta=static_layout.sin_ktheta,
-        cos_ktheta=static_layout.cos_ktheta,
+        sin_mtheta=static_layout.sin_mtheta,
+        cos_mtheta=static_layout.cos_mtheta,
         rho_powers=static_layout.rho_powers,
         y=static_layout.y,
         T_fields=static_layout.T_fields,
-        weights=static_layout.weights,
+        quadrature=static_layout.quadrature,
         a=a,
         R0=R0,
         B0=B0,
@@ -203,11 +201,9 @@ def build_fused_source_eval_abi(
         source_kernel=source_kernel,
         scratch_source_kernel=resolve_source_scratch_kernel(source_kernel),
         coordinate_code=int(source_plan.coordinate_code),
-        weights=static_layout.weights,
-        differentiation_matrix=static_layout.differentiation_matrix,
-        integration_matrix=static_layout.integration_matrix,
-        odd_integration_matrix=static_layout.odd_integration_matrix,
-        even_integration_matrix=static_layout.even_integration_matrix,
+        quadrature=static_layout.quadrature,
+        differentiator=static_layout.differentiator,
+        accumulator=static_layout.accumulator,
         rho=static_layout.rho,
         radial_workspace=runtime_layout.geometry_radial_workspace,
         surface_workspace=runtime_layout.geometry_surface_workspace,

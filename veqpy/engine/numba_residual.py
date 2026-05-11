@@ -117,8 +117,8 @@ def _run_residual_blocks_packed_precomputed(
     coeff_index_rows: np.ndarray,
     lengths: np.ndarray,
     residual_workspace: np.ndarray,
-    sin_ktheta: np.ndarray,
-    cos_ktheta: np.ndarray,
+    sin_mtheta: np.ndarray,
+    cos_mtheta: np.ndarray,
     rho_powers: np.ndarray,
     y: np.ndarray,
     T_fields: np.ndarray,
@@ -132,7 +132,7 @@ def _run_residual_blocks_packed_precomputed(
     Gpsin_Z = residual_workspace[2]
     Gpsin_R_sin_tb = residual_workspace[3]
     T = T_fields[0]
-    sin_theta = sin_ktheta[1]
+    sin_theta = sin_mtheta[1]
     rho = rho_powers[1]
     rho2 = rho_powers[2]
     nt = G.shape[1]
@@ -159,7 +159,7 @@ def _run_residual_blocks_packed_precomputed(
                 out_packed, coeff_indices, T, scratch, rho, y, weights, base_scale * (-a)
             )
         elif code == 4:
-            rowwise_weighted_sum_into(scratch, Gpsin_R_sin_tb, cos_ktheta[order])
+            rowwise_weighted_sum_into(scratch, Gpsin_R_sin_tb, cos_mtheta[order])
             _project_scaled3(
                 out_packed,
                 coeff_indices,
@@ -171,7 +171,7 @@ def _run_residual_blocks_packed_precomputed(
                 base_scale * (-a),
             )
         elif code == 5:
-            rowwise_weighted_sum_into(scratch, Gpsin_R_sin_tb, sin_ktheta[order])
+            rowwise_weighted_sum_into(scratch, Gpsin_R_sin_tb, sin_mtheta[order])
             _project_scaled3(
                 out_packed,
                 coeff_indices,

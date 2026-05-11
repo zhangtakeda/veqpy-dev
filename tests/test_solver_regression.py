@@ -92,9 +92,9 @@ def _install_fake_attempts(monkeypatch, solver: Solver, scripted_attempts):
     return calls
 
 
-def test_operator_collocation_residual_uses_radial_quadrature_weights(monkeypatch):
+def test_operator_collocation_residual_uses_radial_quadrature(monkeypatch):
     operator = object.__new__(Operator)
-    operator.grid = SimpleNamespace(Nr=2, Nt=3, weights=np.array([0.25, 0.75], dtype=np.float64))
+    operator.grid = SimpleNamespace(Nr=2, Nt=3, quadrature=np.array([0.25, 0.75], dtype=np.float64))
     operator.residual_surface_workspace = np.asarray(
         [
             [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],

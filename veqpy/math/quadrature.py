@@ -26,10 +26,12 @@ Builder = Callable[[int], tuple[np.ndarray, np.ndarray]]
 quadrature_generator: Registry[str, Builder] = Registry(str, Callable)
 
 
-def make_quadrature(n: int, *, scheme: str) -> tuple[np.ndarray, np.ndarray]:
+def make_quadrature(n: int, *, scheme: str | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Build quadrature nodes and weights for a named scheme."""
 
     try:
+        if scheme is None:
+            scheme = list(quadrature_generator)[0]
         builder = quadrature_generator[scheme]
     except KeyError as exc:
         raise ValueError(f"Unknown grid scheme: {scheme}") from exc

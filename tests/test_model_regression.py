@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import orjson
 import pytest
@@ -35,10 +36,59 @@ def test_grid_calculus_string_switches_base_matrices():
 
     assert compact_grid.calculus == "compact"
     assert spectral_grid.calculus == "spectral"
-    assert not np.allclose(
-        compact_grid.differentiation_matrix,
-        spectral_grid.differentiation_matrix,
+    assert np.allclose(
+        compact_grid.differentiator,
+        spectral_grid.differentiator,
     )
+    assert not np.allclose(
+        compact_grid.accumulator,
+        spectral_grid.accumulator,
+    )
+
+
+def test_grid_default_order_keeps_mmax_before_kmax():
+    grid = Grid(Nr=8, Nt=16, scheme="uniform")
+
+    assert grid.L_max == 20
+    assert grid.M_max == 20
+    assert grid.K_max is None
+
+
+def test_equilibrium_plot_profiles_use_unsampled_equilibrium(monkeypatch):
+    equilibrium, _ = _build_high_order_equilibrium()
+    plot_grid = Grid(Nr=12, Nt=24, scheme="uniform", M_max=equilibrium.grid.M_max)
+    captured = {}
+
+    def _capture_summary(*, surface_equilibrium, profile_equilibrium=None, plot_residual=False):
+        captured["surface"] = surface_equilibrium
+        captured["profile"] = profile_equilibrium
+        captured["plot_residual"] = plot_residual
+        return object()
+
+    import veqpy.model.equilibrium as equilibrium_module
+
+    monkeypatch.setattr(equilibrium_module, "_render_equilibrium_summary", _capture_summary)
+
+    fig = equilibrium.plot(grid=plot_grid)
+
+    assert fig is not None
+    assert captured["surface"].grid is plot_grid
+    assert captured["profile"] is equilibrium
+
+
+def test_equilibrium_plot_current_panel_keeps_native_radial_samples():
+    equilibrium, _ = _build_high_order_equilibrium()
+    plot_grid = Grid(Nr=32, Nt=32, scheme="uniform", M_max=equilibrium.grid.M_max)
+
+    fig = equilibrium.plot(grid=plot_grid)
+    try:
+        current_axis = next(ax for ax in fig.axes if ax.get_title().startswith("(e)"))
+        jpara_line = next(line for line in current_axis.lines if line.get_label() == r"$j_\parallel$")
+
+        assert len(jpara_line.get_xdata()) == equilibrium.grid.Nr
+        assert len(jpara_line.get_xdata()) != plot_grid.Nr
+    finally:
+        plt.close(fig)
 
 
 def _build_high_order_equilibrium() -> tuple[Equilibrium, Operator]:
@@ -244,21 +294,21 @@ def test_operator_case_skips_mu0_current_check_for_pq_driver():
 def test_grid_precomputes_fourier_tables_and_rho_powers():
     grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=5)
 
-    assert grid.cos_ktheta.shape == (6, 16)
-    assert grid.sin_ktheta.shape == (6, 16)
-    assert grid.k_cos_ktheta.shape == (6, 16)
-    assert grid.k_sin_ktheta.shape == (6, 16)
-    assert grid.k2_cos_ktheta.shape == (6, 16)
-    assert grid.k2_sin_ktheta.shape == (6, 16)
+    assert grid.cos_mtheta.shape == (6, 16)
+    assert grid.sin_mtheta.shape == (6, 16)
+    assert grid.m_cos_mtheta.shape == (6, 16)
+    assert grid.m_sin_mtheta.shape == (6, 16)
+    assert grid.m2_cos_mtheta.shape == (6, 16)
+    assert grid.m2_sin_mtheta.shape == (6, 16)
     assert grid.rho_powers.shape == (7, 8)
 
     theta = grid.theta
-    assert np.allclose(grid.cos_ktheta[3], np.cos(3.0 * theta))
-    assert np.allclose(grid.sin_ktheta[4], np.sin(4.0 * theta))
-    assert np.allclose(grid.k_cos_ktheta[5], 5.0 * np.cos(5.0 * theta))
-    assert np.allclose(grid.k_sin_ktheta[2], 2.0 * np.sin(2.0 * theta))
-    assert np.allclose(grid.k2_cos_ktheta[3], 9.0 * np.cos(3.0 * theta))
-    assert np.allclose(grid.k2_sin_ktheta[4], 16.0 * np.sin(4.0 * theta))
+    assert np.allclose(grid.cos_mtheta[3], np.cos(3.0 * theta))
+    assert np.allclose(grid.sin_mtheta[4], np.sin(4.0 * theta))
+    assert np.allclose(grid.m_cos_mtheta[5], 5.0 * np.cos(5.0 * theta))
+    assert np.allclose(grid.m_sin_mtheta[2], 2.0 * np.sin(2.0 * theta))
+    assert np.allclose(grid.m2_cos_mtheta[3], 9.0 * np.cos(3.0 * theta))
+    assert np.allclose(grid.m2_sin_mtheta[4], 16.0 * np.sin(4.0 * theta))
     assert np.allclose(grid.rho_powers[0], 1.0)
     assert np.allclose(grid.rho_powers[1], grid.rho)
     assert np.allclose(grid.rho_powers[2], grid.rho**2)
@@ -576,27 +626,21 @@ def test_resampled_equilibrium_preserves_profile_shapes_on_target_grid():
     assert np.all(np.isfinite(resampled.FFn_psin))
 
 
-def test_equilibrium_diagnostics_use_grid_corrected_calculus(monkeypatch):
-    calls = {"integrate": 0, "corrected_even_derivative": 0, "corrected_linear_derivative": 0}
-    original_integrate = Grid.integrate
-    original_corrected_even_derivative = Grid.corrected_even_derivative
-    original_corrected_linear_derivative = Grid.corrected_linear_derivative
+def test_equilibrium_diagnostics_use_grid_base_calculus(monkeypatch):
+    calls = {"accumulate": 0, "differentiate": 0}
+    original_accumulate = Grid.accumulate
+    original_differentiate = Grid.differentiate
 
     def _track_integrate(self, *args, **kwargs):
-        calls["integrate"] += 1
-        return original_integrate(self, *args, **kwargs)
+        calls["accumulate"] += 1
+        return original_accumulate(self, *args, **kwargs)
 
-    def _track_corrected_even_derivative(self, *args, **kwargs):
-        calls["corrected_even_derivative"] += 1
-        return original_corrected_even_derivative(self, *args, **kwargs)
+    def _track_differentiate(self, *args, **kwargs):
+        calls["differentiate"] += 1
+        return original_differentiate(self, *args, **kwargs)
 
-    def _track_corrected_linear_derivative(self, *args, **kwargs):
-        calls["corrected_linear_derivative"] += 1
-        return original_corrected_linear_derivative(self, *args, **kwargs)
-
-    monkeypatch.setattr(Grid, "integrate", _track_integrate)
-    monkeypatch.setattr(Grid, "corrected_even_derivative", _track_corrected_even_derivative)
-    monkeypatch.setattr(Grid, "corrected_linear_derivative", _track_corrected_linear_derivative)
+    monkeypatch.setattr(Grid, "accumulate", _track_integrate)
+    monkeypatch.setattr(Grid, "differentiate", _track_differentiate)
 
     equilibrium, _ = _build_high_order_equilibrium()
 
@@ -607,9 +651,8 @@ def test_equilibrium_diagnostics_use_grid_corrected_calculus(monkeypatch):
     assert np.all(np.isfinite(equilibrium.Psi))
     assert np.all(np.isfinite(equilibrium.Phi))
     equilibrium.resample(Grid(Nr=12, Nt=24, scheme="uniform", M_max=4))
-    assert calls["integrate"] >= 2
-    assert calls["corrected_even_derivative"] >= 1
-    assert calls["corrected_linear_derivative"] >= 1
+    assert calls["accumulate"] >= 2
+    assert calls["differentiate"] >= 2
 
 
 def test_pj2_psin_route_uses_f_profile_parameterization():
@@ -654,7 +697,7 @@ def test_operator_collocation_residual_returns_desc_style_pointwise_force_balanc
     x = operator.encode_initial_state()
 
     residual = operator.residual_collocation(x)
-    sqrt_weights = np.sqrt(grid.weights[:, None] / grid.Nt)
+    sqrt_weights = np.sqrt(grid.quadrature[:, None] / grid.Nt)
     expected = np.concatenate(
         (
             np.ravel(sqrt_weights * operator.residual_surface_workspace[1]),
