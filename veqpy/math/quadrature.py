@@ -21,12 +21,15 @@ from veqpy.base.registry import Registry
 # Public implementation
 # -----------------------------------------------------------------------------
 
-
 Builder = Callable[[int], tuple[np.ndarray, np.ndarray]]
 quadrature_generator: Registry[str, Builder] = Registry(str, Callable)
 
 
-def make_quadrature(n: int, *, scheme: str | None = None) -> tuple[np.ndarray, np.ndarray]:
+def make_quadrature(
+    n: int,
+    *,
+    scheme: str | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
     """Build quadrature nodes and weights for a named scheme."""
 
     try:

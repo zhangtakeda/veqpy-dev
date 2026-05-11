@@ -28,7 +28,7 @@ calculus_generator: Registry[str, CalculusBuilder] = Registry(str, Callable)
 def make_calculus(
     nodes: np.ndarray,
     *,
-    calculus: str,
+    calculus: str | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Build ``(accumulator, differentiator)`` for a calculus scheme."""
 
