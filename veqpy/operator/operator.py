@@ -57,7 +57,6 @@ from veqpy.operator.runtime_layout import (
     StaticLayout,
     allocate_runtime_state,
 )
-from veqpy.orchestration import normalize_fourier_power_K_max, resolve_fourier_power
 
 
 @dataclass(slots=True)
@@ -66,7 +65,6 @@ class Operator:
 
     grid: Grid = field(repr=False)
     case: OperatorCase = field(repr=False)
-    K_max: int | None = None
     static_layout: StaticLayout = field(init=False, repr=False)
     residual_binding_layout: ResidualBindingLayout = field(init=False, repr=False)
     runtime_layout: RuntimeLayout = field(init=False, repr=False)
@@ -131,7 +129,6 @@ class Operator:
 
     def __post_init__(self) -> None:
         """完成 layout 构造, 运行时缓冲区分配和 case 绑定."""
-        self.K_max = normalize_fourier_power_K_max(self.K_max)
         self._refresh_operator_identity()
         self.prefix_profile_names = get_prefix_profile_names()
         self.shape_profile_names = build_shape_profile_names(self.grid.M_max)
@@ -364,7 +361,7 @@ class Operator:
         )
         active_residual_block_radial_powers = orchestration.build_residual_block_radial_powers(
             active_profile_names,
-            K_max=self.K_max,
+            fourier_radial_powers=self.grid.fourier_radial_powers,
         )
         return ResidualBindingLayout(
             active_profile_names=active_profile_names,
@@ -414,6 +411,7 @@ class Operator:
             x_size=self.x_size,
             make_profile=lambda name: make_profile(
                 case=self.case,
+                grid=self.grid,
                 name=name,
                 profile_L=self.profile_L,
                 profile_names=self.profile_names,
@@ -490,7 +488,7 @@ class Operator:
         for name in self.c_profile_names + self.s_profile_names:
             order = int(name[1:])
             self.profile_static_kwargs_by_name[name] = (
-                {} if order == 0 else {"power": resolve_fourier_power(order, self.K_max)}
+                {} if order == 0 else {"power": self.grid.resolve_fourier_power(order)}
             )
         self.profile_offset_specs = dict(orchestration.PROFILE_OFFSET_SPECS)
 

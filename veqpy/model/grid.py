@@ -43,13 +43,15 @@ class Grid(Serial):
 
     Nr: int
     Nt: int
-    M_max: int = 20
     L_max: int = 20
+    M_max: int = 20
+    K_max: int | None = None
     scheme: str = "legendre"
     calculus: str = "spectral"
 
     rho: np.ndarray = field(init=False)
     rho_powers: np.ndarray = field(init=False)
+    fourier_radial_powers: np.ndarray = field(init=False)
     theta: np.ndarray = field(init=False)
     cos_ktheta: np.ndarray = field(init=False)
     sin_ktheta: np.ndarray = field(init=False)
@@ -82,6 +84,7 @@ class Grid(Serial):
             "calculus": str,
             "L_max": int,
             "M_max": int,
+            "K_max": int | None,
         }
 
     def __post_init__(self):
@@ -108,6 +111,8 @@ class Grid(Serial):
             raise ValueError("L_max must be non-negative")
         if self.M_max < 2:
             raise ValueError("M_max must be at least 2")
+        K_max = _normalize_fourier_power_K_max(self.K_max)
+        object.__setattr__(self, "K_max", K_max)
 
         rho, weights = make_quadrature(self.Nr, scheme=scheme)
         theta = np.linspace(0.0, 2.0 * np.pi, self.Nt, endpoint=False)
@@ -121,9 +126,11 @@ class Grid(Serial):
         k2_cos_ktheta = k2 * cos_ktheta
         k2_sin_ktheta = k2 * sin_ktheta
         rho2 = rho * rho
-        rho_powers = np.empty((self.M_max + 2, self.Nr), dtype=np.float64)
+        fourier_radial_powers = _build_fourier_radial_powers(self.M_max, K_max)
+        max_rho_power = max(2, int(np.max(fourier_radial_powers)) + 1)
+        rho_powers = np.empty((max_rho_power + 1, self.Nr), dtype=np.float64)
         rho_powers[0].fill(1.0)
-        for power in range(1, self.M_max + 2):
+        for power in range(1, max_rho_power + 1):
             rho_powers[power] = rho**power
         x = 2.0 * rho2 - 1.0
         y = 1.0 - rho2
@@ -170,6 +177,8 @@ class Grid(Serial):
         object.__setattr__(self, "rho", np.asarray(rho, dtype=np.float64))
         rho_powers.flags.writeable = False
         object.__setattr__(self, "rho_powers", rho_powers)
+        fourier_radial_powers.flags.writeable = False
+        object.__setattr__(self, "fourier_radial_powers", fourier_radial_powers)
         object.__setattr__(self, "theta", np.asarray(theta, dtype=np.float64))
         object.__setattr__(self, "cos_ktheta", trig_tables[0])
         object.__setattr__(self, "sin_ktheta", trig_tables[1])
@@ -226,6 +235,8 @@ class Grid(Serial):
         tree.add(f"Nt: {self.Nt}")
         tree.add(f"scheme: {self.scheme}")
         tree.add(f"calculus: {self.calculus}")
+        if self.K_max is not None:
+            tree.add(f"K_max: {self.K_max}")
         return tree
 
     def __str__(self) -> str:
@@ -238,6 +249,17 @@ class Grid(Serial):
 
     def __repr__(self) -> str:
         return str(self)
+
+    def resolve_fourier_power(self, order: int) -> int:
+        """返回当前 Grid 规则下 Fourier shape profile 的径向 prefactor 幂次."""
+        order = int(order)
+        if order <= 0:
+            return 0
+        if order <= self.M_max:
+            return int(self.fourier_radial_powers[order])
+        if self.K_max is None:
+            return order
+        return min(order, int(self.K_max))
 
     @property
     def T(self) -> np.ndarray:
@@ -353,6 +375,24 @@ def _build_ff_r_regularization_matrix(rho: np.ndarray, *, degree: int = 3) -> np
     s = np.asarray(rho, dtype=np.float64) ** 2
     basis = np.column_stack([rho * (1.0 - s) * (s**k) for k in range(degree + 1)])
     return basis @ np.linalg.pinv(basis)
+
+
+def _normalize_fourier_power_K_max(value: int | None) -> int | None:
+    """Normalize and validate a Fourier radial-power cap owned by Grid."""
+    if value is None:
+        return None
+    K_max = int(value)
+    if K_max < 1:
+        raise ValueError(f"K_max must be None or an integer >= 1, got {value!r}")
+    return K_max
+
+
+def _build_fourier_radial_powers(M_max: int, K_max: int | None) -> np.ndarray:
+    powers = np.arange(int(M_max) + 1, dtype=np.int64)
+    powers[0] = 0
+    if K_max is not None:
+        powers[1:] = np.minimum(powers[1:], int(K_max))
+    return powers
 
 
 def _build_chebyshev_tables(

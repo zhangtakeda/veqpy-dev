@@ -37,7 +37,6 @@ from veqpy.model.geometry import Geometry
 from veqpy.model.geqdsk import Geqdsk
 from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile
-from veqpy.orchestration import resolve_fourier_power
 
 plt.style.use("seaborn-v0_8-paper")
 plt.rcParams.update(
@@ -185,9 +184,9 @@ class Equilibrium(Reactive, Serial):
 
         for name, profile in self.shape_profiles.items():
             setattr(self, f"{name}_profile", profile)
-        self.h_profile = self.shape_profiles.get("h", _build_default_shape_profile("h"))
-        self.v_profile = self.shape_profiles.get("v", _build_default_shape_profile("v"))
-        self.k_profile = self.shape_profiles.get("k", _build_default_shape_profile("k"))
+        self.h_profile = self.shape_profiles.get("h", _build_default_shape_profile("h", self.grid))
+        self.v_profile = self.shape_profiles.get("v", _build_default_shape_profile("v", self.grid))
+        self.k_profile = self.shape_profiles.get("k", _build_default_shape_profile("k", self.grid))
 
         for profile in _unique_profiles(
             (*self.shape_profiles.values(), self.h_profile, self.v_profile, self.k_profile)
@@ -624,10 +623,10 @@ def _normalize_shape_profiles(shape_profiles: dict[str, Profile]) -> dict[str, P
     return {name: profile.copy() for name, profile in shape_profiles.items()}
 
 
-def _build_default_shape_profile(name: str) -> Profile:
+def _build_default_shape_profile(name: str, grid: Grid) -> Profile:
     power = 0
     if name.startswith(("c", "s")) and name[1:].isdigit():
-        power = resolve_fourier_power(int(name[1:]))
+        power = grid.resolve_fourier_power(int(name[1:]))
     return Profile(scale=1.0, power=power, envelope_power=1, offset=0.0, coeff=None)
 
 
@@ -697,6 +696,7 @@ def _compare_equilibrium(
         scheme="uniform",
         L_max=max(reference.grid.L_max, other.grid.L_max),
         M_max=max(reference.grid.M_max, other.grid.M_max),
+        K_max=reference.grid.K_max if reference.grid.K_max == other.grid.K_max else None,
     )
     ref_plot = _build_resampled_equilibrium(reference, grid=compare_grid)
     other_plot = _build_resampled_equilibrium(other, grid=compare_grid)
@@ -823,7 +823,12 @@ def _build_resampled_equilibrium(
 ) -> Equilibrium:
     source_grid = equilibrium.grid
     plot_grid = grid or Grid(
-        Nr=64, Nt=64, scheme="uniform", L_max=source_grid.L_max, M_max=source_grid.M_max
+        Nr=64,
+        Nt=64,
+        scheme="uniform",
+        L_max=source_grid.L_max,
+        M_max=source_grid.M_max,
+        K_max=source_grid.K_max,
     )
 
     psin_r = _resample_profile_linear(

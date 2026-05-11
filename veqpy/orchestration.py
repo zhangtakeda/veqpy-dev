@@ -3,8 +3,8 @@ Module: veqpy.orchestration
 
 Role:
 - Centralize Python-level stage orchestration shared by operator/runtime code.
-- Keep route policy, source materialization, residual metadata, and K_max
-  decisions out of numeric kernels.
+- Keep route policy, source materialization, and residual metadata out of
+  numeric kernels.
 
 Notes:
 - This module assembles and refreshes runtime stages; it does not implement
@@ -194,12 +194,19 @@ def build_residual_block_metadata(profile_names: tuple[str, ...]) -> tuple[np.nd
 
 
 def build_residual_block_radial_powers(
-    profile_names: tuple[str, ...], *, K_max: int | None
+    profile_names: tuple[str, ...],
+    *,
+    K_max: int | None = None,
+    fourier_radial_powers: np.ndarray | None = None,
 ) -> np.ndarray:
     radial_powers = np.zeros(len(profile_names), dtype=np.int64)
     for i, name in enumerate(profile_names):
         if name.startswith(("c", "s")) and name[1:].isdigit():
-            radial_powers[i] = resolve_fourier_power(int(name[1:]), K_max)
+            order = int(name[1:])
+            if fourier_radial_powers is not None and order < fourier_radial_powers.size:
+                radial_powers[i] = int(fourier_radial_powers[order])
+            else:
+                radial_powers[i] = resolve_fourier_power(order, K_max)
     return radial_powers
 
 

@@ -24,7 +24,8 @@ $$
 当前实现对应的运行时约束是:
 
 - `Grid.M_max` 给出可表示的最高 Fourier 阶数
-- `Grid.rho_powers` 保存 `rho^0 .. rho^(K+1)`
+- `Grid.rho_powers` 保存 residual/profile 热路径需要的 `rho^0 .. rho^(K_{\max}^{grid}+1)`，
+  其中 $K_{\max}^{grid}=\max_m K_m$
 - `Grid.cos_ktheta` / `Grid.sin_ktheta` 保存 `k = 0 .. K` 的 Fourier 表
 - `OperatorCase.c_offsets` 保存 `c0 .. cK`
 - `OperatorCase.s_offsets` 保存 `s0 .. sK`，其中 `s0` 恒为 0
@@ -44,7 +45,7 @@ s_n &=\rho^{K_n}\left[s_{n a}+(1-\rho^2)\sum_{l=0}^L s_{n l} T_l(x) \right], \qu
 $$
 
 默认 strong 规则为 $K_m=m$，也就是历史行为。运行时也支持在
-`Operator` 实例上设置径向正则化上限 `K_max`：
+`Grid` 实例上设置径向正则化上限 `K_max`：
 
 $$
 K_m =
@@ -54,19 +55,20 @@ m, & K_{\max}=\text{None}\\
 \end{cases}
 $$
 
-这里 `Grid.M_max` 和 `K_max` 的含义不同：
+这里 `Grid.M_max` 和 `Grid.K_max` 的含义不同：
 
 - `Grid.M_max` 控制最高 Fourier 谐波阶数，即可出现的 `c_m` / `s_m`
-- `K_max` 只控制这些 Fourier profile 的径向正则化幂次上限
+- `Grid.K_max` 只控制这些 Fourier profile 的径向正则化幂次上限
 
-因此 `Operator(..., K_max=2)` 不会删除 `c_3` / `s_4` 等高阶谐波，
+因此 `Grid(..., K_max=2)` 不会删除 `c_3` / `s_4` 等高阶谐波，
 只会把它们的径向 prefactor 从 $\rho^3$ / $\rho^4$ 改为 $\rho^2$。
 除非高阶模式系数退化为零或其它对称退化情形，设置 `K_max` 后的
 materialized profile、geometry 和求解路径结果都应与 `K_max=None`
 不同。
 
-实现上，`K_max` 在 Python 冷路径解析为每个 Fourier profile 的
-`power`，`Profile._prepare_runtime_cache(...)` 预计算 `rp_fields`。
+实现上，`Grid.K_max` 在 Python 冷路径解析为 `Grid.fourier_radial_powers`，
+再为每个 Fourier profile 的 `power` 提供 authority；
+`Profile._prepare_runtime_cache(...)` 预计算 `rp_fields`。
 profile 热核只消费 `rp_fields` / `env_fields` / `offset` / `scale` /
 packed coefficients，不接收 `K_max`，也不按 `K_max` 分支。residual
 路径同样把 Fourier 谐波阶数和径向投影幂次拆开为预计算 metadata：
