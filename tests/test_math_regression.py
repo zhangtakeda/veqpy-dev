@@ -182,7 +182,7 @@ def test_high_order_quadrature_rules_preserve_expected_moments():
     }
 
     for scheme in available_quadrature_schemes():
-        nodes, weights = make_quadrature(scheme, HIGH_ORDER_NODE_COUNT)
+        nodes, weights = make_quadrature(HIGH_ORDER_NODE_COUNT, scheme=scheme)
         assert np.all(np.isfinite(nodes))
         assert np.all(np.isfinite(weights))
         assert np.all(np.diff(nodes) > 0.0)

@@ -109,7 +109,7 @@ class Grid(Serial):
         if self.M_max < 2:
             raise ValueError("M_max must be at least 2")
 
-        rho, weights = _build_rho_and_weights(self.Nr, scheme)
+        rho, weights = make_quadrature(self.Nr, scheme=scheme)
         theta = np.linspace(0.0, 2.0 * np.pi, self.Nt, endpoint=False)
         harmonics = np.arange(self.M_max + 1, dtype=np.float64)[:, None]
         ktheta = harmonics * theta[None, :]
@@ -347,10 +347,6 @@ class Grid(Serial):
         else:
             raise ValueError(f"Unsupported quadrature axis {axis}")
         return out
-
-
-def _build_rho_and_weights(Nr: int, scheme: str) -> tuple[np.ndarray, np.ndarray]:
-    return make_quadrature(scheme, Nr)
 
 
 def _build_ff_r_regularization_matrix(rho: np.ndarray, *, degree: int = 3) -> np.ndarray:
