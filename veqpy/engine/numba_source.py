@@ -760,7 +760,7 @@ def corrected_linear_derivative(
     differentiation_matrix: np.ndarray,
     rho: np.ndarray,
 ) -> np.ndarray:
-    """对轴心奇函数/线性起始量执行修正微分."""
+    """对轴心奇函数/线性起始量执行修正微分。"""
     n = arr.shape[0]
     if n == 0:
         return out
@@ -794,7 +794,7 @@ def corrected_even_derivative(
     differentiation_matrix: np.ndarray,
     rho: np.ndarray,
 ) -> np.ndarray:
-    """对轴心偶函数量执行修正微分."""
+    """对轴心偶函数量执行修正微分。"""
     n = arr.shape[0]
     if n == 0:
         return out

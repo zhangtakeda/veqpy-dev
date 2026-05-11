@@ -6,18 +6,9 @@ Role:
 - Own the registry that selects base integration/differentiation schemes.
 
 Public API:
-- CalculusBuilder
-- make_calculus
-- cfd33_matrices
-- cfd33_differentiation_matrix
-- cfd33_integration_matrix
-- corrected_even_derivative_matrix
+- corrected_differentiation_matrix
 - corrected_integration_matrix
-- corrected_linear_derivative_matrix
-- spectral_differentiation_matrix
-- spectral_integration_matrix
-- uniform_spectral_differentiation_matrix
-- uniform_spectral_integration_matrix
+- make_calculus
 """
 
 import math
@@ -29,8 +20,6 @@ from veqpy.base.registry import Registry
 from veqpy.math.interpolate import barycentric_log_weights, interpolation_matrix
 
 CalculusBuilder = Callable[[np.ndarray], tuple[np.ndarray, np.ndarray]]
-LinearOperator = Callable[[np.ndarray, np.ndarray], None]
-
 calculus_generator: Registry[str, CalculusBuilder] = Registry(str, Callable)
 
 
@@ -45,14 +34,17 @@ def make_calculus(
     if calculus not in calculus_generator:
         available = ", ".join(sorted(calculus_generator.registry))
         raise ValueError(f"Unknown calculus scheme: {calculus}. Available schemes: {available}")
-    return calculus_generator[calculus](np.asarray(nodes, dtype=np.float64))
+    return calculus_generator[calculus](_validated_calculus_nodes(nodes, calculus=calculus))
 
 
 @calculus_generator("compact", "cfd33")
 def compact_cfd33_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Build dense CFD33 compact integration and differentiation matrices."""
 
-    return cfd33_integration_matrix(nodes), cfd33_differentiation_matrix(nodes)
+    return (
+        _cfd33_integration_matrix(nodes),
+        _cfd33_differentiation_matrix(nodes),
+    )
 
 
 @calculus_generator("spectral")
@@ -61,10 +53,13 @@ def spectral_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
     if _has_uniform_spacing(nodes):
         return (
-            uniform_spectral_integration_matrix(nodes.shape[0]),
-            uniform_spectral_differentiation_matrix(nodes.shape[0]),
+            _uniform_spectral_integration_matrix(nodes.shape[0]),
+            _uniform_spectral_differentiation_matrix(nodes.shape[0]),
         )
-    return spectral_integration_matrix(nodes), spectral_differentiation_matrix(nodes)
+    return (
+        _spectral_integration_matrix(nodes),
+        _spectral_differentiation_matrix(nodes),
+    )
 
 
 def corrected_integration_matrix(
@@ -73,43 +68,68 @@ def corrected_integration_matrix(
     *,
     p: int,
 ) -> np.ndarray:
-    """Build the precomputed corrected variable-limit integration matrix."""
+    """Build the precomputed corrected variable-limit integration matrix.
 
-    nodes = np.asarray(nodes, dtype=np.float64)
-    return _linear_operator_matrix(
-        nodes.shape[0],
-        lambda out, arr: _corrected_integration(out, arr, p, nodes, base_differentiation_matrix),
+    The returned matrix represents the corrected integral operator for fixed
+    ``nodes``, ``base_differentiation_matrix``, and radial power ``p``. Any
+    solve happens once at construction; applying the operator is a matvec.
+    """
+
+    nodes = _validated_nodes(nodes, min_size=1)
+    base_differentiation_matrix = _validated_square_matrix(
+        base_differentiation_matrix,
+        size=nodes.shape[0],
+        name="base_differentiation_matrix",
     )
+    rho_safe = np.where(nodes > 1e-10, nodes, 1e-10)
+    system = nodes[:, None] * base_differentiation_matrix
+    system = system.copy()
+    system[np.diag_indices_from(system)] += float(p + 1)
+    rhs_matrix = np.diag(1.0 / (rho_safe**p))
+    matrix = np.linalg.solve(system, rhs_matrix)
+    matrix *= (nodes ** (p + 1))[:, None]
+    return matrix
 
 
-def corrected_linear_derivative_matrix(
-    nodes: np.ndarray, base_differentiation_matrix: np.ndarray
+def corrected_differentiation_matrix(
+    nodes: np.ndarray,
+    base_differentiation_matrix: np.ndarray,
+    *,
+    p: int,
 ) -> np.ndarray:
-    """Build the precomputed corrected derivative matrix for linear-axis data."""
+    """Build the precomputed corrected derivative matrix for radial power ``p``.
 
-    nodes = np.asarray(nodes, dtype=np.float64)
+    This is the single construction path for the real corrected derivative
+    operators. ``p=1`` differentiates data represented as ``rho * q(rho)``;
+    ``p=2`` differentiates data represented as ``axis_value + rho**2 * q(rho)``.
+    """
+
+    nodes = _validated_nodes(nodes, min_size=1)
+    base_differentiation_matrix = _validated_square_matrix(
+        base_differentiation_matrix,
+        size=nodes.shape[0],
+        name="base_differentiation_matrix",
+    )
     return _linear_operator_matrix(
         nodes.shape[0],
-        lambda out, arr: _corrected_linear_derivative(out, arr, base_differentiation_matrix, nodes),
+        lambda out, arr: _corrected_power_derivative(
+            out,
+            arr,
+            p=p,
+            nodes=nodes,
+            base_differentiation_matrix=base_differentiation_matrix,
+        ),
     )
 
 
-def corrected_even_derivative_matrix(
-    nodes: np.ndarray, base_differentiation_matrix: np.ndarray
-) -> np.ndarray:
-    """Build the precomputed corrected derivative matrix for even-axis data."""
-
-    nodes = np.asarray(nodes, dtype=np.float64)
-    return _linear_operator_matrix(
-        nodes.shape[0],
-        lambda out, arr: _corrected_even_derivative(out, arr, base_differentiation_matrix, nodes),
-    )
+# -----------------------------------------------------------------------------
+# Private implementation
+# -----------------------------------------------------------------------------
 
 
-def cfd33_matrices(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _cfd33_matrices(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Build non-uniform CFD33 matrices ``A`` and ``B`` for ``A @ u_r == B @ u``."""
 
-    nodes = _validated_nodes(nodes)
     n = nodes.shape[0]
     a_matrix = np.zeros((n, n), dtype=np.float64)
     b_matrix = np.zeros((n, n), dtype=np.float64)
@@ -139,18 +159,17 @@ def cfd33_matrices(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return a_matrix, b_matrix
 
 
-def cfd33_differentiation_matrix(nodes: np.ndarray) -> np.ndarray:
+def _cfd33_differentiation_matrix(nodes: np.ndarray) -> np.ndarray:
     """Build the dense pre-eliminated CFD33 derivative matrix."""
 
-    a_matrix, b_matrix = cfd33_matrices(nodes)
+    a_matrix, b_matrix = _cfd33_matrices(nodes)
     return np.linalg.solve(a_matrix, b_matrix)
 
 
-def cfd33_integration_matrix(nodes: np.ndarray) -> np.ndarray:
+def _cfd33_integration_matrix(nodes: np.ndarray) -> np.ndarray:
     """Build the dense CFD33 variable-limit integration matrix with ``v(0) == 0``."""
 
-    nodes = _validated_nodes(nodes)
-    a_matrix, b_matrix = cfd33_matrices(nodes)
+    a_matrix, b_matrix = _cfd33_matrices(nodes)
     system = b_matrix.copy()
     rhs_matrix = a_matrix.copy()
 
@@ -160,7 +179,7 @@ def cfd33_integration_matrix(nodes: np.ndarray) -> np.ndarray:
     return np.linalg.solve(system, rhs_matrix)
 
 
-def spectral_differentiation_matrix(nodes: np.ndarray) -> np.ndarray:
+def _spectral_differentiation_matrix(nodes: np.ndarray) -> np.ndarray:
     """Build the polynomial collocation first-derivative matrix."""
 
     nodes = np.asarray(nodes, dtype=np.float64)
@@ -175,7 +194,7 @@ def spectral_differentiation_matrix(nodes: np.ndarray) -> np.ndarray:
     return matrix
 
 
-def uniform_spectral_differentiation_matrix(n: int) -> np.ndarray:
+def _uniform_spectral_differentiation_matrix(n: int) -> np.ndarray:
     """Build the legacy explicit first-derivative matrix on a uniform grid."""
 
     h = 1.0 / (n - 1)
@@ -188,7 +207,7 @@ def uniform_spectral_differentiation_matrix(n: int) -> np.ndarray:
     return matrix
 
 
-def spectral_integration_matrix(nodes: np.ndarray) -> np.ndarray:
+def _spectral_integration_matrix(nodes: np.ndarray) -> np.ndarray:
     """Build the polynomial matrix for integrals from zero to each node."""
 
     nodes = np.asarray(nodes, dtype=np.float64)
@@ -217,7 +236,7 @@ def spectral_integration_matrix(nodes: np.ndarray) -> np.ndarray:
     return np.linalg.lstsq(legendre.T, rhs, rcond=None)[0].T
 
 
-def uniform_spectral_integration_matrix(n: int) -> np.ndarray:
+def _uniform_spectral_integration_matrix(n: int) -> np.ndarray:
     """Build the legacy trapezoidal variable-limit integration matrix."""
 
     h = 1.0 / (n - 1)
@@ -230,17 +249,22 @@ def uniform_spectral_integration_matrix(n: int) -> np.ndarray:
     return matrix
 
 
-def _validated_nodes(nodes: np.ndarray) -> np.ndarray:
+def _validated_nodes(nodes: np.ndarray, *, min_size: int) -> np.ndarray:
     nodes = np.asarray(nodes, dtype=np.float64)
     if nodes.ndim != 1:
         raise ValueError("nodes must be a one-dimensional array")
-    if nodes.shape[0] < 4:
-        raise ValueError("CFD33 requires at least four nodes")
+    if nodes.shape[0] < min_size:
+        raise ValueError(f"require at least {min_size} nodes")
     if not np.all(np.isfinite(nodes)):
         raise ValueError("nodes must be finite")
     if not np.all(np.diff(nodes) > 0.0):
         raise ValueError("nodes must be strictly increasing")
     return nodes
+
+
+def _validated_calculus_nodes(nodes: np.ndarray, *, calculus: str) -> np.ndarray:
+    min_size = 4 if calculus in {"compact", "cfd33"} else 2
+    return _validated_nodes(nodes, min_size=min_size)
 
 
 def _finite_difference_weights(
@@ -262,7 +286,8 @@ def _has_uniform_spacing(nodes: np.ndarray) -> bool:
     return bool(np.all(np.abs(spacing - spacing[0]) < 1.0e-6))
 
 
-def _linear_operator_matrix(n: int, operator: LinearOperator) -> np.ndarray:
+
+def _linear_operator_matrix(n: int, operator: Callable[[np.ndarray, np.ndarray], np.ndarray]) -> np.ndarray:
     matrix = np.empty((n, n), dtype=np.float64)
     basis = np.zeros(n, dtype=np.float64)
     out = np.empty(n, dtype=np.float64)
@@ -274,92 +299,112 @@ def _linear_operator_matrix(n: int, operator: LinearOperator) -> np.ndarray:
     return matrix
 
 
-def _corrected_integration(
+def _corrected_power_derivative(
     out: np.ndarray,
     arr: np.ndarray,
+    *,
     p: int,
     nodes: np.ndarray,
     base_differentiation_matrix: np.ndarray,
 ) -> np.ndarray:
-    rho_safe = np.where(nodes > 1e-10, nodes, 1e-10)
-    q_solution = np.linalg.solve(
-        nodes[:, None] * base_differentiation_matrix
-        + np.eye(nodes.shape[0], dtype=np.float64) * float(p + 1),
-        arr / (rho_safe**p),
+    if p < 1:
+        raise ValueError("p must be positive")
+    if arr.shape[0] == 0:
+        return out
+    if arr.shape[0] == 1:
+        out[0] = 0.0
+        return out
+
+    if p == 1:
+        reduced = np.divide(arr, nodes, out=np.zeros_like(arr), where=nodes > 1e-10)
+        reduced[0] = reduced[1]
+        _regularize_axis_reduced_profile(reduced, nodes)
+
+        reduced_r = base_differentiation_matrix @ reduced
+        _enforce_axis_power_profile(reduced_r, nodes, p=1)
+
+        out[:] = reduced + nodes * reduced_r
+        out[0] = reduced[0]
+        return out
+
+    if p == 2:
+        smooth = np.array(arr, dtype=np.float64, copy=True)
+        _regularize_axis_reduced_profile(smooth, nodes)
+        rho2 = nodes * nodes
+
+        reduced = np.divide(
+            smooth - smooth[0],
+            rho2,
+            out=np.zeros_like(arr),
+            where=rho2 > 1e-10,
+        )
+        reduced[0] = reduced[1]
+        _regularize_axis_reduced_profile(reduced, nodes)
+
+        reduced_r = base_differentiation_matrix @ reduced
+        _enforce_axis_power_profile(reduced_r, nodes, p=1)
+
+        out[:] = 2.0 * nodes * reduced + rho2 * reduced_r
+        out[0] = 0.0
+        return _enforce_axis_power_profile(out, nodes, p=1)
+
+    axis_value = 0.0
+    if p % 2 == 0:
+        axis_value = float(interpolation_matrix(nodes, np.array([0.0], dtype=np.float64))[0] @ arr)
+
+    reduced = np.divide(
+        arr - axis_value,
+        nodes**p,
+        out=np.zeros_like(arr, dtype=np.float64),
+        where=np.abs(nodes) > 1e-10,
     )
-    out[:] = q_solution * (nodes ** (p + 1))
-    return out
-
-
-def _corrected_linear_derivative(
-    out: np.ndarray,
-    arr: np.ndarray,
-    base_differentiation_matrix: np.ndarray,
-    nodes: np.ndarray,
-) -> np.ndarray:
-    if arr.shape[0] <= 1:
-        if arr.shape[0] == 1:
-            out[0] = 0.0
-        return out
-
-    reduced = np.divide(arr, nodes, out=np.zeros_like(arr), where=nodes > 1e-10)
-    reduced[0] = reduced[1]
-    _enforce_axis_even_profile(reduced, nodes)
+    _regularize_axis_reduced_profile(reduced, nodes)
 
     reduced_r = base_differentiation_matrix @ reduced
-    _enforce_axis_linear_profile(reduced_r, nodes)
+    _enforce_axis_power_profile(reduced_r, nodes, p=1)
 
-    out[:] = reduced + nodes * reduced_r
-    out[0] = reduced[0]
-    return out
-
-
-def _corrected_even_derivative(
-    out: np.ndarray,
-    arr: np.ndarray,
-    base_differentiation_matrix: np.ndarray,
-    nodes: np.ndarray,
-) -> np.ndarray:
-    if arr.shape[0] <= 1:
-        if arr.shape[0] == 1:
-            out[0] = 0.0
-        return out
-
-    smooth = np.array(arr, dtype=np.float64, copy=True)
-    _enforce_axis_even_profile(smooth, nodes)
-    rho2 = nodes * nodes
-
-    reduced = np.divide(smooth - smooth[0], rho2, out=np.zeros_like(arr), where=rho2 > 1e-10)
-    reduced[0] = reduced[1]
-    _enforce_axis_even_profile(reduced, nodes)
-
-    reduced_r = base_differentiation_matrix @ reduced
-    _enforce_axis_linear_profile(reduced_r, nodes)
-
-    out[:] = 2.0 * nodes * reduced + rho2 * reduced_r
+    out[:] = p * (nodes ** (p - 1)) * reduced + (nodes**p) * reduced_r
     out[0] = 0.0
-    _enforce_axis_linear_profile(out, nodes)
-    return out
+    return _enforce_axis_power_profile(out, nodes, p=max(p - 1, 1))
 
 
-def _enforce_axis_linear_profile(values: np.ndarray, nodes: np.ndarray) -> np.ndarray:
-    if values.shape[0] < 2 or abs(nodes[1]) < 1e-14:
+def _regularize_axis_reduced_profile(values: np.ndarray, nodes: np.ndarray) -> np.ndarray:
+    if values.shape[0] < 2:
         return values
-    if values.shape[0] >= 3 and abs(nodes[2]) >= 1e-14:
-        values[:2] = values[2] / nodes[2] * nodes[:2]
-        return values
-    values[0] = values[1] * nodes[0] / nodes[1]
-    return values
-
-
-def _enforce_axis_even_profile(values: np.ndarray, nodes: np.ndarray) -> np.ndarray:
     if values.shape[0] < 3:
+        values[0] = values[1]
         return values
     x1 = nodes[1] * nodes[1]
     x2 = nodes[2] * nodes[2]
     if abs(x2 - x1) < 1e-14:
+        values[0] = values[1]
         return values
     slope = (values[2] - values[1]) / (x2 - x1)
-    intercept = values[1] - slope * x1
-    values[:2] = intercept + slope * nodes[:2] * nodes[:2]
+    values[:2] = values[1] + slope * (nodes[:2] * nodes[:2] - x1)
     return values
+
+
+def _enforce_axis_power_profile(values: np.ndarray, nodes: np.ndarray, *, p: int) -> np.ndarray:
+    if values.shape[0] < 2:
+        return values
+    if p <= 1:
+        if abs(nodes[1]) < 1e-14:
+            return values
+        if values.shape[0] >= 3 and abs(nodes[2]) >= 1e-14:
+            values[:2] = values[2] / nodes[2] * nodes[:2]
+            return values
+        values[0] = values[1] * nodes[0] / nodes[1]
+        return values
+    if p % 2 == 0:
+        return _regularize_axis_reduced_profile(values, nodes)
+    values[0] = 0.0
+    return values
+
+def _validated_square_matrix(matrix: np.ndarray, *, size: int, name: str) -> np.ndarray:
+    matrix = np.asarray(matrix, dtype=np.float64)
+    expected_shape = (size, size)
+    if matrix.shape != expected_shape:
+        raise ValueError(f"{name} must have shape {expected_shape}, got {matrix.shape}")
+    if not np.all(np.isfinite(matrix)):
+        raise ValueError(f"{name} must be finite")
+    return matrix

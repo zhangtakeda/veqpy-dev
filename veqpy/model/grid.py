@@ -16,7 +16,6 @@ Notes:
 
 import warnings
 from dataclasses import dataclass, field
-from typing import Literal
 
 import numpy as np
 from rich.console import Console
@@ -26,14 +25,12 @@ from veqpy.base import Serial
 from veqpy.engine import (
     RHO_AXIS,
     THETA_AXIS,
-    corrected_integration,
     full_differentiation,
     full_integration,
 )
 from veqpy.math.calculus import (
-    corrected_even_derivative_matrix,
+    corrected_differentiation_matrix,
     corrected_integration_matrix,
-    corrected_linear_derivative_matrix,
     make_calculus,
 )
 from veqpy.math.fast import colwise_weighted_sum_into, dot, rowwise_sum_into
@@ -64,10 +61,10 @@ class Grid(Serial):
     weights: np.ndarray = field(init=False)
     integration_matrix: np.ndarray = field(init=False, default=None)
     differentiation_matrix: np.ndarray = field(init=False, default=None)
-    corrected_integration_matrix_p1: np.ndarray = field(init=False, default=None)
-    corrected_integration_matrix_p2: np.ndarray = field(init=False, default=None)
-    corrected_linear_derivative_matrix: np.ndarray = field(init=False, default=None)
-    corrected_even_derivative_matrix: np.ndarray = field(init=False, default=None)
+    odd_integration_matrix: np.ndarray = field(init=False, default=None)
+    even_integration_matrix: np.ndarray = field(init=False, default=None)
+    odd_differentiation_matrix: np.ndarray = field(init=False, default=None)
+    even_differentiation_matrix: np.ndarray = field(init=False, default=None)
     ff_r_regularization_matrix: np.ndarray = field(init=False, default=None)
 
     x: np.ndarray = field(init=False)
@@ -135,20 +132,26 @@ class Grid(Serial):
             rho,
             calculus=calculus,
         )
-        corrected_integration_matrix_p1 = corrected_integration_matrix(
+        odd_integration_matrix = corrected_integration_matrix(
             rho,
             differentiation_matrix,
             p=1,
         )
-        corrected_integration_matrix_p2 = corrected_integration_matrix(
+        even_integration_matrix = corrected_integration_matrix(
             rho,
             differentiation_matrix,
             p=2,
         )
-        corrected_linear_derivative = corrected_linear_derivative_matrix(
-            rho, differentiation_matrix
+        corrected_linear_derivative = corrected_differentiation_matrix(
+            rho,
+            differentiation_matrix,
+            p=1,
         )
-        corrected_even_derivative = corrected_even_derivative_matrix(rho, differentiation_matrix)
+        corrected_even_derivative = corrected_differentiation_matrix(
+            rho,
+            differentiation_matrix,
+            p=2,
+        )
         ff_r_regularization_matrix = _build_ff_r_regularization_matrix(rho)
 
         T_fields = _build_chebyshev_tables(rho, x, self.L_max)
@@ -183,22 +186,22 @@ class Grid(Serial):
         )
         object.__setattr__(
             self,
-            "corrected_integration_matrix_p1",
-            np.asarray(corrected_integration_matrix_p1, dtype=np.float64),
+            "odd_integration_matrix",
+            np.asarray(odd_integration_matrix, dtype=np.float64),
         )
         object.__setattr__(
             self,
-            "corrected_integration_matrix_p2",
-            np.asarray(corrected_integration_matrix_p2, dtype=np.float64),
+            "even_integration_matrix",
+            np.asarray(even_integration_matrix, dtype=np.float64),
         )
         object.__setattr__(
             self,
-            "corrected_linear_derivative_matrix",
+            "odd_differentiation_matrix",
             np.asarray(corrected_linear_derivative, dtype=np.float64),
         )
         object.__setattr__(
             self,
-            "corrected_even_derivative_matrix",
+            "even_differentiation_matrix",
             np.asarray(corrected_even_derivative, dtype=np.float64),
         )
         object.__setattr__(
@@ -211,10 +214,10 @@ class Grid(Serial):
         object.__setattr__(self, "T_fields", np.asarray(T_fields, dtype=np.float64))
         self.integration_matrix.flags.writeable = False
         self.differentiation_matrix.flags.writeable = False
-        self.corrected_integration_matrix_p1.flags.writeable = False
-        self.corrected_integration_matrix_p2.flags.writeable = False
-        self.corrected_linear_derivative_matrix.flags.writeable = False
-        self.corrected_even_derivative_matrix.flags.writeable = False
+        self.odd_integration_matrix.flags.writeable = False
+        self.even_integration_matrix.flags.writeable = False
+        self.odd_differentiation_matrix.flags.writeable = False
+        self.even_differentiation_matrix.flags.writeable = False
         self.ff_r_regularization_matrix.flags.writeable = False
 
     def __rich__(self):
@@ -263,20 +266,19 @@ class Grid(Serial):
         if p is None:
             return full_integration(out, f_1D, self.integration_matrix)
         if p == 1:
-            np.matmul(self.corrected_integration_matrix_p1, f_1D, out=out)
+            np.matmul(self.odd_integration_matrix, f_1D, out=out)
             return out
         if p == 2:
-            np.matmul(self.corrected_integration_matrix_p2, f_1D, out=out)
+            np.matmul(self.even_integration_matrix, f_1D, out=out)
             return out
 
-        return corrected_integration(
-            out,
-            f_1D,
-            self.integration_matrix,
+        matrix = corrected_integration_matrix(
+            self.rho,
+            self.differentiation_matrix,
             p=p,
-            rho=self.rho,
-            differentiation_matrix=self.differentiation_matrix,
         )
+        np.matmul(matrix, f_1D, out=out)
+        return out
 
     def corrected_linear_derivative(
         self, f_1D: np.ndarray, *, out: np.ndarray | None = None
@@ -284,7 +286,7 @@ class Grid(Serial):
         """在当前 Grid 上对轴心线性起始量做预计算修正微分."""
         if out is None:
             out = np.empty_like(f_1D)
-        np.matmul(self.corrected_linear_derivative_matrix, f_1D, out=out)
+        np.matmul(self.odd_differentiation_matrix, f_1D, out=out)
         return out
 
     def corrected_even_derivative(
@@ -296,7 +298,7 @@ class Grid(Serial):
         if not np.all(np.isfinite(f_1D)):
             out.fill(0.0)
             return out
-        np.matmul(self.corrected_even_derivative_matrix, f_1D, out=out)
+        np.matmul(self.even_differentiation_matrix, f_1D, out=out)
         return out
 
     def regularize_ff_r(self, f_1D: np.ndarray, *, out: np.ndarray | None = None) -> np.ndarray:

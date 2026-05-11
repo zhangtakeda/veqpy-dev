@@ -1,6 +1,6 @@
+import pickle
 from pathlib import Path
 from types import SimpleNamespace
-import pickle
 
 import numpy as np
 

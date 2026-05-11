@@ -99,7 +99,7 @@ def uniform_quadrature(n: int) -> tuple[np.ndarray, np.ndarray]:
 
 
 # -----------------------------------------------------------------------------
-# Private implementation details
+# Private implementation
 # -----------------------------------------------------------------------------
 
 
