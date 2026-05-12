@@ -245,7 +245,9 @@ def _normalize_source_filter(value: dict[str, int] | None) -> dict[str, int]:
                 f"Unsupported source_filter key {raw_key!r}; supported keys: ('FFn_psin',)"
             )
         if isinstance(raw_degree, bool) or not isinstance(raw_degree, Integral):
-            raise TypeError(f"source_filter['FFn_psin'] must be an integer degree, got {raw_degree!r}")
+            raise TypeError(
+                f"source_filter['FFn_psin'] must be an integer degree, got {raw_degree!r}"
+            )
         degree = int(raw_degree)
         if degree < 0:
             raise ValueError(f"source_filter['FFn_psin'] degree must be non-negative, got {degree}")

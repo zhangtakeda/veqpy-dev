@@ -159,32 +159,27 @@ def _normalize_psin_query(out: np.ndarray, source: np.ndarray) -> None:
 @njit(cache=True, nogil=True)
 def _project_ffn_psin_impl(
     FFn_psin: np.ndarray,
-    fit_matrix: np.ndarray,
-    basis_matrix: np.ndarray,
-    coeff: np.ndarray,
+    filter_matrix: np.ndarray,
+    work: np.ndarray,
 ) -> None:
-    if fit_matrix.size == 0 or basis_matrix.size == 0 or coeff.size == 0:
+    if filter_matrix.size == 0 or work.size == 0:
         return
-    for row in range(coeff.shape[0]):
-        total = 0.0
-        for col in range(FFn_psin.shape[0]):
-            total += fit_matrix[row, col] * FFn_psin[col]
-        coeff[row] = total
+    for col in range(FFn_psin.shape[0]):
+        work[col] = FFn_psin[col]
     for row in range(FFn_psin.shape[0]):
         total = 0.0
-        for col in range(coeff.shape[0]):
-            total += basis_matrix[row, col] * coeff[col]
+        for col in range(work.shape[0]):
+            total += filter_matrix[row, col] * work[col]
         FFn_psin[row] = total
 
 
 def _build_ffn_projection_runner(backend_state: "BackendState") -> Callable[[np.ndarray], None]:
     source_runtime_state = backend_state.source_runtime_state
-    fit_matrix = source_runtime_state.const_state.ffn_projection_fit_matrix
-    basis_matrix = source_runtime_state.const_state.ffn_projection_basis_matrix
-    coeff = source_runtime_state.aux_state.ffn_projection_coeff
+    filter_matrix = source_runtime_state.const_state.ffn_projection_matrix
+    work = source_runtime_state.aux_state.ffn_projection_work
 
     def runner(FFn_psin: np.ndarray) -> None:
-        _project_ffn_psin_impl(FFn_psin, fit_matrix, basis_matrix, coeff)
+        _project_ffn_psin_impl(FFn_psin, filter_matrix, work)
 
     return runner
 

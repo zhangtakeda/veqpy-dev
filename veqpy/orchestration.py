@@ -31,7 +31,7 @@ from veqpy.engine.numba_source import (
     update_fixed_point_psin_query,
     update_fourier_family_fields,
 )
-from veqpy.math.calculus import make_ffn_projection_calculus
+from veqpy.math.calculus import make_filter
 
 if TYPE_CHECKING:
     from veqpy.operator.operator_case import OperatorCase
@@ -581,15 +581,12 @@ def refresh_source_runtime(
                     chebvander(source_query, source_plan.current_projection_degree)
                 )
         if source_plan.has_ffn_projection_policy:
-            (
-                source_const_state.ffn_projection_fit_matrix,
-                source_const_state.ffn_projection_basis_matrix,
-            ) = make_ffn_projection_calculus(grid_rho, degree=source_plan.ffn_projection_degree)
-        else:
-            source_const_state.ffn_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
-            source_const_state.ffn_projection_basis_matrix = np.empty(
-                (0, 0), dtype=np.float64
+            source_const_state.ffn_projection_matrix = make_filter(
+                grid_rho,
+                degree=source_plan.ffn_projection_degree,
             )
+        else:
+            source_const_state.ffn_projection_matrix = np.empty((0, 0), dtype=np.float64)
         source_runtime_state.cache_key = case_key
     if source_plan.is_grid_nodes or not source_plan.has_projection_policy:
         source_aux_state.heat_projection_coeff = np.empty(0, dtype=np.float64)
@@ -607,12 +604,12 @@ def refresh_source_runtime(
             @ np.asarray(source_plan.current_input, dtype=np.float64)
         )
     if source_plan.has_ffn_projection_policy:
-        source_aux_state.ffn_projection_coeff = np.empty(
-            source_const_state.ffn_projection_fit_matrix.shape[0],
+        source_aux_state.ffn_projection_work = np.empty(
+            source_const_state.ffn_projection_matrix.shape[1],
             dtype=np.float64,
         )
     else:
-        source_aux_state.ffn_projection_coeff = np.empty(0, dtype=np.float64)
+        source_aux_state.ffn_projection_work = np.empty(0, dtype=np.float64)
     if source_plan.is_grid_nodes or not source_plan.is_psin_coordinate:
         if source_plan.is_grid_nodes:
             np.copyto(source_work_state.materialized_heat_input, source_plan.heat_input)

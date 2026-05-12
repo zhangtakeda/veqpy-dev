@@ -7,7 +7,7 @@ Role:
 
 Public API:
 - make_calculus
-- make_ffn_projection_calculus
+- make_filter
 """
 
 import math
@@ -45,58 +45,66 @@ def make_calculus(
     return calculus_generator[calculus](nodes)
 
 
-def make_ffn_projection_calculus(
+def make_filter(
     nodes: np.ndarray,
     *,
     degree: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Build endpoint-anchored low-order projection matrices for ``FFn_psin``.
+) -> np.ndarray:
+    """Build an unanchored roughness-penalized smoother for ``FFn_psin``.
 
-    Returns ``(fit_matrix, basis_matrix)`` so callers can project a grid profile
-    with ``basis_matrix @ (fit_matrix @ values)``.  The polynomial part is built
-    on ``rho**2`` with a ``rho**2 * (1 - rho**2)**2`` envelope, so smooth
-    corrections preserve both endpoint values while matching the even axis
-    regularity expected for the normalized current source used by residual
-    kernels.
+    Returns a single dense matrix ``filter_matrix`` so callers can smooth a grid
+    profile with ``filter_matrix @ values``.  The matrix solves the penalized
+    least-squares problem ``min_v ||v - u||^2 + strength * ||D2 v||^2``, where
+    ``D2`` is the grid-spacing-normalized nonuniform second-difference operator.
+    The integer ``degree`` is interpreted as a conservative smoothing strength
+    knob, not as a polynomial order.
     """
 
     degree = int(degree)
     if degree < 0:
-        return np.empty((0, 0), dtype=np.float64), np.empty((0, 0), dtype=np.float64)
+        return np.empty((0, 0), dtype=np.float64)
 
     rho = np.asarray(nodes, dtype=np.float64)
     _validate_nodes(rho, min_size=2)
 
-    x = 2.0 * rho * rho - 1.0
-    y = 1.0 - rho * rho
-    env = rho * rho * y * y
-    chebyshev_basis = np.empty((degree + 1, rho.shape[0]), dtype=np.float64)
-    chebyshev_basis[0] = 1.0
-    if degree >= 1:
-        chebyshev_basis[1] = x
-    for order in range(1, degree):
-        chebyshev_basis[order + 1] = 2.0 * x * chebyshev_basis[order] - chebyshev_basis[order - 1]
+    node_count = rho.shape[0]
+    identity = np.eye(node_count, dtype=np.float64)
+    if degree == 0 or node_count < 3:
+        return identity
 
-    endpoint_basis = np.empty((rho.shape[0], 2), dtype=np.float64)
-    endpoint_basis[:, 0] = 1.0 - rho * rho
-    endpoint_basis[:, 1] = rho * rho
-    smooth_basis = (env[None, :] * chebyshev_basis).T
-    smooth_transform = np.eye(rho.shape[0], dtype=np.float64)
-    smooth_transform[:, 0] -= endpoint_basis[:, 0]
-    smooth_transform[:, -1] -= endpoint_basis[:, 1]
+    spacing_scale = float(np.mean(np.diff(rho)))
+    second_difference = (spacing_scale * spacing_scale) * _second_difference_matrix(rho)
+    strength = float(degree) / 30.0
+    penalty = identity + strength * (second_difference.T @ second_difference)
+    return np.linalg.solve(penalty, identity)
 
-    fit_matrix = np.empty((degree + 3, rho.shape[0]), dtype=np.float64)
-    fit_matrix[0].fill(0.0)
-    fit_matrix[0, 0] = 1.0
-    fit_matrix[1].fill(0.0)
-    fit_matrix[1, -1] = 1.0
-    fit_matrix[2:] = np.linalg.pinv(smooth_basis) @ smooth_transform
 
-    basis_matrix = np.empty((rho.shape[0], degree + 3), dtype=np.float64)
-    basis_matrix[:, 0] = endpoint_basis[:, 0]
-    basis_matrix[:, 1] = endpoint_basis[:, 1]
-    basis_matrix[:, 2:] = smooth_basis
-    return fit_matrix, basis_matrix
+def _second_difference_matrix(nodes: np.ndarray) -> np.ndarray:
+    """Build interior nonuniform second-difference rows."""
+
+    row_count = nodes.shape[0] - 2
+    second_difference = np.zeros((row_count, nodes.shape[0]), dtype=np.float64)
+    for row in range(row_count):
+        left = row
+        center = row + 1
+        right = row + 2
+        left_spacing = nodes[center] - nodes[left]
+        right_spacing = nodes[right] - nodes[center]
+        span = left_spacing + right_spacing
+        second_difference[row, left] = 2.0 / (left_spacing * span)
+        second_difference[row, center] = -2.0 / (left_spacing * right_spacing)
+        second_difference[row, right] = 2.0 / (right_spacing * span)
+    return second_difference
+
+
+def make_ffn_projection_calculus(
+    nodes: np.ndarray,
+    *,
+    degree: int,
+) -> np.ndarray:
+    """Compatibility alias for the FFn projection filter matrix builder."""
+
+    return make_filter(nodes, degree=degree)
 
 
 @calculus_generator("spectral")
@@ -114,7 +122,6 @@ def spectral_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         _spectral_differentiator(nodes),
     )
 
-
 @calculus_generator("compact", "cfd33")
 def compact_cfd33_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Build dense CFD33 compact integration and differentiation matrices."""
@@ -125,14 +132,12 @@ def compact_cfd33_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         _cfd33_differentiator(nodes),
     )
 
-
 @calculus_generator("cfd35")
 def compact_cfd35_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Build dense CFD35 compact integration and differentiation matrices."""
 
     _validate_nodes(nodes, min_size=5)
     return _compact_calculus(nodes, implicit_width=3, explicit_width=5)
-
 
 @calculus_generator("cfd55")
 def compact_cfd55_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

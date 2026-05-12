@@ -52,7 +52,7 @@ REFERENCE_GRID = Grid(
 TEST_GRID = Grid(
     Nr=32,
     Nt=16,
-    scheme="legendre",
+    scheme="chebyshev",
 )
 
 REFERENCE_SUMMARY_GRID = Grid(

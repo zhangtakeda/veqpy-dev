@@ -785,8 +785,8 @@ def test_source_filter_projects_derived_ffn_before_residual_and_snapshot():
     operator.stage_c_source()
     filtered_ffn = operator.FFn_psin.copy()
     expected = (
-        operator.source_runtime_state.const_state.ffn_projection_basis_matrix
-        @ operator.source_runtime_state.aux_state.ffn_projection_coeff
+        operator.source_runtime_state.const_state.ffn_projection_matrix
+        @ operator.source_runtime_state.aux_state.ffn_projection_work
     )
     operator.stage_d_residual()
     snapshot = operator.build_equilibrium(x)
