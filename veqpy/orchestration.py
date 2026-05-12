@@ -31,6 +31,7 @@ from veqpy.engine.numba_source import (
     update_fixed_point_psin_query,
     update_fourier_family_fields,
 )
+from veqpy.math.calculus import make_ffn_projection_calculus
 
 if TYPE_CHECKING:
     from veqpy.operator.operator_case import OperatorCase
@@ -230,6 +231,7 @@ class SourcePlan:
     endpoint_policy: str
     heat_projection_degree: int
     current_projection_degree: int
+    ffn_projection_degree: int
 
     @property
     def is_grid_nodes(self) -> bool:
@@ -286,6 +288,10 @@ class SourcePlan:
     def endpoint_policy_code(self) -> int:
         return int(ENDPOINT_POLICY_CODES[self.endpoint_policy])
 
+    @property
+    def has_ffn_projection_policy(self) -> bool:
+        return int(self.ffn_projection_degree) >= 0
+
 
 def _source_route_key(source_plan: SourcePlan) -> tuple[str, str, str]:
     return (source_plan.route, source_plan.coordinate, source_plan.nodes)
@@ -332,6 +338,11 @@ SOURCE_PROJECTION_POLICIES: dict[tuple[str, str, str], SourceProjectionPolicy] =
         current_other_endpoint_policy="none",
     ),
 }
+
+
+DERIVED_FFN_PROJECTION_DEGREES: dict[tuple[str, str, str], int] = {}
+
+FFN_PROJECTION_ROUTES = {"PI", "PJ1", "PJ2", "PQ"}
 
 
 PROJECTION_DOMAIN_CODES = {
@@ -434,6 +445,15 @@ def build_source_plan(
             if has_ip_constraint and policy.ip_current_degree is not None
             else policy.current_degree
         )
+    ffn_projection_degree = DERIVED_FFN_PROJECTION_DEGREES.get(
+        (str(case.route).upper(), str(case.coordinate).lower(), str(case.nodes).lower()),
+        -1,
+    )
+    explicit_source_filter = getattr(case, "source_filter", {})
+    if "FFn_psin" in explicit_source_filter:
+        if str(case.route).upper() not in FFN_PROJECTION_ROUTES:
+            raise ValueError("source_filter['FFn_psin'] is only supported for PI/PJ/PQ routes")
+        ffn_projection_degree = int(explicit_source_filter["FFn_psin"])
 
     return SourcePlan(
         route=str(case.route).upper(),
@@ -452,6 +472,7 @@ def build_source_plan(
         endpoint_policy=str(endpoint_policy).lower(),
         heat_projection_degree=heat_projection_degree,
         current_projection_degree=current_projection_degree,
+        ffn_projection_degree=ffn_projection_degree,
     )
 
 
@@ -559,6 +580,16 @@ def refresh_source_runtime(
                 source_const_state.current_projection_fit_matrix = np.linalg.pinv(
                     chebvander(source_query, source_plan.current_projection_degree)
                 )
+        if source_plan.has_ffn_projection_policy:
+            (
+                source_const_state.ffn_projection_fit_matrix,
+                source_const_state.ffn_projection_basis_matrix,
+            ) = make_ffn_projection_calculus(grid_rho, degree=source_plan.ffn_projection_degree)
+        else:
+            source_const_state.ffn_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
+            source_const_state.ffn_projection_basis_matrix = np.empty(
+                (0, 0), dtype=np.float64
+            )
         source_runtime_state.cache_key = case_key
     if source_plan.is_grid_nodes or not source_plan.has_projection_policy:
         source_aux_state.heat_projection_coeff = np.empty(0, dtype=np.float64)
@@ -575,6 +606,13 @@ def refresh_source_runtime(
             source_const_state.current_projection_fit_matrix
             @ np.asarray(source_plan.current_input, dtype=np.float64)
         )
+    if source_plan.has_ffn_projection_policy:
+        source_aux_state.ffn_projection_coeff = np.empty(
+            source_const_state.ffn_projection_fit_matrix.shape[0],
+            dtype=np.float64,
+        )
+    else:
+        source_aux_state.ffn_projection_coeff = np.empty(0, dtype=np.float64)
     if source_plan.is_grid_nodes or not source_plan.is_psin_coordinate:
         if source_plan.is_grid_nodes:
             np.copyto(source_work_state.materialized_heat_input, source_plan.heat_input)

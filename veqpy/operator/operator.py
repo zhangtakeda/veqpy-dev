@@ -343,10 +343,10 @@ class Operator:
             K_max=grid.K_max or grid.M_max,
             scheme=grid.scheme,
             calculus=grid.calculus,
-            K_values=grid.K_values,
-            quadrature=grid.quadrature,
-            differentiator=grid.differentiator,
-            accumulator=grid.accumulator,
+            K_values=grid.K_values.copy(),
+            quadrature=grid.quadrature.copy(),
+            differentiator=grid.differentiator.copy(),
+            accumulator=grid.accumulator.copy(),
             radial_block=_pack_radial_block(
                 grid.rho, grid.x, grid.y, grid.rho_powers, grid.T, grid.T_r, grid.T_rr
             ),

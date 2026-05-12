@@ -41,6 +41,7 @@ class OperatorCase:
     nodes: str = "uniform"
     Ip: float | None = None
     beta: float | None = None
+    source_filter: dict[str, int] | None = None
 
     def __post_init__(self) -> None:
         """在构造后把各字段规整为稳定运行时表示."""
@@ -53,6 +54,9 @@ class OperatorCase:
         object.__setattr__(self, "boundary", _normalize_case_value("boundary", self.boundary))
         object.__setattr__(self, "Ip", _normalize_case_value("Ip", self.Ip))
         object.__setattr__(self, "beta", _normalize_case_value("beta", self.beta))
+        object.__setattr__(
+            self, "source_filter", _normalize_case_value("source_filter", self.source_filter)
+        )
         object.__setattr__(self, "heat_input", _normalize_case_value("heat_input", self.heat_input))
         object.__setattr__(
             self, "current_input", _normalize_case_value("current_input", self.current_input)
@@ -73,6 +77,7 @@ class OperatorCase:
             "nodes",
             "Ip",
             "beta",
+            "source_filter",
             "heat_input",
             "current_input",
         ):
@@ -131,6 +136,7 @@ class OperatorCase:
             nodes=self.nodes,
             Ip=self.Ip,
             beta=self.beta,
+            source_filter=dict(self.source_filter),
         )
 
     @property
@@ -219,9 +225,32 @@ def _normalize_case_value(name: str, value):
         return nodes
     if name in ("Ip", "beta"):
         return np.nan if value is None else float(value)
+    if name == "source_filter":
+        return _normalize_source_filter(value)
     if name in ("heat_input", "current_input"):
         return _as_1d_array(value, name=name).copy()
     return value
+
+
+def _normalize_source_filter(value: dict[str, int] | None) -> dict[str, int]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise TypeError(f"source_filter must be a dict or None, got {type(value).__name__}")
+    normalized: dict[str, int] = {}
+    for raw_key, raw_degree in value.items():
+        key = str(raw_key)
+        if key != "FFn_psin":
+            raise ValueError(
+                f"Unsupported source_filter key {raw_key!r}; supported keys: ('FFn_psin',)"
+            )
+        if isinstance(raw_degree, bool) or not isinstance(raw_degree, Integral):
+            raise TypeError(f"source_filter['FFn_psin'] must be an integer degree, got {raw_degree!r}")
+        degree = int(raw_degree)
+        if degree < 0:
+            raise ValueError(f"source_filter['FFn_psin'] degree must be non-negative, got {degree}")
+        normalized[key] = degree
+    return normalized
 
 
 def _autoscale_legacy_mu0_inputs(case: OperatorCase) -> None:

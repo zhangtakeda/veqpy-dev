@@ -770,6 +770,44 @@ def test_pq_psin_route_evaluates_residual_without_active_psin_profile():
     assert np.all(np.isfinite(equilibrium.F))
 
 
+def test_source_filter_projects_derived_ffn_before_residual_and_snapshot():
+    grid, case = _build_operator_case(mode="PQ", coordinate="psin", nodes="uniform")
+    case.profile_coeffs["psin"] = None
+    case.source_filter = {"FFn_psin": 3}
+    case.Ip = 1.0
+    case.heat_input = np.linspace(1.0, 1.5, case.heat_input.shape[0])
+    case.current_input = np.linspace(1.0, 2.0, case.current_input.shape[0])
+    operator = Operator(grid=grid, case=case)
+    x = operator.encode_initial_state()
+
+    operator.stage_a_profile(x)
+    operator.stage_b_geometry()
+    operator.stage_c_source()
+    filtered_ffn = operator.FFn_psin.copy()
+    expected = (
+        operator.source_runtime_state.const_state.ffn_projection_basis_matrix
+        @ operator.source_runtime_state.aux_state.ffn_projection_coeff
+    )
+    operator.stage_d_residual()
+    snapshot = operator.build_equilibrium(x)
+
+    assert operator.source_plan.ffn_projection_degree == 3
+    assert np.allclose(filtered_ffn, expected)
+    assert np.allclose(snapshot.FFn_psin[1:], operator.FFn_psin[1:])
+    assert np.allclose(
+        snapshot.G,
+        snapshot.alpha1 * snapshot.Gn1 + snapshot.alpha2 * snapshot.Gn2,
+    )
+
+
+def test_source_filter_does_not_apply_to_pf_source():
+    grid, case = _build_operator_case(mode="PF", coordinate="psin", nodes="uniform")
+    case.source_filter = {"FFn_psin": 3}
+
+    with pytest.raises(ValueError, match="only supported for PI/PJ/PQ"):
+        Operator(grid=grid, case=case)
+
+
 def test_operator_collocation_residual_returns_desc_style_pointwise_force_balance():
     grid, case = _build_operator_case(mode="PF", coordinate="rho", nodes="uniform")
     operator = Operator(grid=grid, case=case)

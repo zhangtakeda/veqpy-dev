@@ -690,6 +690,11 @@ def _make_benchmark_case(spec: BenchmarkCaseSpec, reference: ReferenceBundle) ->
         nodes=nodes,
         Ip=Ip,
         beta=beta,
+        source_filter=(
+            {"FFn_psin": 6}
+            if spec.mode == "PI" and spec.coordinate == "psin" and spec.input_kind == "uniform"
+            else None
+        ),
     )
 
 

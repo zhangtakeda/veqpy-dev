@@ -167,6 +167,53 @@ def test_calculus_registry_selects_nonuniform_spectral_matrices_from_nodes():
     assert np.allclose(spectral_integration @ derivative, integral)
 
 
+def test_ffn_projection_calculus_builds_endpoint_anchored_matrix_pair():
+    nodes = np.linspace(0.0, 1.0, 17)
+    fit_matrix, basis_matrix = math_api.make_ffn_projection_calculus(nodes, degree=4)
+
+    assert fit_matrix.shape == (7, nodes.shape[0])
+    assert basis_matrix.shape == (nodes.shape[0], 7)
+    assert np.all(np.isfinite(fit_matrix))
+    assert np.all(np.isfinite(basis_matrix))
+
+    values = np.exp(nodes)
+    projected = basis_matrix @ (fit_matrix @ values)
+
+    assert np.allclose(projected[0], values[0])
+    assert np.allclose(projected[-1], values[-1])
+
+
+def test_ffn_projection_calculus_preserves_representable_smooth_basis():
+    nodes = np.linspace(0.0, 1.0, 21)
+    degree = 3
+    fit_matrix, basis_matrix = math_api.make_ffn_projection_calculus(nodes, degree=degree)
+    projector = basis_matrix @ fit_matrix
+    x = 2.0 * nodes * nodes - 1.0
+    envelope = nodes * nodes * (1.0 - nodes * nodes) ** 2
+
+    values = 1.25 * (1.0 - nodes * nodes) - 0.5 * nodes * nodes
+    values += envelope * (0.3 - 0.2 * x + 0.4 * (2.0 * x * x - 1.0))
+
+    assert np.allclose(projector @ values, values, rtol=1.0e-12, atol=1.0e-12)
+
+
+def test_ffn_projection_calculus_rejects_invalid_nodes_and_accepts_disabled_degree():
+    empty_fit, empty_basis = math_api.make_ffn_projection_calculus(
+        np.linspace(0.0, 1.0, 4),
+        degree=-1,
+    )
+
+    assert empty_fit.shape == (0, 0)
+    assert empty_basis.shape == (0, 0)
+
+    try:
+        math_api.make_ffn_projection_calculus(np.eye(3), degree=1)
+    except ValueError as exc:
+        assert "one-dimensional" in str(exc)
+    else:
+        raise AssertionError("Expected FFn projection calculus to reject non-1D nodes")
+
+
 def test_interpolation_matrix_preserves_polynomial_values():
     source = np.array([0.0, 0.2, 0.7, 1.0], dtype=np.float64)
     evaluation = np.array([0.1, 0.4, 0.9], dtype=np.float64)

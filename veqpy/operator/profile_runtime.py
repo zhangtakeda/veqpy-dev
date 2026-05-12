@@ -276,6 +276,9 @@ def validate_case_compatibility(
     validate_source_inputs: Callable[[OperatorCase], None],
 ) -> None:
     validate_route(case.route, case.coordinate, case.nodes)
+    source_filter = getattr(case, "source_filter", {})
+    if source_filter and "FFn_psin" in source_filter and case.route not in {"PI", "PJ1", "PJ2", "PQ"}:
+        raise ValueError("source_filter['FFn_psin'] is only supported for PI/PJ/PQ routes")
     next_profile_L, next_coeff_index, next_order_offsets = build_profile_layout(
         case.profile_coeffs,
         profile_names=profile_names,

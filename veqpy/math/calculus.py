@@ -7,6 +7,7 @@ Role:
 
 Public API:
 - make_calculus
+- make_ffn_projection_calculus
 """
 
 import math
@@ -42,6 +43,60 @@ def make_calculus(
         available = ", ".join(sorted(calculus_generator.registry))
         raise ValueError(f"Unknown calculus scheme: {calculus}. Available schemes: {available}")
     return calculus_generator[calculus](nodes)
+
+
+def make_ffn_projection_calculus(
+    nodes: np.ndarray,
+    *,
+    degree: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build endpoint-anchored low-order projection matrices for ``FFn_psin``.
+
+    Returns ``(fit_matrix, basis_matrix)`` so callers can project a grid profile
+    with ``basis_matrix @ (fit_matrix @ values)``.  The polynomial part is built
+    on ``rho**2`` with a ``rho**2 * (1 - rho**2)**2`` envelope, so smooth
+    corrections preserve both endpoint values while matching the even axis
+    regularity expected for the normalized current source used by residual
+    kernels.
+    """
+
+    degree = int(degree)
+    if degree < 0:
+        return np.empty((0, 0), dtype=np.float64), np.empty((0, 0), dtype=np.float64)
+
+    rho = np.asarray(nodes, dtype=np.float64)
+    _validate_nodes(rho, min_size=2)
+
+    x = 2.0 * rho * rho - 1.0
+    y = 1.0 - rho * rho
+    env = rho * rho * y * y
+    chebyshev_basis = np.empty((degree + 1, rho.shape[0]), dtype=np.float64)
+    chebyshev_basis[0] = 1.0
+    if degree >= 1:
+        chebyshev_basis[1] = x
+    for order in range(1, degree):
+        chebyshev_basis[order + 1] = 2.0 * x * chebyshev_basis[order] - chebyshev_basis[order - 1]
+
+    endpoint_basis = np.empty((rho.shape[0], 2), dtype=np.float64)
+    endpoint_basis[:, 0] = 1.0 - rho * rho
+    endpoint_basis[:, 1] = rho * rho
+    smooth_basis = (env[None, :] * chebyshev_basis).T
+    smooth_transform = np.eye(rho.shape[0], dtype=np.float64)
+    smooth_transform[:, 0] -= endpoint_basis[:, 0]
+    smooth_transform[:, -1] -= endpoint_basis[:, 1]
+
+    fit_matrix = np.empty((degree + 3, rho.shape[0]), dtype=np.float64)
+    fit_matrix[0].fill(0.0)
+    fit_matrix[0, 0] = 1.0
+    fit_matrix[1].fill(0.0)
+    fit_matrix[1, -1] = 1.0
+    fit_matrix[2:] = np.linalg.pinv(smooth_basis) @ smooth_transform
+
+    basis_matrix = np.empty((rho.shape[0], degree + 3), dtype=np.float64)
+    basis_matrix[:, 0] = endpoint_basis[:, 0]
+    basis_matrix[:, 1] = endpoint_basis[:, 1]
+    basis_matrix[:, 2:] = smooth_basis
+    return fit_matrix, basis_matrix
 
 
 @calculus_generator("spectral")
