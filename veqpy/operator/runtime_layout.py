@@ -370,7 +370,7 @@ class RuntimeAllocationBundle:
 def allocate_runtime_state(
     *,
     static_layout: StaticLayout,
-    source_plan,
+    source_execution,
     profile_names: tuple[str, ...],
     profile_index: dict[str, int],
     active_profile_ids: np.ndarray,
@@ -414,15 +414,15 @@ def allocate_runtime_state(
 
     materialized_heat_input = np.empty(nr, dtype=np.float64)
     materialized_current_input = np.empty(nr, dtype=np.float64)
-    needs_psin_query = bool(source_plan.requires_psin_query_workspace)
+    needs_psin_query = bool(source_execution.requires_psin_query_workspace)
     psin_query = (
         np.empty(nr, dtype=np.float64) if needs_psin_query else np.empty(0, dtype=np.float64)
     )
-    if source_plan.requires_source_parameter_query:
+    if source_execution.requires_source_parameter_query:
         parameter_query = np.empty(nr, dtype=np.float64)
     else:
         parameter_query = psin_query
-    if source_plan.requires_target_root_fields:
+    if source_execution.requires_target_root_fields:
         target_root_fields = np.empty((3, nr), dtype=np.float64)
     else:
         target_root_fields = np.empty((3, 0), dtype=np.float64)

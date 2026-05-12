@@ -19,7 +19,8 @@ from pathlib import Path
 import numpy as np
 from scipy.interpolate import PchipInterpolator, interp1d
 
-from veqpy.engine import validate_route
+import veqpy.engine.backend_abi as backend_abi
+from veqpy.engine.numba_source import source_parameterization_for_route_key
 from veqpy.model import Boundary, Grid
 from veqpy.operator import (
     Operator,
@@ -601,8 +602,8 @@ def _build_mode_init_kwargs(
 
 
 def _uniform_source_axis(spec: BenchmarkCaseSpec) -> np.ndarray:
-    route_spec = validate_route(spec.mode, spec.coordinate, spec.input_kind)
-    if route_spec.source_parameterization == "sqrt_psin":
+    route_key = (str(spec.mode).upper(), str(spec.coordinate).lower(), str(spec.input_kind).lower())
+    if source_parameterization_for_route_key(route_key) == "sqrt_psin":
         return _UNIFORM_SOURCE_AXIS_SQRT_PSIN
     return _UNIFORM_SOURCE_AXIS
 
@@ -632,8 +633,8 @@ def _profile_coeffs_for_case(
     constraint: str | None = None,
 ) -> dict[str, list[float] | None]:
     """Choose a conservative coefficient seed for one benchmark case."""
-    route_spec = validate_route(mode, coordinate, input_kind)
-    if route_spec.source_strategy == "profile_owned_psin":
+    route_key = (str(mode).upper(), str(coordinate).lower(), str(input_kind).lower())
+    if route_key in backend_abi.PROFILE_OWNED_PSIN_ROUTE_KEYS:
         coeffs = {name: list(values) for name, values in PSIN_ROBUST_COEFFS.items()}
     else:
         coeffs = {name: list(values) for name, values in BASE_COEFFS.items()}

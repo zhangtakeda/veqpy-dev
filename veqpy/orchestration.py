@@ -28,6 +28,7 @@ from veqpy.engine.numba_source import (
     materialize_profile_owned_psin_source,
     materialize_projected_source_inputs,
     resolve_source_inputs,
+    source_parameterization_for_route_key,
     update_fixed_point_psin_query,
     update_fourier_family_fields,
 )
@@ -219,7 +220,6 @@ class SourcePlan:
     kernel: Callable
     coordinate: str
     nodes: str
-    strategy: str
     parameterization: str
     source_sample_count: int
     heat_input: np.ndarray
@@ -242,35 +242,8 @@ class SourcePlan:
         return self.coordinate == "psin"
 
     @property
-    def is_profile_owned_psin(self) -> bool:
-        return self.strategy == "profile_owned_psin"
-
-    @property
-    def is_fixed_point_psin_route(self) -> bool:
-        return (self.route, self.coordinate, self.nodes) in {
-            ("PJ2", "psin", "uniform"),
-            ("PQ", "psin", "uniform"),
-        }
-
-    @property
-    def supports_fused_residual(self) -> bool:
-        return self.strategy in {"single_pass", "profile_owned_psin"}
-
-    @property
-    def requires_psin_profile_fields(self) -> bool:
-        return self.is_profile_owned_psin
-
-    @property
-    def requires_psin_query_workspace(self) -> bool:
-        return self.is_profile_owned_psin or self.is_fixed_point_psin_route
-
-    @property
-    def requires_source_parameter_query(self) -> bool:
-        return self.is_psin_coordinate and self.parameterization != "identity"
-
-    @property
-    def requires_target_root_fields(self) -> bool:
-        return self.is_profile_owned_psin or self.is_fixed_point_psin_route
+    def route_key(self) -> tuple[str, str, str]:
+        return (self.route, self.coordinate, self.nodes)
 
     @property
     def coordinate_code(self) -> int:
@@ -460,8 +433,9 @@ def build_source_plan(
         kernel=source_route_spec.implementation,
         coordinate=str(case.coordinate).lower(),
         nodes=str(case.nodes).lower(),
-        strategy=str(source_route_spec.source_strategy).lower(),
-        parameterization=str(source_route_spec.source_parameterization).lower(),
+        parameterization=source_parameterization_for_route_key(
+            (str(case.route).upper(), str(case.coordinate).lower(), str(case.nodes).lower())
+        ),
         source_sample_count=int(case.heat_input.shape[0]),
         heat_input=case.heat_input,
         current_input=case.current_input,
@@ -479,17 +453,26 @@ def build_source_plan(
 def validate_source_plan_profile_support(
     *,
     source_plan: SourcePlan,
-    profile_L: np.ndarray,
-    profile_index: dict[str, int],
+    source_execution: object,
     case: "OperatorCase",
 ) -> None:
-    has_active_psin = int(profile_L[profile_index["psin"]]) >= 0
-    if source_plan.strategy == "profile_owned_psin" and not has_active_psin:
+    route_key = _source_route_key(source_plan)
+    if route_key != tuple(getattr(source_execution, "route_key")):
+        raise ValueError(
+            f"Source execution binding route mismatch: plan={route_key!r}, "
+            f"binding={getattr(source_execution, 'route_key')!r}"
+        )
+
+    has_active_psin = int(getattr(source_execution, "psin_active_length", 0)) > 0
+    if (
+        bool(getattr(source_execution, "route_requires_optimized_psin_profile", False))
+        and not has_active_psin
+    ):
         raise ValueError(f"{case.route} requires an active psin profile")
     if (
-        case.coordinate == "psin"
-        and source_plan.strategy != "profile_owned_psin"
+        source_plan.is_psin_coordinate
         and has_active_psin
+        and not bool(getattr(source_execution, "requires_optimized_psin_profile", False))
     ):
         raise ValueError(
             f"{case.route} does not accept an active psin profile because psin is source-owned"
@@ -515,6 +498,7 @@ def refresh_source_runtime(
     case: "OperatorCase",
     grid_rho: np.ndarray,
     source_plan: SourcePlan,
+    source_execution: object,
     source_runtime_state: "SourceRuntimeState",
     psin: np.ndarray,
 ) -> None:
@@ -626,42 +610,14 @@ def refresh_source_runtime(
                 source_const_state.fixed_remap_matrix,
                 psin,
             )
-    elif (source_plan.route, source_plan.coordinate, source_plan.nodes) in {
-        ("PJ2", "psin", "uniform"),
-        ("PQ", "psin", "uniform"),
-    }:
+    elif source_execution.requires_fixed_point_psin_materialization:
         source_work_state.psin_query.fill(-1.0)
 
 
 def build_bound_source_stage_runner(operator_core: Any) -> Callable:
-    route_key = _source_route_key(operator_core.source_plan)
-    valid_route_keys = {
-        ("PF", "rho", "uniform"),
-        ("PF", "rho", "grid"),
-        ("PF", "psin", "uniform"),
-        ("PF", "psin", "grid"),
-        ("PP", "rho", "uniform"),
-        ("PP", "rho", "grid"),
-        ("PP", "psin", "uniform"),
-        ("PP", "psin", "grid"),
-        ("PI", "rho", "uniform"),
-        ("PI", "rho", "grid"),
-        ("PI", "psin", "uniform"),
-        ("PI", "psin", "grid"),
-        ("PJ1", "rho", "uniform"),
-        ("PJ1", "rho", "grid"),
-        ("PJ1", "psin", "uniform"),
-        ("PJ1", "psin", "grid"),
-        ("PJ2", "rho", "uniform"),
-        ("PJ2", "rho", "grid"),
-        ("PJ2", "psin", "uniform"),
-        ("PJ2", "psin", "grid"),
-        ("PQ", "rho", "uniform"),
-        ("PQ", "rho", "grid"),
-        ("PQ", "psin", "uniform"),
-        ("PQ", "psin", "grid"),
-    }
-    if route_key not in valid_route_keys:
+    source_execution = operator_core.source_execution
+    route_key = tuple(source_execution.route_key)
+    if not bool(source_execution.supports_fused_residual):
         raise ValueError(f"Unsupported source route key {route_key!r}")
     if route_key == ("PJ2", "psin", "uniform"):
         return _build_pj2_psin_uniform_source_stage_runner(operator_core)
@@ -672,6 +628,7 @@ def build_bound_source_stage_runner(operator_core: Any) -> Callable:
 
 def _build_source_stage_runner_shared(operator_core: Any) -> Callable:
     source_plan = operator_core.source_plan
+    source_execution = operator_core.source_execution
     source_eval_runner = operator_core.execution_state.source_eval_runner
     runtime_layout = operator_core.runtime_layout
     source_runtime_state = operator_core.source_runtime_state
@@ -687,7 +644,7 @@ def _build_source_stage_runner_shared(operator_core: Any) -> Callable:
     source_target_root_fields = source_aux_state.target_root_fields
     case_R0 = float(operator_core.case.R0)
 
-    if source_plan.strategy == "profile_owned_psin":
+    if source_execution.requires_optimized_psin_profile:
         if source_plan.is_psin_coordinate and not source_plan.is_grid_nodes:
             source_psin_query = source_work_state.psin_query
             source_parameter_query = source_work_state.parameter_query

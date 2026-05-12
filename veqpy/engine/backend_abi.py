@@ -6,9 +6,11 @@ Role:
 - 把 bind-time 数据选择从 numba 实现中剥离到 engine 层 ABI 模块.
 
 Public API:
+- SourceExecutionABI
 - FusedHotRuntimeABI
 - FusedResidualPackABI
 - FusedSourceEvalABI
+- build_source_execution_abi
 - build_fused_hot_runtime_abi
 - build_fused_residual_pack_abi
 - build_fused_source_eval_abi
@@ -30,6 +32,189 @@ from veqpy.engine.numba_source import resolve_source_scratch_kernel, uniform_bar
 if TYPE_CHECKING:
     from veqpy.operator.runtime_layout import BackendState
     from veqpy.orchestration import SourcePlan
+
+
+RouteKey = tuple[str, str, str]
+
+PROFILE_OWNED_PSIN_ROUTE_KEYS: frozenset[RouteKey] = frozenset(
+    {
+        ("PF", "psin", "uniform"),
+        ("PP", "psin", "uniform"),
+        ("PI", "psin", "uniform"),
+        ("PJ1", "psin", "uniform"),
+    }
+)
+
+FIXED_POINT_PSIN_ROUTE_KEYS: frozenset[RouteKey] = frozenset(
+    {
+        ("PJ2", "psin", "uniform"),
+        ("PQ", "psin", "uniform"),
+    }
+)
+
+SUPPORTED_FUSED_SOURCE_ROUTE_KEYS: frozenset[RouteKey] = frozenset(
+    {
+        ("PF", "rho", "uniform"),
+        ("PF", "rho", "grid"),
+        ("PF", "psin", "uniform"),
+        ("PF", "psin", "grid"),
+        ("PP", "rho", "uniform"),
+        ("PP", "rho", "grid"),
+        ("PP", "psin", "uniform"),
+        ("PP", "psin", "grid"),
+        ("PI", "rho", "uniform"),
+        ("PI", "rho", "grid"),
+        ("PI", "psin", "uniform"),
+        ("PI", "psin", "grid"),
+        ("PJ1", "rho", "uniform"),
+        ("PJ1", "rho", "grid"),
+        ("PJ1", "psin", "uniform"),
+        ("PJ1", "psin", "grid"),
+        ("PJ2", "rho", "uniform"),
+        ("PJ2", "rho", "grid"),
+        ("PJ2", "psin", "uniform"),
+        ("PJ2", "psin", "grid"),
+        ("PQ", "rho", "uniform"),
+        ("PQ", "rho", "grid"),
+        ("PQ", "psin", "uniform"),
+        ("PQ", "psin", "grid"),
+    }
+)
+
+PSIN_SKIP_PROJECTION_FINALIZE_ROUTE_KEYS: frozenset[RouteKey] = frozenset(
+    {("PI", "psin", "uniform")}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SourceExecutionABI:
+    route_key: RouteKey
+    psin_active_slot: int
+    psin_active_length: int
+    psin_coeff_start: int
+    F_active_slot: int
+    F_active_length: int
+    F_coeff_start: int
+    route_requires_optimized_psin_profile: bool
+    requires_optimized_psin_profile: bool
+    requires_fixed_point_psin_materialization: bool
+    requires_psin_profile_fields: bool
+    requires_psin_query_workspace: bool
+    requires_source_parameter_query: bool
+    requires_target_root_fields: bool
+    supports_fused_residual: bool
+    skip_projection_finalize: bool
+
+    @property
+    def requires_fixed_point_psin(self) -> bool:
+        return self.requires_fixed_point_psin_materialization
+
+    @property
+    def uses_active_F_profile(self) -> bool:
+        return self.F_active_length > 0
+
+
+def _active_profile_abi_fields(
+    name: str,
+    *,
+    profile_index: dict[str, int],
+    profile_L: np.ndarray,
+    coeff_index: np.ndarray,
+    active_profile_ids: np.ndarray,
+) -> tuple[int, int, int]:
+    profile_id = int(profile_index.get(name, -1))
+    if profile_id < 0:
+        return -1, 0, -1
+    length = int(profile_L[profile_id]) + 1
+    if length <= 0:
+        return -1, 0, -1
+
+    active_slot = -1
+    for slot, active_profile_id in enumerate(active_profile_ids):
+        if int(active_profile_id) == profile_id:
+            active_slot = int(slot)
+            break
+
+    coeff_start = -1
+    if coeff_index.ndim == 2 and coeff_index.shape[1] > 0:
+        candidate = int(coeff_index[profile_id, 0])
+        if candidate >= 0:
+            coeff_start = candidate
+    return active_slot, length, coeff_start
+
+
+def build_source_execution_abi(
+    *,
+    source_plan: "SourcePlan",
+    profile_index: dict[str, int],
+    profile_L: np.ndarray,
+    coeff_index: np.ndarray,
+    active_profile_ids: np.ndarray,
+) -> SourceExecutionABI:
+    route_key = (source_plan.route, source_plan.coordinate, source_plan.nodes)
+    psin_active_slot, psin_active_length, psin_coeff_start = _active_profile_abi_fields(
+        "psin",
+        profile_index=profile_index,
+        profile_L=profile_L,
+        coeff_index=coeff_index,
+        active_profile_ids=active_profile_ids,
+    )
+    F_active_slot, F_active_length, F_coeff_start = _active_profile_abi_fields(
+        "F",
+        profile_index=profile_index,
+        profile_L=profile_L,
+        coeff_index=coeff_index,
+        active_profile_ids=active_profile_ids,
+    )
+
+    if route_key not in SUPPORTED_FUSED_SOURCE_ROUTE_KEYS:
+        raise ValueError(f"Unsupported source route key {route_key!r}")
+    if psin_active_length > 0 and psin_active_slot < 0:
+        raise ValueError("psin is active but has no active profile slot")
+    if F_active_length > 0 and F_active_slot < 0:
+        raise ValueError("F is active but has no active profile slot")
+
+    route_requires_optimized_psin_profile = route_key in PROFILE_OWNED_PSIN_ROUTE_KEYS
+    if route_requires_optimized_psin_profile and psin_active_length <= 0:
+        raise ValueError(
+            f"{route_key[0]} {route_key[1]}/{route_key[2]} requires an active psin profile"
+        )
+    if (
+        source_plan.coordinate == "psin"
+        and not route_requires_optimized_psin_profile
+        and psin_active_length > 0
+    ):
+        raise ValueError(
+            f"{route_key[0]} {route_key[1]}/{route_key[2]} does not accept an active psin "
+            "profile because psin is source-owned"
+        )
+
+    requires_optimized_psin_profile = route_requires_optimized_psin_profile
+    requires_fixed_point_psin_materialization = route_key in FIXED_POINT_PSIN_ROUTE_KEYS
+    return SourceExecutionABI(
+        route_key=route_key,
+        psin_active_slot=psin_active_slot,
+        psin_active_length=psin_active_length,
+        psin_coeff_start=psin_coeff_start,
+        F_active_slot=F_active_slot,
+        F_active_length=F_active_length,
+        F_coeff_start=F_coeff_start,
+        route_requires_optimized_psin_profile=route_requires_optimized_psin_profile,
+        requires_optimized_psin_profile=requires_optimized_psin_profile,
+        requires_fixed_point_psin_materialization=requires_fixed_point_psin_materialization,
+        requires_psin_profile_fields=requires_optimized_psin_profile,
+        requires_psin_query_workspace=(
+            requires_optimized_psin_profile or requires_fixed_point_psin_materialization
+        ),
+        requires_source_parameter_query=bool(
+            source_plan.coordinate == "psin" and source_plan.parameterization != "identity"
+        ),
+        requires_target_root_fields=(
+            requires_optimized_psin_profile or requires_fixed_point_psin_materialization
+        ),
+        supports_fused_residual=route_key in SUPPORTED_FUSED_SOURCE_ROUTE_KEYS,
+        skip_projection_finalize=route_key in PSIN_SKIP_PROJECTION_FINALIZE_ROUTE_KEYS,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,7 +248,12 @@ class FusedHotRuntimeABI:
     v_fields: np.ndarray
     k_fields: np.ndarray
     F_profile_fields: np.ndarray
-    convert_f_squared_to_f: bool
+    psin_active_slot: int
+    psin_active_length: int
+    psin_coeff_start: int
+    F_active_slot: int
+    F_active_length: int
+    F_coeff_start: int
     c_active_order: int
     s_active_order: int
     a: float
@@ -113,7 +303,7 @@ class FusedSourceEvalABI:
 def build_fused_hot_runtime_abi(
     *,
     backend_state: "BackendState",
-    convert_f_squared_to_f: bool,
+    source_execution: SourceExecutionABI,
     c_active_order: int,
     s_active_order: int,
     a: float,
@@ -152,7 +342,12 @@ def build_fused_hot_runtime_abi(
         v_fields=runtime_layout.v_fields,
         k_fields=runtime_layout.k_fields,
         F_profile_fields=runtime_layout.F_profile_fields,
-        convert_f_squared_to_f=convert_f_squared_to_f,
+        psin_active_slot=int(source_execution.psin_active_slot),
+        psin_active_length=int(source_execution.psin_active_length),
+        psin_coeff_start=int(source_execution.psin_coeff_start),
+        F_active_slot=int(source_execution.F_active_slot),
+        F_active_length=int(source_execution.F_active_length),
+        F_coeff_start=int(source_execution.F_coeff_start),
         c_active_order=c_active_order,
         s_active_order=s_active_order,
         a=a,
@@ -223,8 +418,8 @@ def build_fused_source_eval_abi(
 def build_profile_owned_psin_source_abi(
     *,
     source_plan: "SourcePlan",
+    source_execution: SourceExecutionABI,
     backend_state: "BackendState",
-    skip_projection_finalize: bool,
 ):
     runtime_layout = backend_state.runtime_layout
     source_runtime_state = backend_state.source_runtime_state
@@ -246,13 +441,20 @@ def build_profile_owned_psin_source_abi(
         endpoint_policy_code=int(source_plan.endpoint_policy_code),
         heat_input=source_plan.heat_input,
         current_input=source_plan.current_input,
-        skip_projection_finalize=skip_projection_finalize,
+        psin_active_slot=int(source_execution.psin_active_slot),
+        psin_active_length=int(source_execution.psin_active_length),
+        psin_coeff_start=int(source_execution.psin_coeff_start),
+        F_active_slot=int(source_execution.F_active_slot),
+        F_active_length=int(source_execution.F_active_length),
+        F_coeff_start=int(source_execution.F_coeff_start),
+        skip_projection_finalize=bool(source_execution.skip_projection_finalize),
     )
 
 
 def _build_fixed_point_psin_source_abi(
     *,
     source_plan: "SourcePlan",
+    source_execution: SourceExecutionABI,
     backend_state: "BackendState",
     barycentric_order_cap: int,
     allow_query_warmstart: bool,
@@ -280,6 +482,12 @@ def _build_fixed_point_psin_source_abi(
         Ip=Ip,
         beta=float(source_plan.beta),
         has_Ip=bool(np.isfinite(Ip)),
+        psin_active_slot=int(source_execution.psin_active_slot),
+        psin_active_length=int(source_execution.psin_active_length),
+        psin_coeff_start=int(source_execution.psin_coeff_start),
+        F_active_slot=int(source_execution.F_active_slot),
+        F_active_length=int(source_execution.F_active_length),
+        F_coeff_start=int(source_execution.F_coeff_start),
         projection_domain_code=int(source_plan.projection_domain_code),
         endpoint_policy_code=int(source_plan.endpoint_policy_code),
         barycentric_weights=uniform_barycentric_weights(
@@ -293,10 +501,12 @@ def _build_fixed_point_psin_source_abi(
 def build_pj2_fixed_point_psin_source_abi(
     *,
     source_plan: "SourcePlan",
+    source_execution: SourceExecutionABI,
     backend_state: "BackendState",
 ):
     return _build_fixed_point_psin_source_abi(
         source_plan=source_plan,
+        source_execution=source_execution,
         backend_state=backend_state,
         barycentric_order_cap=8,
         allow_query_warmstart=False,
@@ -307,11 +517,13 @@ def build_pj2_fixed_point_psin_source_abi(
 def build_pq_fixed_point_psin_source_abi(
     *,
     source_plan: "SourcePlan",
+    source_execution: SourceExecutionABI,
     backend_state: "BackendState",
 ):
     endpoint_policy_code = int(source_plan.endpoint_policy_code)
     return _build_fixed_point_psin_source_abi(
         source_plan=source_plan,
+        source_execution=source_execution,
         backend_state=backend_state,
         barycentric_order_cap=4,
         allow_query_warmstart=bool(endpoint_policy_code != 0),

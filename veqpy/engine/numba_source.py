@@ -73,8 +73,6 @@ UNIFORM_NODES = "uniform"
 GRID_NODES = "grid"
 NODE_NAMES = (UNIFORM_NODES, GRID_NODES)
 
-SOURCE_STRATEGY_SINGLE_PASS = "single_pass"
-SOURCE_STRATEGY_PROFILE_OWNED_PSIN = "profile_owned_psin"
 SOURCE_PARAMETERIZATION_IDENTITY = "identity"
 SOURCE_PARAMETERIZATION_SQRT_PSIN = "sqrt_psin"
 SOURCE_PARAMETERIZATION_CODE_IDENTITY = 0
@@ -106,8 +104,6 @@ class _SourceRouteSpec:
     coordinate_code: int
     nodes: str
     implementation: Callable
-    source_strategy: str
-    source_parameterization: str
 
 
 SOURCE_ROUTE_KERNELS: Registry[RouteKey, Callable] = Registry(tuple, Callable)
@@ -145,57 +141,52 @@ def _normalize_nodes(value: str) -> str:
     return nodes
 
 
-def _normalize_source_parameterization(value: str) -> str:
-    parameterization = str(value).lower()
-    if parameterization not in (
-        SOURCE_PARAMETERIZATION_IDENTITY,
-        SOURCE_PARAMETERIZATION_SQRT_PSIN,
-    ):
-        raise ValueError(f"Unsupported source parameterization {value!r}")
-    return parameterization
-
-
 def register_route(
-    route_key: RouteKey | str,
+    *route_keys: RouteKey | str,
     coordinate: str | None = None,
     nodes: str | None = None,
-    *,
-    source_strategy: str,
-    source_parameterization: str = SOURCE_PARAMETERIZATION_IDENTITY,
 ) -> Callable[[Callable], Callable]:
-    """Register a concrete source route keyed by ``(route, coordinate, nodes)``.
+    """Register one implementation for one or more concrete source routes.
 
-    The public route key is intentionally a three-string tuple such as
-    ``("PJ1", "rho", "uniform")``.  The metadata registry remains separate
-    from the callable registry so route selection is explicit while existing
-    callers can still retrieve a compact ``_SourceRouteSpec`` from
-    :func:`validate_route`.
+    Each public route key is a three-string tuple such as
+    ``("PJ1", "rho", "uniform")``.  Passing multiple tuple keys registers the
+    same function for each key through the shared base registry mechanism.  This
+    is intentionally used only where the execution route is truly identical,
+    e.g. ``rho/uniform`` and ``rho/grid`` after source input materialization.
     """
+
+    if not route_keys:
+        raise ValueError("At least one source route key is required")
 
     if coordinate is not None or nodes is not None:
         if coordinate is None or nodes is None:
             raise TypeError("coordinate and nodes must be supplied together")
-        normalized_key = _normalize_route_key((str(route_key), coordinate, nodes))
+        if len(route_keys) != 1:
+            raise TypeError("coordinate/nodes form accepts exactly one route name")
+        normalized_keys = (_normalize_route_key((str(route_keys[0]), coordinate, nodes)),)
+    elif len(route_keys) == 3 and all(isinstance(item, str) for item in route_keys):
+        normalized_keys = (_normalize_route_key((route_keys[0], route_keys[1], route_keys[2])),)
     else:
-        normalized_key = _normalize_route_key(route_key)
+        normalized_keys = tuple(_normalize_route_key(route_key) for route_key in route_keys)
 
-    normalized_strategy = str(source_strategy).lower()
-    normalized_parameterization = _normalize_source_parameterization(source_parameterization)
-    coordinate_code = _normalize_coordinate(normalized_key[1])
+    if len(set(normalized_keys)) != len(normalized_keys):
+        raise ValueError(f"Duplicate source route keys in registration: {normalized_keys!r}")
 
     def decorator(func: Callable) -> Callable:
-        if normalized_key in ROUTE_REGISTRY:
-            raise ValueError(f"Source route {normalized_key!r} is already registered")
-        SOURCE_ROUTE_KERNELS(normalized_key)(func)
-        ROUTE_REGISTRY[normalized_key] = _SourceRouteSpec(
-            route=normalized_key[0],
-            coordinate=normalized_key[1],
-            coordinate_code=coordinate_code,
-            nodes=normalized_key[2],
-            implementation=func,
-            source_strategy=normalized_strategy,
-            source_parameterization=normalized_parameterization,
-        )
+        for normalized_key in normalized_keys:
+            if normalized_key in ROUTE_REGISTRY:
+                raise ValueError(f"Source route {normalized_key!r} is already registered")
+
+        SOURCE_ROUTE_KERNELS(*normalized_keys)(func)
+        for normalized_key in normalized_keys:
+            coordinate_code = _normalize_coordinate(normalized_key[1])
+            ROUTE_REGISTRY[normalized_key] = _SourceRouteSpec(
+                route=normalized_key[0],
+                coordinate=normalized_key[1],
+                coordinate_code=coordinate_code,
+                nodes=normalized_key[2],
+                implementation=func,
+            )
         return func
 
     return decorator
@@ -212,6 +203,18 @@ def validate_route(route: str, coordinate: str, nodes: str = UNIFORM_NODES) -> _
         raise KeyError(
             f"Unknown source route {route!r}/{coordinate!r}/{nodes!r}; supported: {supported}"
         ) from exc
+
+
+def source_parameterization_for_route_key(route_key: RouteKey | str) -> str:
+    """Return the source-input parameterization for a registered concrete route key."""
+
+    normalized_key = _normalize_route_key(route_key)
+    if normalized_key not in ROUTE_REGISTRY:
+        supported = ", ".join("/".join(route_key) for route_key in sorted(ROUTE_REGISTRY))
+        raise KeyError(f"Unknown source route {normalized_key!r}; supported: {supported}")
+    if normalized_key == ("PP", "psin", "uniform"):
+        return SOURCE_PARAMETERIZATION_SQRT_PSIN
+    return SOURCE_PARAMETERIZATION_IDENTITY
 
 
 @njit(cache=True, nogil=True)
@@ -595,8 +598,10 @@ def resolve_source_inputs(
 # ---------------------------------------------------------------------------
 
 
-@register_route(("PF", "rho", "uniform"), source_strategy=SOURCE_STRATEGY_SINGLE_PASS)
-@register_route(("PF", "rho", "grid"), source_strategy=SOURCE_STRATEGY_SINGLE_PASS)
+@register_route(
+    ("PF", "rho", "uniform"),
+    ("PF", "rho", "grid"),
+)
 @njit(cache=True, nogil=True)
 def _update_pf_from_rho_inputs_with_scratch(
     out_root_fields: np.ndarray,
@@ -678,10 +683,9 @@ def _update_pf_from_rho_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(("PF", "psin", "uniform"), source_strategy=SOURCE_STRATEGY_PROFILE_OWNED_PSIN)
-@register_route(("PF", "psin", "grid"), source_strategy=SOURCE_STRATEGY_SINGLE_PASS)
+@register_route(("PF", "psin", "uniform"))
 @njit(cache=True, nogil=True)
-def _update_pf_from_psin_inputs_with_scratch(
+def _update_pf_from_psin_uniform_inputs_with_scratch(
     out_root_fields: np.ndarray,
     out_FFn_psin: np.ndarray,
     out_Pn_psin: np.ndarray,
@@ -759,8 +763,90 @@ def _update_pf_from_psin_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(("PP", "rho", "uniform"), source_strategy=SOURCE_STRATEGY_SINGLE_PASS)
-@register_route(("PP", "rho", "grid"), source_strategy=SOURCE_STRATEGY_SINGLE_PASS)
+@register_route(("PF", "psin", "grid"))
+@njit(cache=True, nogil=True)
+def _update_pf_from_psin_grid_inputs_with_scratch(
+    out_root_fields: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    quadrature: np.ndarray,
+    differentiator: np.ndarray,
+    accumulator: np.ndarray,
+    rho: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+    source_scratch_1d: np.ndarray,
+    source_scratch_2d: np.ndarray,
+) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, _, Ln_r, _, R, JdivR = _source_geometry_workspace_views(
+        radial_workspace, surface_workspace
+    )
+    has_Ip = not np.isnan(Ip)
+    has_beta = not np.isnan(beta)
+    integrand = source_scratch_1d[_SLOT_INTEGRAND]
+    _fill_pf_psin_integrand(integrand, current_input, Ln_r, V_r, heat_input)
+    full_integration(out_psin_r, integrand, accumulator)
+    out_psin_r *= -1.0
+    out_psin_r /= Kn
+    prof = out_psin_r
+    integral_prof = dot(prof, quadrature)
+    out_psin_r /= integral_prof
+    full_differentiation(out_psin_rr, out_psin_r, differentiator)
+    _update_psin_coordinate(out_psin, out_psin_r, accumulator)
+    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
+    maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
+    if (not has_Ip) and (not has_beta):
+        alpha2 = integral_prof
+        pressure_profile = source_scratch_1d[_SLOT_AUX0]
+        product_into(pressure_profile, heat_input, prof)
+        alpha1 = -dot(pressure_profile, quadrature)
+        scale_into(out_Pn_psin, heat_input, 1.0 / alpha1)
+        scale_into(out_FFn_psin, current_input, 1.0 / alpha1)
+        return alpha1, alpha2
+    c2 = integral_prof
+    copy_into(out_Pn_psin, heat_input)
+    copy_into(out_FFn_psin, current_input)
+    if has_Ip and (not has_beta):
+        g1n_integrand = source_scratch_2d[0]
+        _fill_g1n_psin_integrand(g1n_integrand, JdivR, out_FFn_psin, R, out_Pn_psin)
+        radial_scratch = source_scratch_1d[_SLOT_AUX0]
+        nt = g1n_integrand.shape[1]
+        for j in range(nt):
+            s = 0.0
+            for i in range(g1n_integrand.shape[0]):
+                s += quadrature[i] * g1n_integrand[i, j]
+            radial_scratch[j] = s
+        G1n_integral = 0.0
+        for j in range(nt):
+            G1n_integral += radial_scratch[j]
+        G1n_integral = (2.0 * np.pi / nt) * G1n_integral
+        alpha1 = -Ip / G1n_integral
+    elif has_beta and (not has_Ip):
+        scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
+        product_into(scratch_Pn_r, out_Pn_psin, out_psin_r)
+        scratch_aux = source_scratch_1d[_SLOT_AUX1]
+        _compute_Pn_out(scratch_aux, scratch_Pn_r, accumulator, quadrature)
+        c1 = 0.5 * beta * B0**2 * dot(V_r, quadrature) / weighted_dot(scratch_aux, V_r, quadrature)
+        alpha1 = np.sqrt(c1 / c2)
+    else:
+        raise ValueError("PF does not support applying Ip and beta constraints simultaneously")
+    alpha2 = c2 * alpha1
+    return alpha1, alpha2
+
+
+@register_route(
+    ("PP", "rho", "uniform"),
+    ("PP", "rho", "grid"),
+)
 @njit(cache=True, nogil=True)
 def _update_pp_from_rho_inputs_with_scratch(
     out_root_fields: np.ndarray,
@@ -834,14 +920,9 @@ def _update_pp_from_rho_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(
-    ("PP", "psin", "uniform"),
-    source_strategy=SOURCE_STRATEGY_PROFILE_OWNED_PSIN,
-    source_parameterization=SOURCE_PARAMETERIZATION_SQRT_PSIN,
-)
-@register_route(("PP", "psin", "grid"), source_strategy=SOURCE_STRATEGY_SINGLE_PASS)
+@register_route(("PP", "psin", "uniform"))
 @njit(cache=True, nogil=True)
-def _update_pp_from_psin_inputs_with_scratch(
+def _update_pp_from_psin_uniform_inputs_with_scratch(
     out_root_fields: np.ndarray,
     out_FFn_psin: np.ndarray,
     out_Pn_psin: np.ndarray,
@@ -913,8 +994,84 @@ def _update_pp_from_psin_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(("PI", "rho", "uniform"), source_strategy=SOURCE_STRATEGY_SINGLE_PASS)
-@register_route(("PI", "rho", "grid"), source_strategy=SOURCE_STRATEGY_SINGLE_PASS)
+@register_route(("PP", "psin", "grid"))
+@njit(cache=True, nogil=True)
+def _update_pp_from_psin_grid_inputs_with_scratch(
+    out_root_fields: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    quadrature: np.ndarray,
+    differentiator: np.ndarray,
+    accumulator: np.ndarray,
+    rho: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+    source_scratch_1d: np.ndarray,
+    source_scratch_2d: np.ndarray,
+) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(
+        radial_workspace, surface_workspace
+    )
+    has_Ip = not np.isnan(Ip)
+    has_beta = not np.isnan(beta)
+    if has_Ip:
+        copy_into(out_psin_r, current_input)
+        alpha2 = Ip / (2.0 * np.pi * Kn[-1] * out_psin_r[-1])
+    else:
+        alpha2 = dot(current_input, quadrature)
+        scale_into(out_psin_r, current_input, 1.0 / alpha2)
+    _regularize_axis_linear_psin_r(out_psin_r, rho)
+    full_differentiation(out_psin_rr, out_psin_r, differentiator)
+    _update_psin_coordinate(out_psin, out_psin_r, accumulator)
+    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
+    maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
+    if has_beta:
+        copy_into(out_Pn_psin, heat_input)
+        scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
+        product_into(scratch_Pn_r, out_Pn_psin, out_psin_r)
+        scratch_aux = source_scratch_1d[_SLOT_AUX0]
+        _compute_Pn_out(scratch_aux, scratch_Pn_r, accumulator, quadrature)
+        alpha1 = (
+            0.5
+            * beta
+            * B0**2
+            / alpha2
+            * dot(V_r, quadrature)
+            / weighted_dot(scratch_aux, V_r, quadrature)
+        )
+    else:
+        scratch_Pr = source_scratch_1d[_SLOT_Pr]
+        scaled_product_into(scratch_Pr, heat_input, out_psin_r, alpha2)
+        alpha1 = -dot(scratch_Pr, quadrature) / alpha2
+        scaled_ratio_into(out_Pn_psin, scratch_Pr, psin_r_safe, 1.0 / (alpha1 * alpha2))
+    _fill_pp_ffn_psin(
+        out_FFn_psin,
+        out_psin_r,
+        psin_r_safe,
+        Kn_r,
+        Kn,
+        out_psin_rr,
+        V_r,
+        out_Pn_psin,
+        Ln_r,
+        alpha2 / alpha1,
+    )
+    return alpha1, alpha2
+
+
+@register_route(
+    ("PI", "rho", "uniform"),
+    ("PI", "rho", "grid"),
+)
 @njit(cache=True, nogil=True)
 def _update_pi_from_rho_inputs_with_scratch(
     out_root_fields: np.ndarray,
@@ -986,10 +1143,9 @@ def _update_pi_from_rho_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(("PI", "psin", "uniform"), source_strategy=SOURCE_STRATEGY_PROFILE_OWNED_PSIN)
-@register_route(("PI", "psin", "grid"), source_strategy=SOURCE_STRATEGY_SINGLE_PASS)
+@register_route(("PI", "psin", "uniform"))
 @njit(cache=True, nogil=True)
-def _update_pi_from_psin_inputs_with_scratch(
+def _update_pi_from_psin_uniform_inputs_with_scratch(
     out_root_fields: np.ndarray,
     out_FFn_psin: np.ndarray,
     out_Pn_psin: np.ndarray,
@@ -1058,8 +1214,81 @@ def _update_pi_from_psin_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(("PJ1", "rho", "uniform"), source_strategy=SOURCE_STRATEGY_SINGLE_PASS)
-@register_route(("PJ1", "rho", "grid"), source_strategy=SOURCE_STRATEGY_SINGLE_PASS)
+@register_route(("PI", "psin", "grid"))
+@njit(cache=True, nogil=True)
+def _update_pi_from_psin_grid_inputs_with_scratch(
+    out_root_fields: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    quadrature: np.ndarray,
+    differentiator: np.ndarray,
+    accumulator: np.ndarray,
+    rho: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+    source_scratch_1d: np.ndarray,
+    source_scratch_2d: np.ndarray,
+) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(
+        radial_workspace, surface_workspace
+    )
+    has_Ip = not np.isnan(Ip)
+    has_beta = not np.isnan(beta)
+    Itor = source_scratch_1d[_SLOT_AUX0]
+    if has_Ip:
+        scale_into(Itor, current_input, Ip / current_input[-1])
+    else:
+        copy_into(Itor, current_input)
+    _enforce_axis_quadratic_itor(Itor, rho)
+    itor_floor = max(Itor[-1], 1.0) * 1e-12
+    maximum_floor_into(Itor, Itor, itor_floor)
+    itor_over_kn = source_scratch_1d[_SLOT_INTEGRAND]
+    scaled_ratio_into(itor_over_kn, Itor, Kn, 1.0 / (2.0 * np.pi))
+    alpha2 = dot(itor_over_kn, quadrature)
+    scaled_ratio_into(out_psin_r, Itor, Kn, 1.0 / (2.0 * np.pi * alpha2))
+    full_differentiation(out_psin_rr, out_psin_r, differentiator)
+    _update_psin_coordinate(out_psin, out_psin_r, accumulator)
+    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
+    maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
+    Itor_r = source_scratch_1d[_SLOT_AUX1]
+    full_differentiation(Itor_r, Itor, differentiator)
+    _regularize_axis_linear_psin_r(Itor_r, rho)
+    if has_beta:
+        copy_into(out_Pn_psin, heat_input)
+        scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
+        product_into(scratch_Pn_r, out_Pn_psin, out_psin_r)
+        scratch_aux = source_scratch_1d[_SLOT_AUX2]
+        _compute_Pn_out(scratch_aux, scratch_Pn_r, accumulator, quadrature)
+        alpha1 = (
+            0.5
+            * beta
+            * B0**2
+            / alpha2
+            * dot(V_r, quadrature)
+            / weighted_dot(scratch_aux, V_r, quadrature)
+        )
+    else:
+        scratch_Pr = source_scratch_1d[_SLOT_Pr]
+        scaled_product_into(scratch_Pr, heat_input, out_psin_r, alpha2)
+        alpha1 = -dot(scratch_Pr, quadrature) / alpha2
+        scaled_ratio_into(out_Pn_psin, scratch_Pr, psin_r_safe, 1.0 / (alpha1 * alpha2))
+    _fill_pi_ffn_psin(out_FFn_psin, Itor_r, V_r, out_Pn_psin, Ln_r, 1.0 / (2.0 * np.pi * alpha1))
+    return alpha1, alpha2
+
+
+@register_route(
+    ("PJ1", "rho", "uniform"),
+    ("PJ1", "rho", "grid"),
+)
 @njit(cache=True, nogil=True)
 def _update_pj1_from_rho_inputs_with_scratch(
     out_root_fields: np.ndarray,
@@ -1146,10 +1375,9 @@ def _update_pj1_from_rho_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(("PJ1", "psin", "uniform"), source_strategy=SOURCE_STRATEGY_PROFILE_OWNED_PSIN)
-@register_route(("PJ1", "psin", "grid"), source_strategy=SOURCE_STRATEGY_SINGLE_PASS)
+@register_route(("PJ1", "psin", "uniform"))
 @njit(cache=True, nogil=True)
-def _update_pj1_from_psin_inputs_with_scratch(
+def _update_pj1_from_psin_uniform_inputs_with_scratch(
     out_root_fields: np.ndarray,
     out_FFn_psin: np.ndarray,
     out_Pn_psin: np.ndarray,
@@ -1234,10 +1462,96 @@ def _update_pj1_from_psin_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(("PJ2", "psin", "uniform"), source_strategy=SOURCE_STRATEGY_SINGLE_PASS)
-@register_route(("PJ2", "psin", "grid"), source_strategy=SOURCE_STRATEGY_SINGLE_PASS)
+@register_route(("PJ1", "psin", "grid"))
 @njit(cache=True, nogil=True)
-def _update_pj2_from_psin_inputs_with_scratch(
+def _update_pj1_from_psin_grid_inputs_with_scratch(
+    out_root_fields: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    quadrature: np.ndarray,
+    differentiator: np.ndarray,
+    accumulator: np.ndarray,
+    rho: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+    source_scratch_1d: np.ndarray,
+    source_scratch_2d: np.ndarray,
+) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(
+        radial_workspace, surface_workspace
+    )
+    has_Ip = not np.isnan(Ip)
+    has_beta = not np.isnan(beta)
+    integrand_j = source_scratch_1d[_SLOT_INTEGRAND]
+    product_into(integrand_j, current_input, S_r)
+    full_integration(out_psin_r, integrand_j, accumulator)
+    I_tor_prof = source_scratch_1d[_SLOT_AUX0]
+    copy_into(I_tor_prof, out_psin_r)
+    _enforce_axis_quadratic_itor(I_tor_prof, rho)
+    I_tor = source_scratch_1d[_SLOT_AUX1]
+    jtor = source_scratch_1d[_SLOT_AUX2]
+    if has_Ip:
+        scale_into(I_tor, I_tor_prof, Ip / I_tor_prof[-1])
+        scale_into(jtor, current_input, Ip / I_tor_prof[-1])
+    else:
+        copy_into(I_tor, I_tor_prof)
+        copy_into(jtor, current_input)
+    _enforce_axis_even_profile(jtor, rho)
+    itor_floor = max(I_tor[-1], 1.0) * 1e-12
+    maximum_floor_into(I_tor, I_tor, itor_floor)
+    itor_over_kn = source_scratch_1d[_SLOT_INTEGRAND]
+    scaled_ratio_into(itor_over_kn, I_tor, Kn, 1.0 / (2.0 * np.pi))
+    alpha2 = dot(itor_over_kn, quadrature)
+    scaled_ratio_into(out_psin_r, I_tor, Kn, 1.0 / (2.0 * np.pi * alpha2))
+    full_differentiation(out_psin_rr, out_psin_r, differentiator)
+    _update_psin_coordinate(out_psin, out_psin_r, accumulator)
+    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
+    maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
+    if has_beta:
+        copy_into(out_Pn_psin, heat_input)
+        scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
+        product_into(scratch_Pn_r, out_Pn_psin, out_psin_r)
+        scratch_aux = source_scratch_1d[_SLOT_INTEGRAND]
+        _compute_Pn_out(scratch_aux, scratch_Pn_r, accumulator, quadrature)
+        alpha1 = (
+            0.5
+            * beta
+            * B0**2
+            / alpha2
+            * dot(V_r, quadrature)
+            / weighted_dot(scratch_aux, V_r, quadrature)
+        )
+    else:
+        scratch_Pr = source_scratch_1d[_SLOT_Pr]
+        scaled_product_into(scratch_Pr, heat_input, out_psin_r, alpha2)
+        alpha1 = -dot(scratch_Pr, quadrature) / alpha2
+        scaled_ratio_into(out_Pn_psin, scratch_Pr, psin_r_safe, 1.0 / (alpha1 * alpha2))
+    _fill_pj_ffn_psin(
+        out_FFn_psin,
+        jtor,
+        S_r,
+        V_r,
+        out_Pn_psin,
+        out_psin_r,
+        psin_r_safe,
+        Ln_r,
+        1.0 / (2.0 * np.pi * alpha1),
+    )
+    return alpha1, alpha2
+
+
+@register_route(("PJ2", "psin", "uniform"))
+@njit(cache=True, nogil=True)
+def _update_pj2_from_psin_uniform_inputs_with_scratch(
     out_root_fields: np.ndarray,
     out_FFn_psin: np.ndarray,
     out_Pn_psin: np.ndarray,
@@ -1312,8 +1626,87 @@ def _update_pj2_from_psin_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(("PJ2", "rho", "uniform"), source_strategy=SOURCE_STRATEGY_SINGLE_PASS)
-@register_route(("PJ2", "rho", "grid"), source_strategy=SOURCE_STRATEGY_SINGLE_PASS)
+@register_route(("PJ2", "psin", "grid"))
+@njit(cache=True, nogil=True)
+def _update_pj2_from_psin_grid_inputs_with_scratch(
+    out_root_fields: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    quadrature: np.ndarray,
+    differentiator: np.ndarray,
+    accumulator: np.ndarray,
+    rho: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+    source_scratch_1d: np.ndarray,
+    source_scratch_2d: np.ndarray,
+) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, _, Ln_r, _, _, _ = _source_geometry_workspace_views(
+        radial_workspace, surface_workspace
+    )
+    has_Ip = not np.isnan(Ip)
+    has_beta = not np.isnan(beta)
+    integrand = source_scratch_1d[_SLOT_INTEGRAND]
+    integral_val = source_scratch_1d[_SLOT_AUX0]
+    I_tor = source_scratch_1d[_SLOT_AUX1]
+    scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
+    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
+    scratch_aux = source_scratch_1d[_SLOT_AUX2]
+
+    scaled_product_ratio_into(integrand, Ln_r, current_input, F, 1.0)
+    full_integration(out_psin_r, integrand, accumulator)
+    copy_into(integral_val, out_psin_r)
+
+    if has_Ip:
+        scaled_product_into(I_tor, F, integral_val, Ip / (R0 * B0 * integral_val[-1]))
+    else:
+        scaled_product_into(I_tor, F, integral_val, 2.0 * np.pi)
+    scaled_ratio_into(integrand, I_tor, Kn, 1.0 / (2.0 * np.pi))
+    alpha2 = dot(integrand, quadrature)
+    scale_into(out_psin_r, integrand, 1.0 / alpha2)
+    full_differentiation(out_psin_rr, out_psin_r, differentiator)
+    _update_psin_coordinate(out_psin, out_psin_r, accumulator)
+    maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
+
+    if has_beta:
+        product_into(scratch_Pn_r, heat_input, out_psin_r)
+        _compute_Pn_out(scratch_aux, scratch_Pn_r, accumulator, quadrature)
+        alpha1 = (
+            0.5
+            * beta
+            * B0**2
+            / alpha2
+            * dot(V_r, quadrature)
+            / weighted_dot(
+                scratch_aux,
+                V_r,
+                quadrature,
+            )
+        )
+        copy_into(out_Pn_psin, heat_input)
+    else:
+        alpha1 = -weighted_dot(heat_input, out_psin_r, quadrature)
+        scaled_product_ratio_into(out_Pn_psin, heat_input, out_psin_r, psin_r_safe, 1.0 / alpha1)
+
+    full_differentiation(scratch_aux, F, differentiator)
+    product_into(out_FFn_psin, F, scratch_aux)
+    scaled_ratio_into(out_FFn_psin, out_FFn_psin, psin_r_safe, 1.0 / (alpha1 * alpha2))
+    return alpha1, alpha2
+
+
+@register_route(
+    ("PJ2", "rho", "uniform"),
+    ("PJ2", "rho", "grid"),
+)
 @njit(cache=True, nogil=True)
 def _update_pj2_from_rho_inputs_with_scratch(
     out_root_fields: np.ndarray,
@@ -1386,10 +1779,9 @@ def _update_pj2_from_rho_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(("PQ", "psin", "uniform"), source_strategy=SOURCE_STRATEGY_SINGLE_PASS)
-@register_route(("PQ", "psin", "grid"), source_strategy=SOURCE_STRATEGY_SINGLE_PASS)
+@register_route(("PQ", "psin", "uniform"))
 @njit(cache=True, nogil=True)
-def _update_pq_from_psin_inputs_with_scratch(
+def _update_pq_from_psin_uniform_inputs_with_scratch(
     out_root_fields: np.ndarray,
     out_FFn_psin: np.ndarray,
     out_Pn_psin: np.ndarray,
@@ -1460,8 +1852,83 @@ def _update_pq_from_psin_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(("PQ", "rho", "uniform"), source_strategy=SOURCE_STRATEGY_SINGLE_PASS)
-@register_route(("PQ", "rho", "grid"), source_strategy=SOURCE_STRATEGY_SINGLE_PASS)
+@register_route(("PQ", "psin", "grid"))
+@njit(cache=True, nogil=True)
+def _update_pq_from_psin_grid_inputs_with_scratch(
+    out_root_fields: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    quadrature: np.ndarray,
+    differentiator: np.ndarray,
+    accumulator: np.ndarray,
+    rho: np.ndarray,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+    source_scratch_1d: np.ndarray,
+    source_scratch_2d: np.ndarray,
+) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, _, Ln_r, _, _, _ = _source_geometry_workspace_views(
+        radial_workspace, surface_workspace
+    )
+    has_Ip = not np.isnan(Ip)
+    has_beta = not np.isnan(beta)
+    q_prof = source_scratch_1d[_SLOT_INTEGRAND]
+    scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
+    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
+    scratch_aux = source_scratch_1d[_SLOT_AUX2]
+
+    if has_Ip:
+        q_scale = (2.0 * np.pi * F[-1]) / Ip
+        scale_into(q_prof, current_input, q_scale * (Kn[-1] * Ln_r[-1] / current_input[-1]))
+        alpha2 = weighted_ratio_dot(F, Ln_r, q_prof, quadrature)
+        scaled_product_ratio_into(out_psin_r, F, Ln_r, q_prof, 1.0 / alpha2)
+    else:
+        alpha2 = weighted_ratio_dot(F, Ln_r, current_input, quadrature)
+        scaled_product_ratio_into(out_psin_r, F, Ln_r, current_input, 1.0 / alpha2)
+
+    full_differentiation(out_psin_rr, out_psin_r, differentiator)
+    _update_psin_coordinate(out_psin, out_psin_r, accumulator)
+    maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
+
+    if has_beta:
+        product_into(scratch_Pn_r, heat_input, out_psin_r)
+        _compute_Pn_out(scratch_aux, scratch_Pn_r, accumulator, quadrature)
+        alpha1 = (
+            0.5
+            * beta
+            * B0**2
+            / alpha2
+            * dot(V_r, quadrature)
+            / weighted_dot(
+                scratch_aux,
+                V_r,
+                quadrature,
+            )
+        )
+        copy_into(out_Pn_psin, heat_input)
+    else:
+        alpha1 = -weighted_dot(heat_input, out_psin_r, quadrature)
+        scaled_product_ratio_into(out_Pn_psin, heat_input, out_psin_r, psin_r_safe, 1.0 / alpha1)
+
+    full_differentiation(scratch_aux, F, differentiator)
+    product_into(out_FFn_psin, F, scratch_aux)
+    scaled_ratio_into(out_FFn_psin, out_FFn_psin, psin_r_safe, 1.0 / (alpha1 * alpha2))
+    return alpha1, alpha2
+
+
+@register_route(
+    ("PQ", "rho", "uniform"),
+    ("PQ", "rho", "grid"),
+)
 @njit(cache=True, nogil=True)
 def _update_pq_from_rho_inputs_with_scratch(
     out_root_fields: np.ndarray,
@@ -2270,3 +2737,7 @@ def _assert_default_source_routes_registered() -> None:
 
 
 _assert_default_source_routes_registered()
+
+# Compatibility names for callers that still refer to the pre-split psin kernels.
+_update_pj2_from_psin_inputs_with_scratch = _update_pj2_from_psin_uniform_inputs_with_scratch
+_update_pq_from_psin_inputs_with_scratch = _update_pq_from_psin_uniform_inputs_with_scratch

@@ -20,6 +20,7 @@ from typing import Callable
 
 import numpy as np
 
+import veqpy.engine.backend_abi as backend_abi
 from veqpy import orchestration
 from veqpy.engine import numba_operator, numba_profile, numba_residual, validate_route
 from veqpy.model.equilibrium import Equilibrium
@@ -122,6 +123,7 @@ class Operator:
     s_effective_order: int = field(init=False, repr=False)
     _source_route_spec: object = field(init=False, repr=False)
     source_plan: orchestration.SourcePlan = field(init=False, repr=False)
+    source_execution: backend_abi.SourceExecutionABI = field(init=False, repr=False)
     field_runtime_state: FieldRuntimeState = field(init=False, repr=False)
     execution_state: ExecutionState = field(init=False, repr=False)
     source_runtime_state: SourceRuntimeState = field(init=False, repr=False)
@@ -154,6 +156,7 @@ class Operator:
             profile_names=self.profile_names,
         )
         self.x_size = packed_size(self.coeff_index)
+        self._refresh_source_execution_binding()
         self._refresh_profile_config()
         self.residual_binding_layout = self._build_residual_binding_layout()
         self._validate_runtime_profile_support()
@@ -196,8 +199,7 @@ class Operator:
         """校验当前 source route 对 psin profile ownership 的要求."""
         orchestration.validate_source_plan_profile_support(
             source_plan=self.source_plan,
-            profile_L=self.profile_L,
-            profile_index=self.profile_index,
+            source_execution=self.source_execution,
             case=self.case,
         )
         return None
@@ -409,7 +411,7 @@ class Operator:
     def _setup_runtime_state(self) -> None:
         bundle = allocate_runtime_state(
             static_layout=self.static_layout,
-            source_plan=self.source_plan,
+            source_execution=self.source_execution,
             profile_names=self.profile_names,
             profile_index=self.profile_index,
             active_profile_ids=self.active_profile_ids,
@@ -462,6 +464,7 @@ class Operator:
 
     def _refresh_runtime_state(self) -> None:
         self._refresh_operator_identity()
+        self._refresh_source_execution_binding()
         self._refresh_profile_config()
         self.residual_binding_layout = self._build_residual_binding_layout()
         self._validate_runtime_profile_support()
@@ -471,6 +474,7 @@ class Operator:
             case=self.case,
             grid_rho=self.static_layout.rho,
             source_plan=self.source_plan,
+            source_execution=self.source_execution,
             source_runtime_state=self.source_runtime_state,
             psin=self.psin,
         )
@@ -485,6 +489,15 @@ class Operator:
         self.source_plan = orchestration.build_source_plan(
             case=self.case,
             source_route_spec=self._source_route_spec,
+        )
+
+    def _refresh_source_execution_binding(self) -> None:
+        self.source_execution = backend_abi.build_source_execution_abi(
+            source_plan=self.source_plan,
+            profile_index=self.profile_index,
+            profile_L=self.profile_L,
+            coeff_index=self.coeff_index,
+            active_profile_ids=self.active_profile_ids,
         )
 
     def _refresh_profile_config(self) -> None:
@@ -734,16 +747,20 @@ class Operator:
         )
 
     def invalidate_source_state(self) -> None:
-        if self.source_plan.is_fixed_point_psin_route:
+        if self.source_execution.requires_fixed_point_psin_materialization:
             self.source_runtime_state.work_state.psin_query.fill(-1.0)
 
     def _build_fused_residual_runner(self) -> Callable[[np.ndarray], np.ndarray]:
-        if self.source_plan.requires_psin_profile_fields and self.psin_profile.u_fields is None:
+        if (
+            self.source_execution.requires_psin_profile_fields
+            and self.psin_profile.u_fields is None
+        ):
             return self._evaluate_residual
-        if not self.source_plan.supports_fused_residual:
+        if not self.source_execution.supports_fused_residual:
             return self._evaluate_residual
         return numba_operator.bind_fused_residual_runner(
             source_plan=self.source_plan,
+            source_execution=self.source_execution,
             backend_state=self.backend_state,
             alpha_state=self.execution_state.fused_alpha_state,
             c_active_order=int(self.c_effective_order),

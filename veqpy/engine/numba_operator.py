@@ -15,7 +15,6 @@ Notes:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable
 
 import numpy as np
@@ -44,44 +43,6 @@ from veqpy.engine.numba_source import (
 if TYPE_CHECKING:
     from veqpy.operator.runtime_layout import BackendState
     from veqpy.orchestration import SourcePlan
-
-
-def _source_route_key(source_plan: "SourcePlan") -> tuple[str, str, str]:
-    return (source_plan.route, source_plan.coordinate, source_plan.nodes)
-
-
-@dataclass(frozen=True, slots=True)
-class _FusedRouteBindingSpec:
-    core_kind: str
-    skip_projection_finalize: bool = False
-
-
-_FUSED_ROUTE_BINDINGS: dict[tuple[str, str, str], _FusedRouteBindingSpec] = {
-    ("PF", "rho", "uniform"): _FusedRouteBindingSpec("single_pass"),
-    ("PF", "rho", "grid"): _FusedRouteBindingSpec("single_pass"),
-    ("PF", "psin", "uniform"): _FusedRouteBindingSpec("profile_owned"),
-    ("PF", "psin", "grid"): _FusedRouteBindingSpec("single_pass"),
-    ("PP", "rho", "uniform"): _FusedRouteBindingSpec("single_pass"),
-    ("PP", "rho", "grid"): _FusedRouteBindingSpec("single_pass"),
-    ("PP", "psin", "uniform"): _FusedRouteBindingSpec("profile_owned"),
-    ("PP", "psin", "grid"): _FusedRouteBindingSpec("single_pass"),
-    ("PI", "rho", "uniform"): _FusedRouteBindingSpec("single_pass"),
-    ("PI", "rho", "grid"): _FusedRouteBindingSpec("single_pass"),
-    ("PI", "psin", "uniform"): _FusedRouteBindingSpec(
-        "profile_owned", skip_projection_finalize=True
-    ),
-    ("PI", "psin", "grid"): _FusedRouteBindingSpec("single_pass"),
-    ("PJ1", "rho", "uniform"): _FusedRouteBindingSpec("single_pass"),
-    ("PJ1", "rho", "grid"): _FusedRouteBindingSpec("single_pass"),
-    ("PJ1", "psin", "uniform"): _FusedRouteBindingSpec("profile_owned"),
-    ("PJ1", "psin", "grid"): _FusedRouteBindingSpec("single_pass"),
-    ("PJ2", "rho", "uniform"): _FusedRouteBindingSpec("single_pass"),
-    ("PJ2", "rho", "grid"): _FusedRouteBindingSpec("single_pass"),
-    ("PJ2", "psin", "grid"): _FusedRouteBindingSpec("single_pass"),
-    ("PQ", "rho", "uniform"): _FusedRouteBindingSpec("single_pass"),
-    ("PQ", "rho", "grid"): _FusedRouteBindingSpec("single_pass"),
-    ("PQ", "psin", "grid"): _FusedRouteBindingSpec("single_pass"),
-}
 
 
 def bind_source_eval_runner(
@@ -200,7 +161,7 @@ def _refresh_hot_runtime(
         hot_runtime_binding.active_coeff_index_rows,
         hot_runtime_binding.active_lengths,
     )
-    if hot_runtime_binding.convert_f_squared_to_f:
+    if hot_runtime_binding.F_active_length > 0:
         _convert_f_squared_fields_to_f_impl(hot_runtime_binding.F_profile_fields)
     _update_fourier_family_fields_impl(
         hot_runtime_binding.c_family_fields,
@@ -632,6 +593,7 @@ def _run_projected_finalize_with_scratch(
 def bind_fused_residual_runner(
     *,
     source_plan: SourcePlan,
+    source_execution: backend_abi.SourceExecutionABI,
     backend_state: "BackendState",
     alpha_state: np.ndarray,
     c_active_order: int,
@@ -641,57 +603,47 @@ def bind_fused_residual_runner(
     Z0: float,
     B0: float,
 ) -> Callable[[np.ndarray], np.ndarray]:
-    convert_f_squared_to_f = "F" in backend_state.residual_binding_layout.active_profile_names
-    route_key = _source_route_key(source_plan)
-    if route_key == ("PJ2", "psin", "uniform"):
-        return _bind_pj2_psin_fixed_point_residual_runner_core(
-            source_plan=source_plan,
-            backend_state=backend_state,
-            convert_f_squared_to_f=convert_f_squared_to_f,
-            alpha_state=alpha_state,
-            c_active_order=c_active_order,
-            s_active_order=s_active_order,
-            a=a,
-            R0=R0,
-            Z0=Z0,
-            B0=B0,
+    route_key = tuple(source_execution.route_key)
+    if route_key != source_plan.route_key:
+        raise ValueError(
+            f"Source execution ABI route mismatch: plan={source_plan.route_key!r}, "
+            f"binding={route_key!r}"
         )
-    if route_key == ("PQ", "psin", "uniform"):
-        return _bind_pq_psin_fixed_point_residual_runner_core(
-            source_plan=source_plan,
-            backend_state=backend_state,
-            convert_f_squared_to_f=convert_f_squared_to_f,
-            alpha_state=alpha_state,
-            c_active_order=c_active_order,
-            s_active_order=s_active_order,
-            a=a,
-            R0=R0,
-            Z0=Z0,
-            B0=B0,
-        )
-    try:
-        binding = _FUSED_ROUTE_BINDINGS[route_key]
-    except KeyError as exc:
-        raise ValueError(f"Unsupported source route key {route_key!r}") from exc
 
-    if binding.core_kind == "single_pass":
-        return _bind_single_pass_residual_runner_core(
-            source_plan=source_plan,
-            backend_state=backend_state,
-            convert_f_squared_to_f=convert_f_squared_to_f,
-            alpha_state=alpha_state,
-            c_active_order=c_active_order,
-            s_active_order=s_active_order,
-            a=a,
-            R0=R0,
-            Z0=Z0,
-            B0=B0,
-        )
-    if binding.core_kind == "profile_owned":
+    if source_execution.requires_fixed_point_psin_materialization:
+        if route_key == ("PJ2", "psin", "uniform"):
+            return _bind_pj2_psin_fixed_point_residual_runner_core(
+                source_plan=source_plan,
+                source_execution=source_execution,
+                backend_state=backend_state,
+                alpha_state=alpha_state,
+                c_active_order=c_active_order,
+                s_active_order=s_active_order,
+                a=a,
+                R0=R0,
+                Z0=Z0,
+                B0=B0,
+            )
+        if route_key == ("PQ", "psin", "uniform"):
+            return _bind_pq_psin_fixed_point_residual_runner_core(
+                source_plan=source_plan,
+                source_execution=source_execution,
+                backend_state=backend_state,
+                alpha_state=alpha_state,
+                c_active_order=c_active_order,
+                s_active_order=s_active_order,
+                a=a,
+                R0=R0,
+                Z0=Z0,
+                B0=B0,
+            )
+        raise ValueError(f"Unsupported fixed-point psin source route {route_key!r}")
+
+    if source_execution.requires_optimized_psin_profile:
         return _bind_profile_owned_psin_residual_runner_core(
             source_plan=source_plan,
+            source_execution=source_execution,
             backend_state=backend_state,
-            convert_f_squared_to_f=convert_f_squared_to_f,
             alpha_state=alpha_state,
             c_active_order=c_active_order,
             s_active_order=s_active_order,
@@ -699,16 +651,30 @@ def bind_fused_residual_runner(
             R0=R0,
             Z0=Z0,
             B0=B0,
-            skip_projection_finalize=binding.skip_projection_finalize,
         )
-    raise ValueError(f"Unsupported fused route binding {binding!r} for key {route_key!r}")
+
+    if source_execution.supports_fused_residual:
+        return _bind_single_pass_residual_runner_core(
+            source_plan=source_plan,
+            source_execution=source_execution,
+            backend_state=backend_state,
+            alpha_state=alpha_state,
+            c_active_order=c_active_order,
+            s_active_order=s_active_order,
+            a=a,
+            R0=R0,
+            Z0=Z0,
+            B0=B0,
+        )
+
+    raise ValueError(f"Unsupported source route key {route_key!r}")
 
 
 def _bind_single_pass_residual_runner_core(
     *,
     source_plan: SourcePlan,
+    source_execution: backend_abi.SourceExecutionABI,
     backend_state: "BackendState",
-    convert_f_squared_to_f: bool,
     alpha_state: np.ndarray,
     c_active_order: int,
     s_active_order: int,
@@ -726,7 +692,7 @@ def _bind_single_pass_residual_runner_core(
     materialized_current_input = source_work_state.materialized_current_input
     hot_runtime_binding = backend_abi.build_fused_hot_runtime_abi(
         backend_state=backend_state,
-        convert_f_squared_to_f=convert_f_squared_to_f,
+        source_execution=source_execution,
         c_active_order=c_active_order,
         s_active_order=s_active_order,
         a=a,
@@ -777,8 +743,8 @@ def _bind_single_pass_residual_runner_core(
 def _bind_profile_owned_psin_residual_runner_core(
     *,
     source_plan: SourcePlan,
+    source_execution: backend_abi.SourceExecutionABI,
     backend_state: "BackendState",
-    convert_f_squared_to_f: bool,
     alpha_state: np.ndarray,
     c_active_order: int,
     s_active_order: int,
@@ -786,7 +752,6 @@ def _bind_profile_owned_psin_residual_runner_core(
     R0: float,
     Z0: float,
     B0: float,
-    skip_projection_finalize: bool,
 ) -> Callable[[np.ndarray], np.ndarray]:
     runtime_layout = backend_state.runtime_layout
     surface_workspace = runtime_layout.geometry_surface_workspace
@@ -794,7 +759,7 @@ def _bind_profile_owned_psin_residual_runner_core(
     root_fields = runtime_layout.root_fields
     hot_runtime_binding = backend_abi.build_fused_hot_runtime_abi(
         backend_state=backend_state,
-        convert_f_squared_to_f=convert_f_squared_to_f,
+        source_execution=source_execution,
         c_active_order=c_active_order,
         s_active_order=s_active_order,
         a=a,
@@ -814,8 +779,8 @@ def _bind_profile_owned_psin_residual_runner_core(
     )
     profile_owned_psin_binding = backend_abi.build_profile_owned_psin_source_abi(
         source_plan=source_plan,
+        source_execution=source_execution,
         backend_state=backend_state,
-        skip_projection_finalize=skip_projection_finalize,
     )
     scratch_holder: list[np.ndarray | None] = [None]
     psin = root_fields[0]
@@ -883,8 +848,8 @@ def _bind_profile_owned_psin_residual_runner_core(
 def _bind_pj2_psin_fixed_point_residual_runner_core(
     *,
     source_plan: SourcePlan,
+    source_execution: backend_abi.SourceExecutionABI,
     backend_state: "BackendState",
-    convert_f_squared_to_f: bool,
     alpha_state: np.ndarray,
     c_active_order: int,
     s_active_order: int,
@@ -905,7 +870,7 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
     root_fields = runtime_layout.root_fields
     hot_runtime_binding = backend_abi.build_fused_hot_runtime_abi(
         backend_state=backend_state,
-        convert_f_squared_to_f=convert_f_squared_to_f,
+        source_execution=source_execution,
         c_active_order=c_active_order,
         s_active_order=s_active_order,
         a=a,
@@ -920,6 +885,7 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
     )
     fixed_point_psin_binding = backend_abi.build_pj2_fixed_point_psin_source_abi(
         source_plan=source_plan,
+        source_execution=source_execution,
         backend_state=backend_state,
     )
     ffn_projection_runner = (
@@ -1107,8 +1073,8 @@ def _bind_source_eval_runner_for_fused_backend(
 def _bind_pq_psin_fixed_point_residual_runner_core(
     *,
     source_plan: SourcePlan,
+    source_execution: backend_abi.SourceExecutionABI,
     backend_state: "BackendState",
-    convert_f_squared_to_f: bool,
     alpha_state: np.ndarray,
     c_active_order: int,
     s_active_order: int,
@@ -1129,7 +1095,7 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
     root_fields = runtime_layout.root_fields
     hot_runtime_binding = backend_abi.build_fused_hot_runtime_abi(
         backend_state=backend_state,
-        convert_f_squared_to_f=convert_f_squared_to_f,
+        source_execution=source_execution,
         c_active_order=c_active_order,
         s_active_order=s_active_order,
         a=a,
@@ -1144,6 +1110,7 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
     )
     fixed_point_psin_binding = backend_abi.build_pq_fixed_point_psin_source_abi(
         source_plan=source_plan,
+        source_execution=source_execution,
         backend_state=backend_state,
     )
     ffn_projection_runner = (
