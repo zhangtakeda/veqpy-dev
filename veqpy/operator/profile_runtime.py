@@ -34,7 +34,9 @@ def make_profile(
     static_kwargs = profile_static_kwargs_by_name.get(name)
     if static_kwargs is None and name.startswith(("c", "s")) and name[1:].isdigit():
         order = int(name[1:])
-        static_kwargs = {} if order == 0 else {"power": _resolve_fourier_power(operator_grid, order)}
+        static_kwargs = (
+            {} if order == 0 else {"power": _resolve_fourier_power(operator_grid, order)}
+        )
     if static_kwargs is not None:
         kwargs.update(static_kwargs)
 
@@ -83,7 +85,9 @@ def refresh_profile_runtime(
         static_kwargs = profile_static_kwargs_by_name.get(name)
         if static_kwargs is None and name.startswith(("c", "s")) and name[1:].isdigit():
             order = int(name[1:])
-            static_kwargs = {} if order == 0 else {"power": operator_grid.resolve_fourier_power(order)}
+            static_kwargs = (
+                {} if order == 0 else {"power": operator_grid.resolve_fourier_power(order)}
+            )
         elif static_kwargs is None:
             static_kwargs = {}
         profile.power = int(static_kwargs.get("power", 0))

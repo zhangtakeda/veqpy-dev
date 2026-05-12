@@ -249,8 +249,8 @@ class Operator:
         self._evaluate_collocation_workspace(x)
         return np.concatenate(
             (
-                self._weighted_collocation_field(self.residual_surface_workspace[1]),
-                self._weighted_collocation_field(self.residual_surface_workspace[2]),
+                self._weighted_collocation_field(self.residual_surface_workspace[0]),
+                self._weighted_collocation_field(self.residual_surface_workspace[0]),
             )
         )
 

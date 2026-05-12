@@ -83,7 +83,9 @@ def test_equilibrium_plot_current_panel_keeps_native_radial_samples():
     fig = equilibrium.plot(grid=plot_grid)
     try:
         current_axis = next(ax for ax in fig.axes if ax.get_title().startswith("(e)"))
-        jpara_line = next(line for line in current_axis.lines if line.get_label() == r"$j_\parallel$")
+        jpara_line = next(
+            line for line in current_axis.lines if line.get_label() == r"$j_\parallel$"
+        )
 
         assert len(jpara_line.get_xdata()) == equilibrium.grid.Nr
         assert len(jpara_line.get_xdata()) != plot_grid.Nr

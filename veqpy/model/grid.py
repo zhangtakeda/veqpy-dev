@@ -95,8 +95,6 @@ class Grid(Serial):
             raise ValueError("M_max must be at least 2")
         if self.K_max is not None and self.K_max < 2:
             raise ValueError("K_max must be at least 2")
-        K_max = _normalize_fourier_power_K_max(self.K_max)
-        object.__setattr__(self, "K_max", K_max)
 
         rho, quadrature = make_quadrature(self.Nr, quadrature=scheme)
         theta = np.linspace(0.0, 2.0 * np.pi, self.Nt, endpoint=False)
@@ -110,7 +108,7 @@ class Grid(Serial):
         m2_cos_mtheta = k2 * cos_mtheta
         m2_sin_mtheta = k2 * sin_mtheta
         rho2 = rho * rho
-        K_values = _build_K_values(self.M_max, K_max)
+        K_values = _build_K_values(self.M_max, self.K_max)
         max_rho_power = max(2, int(np.max(K_values)) + 1)
         rho_powers = np.empty((max_rho_power + 1, self.Nr), dtype=np.float64)
         rho_powers[0].fill(1.0)
@@ -263,16 +261,6 @@ class Grid(Serial):
         else:
             raise ValueError(f"Unsupported quadrature axis {axis}")
         return out
-
-
-def _normalize_fourier_power_K_max(value: int | None) -> int | None:
-    """Normalize and validate a Fourier radial-power cap owned by Grid."""
-    if value is None:
-        return None
-    K_max = int(value)
-    if K_max < 1:
-        raise ValueError(f"K_max must be None or an integer >= 1, got {value!r}")
-    return K_max
 
 
 def _build_K_values(M_max: int, K_max: int | None) -> np.ndarray:

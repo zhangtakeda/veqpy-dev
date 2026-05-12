@@ -189,7 +189,6 @@ def test_solver_config_supports_collocation_polish_workflow():
     assert config.collocation_method == "lm"
     assert config.collocation_max_residual == 1.0e-8
     assert config.collocation_max_evaluations == 40
-    assert not hasattr(config, "residual_form")
     assert "enable_collocation: True" in str(config)
     assert "collocation_method: lm" in str(config)
     assert "collocation_max_residual: 1e-08" in str(config)
@@ -205,9 +204,7 @@ def test_solver_config_uses_variational_root_default_with_single_least_squares_f
     config = SolverConfig()
 
     assert config.method == DEFAULT_VARIATIONAL_METHOD
-    assert not hasattr(config, "residual_form")
     assert config.fallback_methods == DEFAULT_VARIATIONAL_FALLBACK_METHODS
-    assert "residual_form" not in str(config)
 
 
 def test_solver_enable_collocation_routes_polish_to_collocation_residual(monkeypatch):

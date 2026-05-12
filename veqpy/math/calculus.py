@@ -44,17 +44,6 @@ def make_calculus(
     return calculus_generator[calculus](nodes)
 
 
-@calculus_generator("compact", "cfd33")
-def compact_cfd33_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Build dense CFD33 compact integration and differentiation matrices."""
-
-    _validate_nodes(nodes, min_size=4)
-    return (
-        _cfd33_accumulator(nodes),
-        _cfd33_differentiator(nodes),
-    )
-
-
 @calculus_generator("spectral")
 def spectral_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Build base integration/differentiation matrices for the spectral scheme."""
@@ -69,6 +58,33 @@ def spectral_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         _spectral_accumulator(nodes),
         _spectral_differentiator(nodes),
     )
+
+
+@calculus_generator("compact", "cfd33")
+def compact_cfd33_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Build dense CFD33 compact integration and differentiation matrices."""
+
+    _validate_nodes(nodes, min_size=4)
+    return (
+        _cfd33_accumulator(nodes),
+        _cfd33_differentiator(nodes),
+    )
+
+
+@calculus_generator("cfd35")
+def compact_cfd35_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Build dense CFD35 compact integration and differentiation matrices."""
+
+    _validate_nodes(nodes, min_size=5)
+    return _compact_calculus(nodes, implicit_width=3, explicit_width=5)
+
+
+@calculus_generator("cfd55")
+def compact_cfd55_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Build dense CFD55 compact integration and differentiation matrices."""
+
+    _validate_nodes(nodes, min_size=5)
+    return _compact_calculus(nodes, implicit_width=5, explicit_width=5)
 
 
 # -----------------------------------------------------------------------------
@@ -108,6 +124,109 @@ def _cfd33_matrices(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return a_matrix, b_matrix
 
 
+def _compact_calculus(
+    nodes: np.ndarray, *, implicit_width: int, explicit_width: int
+) -> tuple[np.ndarray, np.ndarray]:
+    a_matrix, b_matrix = _compact_matrices(
+        nodes,
+        implicit_width=implicit_width,
+        explicit_width=explicit_width,
+    )
+    return (
+        _compact_accumulator(nodes, a_matrix, b_matrix),
+        np.linalg.solve(a_matrix, b_matrix),
+    )
+
+
+def _compact_matrices(
+    nodes: np.ndarray, *, implicit_width: int, explicit_width: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build compact matrices ``A`` and ``B`` for ``A @ u_r == B @ u``."""
+
+    if implicit_width % 2 != 1 or explicit_width % 2 != 1:
+        raise ValueError("compact stencil widths must be odd")
+
+    n = nodes.shape[0]
+    a_matrix = np.zeros((n, n), dtype=np.float64)
+    b_matrix = np.zeros((n, n), dtype=np.float64)
+    implicit_radius = implicit_width // 2
+    explicit_radius = explicit_width // 2
+    boundary_width = min(n, implicit_width + explicit_width - 1)
+
+    for row in range(n):
+        implicit_start = row - implicit_radius
+        implicit_stop = row + implicit_radius + 1
+        explicit_start = row - explicit_radius
+        explicit_stop = row + explicit_radius + 1
+
+        if (
+            implicit_start >= 0
+            and implicit_stop <= n
+            and explicit_start >= 0
+            and explicit_stop <= n
+        ):
+            implicit_indices = np.arange(implicit_start, implicit_stop, dtype=np.int64)
+            explicit_indices = np.arange(explicit_start, explicit_stop, dtype=np.int64)
+            a_values, b_values = _compact_row_coefficients(
+                nodes,
+                row,
+                implicit_indices,
+                explicit_indices,
+            )
+            a_matrix[row, implicit_indices] = a_values
+            b_matrix[row, explicit_indices] = b_values
+            continue
+
+        stencil_start = min(max(row - boundary_width // 2, 0), n - boundary_width)
+        stencil_stop = stencil_start + boundary_width
+        stencil_indices = np.arange(stencil_start, stencil_stop, dtype=np.int64)
+        a_matrix[row, row] = 1.0
+        b_matrix[row, stencil_indices] = _finite_difference_weights(
+            nodes[stencil_indices],
+            nodes[row],
+            derivative_order=1,
+        )
+
+    return a_matrix, b_matrix
+
+
+def _compact_row_coefficients(
+    nodes: np.ndarray,
+    row: int,
+    implicit_indices: np.ndarray,
+    explicit_indices: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Solve one local compact row by polynomial moment matching."""
+
+    implicit_offsets = nodes[implicit_indices] - nodes[row]
+    explicit_offsets = nodes[explicit_indices] - nodes[row]
+    center_matches = np.flatnonzero(implicit_indices == row)
+    if center_matches.size != 1:
+        raise ValueError("implicit compact stencil must contain the target row")
+
+    center = int(center_matches[0])
+    implicit_unknowns = [index for index in range(implicit_indices.shape[0]) if index != center]
+    unknown_count = len(implicit_unknowns) + explicit_indices.shape[0]
+    system = np.zeros((unknown_count, unknown_count), dtype=np.float64)
+    rhs = np.zeros(unknown_count, dtype=np.float64)
+
+    for degree in range(unknown_count):
+        for column, index in enumerate(implicit_unknowns):
+            system[degree, column] = (
+                degree * implicit_offsets[index] ** (degree - 1) if degree > 0 else 0.0
+            )
+        explicit_offset = len(implicit_unknowns)
+        system[degree, explicit_offset:] = -(explicit_offsets**degree)
+        rhs[degree] = -1.0 if degree == 1 else 0.0
+
+    solution = np.linalg.solve(system, rhs)
+    a_values = np.zeros(implicit_indices.shape[0], dtype=np.float64)
+    a_values[center] = 1.0
+    for value, index in zip(solution[: len(implicit_unknowns)], implicit_unknowns, strict=True):
+        a_values[index] = value
+    return a_values, solution[len(implicit_unknowns) :]
+
+
 def _cfd33_differentiator(nodes: np.ndarray) -> np.ndarray:
     """Build the dense pre-eliminated CFD33 derivative matrix."""
 
@@ -119,6 +238,14 @@ def _cfd33_accumulator(nodes: np.ndarray) -> np.ndarray:
     """Build the dense CFD33 variable-limit integration matrix with ``v(0) == 0``."""
 
     a_matrix, b_matrix = _cfd33_matrices(nodes)
+    return _compact_accumulator(nodes, a_matrix, b_matrix)
+
+
+def _compact_accumulator(
+    nodes: np.ndarray, a_matrix: np.ndarray, b_matrix: np.ndarray
+) -> np.ndarray:
+    """Build a variable-limit integration matrix from compact derivative matrices."""
+
     system = b_matrix.copy()
     rhs_matrix = a_matrix.copy()
 

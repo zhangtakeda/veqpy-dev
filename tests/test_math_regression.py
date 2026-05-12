@@ -11,6 +11,14 @@ def _compact_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return math_api.make_calculus(nodes, calculus="compact")
 
 
+def _cfd35_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    return math_api.make_calculus(nodes, calculus="cfd35")
+
+
+def _cfd55_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    return math_api.make_calculus(nodes, calculus="cfd55")
+
+
 def _spectral_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return math_api.make_calculus(nodes, calculus="spectral")
 
@@ -23,6 +31,8 @@ def test_math_public_api_hides_base_calculus_builders():
     assert not hasattr(math_api, "spectral_accumulator")
     assert not hasattr(math_api, "uniform_spectral_differentiator")
     assert not hasattr(math_api, "uniform_spectral_accumulator")
+    assert not hasattr(math_api, "cfd35_differentiator")
+    assert not hasattr(math_api, "cfd55_differentiator")
 
 
 def test_make_calculus_rejects_non_1d_nodes():
@@ -77,6 +87,48 @@ def test_compact_calculus_differentiation_recovers_compact_integral_on_interior(
     assert np.allclose(recovered[2:-2], values[2:-2], rtol=1.0e-6, atol=1.0e-6)
 
 
+def test_higher_order_compact_calculus_requires_at_least_five_nodes():
+    nodes = np.array([0.0, 0.3, 0.6, 1.0], dtype=np.float64)
+
+    for calculus in ("cfd35", "cfd55"):
+        try:
+            math_api.make_calculus(nodes, calculus=calculus)
+        except ValueError as exc:
+            assert "at least 5 nodes" in str(exc)
+        else:
+            raise AssertionError(f"Expected {calculus} calculus to require at least five nodes")
+
+
+def test_higher_order_compact_calculus_preserves_polynomial_derivatives():
+    nodes = np.linspace(0.0, 1.0, 17)
+
+    for calculus, exact_degree in (("cfd35", 6), ("cfd55", 8)):
+        _, differentiator = math_api.make_calculus(nodes, calculus=calculus)
+
+        assert np.all(np.isfinite(differentiator))
+        for degree in range(exact_degree + 1):
+            values = nodes**degree
+            expected = np.zeros_like(nodes) if degree == 0 else degree * nodes ** (degree - 1)
+            assert np.allclose(
+                differentiator @ values,
+                expected,
+                rtol=1.0e-9,
+                atol=1.0e-9,
+            ), calculus
+
+
+def test_higher_order_compact_calculus_integrates_constant_and_linear_data():
+    nodes, _ = legendre_quadrature(17)
+
+    for calculus in ("cfd35", "cfd55"):
+        accumulator, differentiator = math_api.make_calculus(nodes, calculus=calculus)
+
+        assert np.all(np.isfinite(accumulator))
+        assert np.allclose(accumulator @ np.ones_like(nodes), nodes, rtol=1.0e-10, atol=1.0e-10)
+        assert np.allclose(accumulator @ nodes, 0.5 * nodes**2, rtol=1.0e-10, atol=1.0e-10)
+        assert np.allclose(differentiator @ nodes, 1.0, rtol=1.0e-11, atol=1.0e-11)
+
+
 def test_calculus_registry_selects_compact_and_uniform_spectral_matrices():
     nodes = np.linspace(0.0, 1.0, 8)
 
@@ -87,6 +139,20 @@ def test_calculus_registry_selects_compact_and_uniform_spectral_matrices():
     assert np.allclose(compact_integration @ np.ones_like(nodes), nodes, atol=1.0e-13)
     assert np.allclose(spectral_differentiation @ nodes, 1.0, atol=1.0e-13)
     assert np.allclose(spectral_integration @ (3.0 * nodes - 2.0), 1.5 * nodes**2 - 2.0 * nodes)
+
+
+def test_calculus_registry_selects_cfd35_and_cfd55_matrices():
+    nodes = np.linspace(0.0, 1.0, 9)
+    cfd33_integration, cfd33_differentiation = math_api.make_calculus(nodes, calculus="cfd33")
+    cfd35_integration, cfd35_differentiation = _cfd35_calculus(nodes)
+    cfd55_integration, cfd55_differentiation = _cfd55_calculus(nodes)
+
+    assert np.allclose(cfd35_integration @ np.ones_like(nodes), nodes, atol=1.0e-12)
+    assert np.allclose(cfd55_integration @ np.ones_like(nodes), nodes, atol=1.0e-12)
+    assert np.allclose(cfd35_differentiation @ nodes, 1.0, atol=1.0e-12)
+    assert np.allclose(cfd55_differentiation @ nodes, 1.0, atol=1.0e-12)
+    assert not np.allclose(cfd35_differentiation, cfd33_differentiation)
+    assert not np.allclose(cfd55_differentiation, cfd33_differentiation)
 
 
 def test_calculus_registry_selects_nonuniform_spectral_matrices_from_nodes():
