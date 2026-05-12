@@ -93,6 +93,81 @@ def test_equilibrium_plot_current_panel_keeps_native_radial_samples():
         plt.close(fig)
 
 
+def test_equilibrium_compare_profiles_keep_native_radial_samples(monkeypatch):
+    reference, _ = _build_high_order_equilibrium()
+    other = reference.resample(Grid(Nr=12, Nt=16, scheme="uniform", M_max=reference.grid.M_max))
+    plot_grid = Grid(Nr=32, Nt=32, scheme="uniform", M_max=reference.grid.M_max)
+
+    original_close = plt.close
+    monkeypatch.setattr(plt, "close", lambda *args, **kwargs: None)
+    try:
+        reference.compare(other, grid=plot_grid)
+        fig = plt.gcf()
+        source_axis = next(ax for ax in fig.axes if ax.get_title().startswith("(c)"))
+        ref_line, other_line = source_axis.lines[:2]
+
+        assert len(ref_line.get_xdata()) == reference.grid.Nr
+        assert len(other_line.get_xdata()) == other.grid.Nr
+        assert len(ref_line.get_xdata()) != plot_grid.Nr
+        assert len(other_line.get_xdata()) != plot_grid.Nr
+    finally:
+        original_close("all")
+
+
+def test_profile_errors_interpolate_to_coarser_grid():
+    import veqpy.model.equilibrium as equilibrium_module
+
+    reference_rho = np.array([0.0, 0.5, 1.0])
+    reference_values = np.array([0.0, 1.0, 2.0])
+    current_rho = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
+    current_values = np.array([0.2, 0.7, 1.2, 1.7, 2.2])
+
+    rel_max, rel_rms = equilibrium_module._profile_errors_on_coarser_grid(
+        reference_rho,
+        reference_values,
+        current_rho,
+        current_values,
+    )
+
+    assert rel_max == pytest.approx(0.1)
+    assert rel_rms == pytest.approx(0.1)
+
+
+def test_operator_build_equilibrium_snapshots_residual_path(monkeypatch):
+    _, operator = _build_high_order_equilibrium()
+    x = operator.encode_initial_state()
+    nr = operator.psin.shape[0]
+    ffn_psin = np.linspace(-2.0, -1.0, nr)
+    pn_psin = np.linspace(-3.0, -2.0, nr)
+    psin = np.linspace(0.0, 1.0, nr)
+    psin_r = np.linspace(0.0, 2.0, nr)
+    psin_rr = np.linspace(2.0, 3.0, nr)
+
+    def residual_snapshot_path(self, x_eval):
+        operator.stage_a_profile(x_eval)
+        operator.stage_b_geometry()
+        np.copyto(operator.psin, psin)
+        np.copyto(operator.psin_r, psin_r)
+        np.copyto(operator.psin_rr, psin_rr)
+        np.copyto(operator.FFn_psin, ffn_psin)
+        np.copyto(operator.Pn_psin, pn_psin)
+        operator.alpha1 = 7.0
+        operator.alpha2 = 11.0
+        return np.zeros(operator.x_size, dtype=np.float64)
+
+    monkeypatch.setattr(type(operator), "residual_var", residual_snapshot_path)
+
+    snapshot = operator.build_equilibrium(x)
+
+    assert snapshot.alpha1 == pytest.approx(7.0)
+    assert snapshot.alpha2 == pytest.approx(11.0)
+    assert np.allclose(snapshot.psin, psin)
+    assert np.allclose(snapshot.psin_r, psin_r)
+    assert np.allclose(snapshot.psin_rr, psin_rr)
+    assert np.allclose(snapshot.FFn_psin, ffn_psin)
+    assert np.allclose(snapshot.Pn_psin, pn_psin)
+
+
 def _build_high_order_equilibrium() -> tuple[Equilibrium, Operator]:
     grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=4)
     profile_coeffs = {name: None for name in build_profile_names(grid.M_max)}

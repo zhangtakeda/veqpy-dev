@@ -702,21 +702,21 @@ def _compare_equilibrium(
         M_max=max(reference.grid.M_max, other.grid.M_max),
         K_max=reference.grid.K_max if reference.grid.K_max == other.grid.K_max else None,
     )
-    ref_plot = _build_resampled_equilibrium(reference, grid=compare_grid)
-    other_plot = _build_resampled_equilibrium(other, grid=compare_grid)
+    ref_surface = _build_resampled_equilibrium(reference, grid=compare_grid)
+    other_surface = _build_resampled_equilibrium(other, grid=compare_grid)
 
     shape_keys = [
         key
         for key in ["h", "k", "s1"]
-        if key in ref_plot.shape_profiles or key in other_plot.shape_profiles
+        if key in reference.shape_profiles or key in other.shape_profiles
     ]
     source_groups = [
         ("psi_r", r"$\psi_\rho$", None),
         ("FF_psi", r"$FF_\psi$", None),
         ("mu0_P_psi", r"$\mu_0 P_\psi$", None),
     ]
-    d1 = _build_comparison_profile_data(ref_plot, shape_keys=shape_keys)
-    d2 = _build_comparison_profile_data(other_plot, shape_keys=shape_keys)
+    d1 = _build_comparison_profile_data(reference, shape_keys=shape_keys)
+    d2 = _build_comparison_profile_data(other, shape_keys=shape_keys)
 
     errors: dict[str, float] = {}
     fig = plt.figure(figsize=(14, 8))
@@ -733,8 +733,8 @@ def _compare_equilibrium(
         right=0.98,
     )
 
-    ref_surface_data = _build_surface_panel_data(ref_plot)
-    other_surface_data = _build_surface_panel_data(other_plot)
+    ref_surface_data = _build_surface_panel_data(ref_surface)
+    other_surface_data = _build_surface_panel_data(other_surface)
     shared_boundary = _merge_surface_boundaries(
         ref_surface_data["boundary"], other_surface_data["boundary"]
     )
@@ -755,10 +755,14 @@ def _compare_equilibrium(
         ylabel = _shape_profile_plot_meta(key)["label"]
         ref_values = np.asarray(d1[key], dtype=np.float64)
         cur_values = np.asarray(d2[key], dtype=np.float64)
-        scale_ref = float(np.max(np.abs(ref_values))) or 1.0
-        diff = cur_values - ref_values
-        errors[f"rel_{key}_max"] = float(np.max(np.abs(diff)) / scale_ref)
-        errors[f"rel_{key}_rms"] = float(np.sqrt(np.mean(diff**2)) / scale_ref)
+        rel_max, rel_rms = _profile_errors_on_coarser_grid(
+            d1["rho"],
+            ref_values,
+            d2["rho"],
+            cur_values,
+        )
+        errors[f"rel_{key}_max"] = rel_max
+        errors[f"rel_{key}_rms"] = rel_rms
 
         ax.plot(d1["rho"], d1[key], color=BLACK, linestyle="-", label=label_ref)
         ax.plot(d2["rho"], d2[key], color=RED, linestyle="--", label=label_other)
@@ -768,7 +772,7 @@ def _compare_equilibrium(
         ax.text(
             0.03,
             0.97,
-            f"err = {errors[f'rel_{key}_max']:.1e}",
+            f"err = {_format_profile_error(errors[f'rel_{key}_max'])}",
             transform=ax.transAxes,
             ha="left",
             va="top",
@@ -785,10 +789,14 @@ def _compare_equilibrium(
         s = scale or 1.0
         ref_values = np.asarray(d1[key], dtype=np.float64)
         cur_values = np.asarray(d2[key], dtype=np.float64)
-        scale_ref = float(np.max(np.abs(ref_values))) or 1.0
-        diff = cur_values - ref_values
-        errors[f"rel_{key}_max"] = float(np.max(np.abs(diff)) / scale_ref)
-        errors[f"rel_{key}_rms"] = float(np.sqrt(np.mean(diff**2)) / scale_ref)
+        rel_max, rel_rms = _profile_errors_on_coarser_grid(
+            d1["rho"],
+            ref_values,
+            d2["rho"],
+            cur_values,
+        )
+        errors[f"rel_{key}_max"] = rel_max
+        errors[f"rel_{key}_rms"] = rel_rms
 
         ax.plot(d1["rho"], d1[key] / s, color=BLACK, linestyle="-", label=label_ref)
         ax.plot(d2["rho"], d2[key] / s, color=RED, linestyle="--", label=label_other)
@@ -798,7 +806,7 @@ def _compare_equilibrium(
         ax.text(
             0.03,
             0.97,
-            f"err = {errors[f'rel_{key}_max']:.1e}",
+            f"err = {_format_profile_error(errors[f'rel_{key}_max'])}",
             transform=ax.transAxes,
             ha="left",
             va="top",
@@ -818,6 +826,58 @@ def _compare_equilibrium(
         plt.close(fig)
 
     return errors
+
+
+def _profile_errors_on_coarser_grid(
+    reference_rho: np.ndarray,
+    reference_values: np.ndarray,
+    current_rho: np.ndarray,
+    current_values: np.ndarray,
+) -> tuple[float, float]:
+    """Return profile errors by interpolating only for error calculation.
+
+    The plotted 1D profiles stay on their native ``Equilibrium`` grids.  When
+    the two grids differ, compare on the coarser grid so diagnostics remain
+    available without densifying or mutating either profile.
+    """
+
+    reference_rho = np.asarray(reference_rho, dtype=np.float64)
+    current_rho = np.asarray(current_rho, dtype=np.float64)
+    reference_values = np.asarray(reference_values, dtype=np.float64)
+    current_values = np.asarray(current_values, dtype=np.float64)
+    if reference_rho.ndim != 1 or current_rho.ndim != 1:
+        raise ValueError("Expected 1D rho grids for profile comparison")
+    if reference_values.shape != reference_rho.shape:
+        raise ValueError(
+            f"reference values/rho shape mismatch: "
+            f"{reference_values.shape} vs {reference_rho.shape}"
+        )
+    if current_values.shape != current_rho.shape:
+        raise ValueError(
+            f"current values/rho shape mismatch: {current_values.shape} vs {current_rho.shape}"
+        )
+
+    if reference_rho.size <= current_rho.size:
+        target_rho = reference_rho
+        reference_on_target = reference_values
+        current_on_target = _resample_profile_linear(current_rho, current_values, target_rho)
+    else:
+        target_rho = current_rho
+        reference_on_target = _resample_profile_linear(reference_rho, reference_values, target_rho)
+        current_on_target = current_values
+
+    scale_ref = float(np.max(np.abs(reference_on_target))) or 1.0
+    diff = current_on_target - reference_on_target
+    return (
+        float(np.max(np.abs(diff)) / scale_ref),
+        float(np.sqrt(np.mean(diff**2)) / scale_ref),
+    )
+
+
+def _format_profile_error(value: float) -> str:
+    if not np.isfinite(value):
+        return "n/a"
+    return f"{value:.1e}"
 
 
 def _build_resampled_equilibrium(

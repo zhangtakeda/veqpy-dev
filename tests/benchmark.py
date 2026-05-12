@@ -50,7 +50,7 @@ REFERENCE_GRID = Grid(
 )
 
 TEST_GRID = Grid(
-    Nr=16,
+    Nr=32,
     Nt=16,
     scheme="legendre",
 )

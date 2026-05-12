@@ -295,9 +295,7 @@ class Operator:
     def build_equilibrium(self, x: np.ndarray) -> Equilibrium:
         """从 packed 状态向量构造完整 Equilibrium 快照."""
         x_eval = self.coerce_x(x)
-        self.stage_a_profile(x_eval)
-        self.stage_b_geometry()
-        self.stage_c_source()
+        self.residual_var(x_eval)
         return self._snapshot_equilibrium_from_runtime(x_eval)
 
     def stage_a_profile(self, x: np.ndarray) -> None:
