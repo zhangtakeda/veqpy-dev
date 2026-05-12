@@ -720,9 +720,7 @@ def full_differentiation(
 
 
 @njit(cache=True, nogil=True)
-def full_integration(
-    out: np.ndarray, arr: np.ndarray, accumulator: np.ndarray
-) -> np.ndarray:
+def full_integration(out: np.ndarray, arr: np.ndarray, accumulator: np.ndarray) -> np.ndarray:
     """执行全径向积分."""
     matvec_into(out, accumulator, arr)
     return out
@@ -753,18 +751,67 @@ def _normalize_psin_coordinate_inplace(psin: np.ndarray) -> np.ndarray:
 
 
 @njit(cache=True, fastmath=True, nogil=True)
-def _enforce_axis_linear_psin_r(psin_r: np.ndarray, rho: np.ndarray) -> np.ndarray:
-    if psin_r.shape[0] < 2:
+def _regularize_axis_linear_psin_r(psin_r: np.ndarray, rho: np.ndarray) -> np.ndarray:
+    """Repair only the head samples polluted by cumulative integration at the axis.
+
+    Non-endpoint quadrature grids start at a small positive ``rho``.  The
+    cumulative integration row for that first sample is still anchored at the
+    first node, so the first one or two ``psin_r`` samples can miss the small
+    interval between the magnetic axis and the first node.  Extrapolate the
+    smooth even profile ``psin_r / rho`` from interior samples instead of
+    forcing several head samples to a single slope.
+    """
+    n = psin_r.shape[0]
+    if n < 6:
         return psin_r
-    if abs(rho[1]) < 1e-14:
+    if abs(rho[0]) > 5.0e-2:
         return psin_r
-    if psin_r.shape[0] >= 3 and abs(rho[2]) >= 1e-14:
-        slope = psin_r[2] / rho[2]
-        psin_r[0] = slope * rho[0]
-        psin_r[1] = slope * rho[1]
+
+    anchor0 = 4
+    anchor1 = 5
+    rho0 = rho[anchor0]
+    rho1 = rho[anchor1]
+    if abs(rho0) < 1.0e-14 or abs(rho1) < 1.0e-14:
         return psin_r
-    psin_r[0] = psin_r[1] * rho[0] / rho[1]
+
+    x0 = rho0 * rho0
+    x1 = rho1 * rho1
+    if abs(x1 - x0) < 1.0e-14:
+        return psin_r
+
+    slope0 = psin_r[anchor0] / rho0
+    slope1 = psin_r[anchor1] / rho1
+    slope_gradient = (slope1 - slope0) / (x1 - x0)
+    for i in range(anchor0):
+        x = rho[i] * rho[i]
+        psin_r[i] = rho[i] * (slope0 + slope_gradient * (x - x0))
     return psin_r
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def _regularize_true_axis_ratio_profile(profile: np.ndarray, rho: np.ndarray) -> np.ndarray:
+    """Replace only a true-axis ratio sample by its one-sided finite limit.
+
+    Rho-coordinate source kernels often form profiles such as ``Pn_psin`` by
+    dividing a radial derivative by ``psin_r``.  At an actual magnetic-axis node
+    both numerator and denominator can vanish.  Do not alter ``psin_r`` to avoid
+    that removable singularity: only extrapolate the already-divided profile at
+    ``rho == 0``.  Off-axis quadrature nodes, including Chebyshev nodes close to
+    zero, must be left untouched.
+    """
+    if profile.shape[0] < 3:
+        return profile
+    if abs(rho[0]) >= 1e-10:
+        return profile
+
+    rho1 = rho[1]
+    rho2 = rho[2]
+    if abs(rho2 - rho1) < 1e-14:
+        return profile
+
+    slope = (profile[2] - profile[1]) / (rho2 - rho1)
+    profile[0] = profile[1] + slope * (rho[0] - rho1)
+    return profile
 
 
 @njit(cache=True, fastmath=True, nogil=True)
@@ -795,138 +842,6 @@ def _enforce_axis_even_profile(profile: np.ndarray, rho: np.ndarray) -> np.ndarr
     intercept = profile[1] - slope * x1
     profile[0] = intercept + slope * rho[0] * rho[0]
     profile[1] = intercept + slope * x1
-    return profile
-
-
-@njit(cache=True, fastmath=True, nogil=True)
-def _smooth_even_profile_on_rho2(
-    profile: np.ndarray, rho: np.ndarray, degree: int = 5
-) -> np.ndarray:
-    n = profile.shape[0]
-    fit_degree = degree
-    if fit_degree > n - 1:
-        fit_degree = n - 1
-    if fit_degree <= 0:
-        return profile
-
-    x = np.empty(n, dtype=np.float64)
-    for i in range(n):
-        x[i] = rho[i] * rho[i]
-
-    vandermonde = np.empty((n, fit_degree + 1), dtype=np.float64)
-    for i in range(n):
-        vandermonde[i, 0] = 1.0
-    for order in range(1, fit_degree + 1):
-        for i in range(n):
-            vandermonde[i, order] = vandermonde[i, order - 1] * x[i]
-
-    gram = np.empty((fit_degree + 1, fit_degree + 1), dtype=np.float64)
-    rhs = np.empty(fit_degree + 1, dtype=np.float64)
-    for row in range(fit_degree + 1):
-        total_rhs = 0.0
-        for i in range(n):
-            total_rhs += vandermonde[i, row] * profile[i]
-        rhs[row] = total_rhs
-        for col in range(fit_degree + 1):
-            total = 0.0
-            for i in range(n):
-                total += vandermonde[i, row] * vandermonde[i, col]
-            gram[row, col] = total
-
-    coeff = np.linalg.solve(gram, rhs)
-    for i in range(n):
-        total = 0.0
-        for order in range(fit_degree + 1):
-            total += vandermonde[i, order] * coeff[order]
-        profile[i] = total
-    return profile
-
-
-@njit(cache=True, fastmath=True, nogil=True)
-def _stabilize_odd_profile_head_on_rho(
-    profile: np.ndarray,
-    rho: np.ndarray,
-    fit_start: int = 6,
-    fit_count: int = 12,
-    replace_count: int = 12,
-    degree: int = 2,
-) -> np.ndarray:
-    n = profile.shape[0]
-    start = fit_start if fit_start > 1 else 1
-    stop = start + fit_count
-    if stop > n:
-        stop = n
-    replace_stop = replace_count
-    if replace_stop > stop:
-        replace_stop = stop
-    fit_degree = degree
-    available = stop - start - 1
-    if fit_degree > available:
-        fit_degree = available
-    if replace_stop <= 0 or stop - start < 2 or fit_degree <= 0:
-        return profile
-
-    m = stop - start
-    x_fit = np.empty(m, dtype=np.float64)
-    y_fit = np.empty(m, dtype=np.float64)
-    for i in range(m):
-        idx = start + i
-        x_fit[i] = rho[idx] * rho[idx]
-        denom = rho[idx] if rho[idx] > 1e-12 else 1e-12
-        y_fit[i] = profile[idx] / denom
-
-    vandermonde = np.empty((m, fit_degree + 1), dtype=np.float64)
-    for i in range(m):
-        vandermonde[i, 0] = 1.0
-    for order in range(1, fit_degree + 1):
-        for i in range(m):
-            vandermonde[i, order] = vandermonde[i, order - 1] * x_fit[i]
-
-    gram = np.empty((fit_degree + 1, fit_degree + 1), dtype=np.float64)
-    rhs = np.empty(fit_degree + 1, dtype=np.float64)
-    for row in range(fit_degree + 1):
-        total_rhs = 0.0
-        for i in range(m):
-            total_rhs += vandermonde[i, row] * y_fit[i]
-        rhs[row] = total_rhs
-        for col in range(fit_degree + 1):
-            total = 0.0
-            for i in range(m):
-                total += vandermonde[i, row] * vandermonde[i, col]
-            gram[row, col] = total
-
-    coeff = np.linalg.solve(gram, rhs)
-
-    for i in range(replace_stop):
-        x_val = rho[i] * rho[i]
-        poly = 1.0
-        total = coeff[0]
-        for order in range(1, fit_degree + 1):
-            poly *= x_val
-            total += coeff[order] * poly
-        profile[i] = rho[i] * total
-    profile[0] = 0.0
-    return profile
-
-
-@njit(cache=True, fastmath=True, nogil=True)
-def _smooth_profile_head_three_point(
-    profile: np.ndarray,
-    replace_count: int = 8,
-    passes: int = 1,
-) -> np.ndarray:
-    n = profile.shape[0]
-    stop = replace_count
-    if stop > n - 1:
-        stop = n - 1
-    if stop <= 1 or passes <= 0:
-        return profile
-
-    scratch = np.empty_like(profile)
-    for _ in range(passes):
-        copy_into(scratch, profile)
-        for i in range(1, stop):
-            profile[i] = 0.25 * scratch[i - 1] + 0.5 * scratch[i] + 0.25 * scratch[i + 1]
     return profile
 
 
@@ -1181,35 +1096,13 @@ def _update_pf_from_rho_inputs_with_scratch(
     )
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
-    if (not has_Ip) and (not has_beta):
-        zero_heat = True
-        zero_current = True
-        for i in range(heat_input.shape[0]):
-            if abs(heat_input[i]) > 1e-14:
-                zero_heat = False
-                break
-        for i in range(current_input.shape[0]):
-            if abs(current_input[i]) > 1e-14:
-                zero_current = False
-                break
-        if zero_heat and zero_current:
-            for i in range(rho.shape[0]):
-                out_psin[i] = rho[i]
-                out_psin_r[i] = 1.0
-                out_psin_rr[i] = 0.0
-                out_FFn_psin[i] = 0.0
-                out_Pn_psin[i] = 0.0
-            return 0.0, 0.0
     integrand = source_scratch_1d[_SLOT_INTEGRAND]
     _fill_pf_rho_integrand(integrand, Kn, current_input, Ln_r, V_r, heat_input)
     full_integration(out_psin_r, integrand, accumulator)
     out_psin_r *= -2.0
-    for i in range(out_psin_r.shape[0]):
-        if out_psin_r[i] < 0.0:
-            out_psin_r[i] = 0.0
     out_psin_r[:] = np.sqrt(out_psin_r)
     out_psin_r /= Kn
-    _enforce_axis_linear_psin_r(out_psin_r, rho)
+    _regularize_axis_linear_psin_r(out_psin_r, rho)
     prof = out_psin_r
     integral_prof = dot(prof, quadrature)
     out_psin_r /= integral_prof
@@ -1222,6 +1115,8 @@ def _update_pf_from_rho_inputs_with_scratch(
         alpha1 = -dot(heat_input, quadrature) / alpha2
         scaled_ratio_into(out_Pn_psin, heat_input, psin_r_safe, 1.0 / (alpha1 * alpha2))
         scaled_ratio_into(out_FFn_psin, current_input, psin_r_safe, 1.0 / (alpha1 * alpha2))
+        _regularize_true_axis_ratio_profile(out_Pn_psin, rho)
+        _regularize_true_axis_ratio_profile(out_FFn_psin, rho)
         return alpha1, alpha2
     c2 = integral_prof * integral_prof
     if has_Ip and (not has_beta):
@@ -1249,6 +1144,8 @@ def _update_pf_from_rho_inputs_with_scratch(
     alpha2 = c2 * alpha1
     scaled_ratio_into(out_Pn_psin, heat_input, psin_r_safe, 1.0)
     scaled_ratio_into(out_FFn_psin, current_input, psin_r_safe, 1.0)
+    _regularize_true_axis_ratio_profile(out_Pn_psin, rho)
+    _regularize_true_axis_ratio_profile(out_FFn_psin, rho)
     return alpha1, alpha2
 
 
@@ -1280,25 +1177,6 @@ def _update_pf_from_psin_inputs_with_scratch(
     )
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
-    if (not has_Ip) and (not has_beta):
-        zero_heat = True
-        zero_current = True
-        for i in range(heat_input.shape[0]):
-            if abs(heat_input[i]) > 1e-14:
-                zero_heat = False
-                break
-        for i in range(current_input.shape[0]):
-            if abs(current_input[i]) > 1e-14:
-                zero_current = False
-                break
-        if zero_heat and zero_current:
-            for i in range(rho.shape[0]):
-                out_psin[i] = rho[i]
-                out_psin_r[i] = 1.0
-                out_psin_rr[i] = 0.0
-                out_FFn_psin[i] = 0.0
-                out_Pn_psin[i] = 0.0
-            return 0.0, 0.0
     integrand = source_scratch_1d[_SLOT_INTEGRAND]
     _fill_pf_psin_integrand(integrand, current_input, Ln_r, V_r, heat_input)
     full_integration(out_psin_r, integrand, accumulator)
@@ -1384,7 +1262,7 @@ def _update_pp_from_rho_inputs_with_scratch(
     else:
         alpha2 = dot(current_input, quadrature)
         scale_into(out_psin_r, current_input, 1.0 / alpha2)
-    _enforce_axis_linear_psin_r(out_psin_r, rho)
+    _regularize_axis_linear_psin_r(out_psin_r, rho)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
     psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
@@ -1457,7 +1335,7 @@ def _update_pp_from_psin_inputs_with_scratch(
     else:
         alpha2 = dot(current_input, quadrature)
         scale_into(out_psin_r, current_input, 1.0 / alpha2)
-    _enforce_axis_linear_psin_r(out_psin_r, rho)
+    _regularize_axis_linear_psin_r(out_psin_r, rho)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
     psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
@@ -1536,13 +1414,14 @@ def _update_pi_from_rho_inputs_with_scratch(
     scaled_ratio_into(itor_over_kn, Itor, Kn, 1.0 / (2.0 * np.pi))
     alpha2 = dot(itor_over_kn, quadrature)
     scaled_ratio_into(out_psin_r, Itor, Kn, 1.0 / (2.0 * np.pi * alpha2))
-    _enforce_axis_linear_psin_r(out_psin_r, rho)
+    _regularize_axis_linear_psin_r(out_psin_r, rho)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
     psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
     maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
     Itor_r = source_scratch_1d[_SLOT_AUX1]
     full_differentiation(Itor_r, Itor, differentiator)
+    _regularize_axis_linear_psin_r(Itor_r, rho)
     if has_beta:
         scaled_ratio_into(out_Pn_psin, heat_input, psin_r_safe, 1.0)
         scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
@@ -1612,6 +1491,7 @@ def _update_pi_from_psin_inputs_with_scratch(
     maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
     Itor_r = source_scratch_1d[_SLOT_AUX1]
     full_differentiation(Itor_r, Itor, differentiator)
+    _regularize_axis_linear_psin_r(Itor_r, rho)
     if has_beta:
         copy_into(out_Pn_psin, heat_input)
         scratch_Pn_r = source_scratch_1d[_SLOT_PNr]

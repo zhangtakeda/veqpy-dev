@@ -76,7 +76,8 @@ def make_filter(
     second_difference = (spacing_scale * spacing_scale) * _second_difference_matrix(rho)
     strength = float(degree) / 30.0
     penalty = identity + strength * (second_difference.T @ second_difference)
-    return np.linalg.solve(penalty, identity)
+    # return np.linalg.solve(penalty, identity)
+    return np.eye(node_count, dtype=np.float64)
 
 
 def _second_difference_matrix(nodes: np.ndarray) -> np.ndarray:
@@ -122,6 +123,7 @@ def spectral_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         _spectral_differentiator(nodes),
     )
 
+
 @calculus_generator("compact", "cfd33")
 def compact_cfd33_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Build dense CFD33 compact integration and differentiation matrices."""
@@ -132,12 +134,14 @@ def compact_cfd33_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         _cfd33_differentiator(nodes),
     )
 
+
 @calculus_generator("cfd35")
 def compact_cfd35_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Build dense CFD35 compact integration and differentiation matrices."""
 
     _validate_nodes(nodes, min_size=5)
     return _compact_calculus(nodes, implicit_width=3, explicit_width=5)
+
 
 @calculus_generator("cfd55")
 def compact_cfd55_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

@@ -1,0 +1,580 @@
+PF-rho-Ip reference vs 46 low-resolution route-specific cases
+
+reference_case                    : PF_RHO + Ip
+reference_grid                    : 64x32 (legendre)
+reference_source_samples          : 51
+test_grid                         : 32x16 (chebyshev)
+test_source_samples               : 51
+repeat_count                      : 100
+shape_tol                         : 1.000e-02
+failure_count                     : 2/46
+worst_shape_case                  : PQ_psin_uniform_Ip (1.491525e-02)
+worst_psi_r_rel_rms_case          : PQ_psin_uniform_Ip_beta (1.679678e-02)
+worst_ff_psi_rel_rms_case         : PQ_psin_uniform_Ip_beta (1.935566e-01)
+worst_mu0_p_psi_rel_rms_case      : PQ_psin_uniform_Ip_beta (2.131460e-02)
+most_oscillatory_psi_r_case       : PF_rho_uniform_null (h/t=0/1)
+most_oscillatory_ff_psi_case      : PP_psin_uniform_Ip_beta (h/t=10/2)
+most_oscillatory_mu0_p_psi_case   : PQ_psin_uniform_Ip_beta (h/t=2/0)
+slowest_case                      : PQ_psin_uniform_Ip_beta (5.635 ms)
+largest_function_evaluations_case : PQ_rho_uniform_Ip (76)
+
+Case results
+
+case                     |  shape_error |       avg_ms |       std_ms | evaluations | iterations |     residual |   ok
+------------------------------------------------------------------------------------------------------------------
+PF_rho_uniform_null      | 1.654968e-04 |        0.777 |        0.162 |     28 |      0 | 2.086424e-10 |  yes
+PF_rho_uniform_Ip        | 1.654962e-04 |        0.795 |        0.135 |     28 |      0 | 4.651442e-10 |  yes
+PF_rho_uniform_beta      | 1.654718e-04 |        1.498 |        7.339 |     26 |      0 | 1.066748e-08 |  yes
+PF_psin_uniform_null     | 4.309199e-04 |        1.082 |        0.182 |     37 |      0 | 4.925660e-08 |  yes
+PF_psin_uniform_Ip       | 4.308810e-04 |        1.084 |        0.141 |     38 |      0 | 2.316178e-09 |  yes
+PF_psin_uniform_beta     | 4.309201e-04 |        1.057 |        0.089 |     37 |      0 | 6.829997e-09 |  yes
+PP_rho_uniform_Ip_beta   | 1.986325e-04 |        0.884 |        0.078 |     35 |      0 | 9.079751e-11 |  yes
+PP_rho_uniform_Ip        | 1.977961e-04 |        0.928 |        0.174 |     36 |      0 | 2.338308e-09 |  yes
+PP_rho_uniform_beta      | 1.968926e-04 |        0.773 |        0.092 |     28 |      0 | 6.585046e-08 |  yes
+PP_rho_uniform_null      | 1.963242e-04 |        0.912 |        0.100 |     29 |      0 | 1.317428e-08 |  yes
+PP_psin_uniform_Ip_beta  | 2.253377e-03 |        1.094 |        0.105 |     39 |      0 | 9.799228e-08 |  yes
+PP_psin_uniform_Ip       | 2.634924e-03 |        1.069 |        0.141 |     38 |      0 | 1.313159e-07 |  yes
+PP_psin_uniform_beta     | 2.317397e-03 |        1.053 |        0.102 |     38 |      0 | 8.488836e-09 |  yes
+PP_psin_uniform_null     | 2.619118e-03 |        1.039 |        0.117 |     38 |      0 | 7.777165e-10 |  yes
+PI_rho_uniform_Ip_beta   | 1.452452e-04 |        1.093 |        0.213 |     39 |      0 | 3.292890e-12 |  yes
+PI_rho_uniform_Ip        | 1.435684e-04 |        0.816 |        0.116 |     29 |      0 | 2.777268e-09 |  yes
+PI_rho_uniform_beta      | 1.439550e-04 |        1.032 |        0.125 |     39 |      0 | 3.291939e-12 |  yes
+PI_rho_uniform_null      | 1.422007e-04 |        0.784 |        0.082 |     29 |      0 | 2.777827e-09 |  yes
+PI_psin_uniform_Ip_beta  | 5.896947e-03 |        1.374 |        0.148 |     48 |      0 | 2.587254e-09 |  yes
+PI_psin_uniform_Ip       | 5.750508e-03 |        1.164 |        0.225 |     39 |      0 | 4.078752e-09 |  yes
+PI_psin_uniform_beta     | 5.872932e-03 |        1.408 |        0.217 |     48 |      0 | 2.627768e-09 |  yes
+PI_psin_uniform_null     | 5.738077e-03 |        1.153 |        0.133 |     39 |      0 | 4.080152e-09 |  yes
+PJ1_rho_uniform_Ip_beta  | 1.627857e-04 |        0.780 |        0.145 |     27 |      0 | 1.032924e-08 |  yes
+PJ1_rho_uniform_Ip       | 1.619744e-04 |        0.789 |        0.132 |     28 |      0 | 1.134761e-09 |  yes
+PJ1_rho_uniform_beta     | 1.605988e-04 |        0.792 |        0.100 |     27 |      0 | 4.479051e-09 |  yes
+PJ1_rho_uniform_null     | 1.596982e-04 |        0.771 |        0.087 |     28 |      0 | 8.638387e-10 |  yes
+PJ1_psin_uniform_Ip_beta | 9.523626e-04 |        1.129 |        0.117 |     39 |      0 | 6.292681e-09 |  yes
+PJ1_psin_uniform_Ip      | 9.924122e-04 |        1.194 |        0.203 |     39 |      0 | 7.833170e-10 |  yes
+PJ1_psin_uniform_beta    | 7.751227e-04 |        2.329 |       12.041 |     38 |      0 | 3.281684e-09 |  yes
+PJ1_psin_uniform_null    | 8.999073e-04 |        1.043 |        0.116 |     36 |      0 | 5.675670e-08 |  yes
+PJ2_rho_uniform_Ip_beta  | 1.605203e-04 |        1.108 |        0.151 |     40 |      0 | 9.849102e-09 |  yes
+PJ2_rho_uniform_Ip       | 1.592137e-04 |        1.891 |        0.180 |     72 |      0 | 6.416457e-08 |  yes
+PJ2_rho_uniform_beta     | 1.579069e-04 |        1.038 |        0.155 |     37 |      0 | 2.570923e-07 |  yes
+PJ2_rho_uniform_null     | 1.563426e-04 |        1.165 |        0.148 |     42 |      0 | 1.598277e-09 |  yes
+PJ2_psin_uniform_Ip_beta | 1.037562e-03 |        4.841 |        0.307 |     72 |      0 | 4.151908e-08 |  yes
+PJ2_psin_uniform_Ip      | 1.019482e-03 |        4.039 |        0.309 |     62 |      0 | 1.591499e-09 |  yes
+PJ2_psin_uniform_beta    | 1.104994e-03 |        2.688 |        0.306 |     40 |      0 | 5.334137e-08 |  yes
+PJ2_psin_uniform_null    | 1.040639e-03 |        2.439 |        0.343 |     39 |      0 | 3.900241e-08 |  yes
+PQ_rho_uniform_Ip_beta   | 1.225417e-04 |        2.529 |       12.766 |     45 |      0 | 1.820552e-07 |  yes
+PQ_rho_uniform_Ip        | 1.200598e-04 |        1.958 |        0.232 |     76 |      0 | 1.649494e-09 |  yes
+PQ_rho_uniform_beta      | 1.281669e-04 |        1.846 |        0.180 |     72 |      0 | 1.025585e-12 |  yes
+PQ_rho_uniform_null      | 1.264706e-04 |        1.492 |        0.222 |     53 |      0 | 1.274197e-11 |  yes
+PQ_psin_uniform_Ip_beta  | 1.424929e-02 |        5.635 |        0.401 |     75 |      0 | 4.021419e-08 |   no
+PQ_psin_uniform_Ip       | 1.491525e-02 |        3.957 |        0.373 |     56 |      0 | 2.027897e-08 |   no
+PQ_psin_uniform_beta     | 3.871583e-03 |        3.319 |        0.253 |     46 |      0 | 5.413800e-09 |  yes
+PQ_psin_uniform_null     | 2.064002e-03 |        3.698 |        0.351 |     48 |      0 | 5.109303e-08 |  yes
+
+psi_r / FF_psi / mu0P_psi diagnostics
+
+case                     |  psi_r_rms |  psi_r_max | psi_r_h/t | FF_psi_rms | FF_psi_max | FF_psi_h/t |   mu0P_rms |   mu0P_max |  mu0P_h/t
+------------------------------------------------------------------------------------------------------------------------------------
+PF_rho_uniform_null      |  4.751e-05 |  1.473e-04 |       0/1 |  1.323e-03 |  3.831e-03 |        1/0 |  1.252e-03 |  3.628e-03 |       1/0
+PF_rho_uniform_Ip        |  4.701e-05 |  1.388e-04 |       0/1 |  1.320e-03 |  3.822e-03 |        1/0 |  1.250e-03 |  3.620e-03 |       1/0
+PF_rho_uniform_beta      |  4.706e-05 |  1.408e-04 |       0/1 |  1.321e-03 |  3.824e-03 |        1/0 |  1.250e-03 |  3.622e-03 |       1/0
+PF_psin_uniform_null     |  2.647e-04 |  7.097e-04 |       0/1 |  7.165e-04 |  3.148e-03 |        0/0 |  8.772e-04 |  4.168e-03 |       0/0
+PF_psin_uniform_Ip       |  2.997e-04 |  5.530e-04 |       0/1 |  7.240e-04 |  3.146e-03 |        0/0 |  8.883e-04 |  4.165e-03 |       0/0
+PF_psin_uniform_beta     |  2.759e-04 |  5.809e-04 |       0/1 |  7.146e-04 |  3.147e-03 |        0/0 |  8.788e-04 |  4.166e-03 |       0/0
+PP_rho_uniform_Ip_beta   |  1.714e-05 |  7.284e-05 |       0/1 |  3.857e-03 |  1.217e-02 |        6/0 |  6.273e-05 |  2.693e-04 |       0/0
+PP_rho_uniform_Ip        |  1.700e-05 |  7.414e-05 |       0/1 |  3.857e-03 |  1.218e-02 |        6/0 |  6.205e-05 |  2.782e-04 |       0/0
+PP_rho_uniform_beta      |  1.755e-05 |  8.293e-05 |       0/1 |  3.858e-03 |  1.218e-02 |        6/0 |  6.204e-05 |  2.786e-04 |       0/0
+PP_rho_uniform_null      |  1.755e-05 |  8.293e-05 |       0/1 |  3.859e-03 |  1.218e-02 |        6/0 |  6.237e-05 |  2.875e-04 |       0/0
+PP_psin_uniform_Ip_beta  |  6.633e-04 |  1.597e-03 |       0/1 |  8.321e-02 |  3.690e-01 |       10/2 |  3.610e-03 |  1.485e-02 |       0/0
+PP_psin_uniform_Ip       |  5.349e-04 |  1.268e-03 |       0/1 |  8.313e-02 |  3.692e-01 |       10/2 |  3.273e-03 |  1.526e-02 |       0/0
+PP_psin_uniform_beta     |  5.779e-04 |  1.403e-03 |       0/1 |  8.316e-02 |  3.691e-01 |       10/2 |  3.545e-03 |  1.488e-02 |       0/0
+PP_psin_uniform_null     |  5.778e-04 |  1.403e-03 |       0/1 |  8.310e-02 |  3.691e-01 |       10/2 |  3.273e-03 |  1.526e-02 |       0/0
+PI_rho_uniform_Ip_beta   |  2.849e-05 |  1.484e-04 |       0/1 |  1.144e-03 |  2.918e-03 |        3/0 |  8.127e-05 |  2.809e-04 |       0/0
+PI_rho_uniform_Ip        |  2.819e-05 |  1.468e-04 |       0/1 |  1.130e-03 |  2.861e-03 |        3/0 |  8.629e-05 |  2.959e-04 |       0/0
+PI_rho_uniform_beta      |  2.784e-05 |  1.413e-04 |       0/1 |  1.132e-03 |  2.868e-03 |        3/0 |  8.287e-05 |  2.868e-04 |       0/0
+PI_rho_uniform_null      |  2.766e-05 |  1.396e-04 |       0/1 |  1.118e-03 |  2.808e-03 |        3/0 |  8.876e-05 |  3.025e-04 |       0/0
+PI_psin_uniform_Ip_beta  |  2.441e-03 |  3.789e-03 |       0/1 |  6.356e-02 |  3.016e-01 |        3/1 |  1.865e-03 |  4.115e-03 |       0/0
+PI_psin_uniform_Ip       |  2.482e-03 |  3.893e-03 |       0/1 |  6.148e-02 |  3.015e-01 |        3/1 |  8.962e-04 |  4.137e-03 |       0/0
+PI_psin_uniform_beta     |  2.364e-03 |  3.686e-03 |       0/1 |  6.313e-02 |  3.016e-01 |        3/1 |  1.758e-03 |  4.117e-03 |       0/0
+PI_psin_uniform_null     |  2.405e-03 |  3.791e-03 |       0/1 |  6.127e-02 |  3.014e-01 |        3/1 |  8.970e-04 |  4.137e-03 |       0/0
+PJ1_rho_uniform_Ip_beta  |  2.925e-05 |  1.543e-04 |       0/1 |  1.970e-04 |  6.560e-04 |        1/0 |  6.283e-05 |  2.735e-04 |       0/0
+PJ1_rho_uniform_Ip       |  2.902e-05 |  1.533e-04 |       0/1 |  1.788e-04 |  6.827e-04 |        1/0 |  6.092e-05 |  2.841e-04 |       0/0
+PJ1_rho_uniform_beta     |  2.591e-05 |  1.369e-04 |       0/1 |  1.533e-04 |  7.423e-04 |        1/0 |  6.076e-05 |  2.877e-04 |       0/0
+PJ1_rho_uniform_null     |  2.585e-05 |  1.359e-04 |       0/1 |  1.494e-04 |  7.721e-04 |        1/0 |  6.046e-05 |  2.997e-04 |       0/0
+PJ1_psin_uniform_Ip_beta |  4.918e-04 |  9.292e-04 |       0/1 |  8.148e-03 |  2.385e-02 |        1/0 |  2.530e-03 |  1.005e-02 |       1/0
+PJ1_psin_uniform_Ip      |  4.967e-04 |  9.357e-04 |       0/1 |  8.562e-03 |  2.385e-02 |        1/0 |  2.564e-03 |  1.005e-02 |       1/0
+PJ1_psin_uniform_beta    |  3.580e-04 |  1.177e-03 |       0/1 |  6.397e-03 |  1.408e-02 |        1/0 |  2.560e-03 |  1.004e-02 |       1/0
+PJ1_psin_uniform_null    |  3.254e-04 |  1.060e-03 |       0/1 |  6.345e-03 |  1.246e-02 |        1/0 |  2.567e-03 |  1.005e-02 |       1/0
+PJ2_rho_uniform_Ip_beta  |  2.883e-05 |  1.528e-04 |       0/1 |  1.611e-04 |  2.714e-04 |        2/0 |  1.003e-04 |  4.429e-04 |       0/0
+PJ2_rho_uniform_Ip       |  2.852e-05 |  1.516e-04 |       0/1 |  1.347e-04 |  2.264e-04 |        2/0 |  9.767e-05 |  4.331e-04 |       0/0
+PJ2_rho_uniform_beta     |  2.590e-05 |  1.383e-04 |       0/1 |  1.062e-04 |  2.670e-04 |        2/0 |  9.769e-05 |  4.331e-04 |       0/0
+PJ2_rho_uniform_null     |  2.582e-05 |  1.373e-04 |       0/1 |  9.629e-05 |  3.154e-04 |        2/0 |  9.586e-05 |  4.223e-04 |       0/0
+PJ2_psin_uniform_Ip_beta |  6.028e-04 |  1.077e-03 |       0/1 |  2.062e-02 |  4.777e-02 |        0/0 |  9.401e-03 |  2.528e-02 |       1/0
+PJ2_psin_uniform_Ip      |  6.232e-04 |  1.152e-03 |       0/1 |  2.031e-02 |  4.818e-02 |        0/0 |  9.245e-03 |  2.525e-02 |       1/0
+PJ2_psin_uniform_beta    |  5.530e-04 |  1.656e-03 |       0/1 |  2.293e-02 |  4.653e-02 |        0/0 |  9.654e-03 |  2.532e-02 |       1/0
+PJ2_psin_uniform_null    |  4.685e-04 |  1.444e-03 |       0/1 |  2.082e-02 |  4.741e-02 |        0/0 |  9.247e-03 |  2.525e-02 |       1/0
+PQ_rho_uniform_Ip_beta   |  2.866e-05 |  9.963e-05 |       0/1 |  1.750e-04 |  4.135e-04 |        1/0 |  6.133e-05 |  3.119e-04 |       1/0
+PQ_rho_uniform_Ip        |  2.931e-05 |  9.786e-05 |       0/1 |  2.106e-04 |  4.518e-04 |        1/0 |  6.527e-05 |  3.287e-04 |       1/0
+PQ_rho_uniform_beta      |  2.439e-05 |  1.281e-04 |       0/1 |  1.897e-04 |  3.417e-04 |        1/0 |  6.188e-05 |  2.880e-04 |       1/0
+PQ_rho_uniform_null      |  2.435e-05 |  1.279e-04 |       0/1 |  1.707e-04 |  3.287e-04 |        1/0 |  6.071e-05 |  3.003e-04 |       1/0
+PQ_psin_uniform_Ip_beta  |  1.680e-02 |  3.055e-02 |       0/1 |  1.936e-01 |  3.637e-01 |        2/3 |  2.131e-02 |  3.184e-02 |       2/0
+PQ_psin_uniform_Ip       |  1.541e-02 |  2.788e-02 |       0/1 |  1.834e-01 |  3.154e-01 |        2/3 |  1.821e-02 |  5.017e-02 |       2/0
+PQ_psin_uniform_beta     |  2.672e-03 |  7.510e-03 |       0/1 |  4.640e-02 |  1.317e-01 |        3/0 |  1.770e-02 |  4.821e-02 |       2/0
+PQ_psin_uniform_null     |  2.666e-03 |  8.641e-03 |       0/1 |  2.933e-02 |  1.002e-01 |        2/0 |  1.803e-02 |  5.008e-02 |       2/0
+
+Largest shape_error ranking
+
+rank | case                     |  shape_error |       avg_ms |       std_ms | evaluations
+------------------------------------------------------------------------------------------
+   1 | PQ_psin_uniform_Ip       | 1.491525e-02 |        3.957 |        0.373 |     56
+   2 | PQ_psin_uniform_Ip_beta  | 1.424929e-02 |        5.635 |        0.401 |     75
+   3 | PI_psin_uniform_Ip_beta  | 5.896947e-03 |        1.374 |        0.148 |     48
+   4 | PI_psin_uniform_beta     | 5.872932e-03 |        1.408 |        0.217 |     48
+   5 | PI_psin_uniform_Ip       | 5.750508e-03 |        1.164 |        0.225 |     39
+   6 | PI_psin_uniform_null     | 5.738077e-03 |        1.153 |        0.133 |     39
+   7 | PQ_psin_uniform_beta     | 3.871583e-03 |        3.319 |        0.253 |     46
+   8 | PP_psin_uniform_Ip       | 2.634924e-03 |        1.069 |        0.141 |     38
+   9 | PP_psin_uniform_null     | 2.619118e-03 |        1.039 |        0.117 |     38
+  10 | PP_psin_uniform_beta     | 2.317397e-03 |        1.053 |        0.102 |     38
+  11 | PP_psin_uniform_Ip_beta  | 2.253377e-03 |        1.094 |        0.105 |     39
+  12 | PQ_psin_uniform_null     | 2.064002e-03 |        3.698 |        0.351 |     48
+  13 | PJ2_psin_uniform_beta    | 1.104994e-03 |        2.688 |        0.306 |     40
+  14 | PJ2_psin_uniform_null    | 1.040639e-03 |        2.439 |        0.343 |     39
+  15 | PJ2_psin_uniform_Ip_beta | 1.037562e-03 |        4.841 |        0.307 |     72
+  16 | PJ2_psin_uniform_Ip      | 1.019482e-03 |        4.039 |        0.309 |     62
+  17 | PJ1_psin_uniform_Ip      | 9.924122e-04 |        1.194 |        0.203 |     39
+  18 | PJ1_psin_uniform_Ip_beta | 9.523626e-04 |        1.129 |        0.117 |     39
+  19 | PJ1_psin_uniform_null    | 8.999073e-04 |        1.043 |        0.116 |     36
+  20 | PJ1_psin_uniform_beta    | 7.751227e-04 |        2.329 |       12.041 |     38
+  21 | PF_psin_uniform_beta     | 4.309201e-04 |        1.057 |        0.089 |     37
+  22 | PF_psin_uniform_null     | 4.309199e-04 |        1.082 |        0.182 |     37
+  23 | PF_psin_uniform_Ip       | 4.308810e-04 |        1.084 |        0.141 |     38
+  24 | PP_rho_uniform_Ip_beta   | 1.986325e-04 |        0.884 |        0.078 |     35
+  25 | PP_rho_uniform_Ip        | 1.977961e-04 |        0.928 |        0.174 |     36
+  26 | PP_rho_uniform_beta      | 1.968926e-04 |        0.773 |        0.092 |     28
+  27 | PP_rho_uniform_null      | 1.963242e-04 |        0.912 |        0.100 |     29
+  28 | PF_rho_uniform_null      | 1.654968e-04 |        0.777 |        0.162 |     28
+  29 | PF_rho_uniform_Ip        | 1.654962e-04 |        0.795 |        0.135 |     28
+  30 | PF_rho_uniform_beta      | 1.654718e-04 |        1.498 |        7.339 |     26
+  31 | PJ1_rho_uniform_Ip_beta  | 1.627857e-04 |        0.780 |        0.145 |     27
+  32 | PJ1_rho_uniform_Ip       | 1.619744e-04 |        0.789 |        0.132 |     28
+  33 | PJ1_rho_uniform_beta     | 1.605988e-04 |        0.792 |        0.100 |     27
+  34 | PJ2_rho_uniform_Ip_beta  | 1.605203e-04 |        1.108 |        0.151 |     40
+  35 | PJ1_rho_uniform_null     | 1.596982e-04 |        0.771 |        0.087 |     28
+  36 | PJ2_rho_uniform_Ip       | 1.592137e-04 |        1.891 |        0.180 |     72
+  37 | PJ2_rho_uniform_beta     | 1.579069e-04 |        1.038 |        0.155 |     37
+  38 | PJ2_rho_uniform_null     | 1.563426e-04 |        1.165 |        0.148 |     42
+  39 | PI_rho_uniform_Ip_beta   | 1.452452e-04 |        1.093 |        0.213 |     39
+  40 | PI_rho_uniform_beta      | 1.439550e-04 |        1.032 |        0.125 |     39
+  41 | PI_rho_uniform_Ip        | 1.435684e-04 |        0.816 |        0.116 |     29
+  42 | PI_rho_uniform_null      | 1.422007e-04 |        0.784 |        0.082 |     29
+  43 | PQ_rho_uniform_beta      | 1.281669e-04 |        1.846 |        0.180 |     72
+  44 | PQ_rho_uniform_null      | 1.264706e-04 |        1.492 |        0.222 |     53
+  45 | PQ_rho_uniform_Ip_beta   | 1.225417e-04 |        2.529 |       12.766 |     45
+  46 | PQ_rho_uniform_Ip        | 1.200598e-04 |        1.958 |        0.232 |     76
+
+Largest psi_r relative RMS error ranking
+
+rank | case                     |  psi_r_rms |  psi_r_max | psi_r_h/t |  shape_error
+------------------------------------------------------------------------------------
+   1 | PQ_psin_uniform_Ip_beta  |  1.680e-02 |  3.055e-02 |       0/1 | 1.424929e-02
+   2 | PQ_psin_uniform_Ip       |  1.541e-02 |  2.788e-02 |       0/1 | 1.491525e-02
+   3 | PQ_psin_uniform_beta     |  2.672e-03 |  7.510e-03 |       0/1 | 3.871583e-03
+   4 | PQ_psin_uniform_null     |  2.666e-03 |  8.641e-03 |       0/1 | 2.064002e-03
+   5 | PI_psin_uniform_Ip       |  2.482e-03 |  3.893e-03 |       0/1 | 5.750508e-03
+   6 | PI_psin_uniform_Ip_beta  |  2.441e-03 |  3.789e-03 |       0/1 | 5.896947e-03
+   7 | PI_psin_uniform_null     |  2.405e-03 |  3.791e-03 |       0/1 | 5.738077e-03
+   8 | PI_psin_uniform_beta     |  2.364e-03 |  3.686e-03 |       0/1 | 5.872932e-03
+   9 | PP_psin_uniform_Ip_beta  |  6.633e-04 |  1.597e-03 |       0/1 | 2.253377e-03
+  10 | PJ2_psin_uniform_Ip      |  6.232e-04 |  1.152e-03 |       0/1 | 1.019482e-03
+  11 | PJ2_psin_uniform_Ip_beta |  6.028e-04 |  1.077e-03 |       0/1 | 1.037562e-03
+  12 | PP_psin_uniform_beta     |  5.779e-04 |  1.403e-03 |       0/1 | 2.317397e-03
+  13 | PP_psin_uniform_null     |  5.778e-04 |  1.403e-03 |       0/1 | 2.619118e-03
+  14 | PJ2_psin_uniform_beta    |  5.530e-04 |  1.656e-03 |       0/1 | 1.104994e-03
+  15 | PP_psin_uniform_Ip       |  5.349e-04 |  1.268e-03 |       0/1 | 2.634924e-03
+  16 | PJ1_psin_uniform_Ip      |  4.967e-04 |  9.357e-04 |       0/1 | 9.924122e-04
+  17 | PJ1_psin_uniform_Ip_beta |  4.918e-04 |  9.292e-04 |       0/1 | 9.523626e-04
+  18 | PJ2_psin_uniform_null    |  4.685e-04 |  1.444e-03 |       0/1 | 1.040639e-03
+  19 | PJ1_psin_uniform_beta    |  3.580e-04 |  1.177e-03 |       0/1 | 7.751227e-04
+  20 | PJ1_psin_uniform_null    |  3.254e-04 |  1.060e-03 |       0/1 | 8.999073e-04
+  21 | PF_psin_uniform_Ip       |  2.997e-04 |  5.530e-04 |       0/1 | 4.308810e-04
+  22 | PF_psin_uniform_beta     |  2.759e-04 |  5.809e-04 |       0/1 | 4.309201e-04
+  23 | PF_psin_uniform_null     |  2.647e-04 |  7.097e-04 |       0/1 | 4.309199e-04
+  24 | PF_rho_uniform_null      |  4.751e-05 |  1.473e-04 |       0/1 | 1.654968e-04
+  25 | PF_rho_uniform_beta      |  4.706e-05 |  1.408e-04 |       0/1 | 1.654718e-04
+  26 | PF_rho_uniform_Ip        |  4.701e-05 |  1.388e-04 |       0/1 | 1.654962e-04
+  27 | PQ_rho_uniform_Ip        |  2.931e-05 |  9.786e-05 |       0/1 | 1.200598e-04
+  28 | PJ1_rho_uniform_Ip_beta  |  2.925e-05 |  1.543e-04 |       0/1 | 1.627857e-04
+  29 | PJ1_rho_uniform_Ip       |  2.902e-05 |  1.533e-04 |       0/1 | 1.619744e-04
+  30 | PJ2_rho_uniform_Ip_beta  |  2.883e-05 |  1.528e-04 |       0/1 | 1.605203e-04
+  31 | PQ_rho_uniform_Ip_beta   |  2.866e-05 |  9.963e-05 |       0/1 | 1.225417e-04
+  32 | PJ2_rho_uniform_Ip       |  2.852e-05 |  1.516e-04 |       0/1 | 1.592137e-04
+  33 | PI_rho_uniform_Ip_beta   |  2.849e-05 |  1.484e-04 |       0/1 | 1.452452e-04
+  34 | PI_rho_uniform_Ip        |  2.819e-05 |  1.468e-04 |       0/1 | 1.435684e-04
+  35 | PI_rho_uniform_beta      |  2.784e-05 |  1.413e-04 |       0/1 | 1.439550e-04
+  36 | PI_rho_uniform_null      |  2.766e-05 |  1.396e-04 |       0/1 | 1.422007e-04
+  37 | PJ1_rho_uniform_beta     |  2.591e-05 |  1.369e-04 |       0/1 | 1.605988e-04
+  38 | PJ2_rho_uniform_beta     |  2.590e-05 |  1.383e-04 |       0/1 | 1.579069e-04
+  39 | PJ1_rho_uniform_null     |  2.585e-05 |  1.359e-04 |       0/1 | 1.596982e-04
+  40 | PJ2_rho_uniform_null     |  2.582e-05 |  1.373e-04 |       0/1 | 1.563426e-04
+  41 | PQ_rho_uniform_beta      |  2.439e-05 |  1.281e-04 |       0/1 | 1.281669e-04
+  42 | PQ_rho_uniform_null      |  2.435e-05 |  1.279e-04 |       0/1 | 1.264706e-04
+  43 | PP_rho_uniform_beta      |  1.755e-05 |  8.293e-05 |       0/1 | 1.968926e-04
+  44 | PP_rho_uniform_null      |  1.755e-05 |  8.293e-05 |       0/1 | 1.963242e-04
+  45 | PP_rho_uniform_Ip_beta   |  1.714e-05 |  7.284e-05 |       0/1 | 1.986325e-04
+  46 | PP_rho_uniform_Ip        |  1.700e-05 |  7.414e-05 |       0/1 | 1.977961e-04
+
+Largest FF_psi relative RMS error ranking
+
+rank | case                     | FF_psi_rms | FF_psi_max | FF_psi_h/t |  shape_error
+-------------------------------------------------------------------------------------
+   1 | PQ_psin_uniform_Ip_beta  |  1.936e-01 |  3.637e-01 |        2/3 | 1.424929e-02
+   2 | PQ_psin_uniform_Ip       |  1.834e-01 |  3.154e-01 |        2/3 | 1.491525e-02
+   3 | PP_psin_uniform_Ip_beta  |  8.321e-02 |  3.690e-01 |       10/2 | 2.253377e-03
+   4 | PP_psin_uniform_beta     |  8.316e-02 |  3.691e-01 |       10/2 | 2.317397e-03
+   5 | PP_psin_uniform_Ip       |  8.313e-02 |  3.692e-01 |       10/2 | 2.634924e-03
+   6 | PP_psin_uniform_null     |  8.310e-02 |  3.691e-01 |       10/2 | 2.619118e-03
+   7 | PI_psin_uniform_Ip_beta  |  6.356e-02 |  3.016e-01 |        3/1 | 5.896947e-03
+   8 | PI_psin_uniform_beta     |  6.313e-02 |  3.016e-01 |        3/1 | 5.872932e-03
+   9 | PI_psin_uniform_Ip       |  6.148e-02 |  3.015e-01 |        3/1 | 5.750508e-03
+  10 | PI_psin_uniform_null     |  6.127e-02 |  3.014e-01 |        3/1 | 5.738077e-03
+  11 | PQ_psin_uniform_beta     |  4.640e-02 |  1.317e-01 |        3/0 | 3.871583e-03
+  12 | PQ_psin_uniform_null     |  2.933e-02 |  1.002e-01 |        2/0 | 2.064002e-03
+  13 | PJ2_psin_uniform_beta    |  2.293e-02 |  4.653e-02 |        0/0 | 1.104994e-03
+  14 | PJ2_psin_uniform_null    |  2.082e-02 |  4.741e-02 |        0/0 | 1.040639e-03
+  15 | PJ2_psin_uniform_Ip_beta |  2.062e-02 |  4.777e-02 |        0/0 | 1.037562e-03
+  16 | PJ2_psin_uniform_Ip      |  2.031e-02 |  4.818e-02 |        0/0 | 1.019482e-03
+  17 | PJ1_psin_uniform_Ip      |  8.562e-03 |  2.385e-02 |        1/0 | 9.924122e-04
+  18 | PJ1_psin_uniform_Ip_beta |  8.148e-03 |  2.385e-02 |        1/0 | 9.523626e-04
+  19 | PJ1_psin_uniform_beta    |  6.397e-03 |  1.408e-02 |        1/0 | 7.751227e-04
+  20 | PJ1_psin_uniform_null    |  6.345e-03 |  1.246e-02 |        1/0 | 8.999073e-04
+  21 | PP_rho_uniform_null      |  3.859e-03 |  1.218e-02 |        6/0 | 1.963242e-04
+  22 | PP_rho_uniform_beta      |  3.858e-03 |  1.218e-02 |        6/0 | 1.968926e-04
+  23 | PP_rho_uniform_Ip        |  3.857e-03 |  1.218e-02 |        6/0 | 1.977961e-04
+  24 | PP_rho_uniform_Ip_beta   |  3.857e-03 |  1.217e-02 |        6/0 | 1.986325e-04
+  25 | PF_rho_uniform_null      |  1.323e-03 |  3.831e-03 |        1/0 | 1.654968e-04
+  26 | PF_rho_uniform_beta      |  1.321e-03 |  3.824e-03 |        1/0 | 1.654718e-04
+  27 | PF_rho_uniform_Ip        |  1.320e-03 |  3.822e-03 |        1/0 | 1.654962e-04
+  28 | PI_rho_uniform_Ip_beta   |  1.144e-03 |  2.918e-03 |        3/0 | 1.452452e-04
+  29 | PI_rho_uniform_beta      |  1.132e-03 |  2.868e-03 |        3/0 | 1.439550e-04
+  30 | PI_rho_uniform_Ip        |  1.130e-03 |  2.861e-03 |        3/0 | 1.435684e-04
+  31 | PI_rho_uniform_null      |  1.118e-03 |  2.808e-03 |        3/0 | 1.422007e-04
+  32 | PF_psin_uniform_Ip       |  7.240e-04 |  3.146e-03 |        0/0 | 4.308810e-04
+  33 | PF_psin_uniform_null     |  7.165e-04 |  3.148e-03 |        0/0 | 4.309199e-04
+  34 | PF_psin_uniform_beta     |  7.146e-04 |  3.147e-03 |        0/0 | 4.309201e-04
+  35 | PQ_rho_uniform_Ip        |  2.106e-04 |  4.518e-04 |        1/0 | 1.200598e-04
+  36 | PJ1_rho_uniform_Ip_beta  |  1.970e-04 |  6.560e-04 |        1/0 | 1.627857e-04
+  37 | PQ_rho_uniform_beta      |  1.897e-04 |  3.417e-04 |        1/0 | 1.281669e-04
+  38 | PJ1_rho_uniform_Ip       |  1.788e-04 |  6.827e-04 |        1/0 | 1.619744e-04
+  39 | PQ_rho_uniform_Ip_beta   |  1.750e-04 |  4.135e-04 |        1/0 | 1.225417e-04
+  40 | PQ_rho_uniform_null      |  1.707e-04 |  3.287e-04 |        1/0 | 1.264706e-04
+  41 | PJ2_rho_uniform_Ip_beta  |  1.611e-04 |  2.714e-04 |        2/0 | 1.605203e-04
+  42 | PJ1_rho_uniform_beta     |  1.533e-04 |  7.423e-04 |        1/0 | 1.605988e-04
+  43 | PJ1_rho_uniform_null     |  1.494e-04 |  7.721e-04 |        1/0 | 1.596982e-04
+  44 | PJ2_rho_uniform_Ip       |  1.347e-04 |  2.264e-04 |        2/0 | 1.592137e-04
+  45 | PJ2_rho_uniform_beta     |  1.062e-04 |  2.670e-04 |        2/0 | 1.579069e-04
+  46 | PJ2_rho_uniform_null     |  9.629e-05 |  3.154e-04 |        2/0 | 1.563426e-04
+
+Largest mu0P_psi relative RMS error ranking
+
+rank | case                     |  mu0P_h/t |   mu0P_rms |   mu0P_max |  shape_error
+------------------------------------------------------------------------------------
+   1 | PQ_psin_uniform_Ip_beta  |       2/0 |  2.131e-02 |  3.184e-02 | 1.424929e-02
+   2 | PQ_psin_uniform_Ip       |       2/0 |  1.821e-02 |  5.017e-02 | 1.491525e-02
+   3 | PQ_psin_uniform_null     |       2/0 |  1.803e-02 |  5.008e-02 | 2.064002e-03
+   4 | PQ_psin_uniform_beta     |       2/0 |  1.770e-02 |  4.821e-02 | 3.871583e-03
+   5 | PJ2_psin_uniform_beta    |       1/0 |  9.654e-03 |  2.532e-02 | 1.104994e-03
+   6 | PJ2_psin_uniform_Ip_beta |       1/0 |  9.401e-03 |  2.528e-02 | 1.037562e-03
+   7 | PJ2_psin_uniform_null    |       1/0 |  9.247e-03 |  2.525e-02 | 1.040639e-03
+   8 | PJ2_psin_uniform_Ip      |       1/0 |  9.245e-03 |  2.525e-02 | 1.019482e-03
+   9 | PP_psin_uniform_Ip_beta  |       0/0 |  3.610e-03 |  1.485e-02 | 2.253377e-03
+  10 | PP_psin_uniform_beta     |       0/0 |  3.545e-03 |  1.488e-02 | 2.317397e-03
+  11 | PP_psin_uniform_Ip       |       0/0 |  3.273e-03 |  1.526e-02 | 2.634924e-03
+  12 | PP_psin_uniform_null     |       0/0 |  3.273e-03 |  1.526e-02 | 2.619118e-03
+  13 | PJ1_psin_uniform_null    |       1/0 |  2.567e-03 |  1.005e-02 | 8.999073e-04
+  14 | PJ1_psin_uniform_Ip      |       1/0 |  2.564e-03 |  1.005e-02 | 9.924122e-04
+  15 | PJ1_psin_uniform_beta    |       1/0 |  2.560e-03 |  1.004e-02 | 7.751227e-04
+  16 | PJ1_psin_uniform_Ip_beta |       1/0 |  2.530e-03 |  1.005e-02 | 9.523626e-04
+  17 | PI_psin_uniform_Ip_beta  |       0/0 |  1.865e-03 |  4.115e-03 | 5.896947e-03
+  18 | PI_psin_uniform_beta     |       0/0 |  1.758e-03 |  4.117e-03 | 5.872932e-03
+  19 | PF_rho_uniform_null      |       1/0 |  1.252e-03 |  3.628e-03 | 1.654968e-04
+  20 | PF_rho_uniform_beta      |       1/0 |  1.250e-03 |  3.622e-03 | 1.654718e-04
+  21 | PF_rho_uniform_Ip        |       1/0 |  1.250e-03 |  3.620e-03 | 1.654962e-04
+  22 | PI_psin_uniform_null     |       0/0 |  8.970e-04 |  4.137e-03 | 5.738077e-03
+  23 | PI_psin_uniform_Ip       |       0/0 |  8.962e-04 |  4.137e-03 | 5.750508e-03
+  24 | PF_psin_uniform_Ip       |       0/0 |  8.883e-04 |  4.165e-03 | 4.308810e-04
+  25 | PF_psin_uniform_beta     |       0/0 |  8.788e-04 |  4.166e-03 | 4.309201e-04
+  26 | PF_psin_uniform_null     |       0/0 |  8.772e-04 |  4.168e-03 | 4.309199e-04
+  27 | PJ2_rho_uniform_Ip_beta  |       0/0 |  1.003e-04 |  4.429e-04 | 1.605203e-04
+  28 | PJ2_rho_uniform_beta     |       0/0 |  9.769e-05 |  4.331e-04 | 1.579069e-04
+  29 | PJ2_rho_uniform_Ip       |       0/0 |  9.767e-05 |  4.331e-04 | 1.592137e-04
+  30 | PJ2_rho_uniform_null     |       0/0 |  9.586e-05 |  4.223e-04 | 1.563426e-04
+  31 | PI_rho_uniform_null      |       0/0 |  8.876e-05 |  3.025e-04 | 1.422007e-04
+  32 | PI_rho_uniform_Ip        |       0/0 |  8.629e-05 |  2.959e-04 | 1.435684e-04
+  33 | PI_rho_uniform_beta      |       0/0 |  8.287e-05 |  2.868e-04 | 1.439550e-04
+  34 | PI_rho_uniform_Ip_beta   |       0/0 |  8.127e-05 |  2.809e-04 | 1.452452e-04
+  35 | PQ_rho_uniform_Ip        |       1/0 |  6.527e-05 |  3.287e-04 | 1.200598e-04
+  36 | PJ1_rho_uniform_Ip_beta  |       0/0 |  6.283e-05 |  2.735e-04 | 1.627857e-04
+  37 | PP_rho_uniform_Ip_beta   |       0/0 |  6.273e-05 |  2.693e-04 | 1.986325e-04
+  38 | PP_rho_uniform_null      |       0/0 |  6.237e-05 |  2.875e-04 | 1.963242e-04
+  39 | PP_rho_uniform_Ip        |       0/0 |  6.205e-05 |  2.782e-04 | 1.977961e-04
+  40 | PP_rho_uniform_beta      |       0/0 |  6.204e-05 |  2.786e-04 | 1.968926e-04
+  41 | PQ_rho_uniform_beta      |       1/0 |  6.188e-05 |  2.880e-04 | 1.281669e-04
+  42 | PQ_rho_uniform_Ip_beta   |       1/0 |  6.133e-05 |  3.119e-04 | 1.225417e-04
+  43 | PJ1_rho_uniform_Ip       |       0/0 |  6.092e-05 |  2.841e-04 | 1.619744e-04
+  44 | PJ1_rho_uniform_beta     |       0/0 |  6.076e-05 |  2.877e-04 | 1.605988e-04
+  45 | PQ_rho_uniform_null      |       1/0 |  6.071e-05 |  3.003e-04 | 1.264706e-04
+  46 | PJ1_rho_uniform_null     |       0/0 |  6.046e-05 |  2.997e-04 | 1.596982e-04
+
+Most oscillatory psi_r ranking
+
+rank | case                     | psi_r_h/t |  psi_r_rms |  psi_r_max |  shape_error
+------------------------------------------------------------------------------------
+   1 | PF_psin_uniform_Ip       |       0/1 |  2.997e-04 |  5.530e-04 | 4.308810e-04
+   2 | PF_psin_uniform_beta     |       0/1 |  2.759e-04 |  5.809e-04 | 4.309201e-04
+   3 | PF_psin_uniform_null     |       0/1 |  2.647e-04 |  7.097e-04 | 4.309199e-04
+   4 | PF_rho_uniform_Ip        |       0/1 |  4.701e-05 |  1.388e-04 | 1.654962e-04
+   5 | PF_rho_uniform_beta      |       0/1 |  4.706e-05 |  1.408e-04 | 1.654718e-04
+   6 | PF_rho_uniform_null      |       0/1 |  4.751e-05 |  1.473e-04 | 1.654968e-04
+   7 | PI_psin_uniform_Ip       |       0/1 |  2.482e-03 |  3.893e-03 | 5.750508e-03
+   8 | PI_psin_uniform_Ip_beta  |       0/1 |  2.441e-03 |  3.789e-03 | 5.896947e-03
+   9 | PI_psin_uniform_beta     |       0/1 |  2.364e-03 |  3.686e-03 | 5.872932e-03
+  10 | PI_psin_uniform_null     |       0/1 |  2.405e-03 |  3.791e-03 | 5.738077e-03
+  11 | PI_rho_uniform_Ip        |       0/1 |  2.819e-05 |  1.468e-04 | 1.435684e-04
+  12 | PI_rho_uniform_Ip_beta   |       0/1 |  2.849e-05 |  1.484e-04 | 1.452452e-04
+  13 | PI_rho_uniform_beta      |       0/1 |  2.784e-05 |  1.413e-04 | 1.439550e-04
+  14 | PI_rho_uniform_null      |       0/1 |  2.766e-05 |  1.396e-04 | 1.422007e-04
+  15 | PJ1_psin_uniform_Ip      |       0/1 |  4.967e-04 |  9.357e-04 | 9.924122e-04
+  16 | PJ1_psin_uniform_Ip_beta |       0/1 |  4.918e-04 |  9.292e-04 | 9.523626e-04
+  17 | PJ1_psin_uniform_beta    |       0/1 |  3.580e-04 |  1.177e-03 | 7.751227e-04
+  18 | PJ1_psin_uniform_null    |       0/1 |  3.254e-04 |  1.060e-03 | 8.999073e-04
+  19 | PJ1_rho_uniform_Ip       |       0/1 |  2.902e-05 |  1.533e-04 | 1.619744e-04
+  20 | PJ1_rho_uniform_Ip_beta  |       0/1 |  2.925e-05 |  1.543e-04 | 1.627857e-04
+  21 | PJ1_rho_uniform_beta     |       0/1 |  2.591e-05 |  1.369e-04 | 1.605988e-04
+  22 | PJ1_rho_uniform_null     |       0/1 |  2.585e-05 |  1.359e-04 | 1.596982e-04
+  23 | PJ2_psin_uniform_Ip      |       0/1 |  6.232e-04 |  1.152e-03 | 1.019482e-03
+  24 | PJ2_psin_uniform_Ip_beta |       0/1 |  6.028e-04 |  1.077e-03 | 1.037562e-03
+  25 | PJ2_psin_uniform_beta    |       0/1 |  5.530e-04 |  1.656e-03 | 1.104994e-03
+  26 | PJ2_psin_uniform_null    |       0/1 |  4.685e-04 |  1.444e-03 | 1.040639e-03
+  27 | PJ2_rho_uniform_Ip       |       0/1 |  2.852e-05 |  1.516e-04 | 1.592137e-04
+  28 | PJ2_rho_uniform_Ip_beta  |       0/1 |  2.883e-05 |  1.528e-04 | 1.605203e-04
+  29 | PJ2_rho_uniform_beta     |       0/1 |  2.590e-05 |  1.383e-04 | 1.579069e-04
+  30 | PJ2_rho_uniform_null     |       0/1 |  2.582e-05 |  1.373e-04 | 1.563426e-04
+  31 | PP_psin_uniform_Ip       |       0/1 |  5.349e-04 |  1.268e-03 | 2.634924e-03
+  32 | PP_psin_uniform_Ip_beta  |       0/1 |  6.633e-04 |  1.597e-03 | 2.253377e-03
+  33 | PP_psin_uniform_beta     |       0/1 |  5.779e-04 |  1.403e-03 | 2.317397e-03
+  34 | PP_psin_uniform_null     |       0/1 |  5.778e-04 |  1.403e-03 | 2.619118e-03
+  35 | PP_rho_uniform_Ip        |       0/1 |  1.700e-05 |  7.414e-05 | 1.977961e-04
+  36 | PP_rho_uniform_Ip_beta   |       0/1 |  1.714e-05 |  7.284e-05 | 1.986325e-04
+  37 | PP_rho_uniform_beta      |       0/1 |  1.755e-05 |  8.293e-05 | 1.968926e-04
+  38 | PP_rho_uniform_null      |       0/1 |  1.755e-05 |  8.293e-05 | 1.963242e-04
+  39 | PQ_psin_uniform_Ip       |       0/1 |  1.541e-02 |  2.788e-02 | 1.491525e-02
+  40 | PQ_psin_uniform_Ip_beta  |       0/1 |  1.680e-02 |  3.055e-02 | 1.424929e-02
+  41 | PQ_psin_uniform_beta     |       0/1 |  2.672e-03 |  7.510e-03 | 3.871583e-03
+  42 | PQ_psin_uniform_null     |       0/1 |  2.666e-03 |  8.641e-03 | 2.064002e-03
+  43 | PQ_rho_uniform_Ip        |       0/1 |  2.931e-05 |  9.786e-05 | 1.200598e-04
+  44 | PQ_rho_uniform_Ip_beta   |       0/1 |  2.866e-05 |  9.963e-05 | 1.225417e-04
+  45 | PQ_rho_uniform_beta      |       0/1 |  2.439e-05 |  1.281e-04 | 1.281669e-04
+  46 | PQ_rho_uniform_null      |       0/1 |  2.435e-05 |  1.279e-04 | 1.264706e-04
+
+Most oscillatory FF_psi ranking
+
+rank | case                     | FF_psi_h/t | FF_psi_rms | FF_psi_max |  shape_error
+-------------------------------------------------------------------------------------
+   1 | PP_psin_uniform_Ip       |       10/2 |  8.313e-02 |  3.692e-01 | 2.634924e-03
+   2 | PP_psin_uniform_Ip_beta  |       10/2 |  8.321e-02 |  3.690e-01 | 2.253377e-03
+   3 | PP_psin_uniform_beta     |       10/2 |  8.316e-02 |  3.691e-01 | 2.317397e-03
+   4 | PP_psin_uniform_null     |       10/2 |  8.310e-02 |  3.691e-01 | 2.619118e-03
+   5 | PP_rho_uniform_Ip        |        6/0 |  3.857e-03 |  1.218e-02 | 1.977961e-04
+   6 | PP_rho_uniform_Ip_beta   |        6/0 |  3.857e-03 |  1.217e-02 | 1.986325e-04
+   7 | PP_rho_uniform_beta      |        6/0 |  3.858e-03 |  1.218e-02 | 1.968926e-04
+   8 | PP_rho_uniform_null      |        6/0 |  3.859e-03 |  1.218e-02 | 1.963242e-04
+   9 | PQ_psin_uniform_Ip       |        2/3 |  1.834e-01 |  3.154e-01 | 1.491525e-02
+  10 | PQ_psin_uniform_Ip_beta  |        2/3 |  1.936e-01 |  3.637e-01 | 1.424929e-02
+  11 | PI_psin_uniform_Ip       |        3/1 |  6.148e-02 |  3.015e-01 | 5.750508e-03
+  12 | PI_psin_uniform_Ip_beta  |        3/1 |  6.356e-02 |  3.016e-01 | 5.896947e-03
+  13 | PI_psin_uniform_beta     |        3/1 |  6.313e-02 |  3.016e-01 | 5.872932e-03
+  14 | PI_psin_uniform_null     |        3/1 |  6.127e-02 |  3.014e-01 | 5.738077e-03
+  15 | PI_rho_uniform_Ip        |        3/0 |  1.130e-03 |  2.861e-03 | 1.435684e-04
+  16 | PI_rho_uniform_Ip_beta   |        3/0 |  1.144e-03 |  2.918e-03 | 1.452452e-04
+  17 | PI_rho_uniform_beta      |        3/0 |  1.132e-03 |  2.868e-03 | 1.439550e-04
+  18 | PI_rho_uniform_null      |        3/0 |  1.118e-03 |  2.808e-03 | 1.422007e-04
+  19 | PQ_psin_uniform_beta     |        3/0 |  4.640e-02 |  1.317e-01 | 3.871583e-03
+  20 | PJ2_rho_uniform_Ip       |        2/0 |  1.347e-04 |  2.264e-04 | 1.592137e-04
+  21 | PJ2_rho_uniform_Ip_beta  |        2/0 |  1.611e-04 |  2.714e-04 | 1.605203e-04
+  22 | PJ2_rho_uniform_beta     |        2/0 |  1.062e-04 |  2.670e-04 | 1.579069e-04
+  23 | PJ2_rho_uniform_null     |        2/0 |  9.629e-05 |  3.154e-04 | 1.563426e-04
+  24 | PQ_psin_uniform_null     |        2/0 |  2.933e-02 |  1.002e-01 | 2.064002e-03
+  25 | PF_rho_uniform_Ip        |        1/0 |  1.320e-03 |  3.822e-03 | 1.654962e-04
+  26 | PF_rho_uniform_beta      |        1/0 |  1.321e-03 |  3.824e-03 | 1.654718e-04
+  27 | PF_rho_uniform_null      |        1/0 |  1.323e-03 |  3.831e-03 | 1.654968e-04
+  28 | PJ1_psin_uniform_Ip      |        1/0 |  8.562e-03 |  2.385e-02 | 9.924122e-04
+  29 | PJ1_psin_uniform_Ip_beta |        1/0 |  8.148e-03 |  2.385e-02 | 9.523626e-04
+  30 | PJ1_psin_uniform_beta    |        1/0 |  6.397e-03 |  1.408e-02 | 7.751227e-04
+  31 | PJ1_psin_uniform_null    |        1/0 |  6.345e-03 |  1.246e-02 | 8.999073e-04
+  32 | PJ1_rho_uniform_Ip       |        1/0 |  1.788e-04 |  6.827e-04 | 1.619744e-04
+  33 | PJ1_rho_uniform_Ip_beta  |        1/0 |  1.970e-04 |  6.560e-04 | 1.627857e-04
+  34 | PJ1_rho_uniform_beta     |        1/0 |  1.533e-04 |  7.423e-04 | 1.605988e-04
+  35 | PJ1_rho_uniform_null     |        1/0 |  1.494e-04 |  7.721e-04 | 1.596982e-04
+  36 | PQ_rho_uniform_Ip        |        1/0 |  2.106e-04 |  4.518e-04 | 1.200598e-04
+  37 | PQ_rho_uniform_Ip_beta   |        1/0 |  1.750e-04 |  4.135e-04 | 1.225417e-04
+  38 | PQ_rho_uniform_beta      |        1/0 |  1.897e-04 |  3.417e-04 | 1.281669e-04
+  39 | PQ_rho_uniform_null      |        1/0 |  1.707e-04 |  3.287e-04 | 1.264706e-04
+  40 | PF_psin_uniform_Ip       |        0/0 |  7.240e-04 |  3.146e-03 | 4.308810e-04
+  41 | PF_psin_uniform_beta     |        0/0 |  7.146e-04 |  3.147e-03 | 4.309201e-04
+  42 | PF_psin_uniform_null     |        0/0 |  7.165e-04 |  3.148e-03 | 4.309199e-04
+  43 | PJ2_psin_uniform_Ip      |        0/0 |  2.031e-02 |  4.818e-02 | 1.019482e-03
+  44 | PJ2_psin_uniform_Ip_beta |        0/0 |  2.062e-02 |  4.777e-02 | 1.037562e-03
+  45 | PJ2_psin_uniform_beta    |        0/0 |  2.293e-02 |  4.653e-02 | 1.104994e-03
+  46 | PJ2_psin_uniform_null    |        0/0 |  2.082e-02 |  4.741e-02 | 1.040639e-03
+
+Most oscillatory mu0P_psi ranking
+
+rank | case                     |  mu0P_h/t |   mu0P_rms |   mu0P_max |  shape_error
+------------------------------------------------------------------------------------
+   1 | PQ_psin_uniform_Ip       |       2/0 |  1.821e-02 |  5.017e-02 | 1.491525e-02
+   2 | PQ_psin_uniform_Ip_beta  |       2/0 |  2.131e-02 |  3.184e-02 | 1.424929e-02
+   3 | PQ_psin_uniform_beta     |       2/0 |  1.770e-02 |  4.821e-02 | 3.871583e-03
+   4 | PQ_psin_uniform_null     |       2/0 |  1.803e-02 |  5.008e-02 | 2.064002e-03
+   5 | PF_rho_uniform_Ip        |       1/0 |  1.250e-03 |  3.620e-03 | 1.654962e-04
+   6 | PF_rho_uniform_beta      |       1/0 |  1.250e-03 |  3.622e-03 | 1.654718e-04
+   7 | PF_rho_uniform_null      |       1/0 |  1.252e-03 |  3.628e-03 | 1.654968e-04
+   8 | PJ1_psin_uniform_Ip      |       1/0 |  2.564e-03 |  1.005e-02 | 9.924122e-04
+   9 | PJ1_psin_uniform_Ip_beta |       1/0 |  2.530e-03 |  1.005e-02 | 9.523626e-04
+  10 | PJ1_psin_uniform_beta    |       1/0 |  2.560e-03 |  1.004e-02 | 7.751227e-04
+  11 | PJ1_psin_uniform_null    |       1/0 |  2.567e-03 |  1.005e-02 | 8.999073e-04
+  12 | PJ2_psin_uniform_Ip      |       1/0 |  9.245e-03 |  2.525e-02 | 1.019482e-03
+  13 | PJ2_psin_uniform_Ip_beta |       1/0 |  9.401e-03 |  2.528e-02 | 1.037562e-03
+  14 | PJ2_psin_uniform_beta    |       1/0 |  9.654e-03 |  2.532e-02 | 1.104994e-03
+  15 | PJ2_psin_uniform_null    |       1/0 |  9.247e-03 |  2.525e-02 | 1.040639e-03
+  16 | PQ_rho_uniform_Ip        |       1/0 |  6.527e-05 |  3.287e-04 | 1.200598e-04
+  17 | PQ_rho_uniform_Ip_beta   |       1/0 |  6.133e-05 |  3.119e-04 | 1.225417e-04
+  18 | PQ_rho_uniform_beta      |       1/0 |  6.188e-05 |  2.880e-04 | 1.281669e-04
+  19 | PQ_rho_uniform_null      |       1/0 |  6.071e-05 |  3.003e-04 | 1.264706e-04
+  20 | PF_psin_uniform_Ip       |       0/0 |  8.883e-04 |  4.165e-03 | 4.308810e-04
+  21 | PF_psin_uniform_beta     |       0/0 |  8.788e-04 |  4.166e-03 | 4.309201e-04
+  22 | PF_psin_uniform_null     |       0/0 |  8.772e-04 |  4.168e-03 | 4.309199e-04
+  23 | PI_psin_uniform_Ip       |       0/0 |  8.962e-04 |  4.137e-03 | 5.750508e-03
+  24 | PI_psin_uniform_Ip_beta  |       0/0 |  1.865e-03 |  4.115e-03 | 5.896947e-03
+  25 | PI_psin_uniform_beta     |       0/0 |  1.758e-03 |  4.117e-03 | 5.872932e-03
+  26 | PI_psin_uniform_null     |       0/0 |  8.970e-04 |  4.137e-03 | 5.738077e-03
+  27 | PI_rho_uniform_Ip        |       0/0 |  8.629e-05 |  2.959e-04 | 1.435684e-04
+  28 | PI_rho_uniform_Ip_beta   |       0/0 |  8.127e-05 |  2.809e-04 | 1.452452e-04
+  29 | PI_rho_uniform_beta      |       0/0 |  8.287e-05 |  2.868e-04 | 1.439550e-04
+  30 | PI_rho_uniform_null      |       0/0 |  8.876e-05 |  3.025e-04 | 1.422007e-04
+  31 | PJ1_rho_uniform_Ip       |       0/0 |  6.092e-05 |  2.841e-04 | 1.619744e-04
+  32 | PJ1_rho_uniform_Ip_beta  |       0/0 |  6.283e-05 |  2.735e-04 | 1.627857e-04
+  33 | PJ1_rho_uniform_beta     |       0/0 |  6.076e-05 |  2.877e-04 | 1.605988e-04
+  34 | PJ1_rho_uniform_null     |       0/0 |  6.046e-05 |  2.997e-04 | 1.596982e-04
+  35 | PJ2_rho_uniform_Ip       |       0/0 |  9.767e-05 |  4.331e-04 | 1.592137e-04
+  36 | PJ2_rho_uniform_Ip_beta  |       0/0 |  1.003e-04 |  4.429e-04 | 1.605203e-04
+  37 | PJ2_rho_uniform_beta     |       0/0 |  9.769e-05 |  4.331e-04 | 1.579069e-04
+  38 | PJ2_rho_uniform_null     |       0/0 |  9.586e-05 |  4.223e-04 | 1.563426e-04
+  39 | PP_psin_uniform_Ip       |       0/0 |  3.273e-03 |  1.526e-02 | 2.634924e-03
+  40 | PP_psin_uniform_Ip_beta  |       0/0 |  3.610e-03 |  1.485e-02 | 2.253377e-03
+  41 | PP_psin_uniform_beta     |       0/0 |  3.545e-03 |  1.488e-02 | 2.317397e-03
+  42 | PP_psin_uniform_null     |       0/0 |  3.273e-03 |  1.526e-02 | 2.619118e-03
+  43 | PP_rho_uniform_Ip        |       0/0 |  6.205e-05 |  2.782e-04 | 1.977961e-04
+  44 | PP_rho_uniform_Ip_beta   |       0/0 |  6.273e-05 |  2.693e-04 | 1.986325e-04
+  45 | PP_rho_uniform_beta      |       0/0 |  6.204e-05 |  2.786e-04 | 1.968926e-04
+  46 | PP_rho_uniform_null      |       0/0 |  6.237e-05 |  2.875e-04 | 1.963242e-04
+
+Slowest avg_ms ranking
+
+rank | case                     |       avg_ms |       std_ms |  shape_error | evaluations
+------------------------------------------------------------------------------------------
+   1 | PQ_psin_uniform_Ip_beta  |        5.635 |        0.401 | 1.424929e-02 |     75
+   2 | PJ2_psin_uniform_Ip_beta |        4.841 |        0.307 | 1.037562e-03 |     72
+   3 | PJ2_psin_uniform_Ip      |        4.039 |        0.309 | 1.019482e-03 |     62
+   4 | PQ_psin_uniform_Ip       |        3.957 |        0.373 | 1.491525e-02 |     56
+   5 | PQ_psin_uniform_null     |        3.698 |        0.351 | 2.064002e-03 |     48
+   6 | PQ_psin_uniform_beta     |        3.319 |        0.253 | 3.871583e-03 |     46
+   7 | PJ2_psin_uniform_beta    |        2.688 |        0.306 | 1.104994e-03 |     40
+   8 | PQ_rho_uniform_Ip_beta   |        2.529 |       12.766 | 1.225417e-04 |     45
+   9 | PJ2_psin_uniform_null    |        2.439 |        0.343 | 1.040639e-03 |     39
+  10 | PJ1_psin_uniform_beta    |        2.329 |       12.041 | 7.751227e-04 |     38
+  11 | PQ_rho_uniform_Ip        |        1.958 |        0.232 | 1.200598e-04 |     76
+  12 | PJ2_rho_uniform_Ip       |        1.891 |        0.180 | 1.592137e-04 |     72
+  13 | PQ_rho_uniform_beta      |        1.846 |        0.180 | 1.281669e-04 |     72
+  14 | PF_rho_uniform_beta      |        1.498 |        7.339 | 1.654718e-04 |     26
+  15 | PQ_rho_uniform_null      |        1.492 |        0.222 | 1.264706e-04 |     53
+  16 | PI_psin_uniform_beta     |        1.408 |        0.217 | 5.872932e-03 |     48
+  17 | PI_psin_uniform_Ip_beta  |        1.374 |        0.148 | 5.896947e-03 |     48
+  18 | PJ1_psin_uniform_Ip      |        1.194 |        0.203 | 9.924122e-04 |     39
+  19 | PJ2_rho_uniform_null     |        1.165 |        0.148 | 1.563426e-04 |     42
+  20 | PI_psin_uniform_Ip       |        1.164 |        0.225 | 5.750508e-03 |     39
+  21 | PI_psin_uniform_null     |        1.153 |        0.133 | 5.738077e-03 |     39
+  22 | PJ1_psin_uniform_Ip_beta |        1.129 |        0.117 | 9.523626e-04 |     39
+  23 | PJ2_rho_uniform_Ip_beta  |        1.108 |        0.151 | 1.605203e-04 |     40
+  24 | PP_psin_uniform_Ip_beta  |        1.094 |        0.105 | 2.253377e-03 |     39
+  25 | PI_rho_uniform_Ip_beta   |        1.093 |        0.213 | 1.452452e-04 |     39
+  26 | PF_psin_uniform_Ip       |        1.084 |        0.141 | 4.308810e-04 |     38
+  27 | PF_psin_uniform_null     |        1.082 |        0.182 | 4.309199e-04 |     37
+  28 | PP_psin_uniform_Ip       |        1.069 |        0.141 | 2.634924e-03 |     38
+  29 | PF_psin_uniform_beta     |        1.057 |        0.089 | 4.309201e-04 |     37
+  30 | PP_psin_uniform_beta     |        1.053 |        0.102 | 2.317397e-03 |     38
+  31 | PJ1_psin_uniform_null    |        1.043 |        0.116 | 8.999073e-04 |     36
+  32 | PP_psin_uniform_null     |        1.039 |        0.117 | 2.619118e-03 |     38
+  33 | PJ2_rho_uniform_beta     |        1.038 |        0.155 | 1.579069e-04 |     37
+  34 | PI_rho_uniform_beta      |        1.032 |        0.125 | 1.439550e-04 |     39
+  35 | PP_rho_uniform_Ip        |        0.928 |        0.174 | 1.977961e-04 |     36
+  36 | PP_rho_uniform_null      |        0.912 |        0.100 | 1.963242e-04 |     29
+  37 | PP_rho_uniform_Ip_beta   |        0.884 |        0.078 | 1.986325e-04 |     35
+  38 | PI_rho_uniform_Ip        |        0.816 |        0.116 | 1.435684e-04 |     29
+  39 | PF_rho_uniform_Ip        |        0.795 |        0.135 | 1.654962e-04 |     28
+  40 | PJ1_rho_uniform_beta     |        0.792 |        0.100 | 1.605988e-04 |     27
+  41 | PJ1_rho_uniform_Ip       |        0.789 |        0.132 | 1.619744e-04 |     28
+  42 | PI_rho_uniform_null      |        0.784 |        0.082 | 1.422007e-04 |     29
+  43 | PJ1_rho_uniform_Ip_beta  |        0.780 |        0.145 | 1.627857e-04 |     27
+  44 | PF_rho_uniform_null      |        0.777 |        0.162 | 1.654968e-04 |     28
+  45 | PP_rho_uniform_beta      |        0.773 |        0.092 | 1.968926e-04 |     28
+  46 | PJ1_rho_uniform_null     |        0.771 |        0.087 | 1.596982e-04 |     28
+
+Largest function_evaluations ranking
+
+rank | case                     | evaluations |       avg_ms |       std_ms |  shape_error
+------------------------------------------------------------------------------------------
+   1 | PQ_rho_uniform_Ip        |     76 |        1.958 |        0.232 | 1.200598e-04
+   2 | PQ_psin_uniform_Ip_beta  |     75 |        5.635 |        0.401 | 1.424929e-02
+   3 | PJ2_psin_uniform_Ip_beta |     72 |        4.841 |        0.307 | 1.037562e-03
+   4 | PJ2_rho_uniform_Ip       |     72 |        1.891 |        0.180 | 1.592137e-04
+   5 | PQ_rho_uniform_beta      |     72 |        1.846 |        0.180 | 1.281669e-04
+   6 | PJ2_psin_uniform_Ip      |     62 |        4.039 |        0.309 | 1.019482e-03
+   7 | PQ_psin_uniform_Ip       |     56 |        3.957 |        0.373 | 1.491525e-02
+   8 | PQ_rho_uniform_null      |     53 |        1.492 |        0.222 | 1.264706e-04
+   9 | PI_psin_uniform_Ip_beta  |     48 |        1.374 |        0.148 | 5.896947e-03
+  10 | PI_psin_uniform_beta     |     48 |        1.408 |        0.217 | 5.872932e-03
+  11 | PQ_psin_uniform_null     |     48 |        3.698 |        0.351 | 2.064002e-03
+  12 | PQ_psin_uniform_beta     |     46 |        3.319 |        0.253 | 3.871583e-03
+  13 | PQ_rho_uniform_Ip_beta   |     45 |        2.529 |       12.766 | 1.225417e-04
+  14 | PJ2_rho_uniform_null     |     42 |        1.165 |        0.148 | 1.563426e-04
+  15 | PJ2_psin_uniform_beta    |     40 |        2.688 |        0.306 | 1.104994e-03
+  16 | PJ2_rho_uniform_Ip_beta  |     40 |        1.108 |        0.151 | 1.605203e-04
+  17 | PI_psin_uniform_Ip       |     39 |        1.164 |        0.225 | 5.750508e-03
+  18 | PI_psin_uniform_null     |     39 |        1.153 |        0.133 | 5.738077e-03
+  19 | PI_rho_uniform_Ip_beta   |     39 |        1.093 |        0.213 | 1.452452e-04
+  20 | PI_rho_uniform_beta      |     39 |        1.032 |        0.125 | 1.439550e-04
+  21 | PJ1_psin_uniform_Ip      |     39 |        1.194 |        0.203 | 9.924122e-04
+  22 | PJ1_psin_uniform_Ip_beta |     39 |        1.129 |        0.117 | 9.523626e-04
+  23 | PJ2_psin_uniform_null    |     39 |        2.439 |        0.343 | 1.040639e-03
+  24 | PP_psin_uniform_Ip_beta  |     39 |        1.094 |        0.105 | 2.253377e-03
+  25 | PF_psin_uniform_Ip       |     38 |        1.084 |        0.141 | 4.308810e-04
+  26 | PJ1_psin_uniform_beta    |     38 |        2.329 |       12.041 | 7.751227e-04
+  27 | PP_psin_uniform_Ip       |     38 |        1.069 |        0.141 | 2.634924e-03
+  28 | PP_psin_uniform_beta     |     38 |        1.053 |        0.102 | 2.317397e-03
+  29 | PP_psin_uniform_null     |     38 |        1.039 |        0.117 | 2.619118e-03
+  30 | PF_psin_uniform_beta     |     37 |        1.057 |        0.089 | 4.309201e-04
+  31 | PF_psin_uniform_null     |     37 |        1.082 |        0.182 | 4.309199e-04
+  32 | PJ2_rho_uniform_beta     |     37 |        1.038 |        0.155 | 1.579069e-04
+  33 | PJ1_psin_uniform_null    |     36 |        1.043 |        0.116 | 8.999073e-04
+  34 | PP_rho_uniform_Ip        |     36 |        0.928 |        0.174 | 1.977961e-04
+  35 | PP_rho_uniform_Ip_beta   |     35 |        0.884 |        0.078 | 1.986325e-04
+  36 | PI_rho_uniform_Ip        |     29 |        0.816 |        0.116 | 1.435684e-04
+  37 | PI_rho_uniform_null      |     29 |        0.784 |        0.082 | 1.422007e-04
+  38 | PP_rho_uniform_null      |     29 |        0.912 |        0.100 | 1.963242e-04
+  39 | PF_rho_uniform_Ip        |     28 |        0.795 |        0.135 | 1.654962e-04
+  40 | PF_rho_uniform_null      |     28 |        0.777 |        0.162 | 1.654968e-04
+  41 | PJ1_rho_uniform_Ip       |     28 |        0.789 |        0.132 | 1.619744e-04
+  42 | PJ1_rho_uniform_null     |     28 |        0.771 |        0.087 | 1.596982e-04
+  43 | PP_rho_uniform_beta      |     28 |        0.773 |        0.092 | 1.968926e-04
+  44 | PJ1_rho_uniform_Ip_beta  |     27 |        0.780 |        0.145 | 1.627857e-04
+  45 | PJ1_rho_uniform_beta     |     27 |        0.792 |        0.100 | 1.605988e-04
+  46 | PF_rho_uniform_beta      |     26 |        1.498 |        7.339 | 1.654718e-04

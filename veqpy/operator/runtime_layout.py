@@ -68,6 +68,9 @@ def _pack_radial_block(
     T_rr: np.ndarray,
 ) -> np.ndarray:
     """按规范压合径向场为 (R, Nr) 2D 只读数组."""
+    if abs(rho[0]) < 1e-10:
+        raise ValueError("rho[0] is too close to zero")
+
     Nr = rho.shape[0]
     K_max = rho_powers.shape[0] - 2
     L_max = T.shape[0] - 1
