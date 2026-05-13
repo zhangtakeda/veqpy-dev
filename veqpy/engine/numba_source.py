@@ -281,24 +281,32 @@ def _normalize_psin_coordinate_inplace(psin: np.ndarray) -> np.ndarray:
 
 
 @njit(cache=True, fastmath=True, nogil=True)
-def _regularize_axis_linear_psin_r(psin_r: np.ndarray, rho: np.ndarray) -> np.ndarray:
-    """Repair only the head samples polluted by cumulative integration at the axis.
+def _regularize_axis_linear_psin_r(
+    psin_r: np.ndarray, rho: np.ndarray, ref_rho: float = 0.05
+) -> np.ndarray:
+    """Repair head samples of ``psin_r`` polluted by cumulative integration at the axis.
 
     Non-endpoint quadrature grids start at a small positive ``rho``.  The
-    cumulative integration row for that first sample is still anchored at the
-    first node, so the first one or two ``psin_r`` samples can miss the small
-    interval between the magnetic axis and the first node.  Extrapolate the
-    smooth even profile ``psin_r / rho`` from interior samples instead of
-    forcing several head samples to a single slope.
+    cumulative integration row for that first sample misses the interval between
+    the magnetic axis (``rho=0``) and the first node, so the head of ``psin_r``
+    systematically deviates from the true ``O(rho)`` profile.
+
+    Find the first node outside the affected region (``rho >= ref_rho``) and use
+    it together with the next node as clean anchors.  Extrapolate the smooth even
+    ratio ``psin_r / rho`` as a linear function of ``rho^2`` back to all nodes
+    inside the affected region.
     """
     n = psin_r.shape[0]
-    if n < 6:
-        return psin_r
-    if abs(rho[0]) > 5.0e-2:
+    if n < 4:
         return psin_r
 
-    anchor0 = 4
-    anchor1 = 5
+    anchor0 = 0
+    while anchor0 < n and rho[anchor0] < ref_rho:
+        anchor0 += 1
+    if anchor0 == 0 or anchor0 >= n - 1:
+        return psin_r
+
+    anchor1 = anchor0 + 1
     rho0 = rho[anchor0]
     rho1 = rho[anchor1]
     if abs(rho0) < 1.0e-14 or abs(rho1) < 1.0e-14:
@@ -316,32 +324,6 @@ def _regularize_axis_linear_psin_r(psin_r: np.ndarray, rho: np.ndarray) -> np.nd
         x = rho[i] * rho[i]
         psin_r[i] = rho[i] * (slope0 + slope_gradient * (x - x0))
     return psin_r
-
-
-@njit(cache=True, fastmath=True, nogil=True)
-def _regularize_true_axis_ratio_profile(profile: np.ndarray, rho: np.ndarray) -> np.ndarray:
-    """Replace only a true-axis ratio sample by its one-sided finite limit.
-
-    Rho-coordinate source kernels often form profiles such as ``Pn_psin`` by
-    dividing a radial derivative by ``psin_r``.  At an actual magnetic-axis node
-    both numerator and denominator can vanish.  Do not alter ``psin_r`` to avoid
-    that removable singularity: only extrapolate the already-divided profile at
-    ``rho == 0``.  Off-axis quadrature nodes, including Chebyshev nodes close to
-    zero, must be left untouched.
-    """
-    if profile.shape[0] < 3:
-        return profile
-    if abs(rho[0]) >= 1e-10:
-        return profile
-
-    rho1 = rho[1]
-    rho2 = rho[2]
-    if abs(rho2 - rho1) < 1e-14:
-        return profile
-
-    slope = (profile[2] - profile[1]) / (rho2 - rho1)
-    profile[0] = profile[1] + slope * (rho[0] - rho1)
-    return profile
 
 
 @njit(cache=True, fastmath=True, nogil=True)
@@ -649,8 +631,6 @@ def _update_pf_from_rho_inputs_with_scratch(
         alpha1 = -dot(heat_input, quadrature) / alpha2
         scaled_ratio_into(out_Pn_psin, heat_input, psin_r_safe, 1.0 / (alpha1 * alpha2))
         scaled_ratio_into(out_FFn_psin, current_input, psin_r_safe, 1.0 / (alpha1 * alpha2))
-        _regularize_true_axis_ratio_profile(out_Pn_psin, rho)
-        _regularize_true_axis_ratio_profile(out_FFn_psin, rho)
         return alpha1, alpha2
     c2 = integral_prof * integral_prof
     if has_Ip and (not has_beta):
@@ -678,8 +658,6 @@ def _update_pf_from_rho_inputs_with_scratch(
     alpha2 = c2 * alpha1
     scaled_ratio_into(out_Pn_psin, heat_input, psin_r_safe, 1.0)
     scaled_ratio_into(out_FFn_psin, current_input, psin_r_safe, 1.0)
-    _regularize_true_axis_ratio_profile(out_Pn_psin, rho)
-    _regularize_true_axis_ratio_profile(out_FFn_psin, rho)
     return alpha1, alpha2
 
 

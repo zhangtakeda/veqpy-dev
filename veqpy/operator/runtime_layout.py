@@ -294,7 +294,6 @@ class SourceConstState:
     fixed_remap_matrix: np.ndarray
     heat_projection_fit_matrix: np.ndarray
     current_projection_fit_matrix: np.ndarray
-    ffn_projection_matrix: np.ndarray
     endpoint_blend: np.ndarray
 
 
@@ -316,7 +315,6 @@ class SourceAuxState:
 
     heat_projection_coeff: np.ndarray
     current_projection_coeff: np.ndarray
-    ffn_projection_work: np.ndarray
     target_root_fields: np.ndarray
 
 
@@ -431,7 +429,6 @@ def allocate_runtime_state(
         fixed_remap_matrix=np.empty((0, 0), dtype=np.float64),
         heat_projection_fit_matrix=np.empty((0, 0), dtype=np.float64),
         current_projection_fit_matrix=np.empty((0, 0), dtype=np.float64),
-        ffn_projection_matrix=np.empty((0, 0), dtype=np.float64),
         endpoint_blend=np.linspace(0.0, 1.0, nr, dtype=np.float64),
     )
     source_work_state = SourceWorkState(
@@ -445,7 +442,6 @@ def allocate_runtime_state(
     source_aux_state = SourceAuxState(
         heat_projection_coeff=np.empty(0, dtype=np.float64),
         current_projection_coeff=np.empty(0, dtype=np.float64),
-        ffn_projection_work=np.empty(0, dtype=np.float64),
         target_root_fields=target_root_fields,
     )
     source_runtime_state = SourceRuntimeState(

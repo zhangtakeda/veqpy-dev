@@ -167,48 +167,6 @@ def test_calculus_registry_selects_nonuniform_spectral_matrices_from_nodes():
     assert np.allclose(spectral_integration @ derivative, integral)
 
 
-def test_ffn_projection_calculus_builds_unanchored_matrix_operator():
-    nodes = np.linspace(0.0, 1.0, 17)
-    filter_matrix = math_api.make_filter(nodes, degree=4)
-
-    assert filter_matrix.shape == (nodes.shape[0], nodes.shape[0])
-    assert np.all(np.isfinite(filter_matrix))
-
-    values = np.exp(nodes) + 0.2 * (-1.0) ** np.arange(nodes.shape[0])
-    projected = filter_matrix @ values
-
-    assert not np.allclose(projected[0], values[0])
-    assert not np.allclose(projected[-1], values[-1])
-
-
-def test_ffn_projection_calculus_preserves_affine_nullspace_and_damps_roughness():
-    nodes = np.linspace(0.0, 1.0, 21)
-    filter_matrix = math_api.make_filter(nodes, degree=3)
-
-    affine = 1.25 - 0.5 * nodes
-    rough = affine + 0.2 * (-1.0) ** np.arange(nodes.shape[0])
-    projected = filter_matrix @ rough
-
-    assert np.allclose(filter_matrix @ affine, affine, rtol=1.0e-12, atol=1.0e-12)
-    assert np.linalg.norm(np.diff(projected, n=2)) < np.linalg.norm(np.diff(rough, n=2))
-
-
-def test_ffn_projection_calculus_rejects_invalid_nodes_and_accepts_disabled_degree():
-    empty_filter = math_api.make_filter(
-        np.linspace(0.0, 1.0, 4),
-        degree=-1,
-    )
-
-    assert empty_filter.shape == (0, 0)
-
-    try:
-        math_api.make_filter(np.eye(3), degree=1)
-    except ValueError as exc:
-        assert "one-dimensional" in str(exc)
-    else:
-        raise AssertionError("Expected FFn projection calculus to reject non-1D nodes")
-
-
 def test_interpolation_matrix_preserves_polynomial_values():
     source = np.array([0.0, 0.2, 0.7, 1.0], dtype=np.float64)
     evaluation = np.array([0.1, 0.4, 0.9], dtype=np.float64)

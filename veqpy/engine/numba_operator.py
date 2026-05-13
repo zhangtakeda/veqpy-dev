@@ -51,37 +51,13 @@ def bind_source_eval_runner(
     backend_state: "BackendState",
     B0: float,
 ) -> Callable:
-    source_eval_runner = _bind_source_eval_runner_for_fused_backend(
+    return _bind_source_eval_runner_for_fused_backend(
         source_eval_binding=backend_abi.build_fused_source_eval_abi(
             source_plan=source_plan,
             backend_state=backend_state,
             B0=B0,
         )
     )
-    if not source_plan.has_ffn_projection_policy:
-        return source_eval_runner
-    ffn_projection_runner = _build_ffn_projection_runner(backend_state)
-
-    def runner(
-        out_root_fields: np.ndarray,
-        out_FFn_psin: np.ndarray,
-        out_Pn_psin: np.ndarray,
-        heat_input: np.ndarray,
-        current_input: np.ndarray,
-        R0: float,
-    ) -> tuple[float, float]:
-        alpha1, alpha2 = source_eval_runner(
-            out_root_fields,
-            out_FFn_psin,
-            out_Pn_psin,
-            heat_input,
-            current_input,
-            R0,
-        )
-        ffn_projection_runner(out_FFn_psin)
-        return alpha1, alpha2
-
-    return runner
 
 
 @njit(cache=True, fastmath=True, nogil=True)
@@ -115,34 +91,6 @@ def _normalize_psin_query(out: np.ndarray, source: np.ndarray) -> None:
     out /= scale
     out[0] = 0.0
     out[-1] = 1.0
-
-
-@njit(cache=True, nogil=True)
-def _project_ffn_psin_impl(
-    FFn_psin: np.ndarray,
-    filter_matrix: np.ndarray,
-    work: np.ndarray,
-) -> None:
-    if filter_matrix.size == 0 or work.size == 0:
-        return
-    for col in range(FFn_psin.shape[0]):
-        work[col] = FFn_psin[col]
-    for row in range(FFn_psin.shape[0]):
-        total = 0.0
-        for col in range(work.shape[0]):
-            total += filter_matrix[row, col] * work[col]
-        FFn_psin[row] = total
-
-
-def _build_ffn_projection_runner(backend_state: "BackendState") -> Callable[[np.ndarray], None]:
-    source_runtime_state = backend_state.source_runtime_state
-    filter_matrix = source_runtime_state.const_state.ffn_projection_matrix
-    work = source_runtime_state.aux_state.ffn_projection_work
-
-    def runner(FFn_psin: np.ndarray) -> None:
-        _project_ffn_psin_impl(FFn_psin, filter_matrix, work)
-
-    return runner
 
 
 def _refresh_hot_runtime(
@@ -551,9 +499,8 @@ def _run_projected_finalize_with_scratch(
     beta: float,
     source_scratch_1d: np.ndarray,
     source_scratch_2d: np.ndarray,
-    ffn_projection_runner: Callable[[np.ndarray], None] | None,
 ) -> tuple[float, float]:
-    alpha1, alpha2 = _run_projected_finalize_with_scratch_impl(
+    return _run_projected_finalize_with_scratch_impl(
         scratch_source_kernel,
         finalize_iter,
         max_residual,
@@ -585,9 +532,6 @@ def _run_projected_finalize_with_scratch(
         source_scratch_1d,
         source_scratch_2d,
     )
-    if ffn_projection_runner is not None:
-        ffn_projection_runner(FFn_psin)
-    return alpha1, alpha2
 
 
 def bind_fused_residual_runner(
@@ -888,11 +832,6 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
         source_execution=source_execution,
         backend_state=backend_state,
     )
-    ffn_projection_runner = (
-        _build_ffn_projection_runner(backend_state)
-        if source_plan.has_ffn_projection_policy
-        else None
-    )
     scratch_holder: list[np.ndarray | None] = [None]
     psin = root_fields[0]
     FFn_psin = root_fields[3]
@@ -995,7 +934,6 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
             beta=fixed_point_psin_binding.beta,
             source_scratch_1d=fixed_point_psin_binding.source_scratch_1d,
             source_scratch_2d=fixed_point_psin_binding.source_scratch_2d,
-            ffn_projection_runner=ffn_projection_runner,
         )
         alpha_state[0] = alpha1
         alpha_state[1] = alpha2
@@ -1113,11 +1051,6 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
         source_execution=source_execution,
         backend_state=backend_state,
     )
-    ffn_projection_runner = (
-        _build_ffn_projection_runner(backend_state)
-        if source_plan.has_ffn_projection_policy
-        else None
-    )
     scratch_holder: list[np.ndarray | None] = [None]
     psin = root_fields[0]
     FFn_psin = root_fields[3]
@@ -1222,7 +1155,6 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
             beta=fixed_point_psin_binding.beta,
             source_scratch_1d=fixed_point_psin_binding.source_scratch_1d,
             source_scratch_2d=fixed_point_psin_binding.source_scratch_2d,
-            ffn_projection_runner=ffn_projection_runner,
         )
         alpha_state[0] = alpha1
         alpha_state[1] = alpha2

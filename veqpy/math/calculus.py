@@ -7,7 +7,6 @@ Role:
 
 Public API:
 - make_calculus
-- make_filter
 """
 
 import math
@@ -43,69 +42,6 @@ def make_calculus(
         available = ", ".join(sorted(calculus_generator.registry))
         raise ValueError(f"Unknown calculus scheme: {calculus}. Available schemes: {available}")
     return calculus_generator[calculus](nodes)
-
-
-def make_filter(
-    nodes: np.ndarray,
-    *,
-    degree: int,
-) -> np.ndarray:
-    """Build an unanchored roughness-penalized smoother for ``FFn_psin``.
-
-    Returns a single dense matrix ``filter_matrix`` so callers can smooth a grid
-    profile with ``filter_matrix @ values``.  The matrix solves the penalized
-    least-squares problem ``min_v ||v - u||^2 + strength * ||D2 v||^2``, where
-    ``D2`` is the grid-spacing-normalized nonuniform second-difference operator.
-    The integer ``degree`` is interpreted as a conservative smoothing strength
-    knob, not as a polynomial order.
-    """
-
-    degree = int(degree)
-    if degree < 0:
-        return np.empty((0, 0), dtype=np.float64)
-
-    rho = np.asarray(nodes, dtype=np.float64)
-    _validate_nodes(rho, min_size=2)
-
-    node_count = rho.shape[0]
-    identity = np.eye(node_count, dtype=np.float64)
-    if degree == 0 or node_count < 3:
-        return identity
-
-    spacing_scale = float(np.mean(np.diff(rho)))
-    second_difference = (spacing_scale * spacing_scale) * _second_difference_matrix(rho)
-    strength = float(degree) / 30.0
-    penalty = identity + strength * (second_difference.T @ second_difference)
-    # return np.linalg.solve(penalty, identity)
-    return np.eye(node_count, dtype=np.float64)
-
-
-def _second_difference_matrix(nodes: np.ndarray) -> np.ndarray:
-    """Build interior nonuniform second-difference rows."""
-
-    row_count = nodes.shape[0] - 2
-    second_difference = np.zeros((row_count, nodes.shape[0]), dtype=np.float64)
-    for row in range(row_count):
-        left = row
-        center = row + 1
-        right = row + 2
-        left_spacing = nodes[center] - nodes[left]
-        right_spacing = nodes[right] - nodes[center]
-        span = left_spacing + right_spacing
-        second_difference[row, left] = 2.0 / (left_spacing * span)
-        second_difference[row, center] = -2.0 / (left_spacing * right_spacing)
-        second_difference[row, right] = 2.0 / (right_spacing * span)
-    return second_difference
-
-
-def make_ffn_projection_calculus(
-    nodes: np.ndarray,
-    *,
-    degree: int,
-) -> np.ndarray:
-    """Compatibility alias for the FFn projection filter matrix builder."""
-
-    return make_filter(nodes, degree=degree)
 
 
 @calculus_generator("spectral")
