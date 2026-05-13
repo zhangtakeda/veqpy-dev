@@ -25,6 +25,7 @@ from veqpy.engine.numba_geometry import update_geometry_hot
 from veqpy.engine.numba_source import (
     COORDINATE_CODES,
     build_source_remap_cache,
+    build_uniform_not_a_knot_spline_coefficients,
     materialize_profile_owned_psin_source,
     materialize_projected_source_inputs,
     resolve_source_inputs,
@@ -493,6 +494,8 @@ def refresh_source_runtime(
             source_const_state.current_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
             source_aux_state.heat_projection_coeff = np.empty(0, dtype=np.float64)
             source_aux_state.current_projection_coeff = np.empty(0, dtype=np.float64)
+            source_aux_state.heat_spline_coeff = np.empty((0, 4), dtype=np.float64)
+            source_aux_state.current_spline_coeff = np.empty((0, 4), dtype=np.float64)
         else:
             (
                 _,
@@ -543,6 +546,16 @@ def refresh_source_runtime(
                     chebvander(source_query, source_plan.current_projection_degree)
                 )
         source_runtime_state.cache_key = case_key
+    if source_plan.is_grid_nodes:
+        source_aux_state.heat_spline_coeff = np.empty((0, 4), dtype=np.float64)
+        source_aux_state.current_spline_coeff = np.empty((0, 4), dtype=np.float64)
+    else:
+        source_aux_state.heat_spline_coeff = build_uniform_not_a_knot_spline_coefficients(
+            source_plan.heat_input
+        )
+        source_aux_state.current_spline_coeff = build_uniform_not_a_knot_spline_coefficients(
+            source_plan.current_input
+        )
     if source_plan.is_grid_nodes or not source_plan.has_projection_policy:
         source_aux_state.heat_projection_coeff = np.empty(0, dtype=np.float64)
         source_aux_state.current_projection_coeff = np.empty(0, dtype=np.float64)
@@ -572,6 +585,8 @@ def refresh_source_runtime(
                 source_plan.source_sample_count,
                 source_const_state.barycentric_weights,
                 source_const_state.fixed_remap_matrix,
+                source_aux_state.heat_spline_coeff,
+                source_aux_state.current_spline_coeff,
                 psin,
             )
     elif source_execution.requires_fixed_point_psin_materialization:
@@ -631,6 +646,8 @@ def _build_source_stage_runner_shared(operator_core: Any) -> Callable:
                     psin_profile_fields,
                     heat_input,
                     current_input,
+                    source_aux_state.heat_spline_coeff,
+                    source_aux_state.current_spline_coeff,
                     parameterization_code,
                 )
                 if source_plan.has_projection_policy:
@@ -705,6 +722,8 @@ def _build_source_stage_runner_shared(operator_core: Any) -> Callable:
                     source_plan.source_sample_count,
                     source_runtime_state.const_state.barycentric_weights,
                     source_runtime_state.const_state.fixed_remap_matrix,
+                    source_aux_state.heat_spline_coeff,
+                    source_aux_state.current_spline_coeff,
                     source_work_state.parameter_query,
                 )
             return source_eval_runner(
@@ -786,6 +805,8 @@ def _build_pj2_psin_uniform_source_stage_runner(
                 source_plan.source_sample_count,
                 source_runtime_state.const_state.barycentric_weights,
                 source_runtime_state.const_state.fixed_remap_matrix,
+                source_aux_state.heat_spline_coeff,
+                source_aux_state.current_spline_coeff,
                 source_work_state.parameter_query,
             )
             alpha1, alpha2 = source_eval_runner(
@@ -889,6 +910,8 @@ def _build_pq_psin_uniform_source_stage_runner(
                 source_plan.source_sample_count,
                 source_runtime_state.const_state.barycentric_weights,
                 source_runtime_state.const_state.fixed_remap_matrix,
+                source_aux_state.heat_spline_coeff,
+                source_aux_state.current_spline_coeff,
                 source_work_state.parameter_query,
             )
             alpha1, alpha2 = source_eval_runner(

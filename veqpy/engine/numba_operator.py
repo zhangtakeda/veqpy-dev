@@ -28,11 +28,11 @@ from veqpy.engine.numba_residual import (
     update_residual_compact,
 )
 from veqpy.engine.numba_source import (
-    _linear_uniform_interpolate_pair,
     _local_barycentric_interpolate_pair,
     _materialize_profile_owned_psin_source_impl,
     _materialize_projected_source_inputs_impl,
-    _update_fixed_point_psin_query_and_linear_uniform_inputs_impl,
+    _uniform_spline_interpolate_pair,
+    _update_fixed_point_psin_query_and_spline_uniform_inputs_impl,
     _update_fixed_point_psin_query_and_local_barycentric_inputs_impl,
     _update_fixed_point_psin_query_and_projected_inputs_impl,
     _update_fourier_family_fields_impl,
@@ -231,7 +231,7 @@ def _call_source_kernel_with_scratch(
 
 
 @njit(cache=True, nogil=True)
-def _run_fixed_point_linear_with_scratch_impl(
+def _run_fixed_point_spline_with_scratch_impl(
     scratch_source_kernel,
     max_iter: int,
     max_residual: float,
@@ -244,6 +244,8 @@ def _run_fixed_point_linear_with_scratch_impl(
     materialized_current_input: np.ndarray,
     heat_input: np.ndarray,
     current_input: np.ndarray,
+    heat_spline_coeff: np.ndarray,
+    current_spline_coeff: np.ndarray,
     coordinate_code: int,
     R0: float,
     B0: float,
@@ -260,11 +262,11 @@ def _run_fixed_point_linear_with_scratch_impl(
     source_scratch_1d: np.ndarray,
     source_scratch_2d: np.ndarray,
 ) -> tuple[float, float]:
-    _linear_uniform_interpolate_pair(
+    _uniform_spline_interpolate_pair(
         materialized_heat_input,
         materialized_current_input,
-        heat_input,
-        current_input,
+        heat_spline_coeff,
+        current_spline_coeff,
         source_psin_query,
     )
     alpha1 = np.nan
@@ -293,7 +295,7 @@ def _run_fixed_point_linear_with_scratch_impl(
             source_scratch_1d,
             source_scratch_2d,
         )
-        if _update_fixed_point_psin_query_and_linear_uniform_inputs_impl(
+        if _update_fixed_point_psin_query_and_spline_uniform_inputs_impl(
             source_psin_query,
             psin,
             max_residual,
@@ -301,6 +303,8 @@ def _run_fixed_point_linear_with_scratch_impl(
             materialized_current_input,
             heat_input,
             current_input,
+            heat_spline_coeff,
+            current_spline_coeff,
         ):
             break
     return alpha1, alpha2
@@ -768,6 +772,8 @@ def _bind_profile_owned_psin_residual_runner_core(
             profile_owned_psin_binding.psin_profile_fields,
             profile_owned_psin_binding.heat_input,
             profile_owned_psin_binding.current_input,
+            profile_owned_psin_binding.heat_spline_coeff,
+            profile_owned_psin_binding.current_spline_coeff,
             profile_owned_psin_binding.parameterization_code,
             profile_owned_psin_binding.rho,
             profile_owned_psin_binding.differentiator,
@@ -904,7 +910,7 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
                 fixed_point_psin_binding.source_scratch_2d,
             )
         else:
-            alpha1, alpha2 = _run_fixed_point_linear_with_scratch_impl(
+            alpha1, alpha2 = _run_fixed_point_spline_with_scratch_impl(
                 _update_pj2_from_psin_inputs_with_scratch,
                 16,
                 1.0e-10,
@@ -917,6 +923,8 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
                 fixed_point_psin_binding.materialized_current_input,
                 fixed_point_psin_binding.heat_input,
                 fixed_point_psin_binding.current_input,
+                fixed_point_psin_binding.heat_spline_coeff,
+                fixed_point_psin_binding.current_spline_coeff,
                 fixed_point_psin_binding.coordinate_code,
                 R0,
                 B0,
@@ -1132,7 +1140,7 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
                 fixed_point_psin_binding.source_scratch_2d,
             )
         else:
-            alpha1, alpha2 = _run_fixed_point_linear_with_scratch_impl(
+            alpha1, alpha2 = _run_fixed_point_spline_with_scratch_impl(
                 _update_pq_from_psin_inputs_with_scratch,
                 16,
                 1.0e-10,
@@ -1145,6 +1153,8 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
                 fixed_point_psin_binding.materialized_current_input,
                 fixed_point_psin_binding.heat_input,
                 fixed_point_psin_binding.current_input,
+                fixed_point_psin_binding.heat_spline_coeff,
+                fixed_point_psin_binding.current_spline_coeff,
                 fixed_point_psin_binding.coordinate_code,
                 R0,
                 B0,

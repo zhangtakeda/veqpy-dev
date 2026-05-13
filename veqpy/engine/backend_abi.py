@@ -27,7 +27,11 @@ from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 
-from veqpy.engine.numba_source import resolve_source_scratch_kernel, uniform_barycentric_weights
+from veqpy.engine.numba_source import (
+    build_uniform_not_a_knot_spline_coefficients,
+    resolve_source_scratch_kernel,
+    uniform_barycentric_weights,
+)
 
 if TYPE_CHECKING:
     from veqpy.operator.runtime_layout import BackendState
@@ -440,6 +444,8 @@ def build_profile_owned_psin_source_abi(
         source_parameter_query=source_work_state.parameter_query,
         heat_projection_coeff=source_aux_state.heat_projection_coeff,
         current_projection_coeff=source_aux_state.current_projection_coeff,
+        heat_spline_coeff=source_aux_state.heat_spline_coeff,
+        current_spline_coeff=source_aux_state.current_spline_coeff,
         endpoint_blend=source_runtime_state.const_state.endpoint_blend,
         materialized_heat_input=source_work_state.materialized_heat_input,
         materialized_current_input=source_work_state.materialized_current_input,
@@ -487,6 +493,12 @@ def _build_fixed_point_psin_source_abi(
         psin_profile_u=runtime_layout.psin_profile_u,
         heat_input=source_plan.heat_input,
         current_input=source_plan.current_input,
+        heat_spline_coeff=build_uniform_not_a_knot_spline_coefficients(
+            source_plan.heat_input
+        ),
+        current_spline_coeff=build_uniform_not_a_knot_spline_coefficients(
+            source_plan.current_input
+        ),
         coordinate_code=int(source_plan.coordinate_code),
         Ip=Ip,
         beta=float(source_plan.beta),

@@ -526,6 +526,74 @@ def build_source_remap_cache(
     return local_size, weights, fixed_remap_matrix
 
 
+def build_uniform_not_a_knot_spline_coefficients(values: np.ndarray) -> np.ndarray:
+    """Precompute local cubic coefficients for uniform [0, 1] source samples.
+
+    Coefficients are stored per source interval in the local coordinate
+    ``t = q * (N - 1) - interval`` so runtime interpolation only needs interval
+    lookup plus Horner evaluation.
+    """
+
+    samples = np.asarray(values, dtype=np.float64)
+    if samples.ndim != 1:
+        raise ValueError(f"Expected 1D source samples, got {samples.shape}")
+    n = int(samples.shape[0])
+    if n < 1:
+        raise ValueError("source samples must be non-empty")
+
+    if n == 1:
+        coeff = np.zeros((1, 4), dtype=np.float64)
+        coeff[0, 0] = samples[0]
+        return coeff
+    if n == 2:
+        coeff = np.zeros((1, 4), dtype=np.float64)
+        coeff[0, 0] = samples[0]
+        coeff[0, 1] = samples[1] - samples[0]
+        return coeff
+    if n == 3:
+        coeff = np.zeros((2, 4), dtype=np.float64)
+        quad_a = 2.0 * samples[2] + 2.0 * samples[0] - 4.0 * samples[1]
+        quad_b = 4.0 * samples[1] - 3.0 * samples[0] - samples[2]
+        quad_c = samples[0]
+        for interval in range(2):
+            x0 = 0.5 * interval
+            coeff[interval, 0] = quad_a * x0 * x0 + quad_b * x0 + quad_c
+            coeff[interval, 1] = 0.5 * (2.0 * quad_a * x0 + quad_b)
+            coeff[interval, 2] = 0.25 * quad_a
+        return coeff
+
+    h = 1.0 / (n - 1.0)
+    h2 = h * h
+    matrix = np.zeros((n, n), dtype=np.float64)
+    rhs = np.zeros(n, dtype=np.float64)
+    matrix[0, 0] = 1.0
+    matrix[0, 1] = -2.0
+    matrix[0, 2] = 1.0
+    matrix[-1, -3] = 1.0
+    matrix[-1, -2] = -2.0
+    matrix[-1, -1] = 1.0
+    for row in range(1, n - 1):
+        matrix[row, row - 1] = 1.0
+        matrix[row, row] = 4.0
+        matrix[row, row + 1] = 1.0
+        rhs[row] = 6.0 * (samples[row + 1] - 2.0 * samples[row] + samples[row - 1]) / h2
+
+    second = np.linalg.solve(matrix, rhs)
+    coeff = np.empty((n - 1, 4), dtype=np.float64)
+    for interval in range(n - 1):
+        left_second = second[interval]
+        right_second = second[interval + 1]
+        coeff[interval, 0] = samples[interval]
+        coeff[interval, 1] = (
+            samples[interval + 1]
+            - samples[interval]
+            - h2 * (2.0 * left_second + right_second) / 6.0
+        )
+        coeff[interval, 2] = 0.5 * h2 * left_second
+        coeff[interval, 3] = h2 * (right_second - left_second) / 6.0
+    return coeff
+
+
 def resolve_source_inputs(
     out_heat_input: np.ndarray,
     out_current_input: np.ndarray,
@@ -535,6 +603,8 @@ def resolve_source_inputs(
     source_sample_count: int,
     barycentric_weights: np.ndarray,
     fixed_remap_matrix: np.ndarray,
+    heat_spline_coeff: np.ndarray,
+    current_spline_coeff: np.ndarray,
     psin_query: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     """按 uniform source + coordinate 语义把输入解析到 operator rho 节点."""
@@ -567,11 +637,11 @@ def resolve_source_inputs(
     if psin_query.shape != out_heat_input.shape:
         raise ValueError(f"psin_query shape mismatch: {psin_query.shape} vs {out_heat_input.shape}")
 
-    _linear_uniform_interpolate_pair(
+    _uniform_spline_interpolate_pair(
         out_heat_input,
         out_current_input,
-        heat,
-        current,
+        heat_spline_coeff,
+        current_spline_coeff,
         psin_query,
     )
     return out_heat_input, out_current_input
@@ -1996,6 +2066,8 @@ def materialize_profile_owned_psin_source(
     psin_fields: np.ndarray,
     heat_input: np.ndarray,
     current_input: np.ndarray,
+    heat_spline_coeff: np.ndarray,
+    current_spline_coeff: np.ndarray,
     parameterization_code: int,
     rho: np.ndarray,
     differentiator: np.ndarray,
@@ -2035,6 +2107,8 @@ def materialize_profile_owned_psin_source(
         np.asarray(psin_fields, dtype=np.float64),
         heat,
         current,
+        np.asarray(heat_spline_coeff, dtype=np.float64),
+        np.asarray(current_spline_coeff, dtype=np.float64),
         int(parameterization_code),
         np.asarray(rho, dtype=np.float64),
         np.asarray(differentiator, dtype=np.float64),
@@ -2214,7 +2288,7 @@ def _update_fixed_point_psin_query_impl(
 
 
 @njit(cache=True, fastmath=True, nogil=True)
-def _update_fixed_point_psin_query_and_linear_uniform_inputs_impl(
+def _update_fixed_point_psin_query_and_spline_uniform_inputs_impl(
     query: np.ndarray,
     psin: np.ndarray,
     max_residual: float,
@@ -2222,23 +2296,10 @@ def _update_fixed_point_psin_query_and_linear_uniform_inputs_impl(
     out_current_input: np.ndarray,
     heat_input: np.ndarray,
     current_input: np.ndarray,
+    heat_spline_coeff: np.ndarray,
+    current_spline_coeff: np.ndarray,
 ) -> bool:
     max_abs_diff = 0.0
-    source_sample_count = heat_input.shape[0]
-    if source_sample_count == 1:
-        heat0 = heat_input[0]
-        current0 = current_input[0]
-        for i in range(query.shape[0]):
-            q = psin[i]
-            diff = abs(q - query[i])
-            if diff > max_abs_diff:
-                max_abs_diff = diff
-            query[i] = q
-            out_heat_input[i] = heat0
-            out_current_input[i] = current0
-        return max_abs_diff <= max_residual
-
-    step = 1.0 / (source_sample_count - 1.0)
     for i in range(query.shape[0]):
         q = psin[i]
         diff = abs(q - query[i])
@@ -2246,22 +2307,13 @@ def _update_fixed_point_psin_query_and_linear_uniform_inputs_impl(
             max_abs_diff = diff
         query[i] = q
 
-        if q < 0.0:
-            q = 0.0
-        elif q > 1.0:
-            q = 1.0
-
-        if q >= 1.0:
-            out_heat_input[i] = heat_input[-1]
-            out_current_input[i] = current_input[-1]
-            continue
-
-        position = q / step
-        left = int(position)
-        right = left + 1
-        frac = position - left
-        out_heat_input[i] = (1.0 - frac) * heat_input[left] + frac * heat_input[right]
-        out_current_input[i] = (1.0 - frac) * current_input[left] + frac * current_input[right]
+    _uniform_spline_interpolate_pair(
+        out_heat_input,
+        out_current_input,
+        heat_spline_coeff,
+        current_spline_coeff,
+        query,
+    )
     return max_abs_diff <= max_residual
 
 
@@ -2417,6 +2469,8 @@ def _materialize_profile_owned_psin_source_impl(
     psin_fields: np.ndarray,
     heat_input: np.ndarray,
     current_input: np.ndarray,
+    heat_spline_coeff: np.ndarray,
+    current_spline_coeff: np.ndarray,
     parameterization_code: int,
     rho: np.ndarray,
     differentiator: np.ndarray,
@@ -2444,11 +2498,11 @@ def _materialize_profile_owned_psin_source_impl(
     elif parameterization_code != SOURCE_PARAMETERIZATION_CODE_IDENTITY:
         raise ValueError("Unsupported source parameterization code")
 
-    _linear_uniform_interpolate_pair(
+    _uniform_spline_interpolate_pair(
         out_heat_input,
         out_current_input,
-        heat_input,
-        current_input,
+        heat_spline_coeff,
+        current_spline_coeff,
         out_parameter_query,
     )
 
@@ -2564,23 +2618,33 @@ def _evaluate_chebyshev_pair(
 
 
 @njit(cache=True, fastmath=True, nogil=True)
-def _linear_uniform_interpolate_pair(
+def _uniform_spline_interpolate_pair(
     out0: np.ndarray,
     out1: np.ndarray,
-    values0: np.ndarray,
-    values1: np.ndarray,
+    coeff0: np.ndarray,
+    coeff1: np.ndarray,
     query: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    source_sample_count = values0.shape[0]
-    if source_sample_count == 1:
-        value0 = values0[0]
-        value1 = values1[0]
+    interval_count = coeff0.shape[0]
+    if interval_count == 1:
         for i in range(out0.shape[0]):
-            out0[i] = value0
-            out1[i] = value1
+            q = query[i]
+            if q < 0.0:
+                q = 0.0
+            elif q > 1.0:
+                q = 1.0
+            out0[i] = (
+                ((coeff0[0, 3] * q + coeff0[0, 2]) * q + coeff0[0, 1]) * q
+                + coeff0[0, 0]
+            )
+            out1[i] = (
+                ((coeff1[0, 3] * q + coeff1[0, 2]) * q + coeff1[0, 1]) * q
+                + coeff1[0, 0]
+            )
         return out0, out1
 
-    step = 1.0 / (source_sample_count - 1.0)
+    denom_scale = float(interval_count)
+    last_interval = interval_count - 1
     for i in range(out0.shape[0]):
         q = query[i]
         if q < 0.0:
@@ -2588,17 +2652,22 @@ def _linear_uniform_interpolate_pair(
         elif q > 1.0:
             q = 1.0
 
-        if q >= 1.0:
-            out0[i] = values0[-1]
-            out1[i] = values1[-1]
-            continue
+        position = q * denom_scale
+        interval = int(position)
+        if interval > last_interval:
+            interval = last_interval
+            t = 1.0
+        else:
+            t = position - interval
 
-        position = q / step
-        left = int(position)
-        right = left + 1
-        frac = position - left
-        out0[i] = (1.0 - frac) * values0[left] + frac * values0[right]
-        out1[i] = (1.0 - frac) * values1[left] + frac * values1[right]
+        out0[i] = (
+            ((coeff0[interval, 3] * t + coeff0[interval, 2]) * t + coeff0[interval, 1]) * t
+            + coeff0[interval, 0]
+        )
+        out1[i] = (
+            ((coeff1[interval, 3] * t + coeff1[interval, 2]) * t + coeff1[interval, 1]) * t
+            + coeff1[interval, 0]
+        )
     return out0, out1
 
 

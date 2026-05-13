@@ -6,6 +6,9 @@ import numpy as np
 from veqpy.engine.numba_source import (
     _regularize_ffn_psin,
     _regularize_psin_r,
+    _uniform_spline_interpolate_pair,
+    _update_fixed_point_psin_query_and_spline_uniform_inputs_impl,
+    build_uniform_not_a_knot_spline_coefficients,
 )
 
 
@@ -28,6 +31,51 @@ def test_psin_coordinate_update_uses_base_accumulator():
 
     assert call_args
     assert set(call_args) == {"accumulator"}
+
+
+def test_uniform_source_interpolation_is_cubic_for_smooth_profiles():
+    axis = np.linspace(0.0, 1.0, 6, dtype=np.float64)
+    values0 = axis**3 - 0.25 * axis
+    values1 = -2.0 * axis**3 + axis * axis
+    coeff0 = build_uniform_not_a_knot_spline_coefficients(values0)
+    coeff1 = build_uniform_not_a_knot_spline_coefficients(values1)
+    query = np.array([0.0, 0.03, 0.11, 0.31, 0.58, 0.83, 1.0], dtype=np.float64)
+    out0 = np.empty_like(query)
+    out1 = np.empty_like(query)
+
+    _uniform_spline_interpolate_pair(out0, out1, coeff0, coeff1, query)
+
+    assert np.allclose(out0, query**3 - 0.25 * query)
+    assert np.allclose(out1, -2.0 * query**3 + query * query)
+
+
+def test_fixed_point_uniform_source_update_uses_cubic_interpolation():
+    axis = np.linspace(0.0, 1.0, 6, dtype=np.float64)
+    heat = axis**3 - 0.25 * axis
+    current = -2.0 * axis**3 + axis * axis
+    heat_coeff = build_uniform_not_a_knot_spline_coefficients(heat)
+    current_coeff = build_uniform_not_a_knot_spline_coefficients(current)
+    query = np.full(7, -1.0, dtype=np.float64)
+    psin = np.array([0.0, 0.03, 0.11, 0.31, 0.58, 0.83, 1.0], dtype=np.float64)
+    out_heat = np.empty_like(psin)
+    out_current = np.empty_like(psin)
+
+    converged = _update_fixed_point_psin_query_and_spline_uniform_inputs_impl(
+        query,
+        psin,
+        1.0e-14,
+        out_heat,
+        out_current,
+        heat,
+        current,
+        heat_coeff,
+        current_coeff,
+    )
+
+    assert not converged
+    assert np.allclose(query, psin)
+    assert np.allclose(out_heat, psin**3 - 0.25 * psin)
+    assert np.allclose(out_current, -2.0 * psin**3 + psin * psin)
 
 
 def test_axis_psin_r_regularizer_precomputed_n_fix():

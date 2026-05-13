@@ -315,6 +315,8 @@ class SourceAuxState:
 
     heat_projection_coeff: np.ndarray
     current_projection_coeff: np.ndarray
+    heat_spline_coeff: np.ndarray
+    current_spline_coeff: np.ndarray
     target_root_fields: np.ndarray
 
 
@@ -442,6 +444,8 @@ def allocate_runtime_state(
     source_aux_state = SourceAuxState(
         heat_projection_coeff=np.empty(0, dtype=np.float64),
         current_projection_coeff=np.empty(0, dtype=np.float64),
+        heat_spline_coeff=np.empty((0, 4), dtype=np.float64),
+        current_spline_coeff=np.empty((0, 4), dtype=np.float64),
         target_root_fields=target_root_fields,
     )
     source_runtime_state = SourceRuntimeState(
