@@ -54,6 +54,53 @@ def test_grid_default_order_keeps_mmax_before_kmax():
     assert grid.K_max is None
 
 
+def test_grid_serializes_optional_kmax(tmp_path):
+    path = tmp_path / "grid.json"
+    grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=4)
+
+    grid.write(path)
+    loaded = Grid.load(str(path))
+
+    assert loaded.K_max is None
+    assert loaded.rho.shape == (8,)
+
+
+def test_grid_reactive_properties_recompute_after_root_update():
+    grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=4)
+
+    rho_before = grid.rho
+    trig_before = grid.cos_mtheta
+    assert rho_before.shape == (8,)
+    assert trig_before.shape == (5, 16)
+    assert not rho_before.flags.writeable
+    assert not trig_before.flags.writeable
+
+    grid.Nr = 10
+    grid.Nt = 12
+
+    assert grid.rho.shape == (10,)
+    assert grid.quadrature.shape == (10,)
+    assert grid.differentiator.shape == (10, 10)
+    assert grid.cos_mtheta.shape == (5, 12)
+    assert grid.rho is not rho_before
+    assert grid.cos_mtheta is not trig_before
+
+    with pytest.raises(ValueError, match="Nr"):
+        grid.Nr = 3
+
+    grid.Nr = 8
+    assert grid.rho.shape == (8,)
+
+
+def test_grid_integrate_accepts_const_cached_quadrature():
+    grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=4)
+    values = np.ones((grid.Nr, grid.Nt), dtype=np.float64)
+
+    assert not grid.quadrature.flags.writeable
+    assert grid.integrate(np.ones(grid.Nr, dtype=np.float64)) == pytest.approx(1.0)
+    assert grid.integrate(values) == pytest.approx(2.0 * np.pi)
+
+
 def test_equilibrium_plot_profiles_use_unsampled_equilibrium(monkeypatch):
     equilibrium, _ = _build_high_order_equilibrium()
     plot_grid = Grid(Nr=12, Nt=24, scheme="uniform", M_max=equilibrium.grid.M_max)

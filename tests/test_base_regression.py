@@ -100,6 +100,48 @@ def test_reactive_caches_and_invalidates_downstream_dependencies():
     assert sample.calls == 2
 
 
+def test_reactive_root_normalization_hook_applies_to_later_assignments():
+    class _NormalizedReactive(Reactive):
+        root_properties = {"x", "label"}
+
+        def __init__(self, x, label):
+            super().__init__()
+            self.x = x
+            self.label = label
+
+        @classmethod
+        def reactive_inspections(cls, name: str, value):
+            if name == "x":
+                value = int(value)
+                if value < 0:
+                    raise ValueError("x must be non-negative")
+                return value
+            if name == "label":
+                return str(value).lower()
+            return super().reactive_inspections(name, value)
+
+        @property
+        def y(self):
+            return self.x + 1
+
+    sample = _NormalizedReactive("1", "UPPER")
+
+    assert sample.x == 1
+    assert sample.cached_x == 1
+    assert sample.label == "upper"
+    assert sample.y == 2
+
+    sample.x = "2"
+    sample.label = "Mixed"
+    assert sample.x == 2
+    assert sample.cached_x == 2
+    assert sample.label == "mixed"
+    assert sample.y == 3
+
+    with pytest.raises(ValueError, match="x must be non-negative"):
+        sample.x = -1
+
+
 def test_reactive_depends_on_declares_non_ast_dependencies():
     class _ExplicitReactive(Reactive):
         root_properties = {"raw"}

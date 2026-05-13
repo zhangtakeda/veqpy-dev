@@ -14,13 +14,11 @@ Notes:
 - 不负责 source route, residual 组装, 或 solver runtime 状态.
 """
 
-from dataclasses import dataclass, field
-
 import numpy as np
 from rich.console import Console
 from rich.tree import Tree
 
-from veqpy.base import Serial
+from veqpy.base import Reactive, Serial
 from veqpy.engine import (
     RHO_AXIS,
     THETA_AXIS,
@@ -32,37 +30,30 @@ from veqpy.math.fast import colwise_weighted_sum_into, dot, rowwise_sum_into
 from veqpy.math.quadrature import make_quadrature
 
 
-@dataclass(frozen=True, slots=True)
-class Grid(Serial):
+class Grid(Reactive, Serial):
     """径向-极角离散化的网格配置."""
 
-    Nr: int
-    Nt: int
-    L_max: int = 20
-    M_max: int = 20
-    K_max: int | None = None
-    scheme: str = "legendre"
-    calculus: str = "spectral"
+    root_properties = {"Nr", "Nt", "L_max", "M_max", "K_max", "scheme", "calculus"}
 
-    rho: np.ndarray = field(init=False)
-    theta: np.ndarray = field(init=False)
+    def __init__(
+        self,
+        Nr: int,
+        Nt: int,
+        L_max: int = 20,
+        M_max: int = 20,
+        K_max: int | None = None,
+        scheme: str = "legendre",
+        calculus: str = "spectral",
+    ):
+        super().__init__()
 
-    x: np.ndarray = field(init=False)
-    y: np.ndarray = field(init=False)
-    rho_powers: np.ndarray = field(init=False)
-    K_values: np.ndarray = field(init=False)
-    T_fields: np.ndarray = field(init=False)
-
-    cos_mtheta: np.ndarray = field(init=False)
-    sin_mtheta: np.ndarray = field(init=False)
-    m_cos_mtheta: np.ndarray = field(init=False)
-    m_sin_mtheta: np.ndarray = field(init=False)
-    m2_cos_mtheta: np.ndarray = field(init=False)
-    m2_sin_mtheta: np.ndarray = field(init=False)
-
-    differentiator: np.ndarray = field(init=False, default=None)
-    accumulator: np.ndarray = field(init=False, default=None)
-    quadrature: np.ndarray = field(init=False)
+        self.Nr = Nr
+        self.Nt = Nt
+        self.L_max = L_max
+        self.M_max = M_max
+        self.K_max = K_max
+        self.scheme = scheme
+        self.calculus = calculus
 
     @classmethod
     def serial_attributes(cls) -> dict[str, type]:
@@ -78,28 +69,70 @@ class Grid(Serial):
             "K_max": int | None,
         }
 
-    def __post_init__(self):
-        """根据根参数构造网格与谱表."""
-        scheme = self.scheme.lower()
-        object.__setattr__(self, "scheme", scheme)
-        calculus = self.calculus.lower()
-        object.__setattr__(self, "calculus", calculus)
+    @classmethod
+    def reactive_inspections(cls, name: str, value):
+        match name:
+            case "Nr":
+                value = int(value)
+                if value < 4:
+                    raise ValueError("Nr must be at least 4 for stable spectral methods")
+                return value
 
-        if self.Nr < 4:
-            raise ValueError("Nr must be at least 4 for stable spectral methods")
-        if self.Nt < 1:
-            raise ValueError("Nt must be positive")
-        if self.L_max < 0:
-            raise ValueError("L_max must be non-negative")
-        if self.M_max < 2:
-            raise ValueError("M_max must be at least 2")
-        if self.K_max is not None and self.K_max < 2:
-            raise ValueError("K_max must be at least 2")
+            case "Nt":
+                value = int(value)
+                if value < 1:
+                    raise ValueError("Nt must be positive")
+                return value
 
-        rho, quadrature = make_quadrature(self.Nr, quadrature=scheme)
+            case "L_max":
+                value = int(value)
+                if value < 0:
+                    raise ValueError("L_max must be non-negative")
+                return value
+
+            case "M_max":
+                value = int(value)
+                if value < 2:
+                    raise ValueError("M_max must be at least 2")
+                return value
+
+            case "K_max":
+                if value is None:
+                    return None
+                value = int(value)
+                if value < 2:
+                    raise ValueError("K_max must be at least 2")
+                return value
+
+            case "scheme" | "calculus":
+                return str(value).lower()
+
+        return value
+
+    @property
+    def _rho_quadrature(self) -> tuple[np.ndarray, np.ndarray]:
+        rho, quadrature = make_quadrature(self.Nr, quadrature=self.scheme)
+        return _const_array(rho), _const_array(quadrature)
+
+    @property
+    def rho(self) -> np.ndarray:
+        return self._rho_quadrature[0]
+
+    @property
+    def quadrature(self) -> np.ndarray:
+        return self._rho_quadrature[1]
+
+    @property
+    def theta(self) -> np.ndarray:
         theta = np.linspace(0.0, 2.0 * np.pi, self.Nt, endpoint=False)
+        return _const_array(theta)
+
+    @property
+    def _trig_tables(
+        self,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         harmonics = np.arange(self.M_max + 1, dtype=np.float64)[:, None]
-        ktheta = harmonics * theta[None, :]
+        ktheta = harmonics * self.theta[None, :]
         cos_mtheta = np.cos(ktheta)
         sin_mtheta = np.sin(ktheta)
         m_cos_mtheta = harmonics * cos_mtheta
@@ -107,54 +140,77 @@ class Grid(Serial):
         k2 = harmonics * harmonics
         m2_cos_mtheta = k2 * cos_mtheta
         m2_sin_mtheta = k2 * sin_mtheta
-        rho2 = rho * rho
-        K_values = _build_K_values(self.M_max, self.K_max)
-        max_rho_power = max(2, int(np.max(K_values)) + 1)
+        return (
+            _const_array(cos_mtheta),
+            _const_array(sin_mtheta),
+            _const_array(m_cos_mtheta),
+            _const_array(m_sin_mtheta),
+            _const_array(m2_cos_mtheta),
+            _const_array(m2_sin_mtheta),
+        )
+
+    @property
+    def cos_mtheta(self) -> np.ndarray:
+        return self._trig_tables[0]
+
+    @property
+    def sin_mtheta(self) -> np.ndarray:
+        return self._trig_tables[1]
+
+    @property
+    def m_cos_mtheta(self) -> np.ndarray:
+        return self._trig_tables[2]
+
+    @property
+    def m_sin_mtheta(self) -> np.ndarray:
+        return self._trig_tables[3]
+
+    @property
+    def m2_cos_mtheta(self) -> np.ndarray:
+        return self._trig_tables[4]
+
+    @property
+    def m2_sin_mtheta(self) -> np.ndarray:
+        return self._trig_tables[5]
+
+    @property
+    def K_values(self) -> np.ndarray:
+        return _const_array(_build_K_values(self.M_max, self.K_max))
+
+    @property
+    def rho_powers(self) -> np.ndarray:
+        k_values = self.K_values
+        max_rho_power = max(2, int(np.max(k_values)) + 1)
         rho_powers = np.empty((max_rho_power + 1, self.Nr), dtype=np.float64)
         rho_powers[0].fill(1.0)
         for power in range(1, max_rho_power + 1):
-            rho_powers[power] = rho**power
-        x = 2.0 * rho2 - 1.0
-        y = 1.0 - rho2
+            rho_powers[power] = self.rho**power
+        return _const_array(rho_powers)
 
-        accumulator, differentiator = make_calculus(
-            rho,
-            calculus=calculus,
-        )
+    @property
+    def x(self) -> np.ndarray:
+        return _const_array(2.0 * self.rho * self.rho - 1.0)
 
-        T_fields = _build_chebyshev_tables(rho, x, self.L_max)
+    @property
+    def y(self) -> np.ndarray:
+        return _const_array(1.0 - self.rho * self.rho)
 
-        trig_tables = (
-            np.asarray(cos_mtheta, dtype=np.float64),
-            np.asarray(sin_mtheta, dtype=np.float64),
-            np.asarray(m_cos_mtheta, dtype=np.float64),
-            np.asarray(m_sin_mtheta, dtype=np.float64),
-            np.asarray(m2_cos_mtheta, dtype=np.float64),
-            np.asarray(m2_sin_mtheta, dtype=np.float64),
-        )
-        for table in trig_tables:
-            table.flags.writeable = False
+    @property
+    def _calculus_matrices(self) -> tuple[np.ndarray, np.ndarray]:
+        accumulator, differentiator = make_calculus(self.rho, calculus=self.calculus)
+        return _const_array(accumulator), _const_array(differentiator)
 
-        object.__setattr__(self, "rho", np.asarray(rho, dtype=np.float64))
-        rho_powers.flags.writeable = False
-        object.__setattr__(self, "rho_powers", rho_powers)
-        K_values.flags.writeable = False
-        object.__setattr__(self, "K_values", K_values)
-        object.__setattr__(self, "theta", np.asarray(theta, dtype=np.float64))
-        object.__setattr__(self, "cos_mtheta", trig_tables[0])
-        object.__setattr__(self, "sin_mtheta", trig_tables[1])
-        object.__setattr__(self, "m_cos_mtheta", trig_tables[2])
-        object.__setattr__(self, "m_sin_mtheta", trig_tables[3])
-        object.__setattr__(self, "m2_cos_mtheta", trig_tables[4])
-        object.__setattr__(self, "m2_sin_mtheta", trig_tables[5])
-        object.__setattr__(self, "quadrature", np.asarray(quadrature, dtype=np.float64))
-        object.__setattr__(self, "accumulator", np.asarray(accumulator, dtype=np.float64))
-        object.__setattr__(self, "differentiator", np.asarray(differentiator, dtype=np.float64))
-        object.__setattr__(self, "x", np.asarray(x, dtype=np.float64))
-        object.__setattr__(self, "y", np.asarray(y, dtype=np.float64))
-        object.__setattr__(self, "T_fields", np.asarray(T_fields, dtype=np.float64))
-        self.accumulator.flags.writeable = False
-        self.differentiator.flags.writeable = False
+    @property
+    def accumulator(self) -> np.ndarray:
+        return self._calculus_matrices[0]
+
+    @property
+    def differentiator(self) -> np.ndarray:
+        return self._calculus_matrices[1]
+
+    @property
+    def T_fields(self) -> np.ndarray:
+        return _const_array(_build_chebyshev_tables(self.rho, self.x, self.L_max))
 
     def __rich__(self):
         tree = Tree("[bold blue]Grid[/]")
@@ -186,7 +242,7 @@ class Grid(Serial):
             return int(self.K_values[order])
         if self.K_max is None:
             return order
-        return min(order, int(self.K_max))
+        return min(order, self.K_max)
 
     @property
     def T(self) -> np.ndarray:
@@ -261,6 +317,18 @@ class Grid(Serial):
         else:
             raise ValueError(f"Unsupported quadrature axis {axis}")
         return out
+
+
+def _const_array(value: np.ndarray) -> np.ndarray:
+    array = np.asarray(value)
+    array.flags.writeable = False
+    return array
+
+
+def _normalize_optional_int(value: int | None) -> int | None:
+    if value is None:
+        return None
+    return int(value)
 
 
 def _build_K_values(M_max: int, K_max: int | None) -> np.ndarray:

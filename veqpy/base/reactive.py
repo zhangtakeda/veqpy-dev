@@ -165,6 +165,7 @@ class Reactive:
 
         def fset(self, value):
             self._init_reactive_state()
+            value = self._prepare_root_value(name, value)
             object.__setattr__(self, cached_name, _freeze_ndarray(value))
             self._bump_version(name)
 
@@ -197,6 +198,7 @@ class Reactive:
 
             def fset(self, value):
                 self._init_reactive_state()
+                value = self._prepare_root_value(name, value)
                 original_fset(self, _freeze_ndarray(value))
                 self._bump_version(name)
 
@@ -270,6 +272,21 @@ class Reactive:
         own_version = self._version.get(name, 0)
         nested_revision = _nested_reactive_revision(value)
         return (own_version, nested_revision)
+
+    def _prepare_root_value(self, name: str, value: Any) -> Any:
+        """Normalize and validate a root assignment before storage.
+
+        Subclasses can override ``reactive_inspections`` to centralize root
+        coercion and validation while keeping ``__init__`` as plain assignment.
+        """
+
+        return type(self).reactive_inspections(name, value)
+
+    @classmethod
+    def reactive_inspections(cls, name: str, value: Any) -> Any:
+        """Subclass hook for root normalization/validation."""
+
+        return value
 
     def _bump_version(self, name: str, *, bump_object_revision: bool = True) -> None:
         self._init_reactive_state()

@@ -37,9 +37,12 @@ import numpy as np
 
 
 scalar = nb.float64
-array = nb.float64[::1]
-matrix = nb.float64[:, ::1]
-indices = nb.intp[::1]
+array = nb.types.Array(nb.float64, 1, "C")
+matrix = nb.types.Array(nb.float64, 2, "C")
+indices = nb.types.Array(nb.intp, 1, "C")
+const_array = nb.types.Array(nb.float64, 1, "C", readonly=True)
+const_matrix = nb.types.Array(nb.float64, 2, "C", readonly=True)
+const_indices = nb.types.Array(nb.intp, 1, "C", readonly=True)
 
 
 def fast_kernel(signature):
@@ -47,7 +50,7 @@ def fast_kernel(signature):
     return nb.njit(signature, cache=True, nogil=True, fastmath=True, inline="always")
 
 
-@fast_kernel(nb.void(matrix, matrix, matrix))
+@fast_kernel(nb.void(matrix, const_matrix, const_matrix))
 def matmul_into(out: np.ndarray, lhs: np.ndarray, rhs: np.ndarray) -> None:
     """Compute `out = lhs @ rhs` for dense 2D float64 arrays."""
     n_rows = lhs.shape[0]
@@ -64,7 +67,7 @@ def matmul_into(out: np.ndarray, lhs: np.ndarray, rhs: np.ndarray) -> None:
                 out[i, j] += lhs_ik * rhs[k, j]
 
 
-@fast_kernel(nb.void(array, matrix, array))
+@fast_kernel(nb.void(array, const_matrix, const_array))
 def matvec_into(out: np.ndarray, mat: np.ndarray, vec: np.ndarray) -> None:
     """Compute `out = mat @ vec` for a dense 2D matrix and 1D vector."""
     n_rows = mat.shape[0]
@@ -77,7 +80,7 @@ def matvec_into(out: np.ndarray, mat: np.ndarray, vec: np.ndarray) -> None:
         out[i] = total
 
 
-@fast_kernel(nb.void(array, indices, matrix, array))
+@fast_kernel(nb.void(array, const_indices, const_matrix, const_array))
 def indexed_matvec_into(
     out: np.ndarray,
     out_indices: np.ndarray,
@@ -95,7 +98,7 @@ def indexed_matvec_into(
         out[out_indices[i]] = total
 
 
-@fast_kernel(scalar(array, array))
+@fast_kernel(scalar(const_array, const_array))
 def dot(lhs: np.ndarray, rhs: np.ndarray) -> float:
     """Return `sum_i lhs[i] * rhs[i]`."""
     total = 0.0
@@ -106,7 +109,7 @@ def dot(lhs: np.ndarray, rhs: np.ndarray) -> float:
     return total
 
 
-@fast_kernel(scalar(array, array, array))
+@fast_kernel(scalar(const_array, const_array, const_array))
 def weighted_dot(
     lhs: np.ndarray,
     rhs: np.ndarray,
@@ -121,7 +124,7 @@ def weighted_dot(
     return total
 
 
-@fast_kernel(scalar(array, array, array, array))
+@fast_kernel(scalar(const_array, const_array, const_array, const_array))
 def weighted_ratio_dot(
     lhs: np.ndarray,
     rhs: np.ndarray,
@@ -137,7 +140,7 @@ def weighted_ratio_dot(
     return total
 
 
-@fast_kernel(nb.void(array, matrix))
+@fast_kernel(nb.void(array, const_matrix))
 def rowwise_sum_into(out: np.ndarray, values: np.ndarray) -> None:
     """Compute `out[i] = sum_j values[i, j]`."""
     n_rows = values.shape[0]
@@ -150,7 +153,7 @@ def rowwise_sum_into(out: np.ndarray, values: np.ndarray) -> None:
         out[i] = total
 
 
-@fast_kernel(nb.void(array, matrix, array))
+@fast_kernel(nb.void(array, const_matrix, const_array))
 def rowwise_weighted_sum_into(
     out: np.ndarray,
     values: np.ndarray,
@@ -167,7 +170,7 @@ def rowwise_weighted_sum_into(
         out[i] = total
 
 
-@fast_kernel(nb.void(array, matrix, matrix))
+@fast_kernel(nb.void(array, const_matrix, const_matrix))
 def rowwise_dot_into(
     out: np.ndarray,
     lhs: np.ndarray,
@@ -184,7 +187,7 @@ def rowwise_dot_into(
         out[i] = total
 
 
-@fast_kernel(nb.void(array, matrix))
+@fast_kernel(nb.void(array, const_matrix))
 def colwise_sum_into(out: np.ndarray, values: np.ndarray) -> None:
     """Compute `out[j] = sum_i values[i, j]`."""
     n_rows = values.shape[0]
@@ -198,7 +201,7 @@ def colwise_sum_into(out: np.ndarray, values: np.ndarray) -> None:
             out[j] += values[i, j]
 
 
-@fast_kernel(nb.void(array, matrix, array))
+@fast_kernel(nb.void(array, const_matrix, const_array))
 def colwise_weighted_sum_into(
     out: np.ndarray,
     values: np.ndarray,
@@ -217,7 +220,7 @@ def colwise_weighted_sum_into(
             out[j] += weight_i * values[i, j]
 
 
-@fast_kernel(nb.void(array, matrix, matrix))
+@fast_kernel(nb.void(array, const_matrix, const_matrix))
 def colwise_dot_into(
     out: np.ndarray,
     lhs: np.ndarray,
@@ -235,14 +238,14 @@ def colwise_dot_into(
             out[j] += lhs[i, j] * rhs[i, j]
 
 
-@fast_kernel(nb.void(array, array))
+@fast_kernel(nb.void(array, const_array))
 def copy_into(out: np.ndarray, src: np.ndarray) -> None:
     """Compute `out[i] = src[i]`."""
     for i in range(out.shape[0]):
         out[i] = src[i]
 
 
-@fast_kernel(nb.void(array, array, array))
+@fast_kernel(nb.void(array, const_array, const_array))
 def product_into(
     out: np.ndarray,
     lhs: np.ndarray,
@@ -253,7 +256,7 @@ def product_into(
         out[i] = lhs[i] * rhs[i]
 
 
-@fast_kernel(nb.void(array, array, scalar))
+@fast_kernel(nb.void(array, const_array, scalar))
 def scale_into(
     out: np.ndarray,
     src: np.ndarray,
@@ -264,7 +267,7 @@ def scale_into(
         out[i] = scale * src[i]
 
 
-@fast_kernel(nb.void(array, array, array, scalar))
+@fast_kernel(nb.void(array, const_array, const_array, scalar))
 def scaled_product_into(
     out: np.ndarray,
     lhs: np.ndarray,
@@ -276,7 +279,7 @@ def scaled_product_into(
         out[i] = scale * lhs[i] * rhs[i]
 
 
-@fast_kernel(nb.void(array, array, array, scalar))
+@fast_kernel(nb.void(array, const_array, const_array, scalar))
 def scaled_ratio_into(
     out: np.ndarray,
     numerator: np.ndarray,
@@ -288,7 +291,7 @@ def scaled_ratio_into(
         out[i] = scale * numerator[i] / denominator[i]
 
 
-@fast_kernel(nb.void(array, array, array, array, scalar))
+@fast_kernel(nb.void(array, const_array, const_array, const_array, scalar))
 def scaled_product_ratio_into(
     out: np.ndarray,
     lhs: np.ndarray,
@@ -301,7 +304,7 @@ def scaled_product_ratio_into(
         out[i] = scale * lhs[i] * rhs[i] / denominator[i]
 
 
-@fast_kernel(nb.void(array, array, scalar))
+@fast_kernel(nb.void(array, const_array, scalar))
 def maximum_floor_into(
     out: np.ndarray,
     src: np.ndarray,

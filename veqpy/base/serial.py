@@ -137,6 +137,9 @@ class Serial:
                     f"got {type(value).__name__}"
                 )
 
+            if value is None and _allows_none(expected):
+                continue
+
             if isinstance(value, np.ndarray):
                 if value.size == 0:
                     raise ValueError(f"Attribute '{key}' is empty array")
@@ -215,6 +218,13 @@ def _normalize_union(t) -> tuple | None:
     if isinstance(t, types.UnionType):
         return get_args(t)
     return None
+
+
+def _allows_none(t) -> bool:
+    members = _normalize_union(t)
+    if members is None:
+        return t is type(None)
+    return type(None) in members
 
 
 def _type_name(t) -> str:
