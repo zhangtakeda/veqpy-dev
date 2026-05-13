@@ -399,10 +399,7 @@ def build_fused_source_eval_abi(
     runtime_layout = backend_state.runtime_layout
     source_work_state = backend_state.source_runtime_state.work_state
 
-    if source_plan.coordinate == "psin" and source_plan.nodes == "uniform":
-        n_axis_fix = 0
-    else:
-        n_axis_fix = int(np.searchsorted(static_layout.rho, fix_rho))
+    n_axis_fix = int(np.searchsorted(static_layout.rho, fix_rho))
 
     return FusedSourceEvalABI(
         source_kernel=source_kernel,
@@ -436,6 +433,9 @@ def build_profile_owned_psin_source_abi(
     source_aux_state = source_runtime_state.aux_state
     return SimpleNamespace(
         source_target_root_fields=source_aux_state.target_root_fields,
+        rho=backend_state.static_layout.rho,
+        differentiator=backend_state.static_layout.differentiator,
+        accumulator=backend_state.static_layout.accumulator,
         source_psin_query=source_work_state.psin_query,
         source_parameter_query=source_work_state.parameter_query,
         heat_projection_coeff=source_aux_state.heat_projection_coeff,

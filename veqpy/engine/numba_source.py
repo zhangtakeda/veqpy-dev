@@ -323,6 +323,30 @@ def _regularize_psin_r(psin_r: np.ndarray, rho: np.ndarray, n_fix: int) -> np.nd
 
 
 @njit(cache=True, fastmath=True, nogil=True)
+def _regularize_axis_even(profile: np.ndarray, rho: np.ndarray, n_fix: int) -> np.ndarray:
+    if n_fix <= 0:
+        return profile
+
+    anchor0 = n_fix
+    anchor1 = n_fix + 1
+    x0 = rho[anchor0] * rho[anchor0]
+    x1 = rho[anchor1] * rho[anchor1]
+    value0 = profile[anchor0]
+    value1 = profile[anchor1]
+    value_gradient = (value1 - value0) / (x1 - x0)
+    for i in range(n_fix):
+        x = rho[i] * rho[i]
+        profile[i] = value0 + value_gradient * (x - x0)
+
+    return profile
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def _regularize_ffn_psin(FFn_psin: np.ndarray, rho: np.ndarray, n_fix: int) -> np.ndarray:
+    return _regularize_axis_even(FFn_psin, rho, n_fix)
+
+
+@njit(cache=True, fastmath=True, nogil=True)
 def _enforce_axis_even_profile(profile: np.ndarray, rho: np.ndarray) -> np.ndarray:
     if profile.shape[0] < 3:
         return profile
@@ -597,10 +621,10 @@ def _update_pf_from_rho_inputs_with_scratch(
     out_psin_r *= -2.0
     out_psin_r[:] = np.sqrt(out_psin_r)
     out_psin_r /= Kn
+    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
     prof = out_psin_r
     integral_prof = dot(prof, quadrature)
     out_psin_r /= integral_prof
-    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
     if (not has_Ip) and (not has_beta):
@@ -608,6 +632,7 @@ def _update_pf_from_rho_inputs_with_scratch(
         alpha1 = -dot(heat_input, quadrature) / alpha2
         scaled_ratio_into(out_Pn_psin, heat_input, out_psin_r, 1.0 / (alpha1 * alpha2))
         scaled_ratio_into(out_FFn_psin, current_input, out_psin_r, 1.0 / (alpha1 * alpha2))
+        _regularize_ffn_psin(out_FFn_psin, rho, n_axis_fix)
         return alpha1, alpha2
     c2 = integral_prof * integral_prof
     if has_Ip and (not has_beta):
@@ -635,6 +660,7 @@ def _update_pf_from_rho_inputs_with_scratch(
     alpha2 = c2 * alpha1
     scaled_ratio_into(out_Pn_psin, heat_input, out_psin_r, 1.0)
     scaled_ratio_into(out_FFn_psin, current_input, out_psin_r, 1.0)
+    _regularize_ffn_psin(out_FFn_psin, rho, n_axis_fix)
     return alpha1, alpha2
 
 
@@ -673,10 +699,10 @@ def _update_pf_from_psin_uniform_inputs_with_scratch(
     full_integration(out_psin_r, integrand, accumulator)
     out_psin_r *= -1.0
     out_psin_r /= Kn
+    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
     prof = out_psin_r
     integral_prof = dot(prof, quadrature)
     out_psin_r /= integral_prof
-    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
     if (not has_Ip) and (not has_beta):
@@ -686,10 +712,12 @@ def _update_pf_from_psin_uniform_inputs_with_scratch(
         alpha1 = -dot(pressure_profile, quadrature)
         scale_into(out_Pn_psin, heat_input, 1.0 / alpha1)
         scale_into(out_FFn_psin, current_input, 1.0 / alpha1)
+        _regularize_ffn_psin(out_FFn_psin, rho, n_axis_fix)
         return alpha1, alpha2
     c2 = integral_prof
     copy_into(out_Pn_psin, heat_input)
     copy_into(out_FFn_psin, current_input)
+    _regularize_ffn_psin(out_FFn_psin, rho, n_axis_fix)
     if has_Ip and (not has_beta):
         g1n_integrand = source_scratch_2d[0]
         _fill_g1n_psin_integrand(g1n_integrand, JdivR, out_FFn_psin, R, out_Pn_psin)
@@ -753,10 +781,10 @@ def _update_pf_from_psin_grid_inputs_with_scratch(
     full_integration(out_psin_r, integrand, accumulator)
     out_psin_r *= -1.0
     out_psin_r /= Kn
+    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
     prof = out_psin_r
     integral_prof = dot(prof, quadrature)
     out_psin_r /= integral_prof
-    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
     if (not has_Ip) and (not has_beta):
@@ -766,10 +794,12 @@ def _update_pf_from_psin_grid_inputs_with_scratch(
         alpha1 = -dot(pressure_profile, quadrature)
         scale_into(out_Pn_psin, heat_input, 1.0 / alpha1)
         scale_into(out_FFn_psin, current_input, 1.0 / alpha1)
+        _regularize_ffn_psin(out_FFn_psin, rho, n_axis_fix)
         return alpha1, alpha2
     c2 = integral_prof
     copy_into(out_Pn_psin, heat_input)
     copy_into(out_FFn_psin, current_input)
+    _regularize_ffn_psin(out_FFn_psin, rho, n_axis_fix)
     if has_Ip and (not has_beta):
         g1n_integrand = source_scratch_2d[0]
         _fill_g1n_psin_integrand(g1n_integrand, JdivR, out_FFn_psin, R, out_Pn_psin)
@@ -870,6 +900,7 @@ def _update_pp_from_rho_inputs_with_scratch(
         Ln_r,
         alpha2 / alpha1,
     )
+    _regularize_ffn_psin(out_FFn_psin, rho, n_axis_fix)
     return alpha1, alpha2
 
 
@@ -942,6 +973,7 @@ def _update_pp_from_psin_uniform_inputs_with_scratch(
         Ln_r,
         alpha2 / alpha1,
     )
+    _regularize_ffn_psin(out_FFn_psin, rho, n_axis_fix)
     return alpha1, alpha2
 
 
@@ -1014,6 +1046,7 @@ def _update_pp_from_psin_grid_inputs_with_scratch(
         Ln_r,
         alpha2 / alpha1,
     )
+    _regularize_ffn_psin(out_FFn_psin, rho, n_axis_fix)
     return alpha1, alpha2
 
 
@@ -1087,6 +1120,7 @@ def _update_pi_from_rho_inputs_with_scratch(
         alpha1 = -dot(scratch_Pr, quadrature) / alpha2
         scaled_ratio_into(out_Pn_psin, scratch_Pr, out_psin_r, 1.0 / (alpha1 * alpha2))
     _fill_pi_ffn_psin(out_FFn_psin, Itor_r, V_r, out_Pn_psin, Ln_r, 1.0 / (2.0 * np.pi * alpha1))
+    _regularize_ffn_psin(out_FFn_psin, rho, n_axis_fix)
     return alpha1, alpha2
 
 
@@ -1157,6 +1191,7 @@ def _update_pi_from_psin_uniform_inputs_with_scratch(
         alpha1 = -dot(scratch_Pr, quadrature) / alpha2
         scaled_ratio_into(out_Pn_psin, scratch_Pr, out_psin_r, 1.0 / (alpha1 * alpha2))
     _fill_pi_ffn_psin(out_FFn_psin, Itor_r, V_r, out_Pn_psin, Ln_r, 1.0 / (2.0 * np.pi * alpha1))
+    _regularize_ffn_psin(out_FFn_psin, rho, n_axis_fix)
     return alpha1, alpha2
 
 
@@ -1227,6 +1262,7 @@ def _update_pi_from_psin_grid_inputs_with_scratch(
         alpha1 = -dot(scratch_Pr, quadrature) / alpha2
         scaled_ratio_into(out_Pn_psin, scratch_Pr, out_psin_r, 1.0 / (alpha1 * alpha2))
     _fill_pi_ffn_psin(out_FFn_psin, Itor_r, V_r, out_Pn_psin, Ln_r, 1.0 / (2.0 * np.pi * alpha1))
+    _regularize_ffn_psin(out_FFn_psin, rho, n_axis_fix)
     return alpha1, alpha2
 
 
@@ -1315,6 +1351,7 @@ def _update_pj1_from_rho_inputs_with_scratch(
         Ln_r,
         1.0 / (2.0 * np.pi * alpha1),
     )
+    _regularize_ffn_psin(out_FFn_psin, rho, n_axis_fix)
     return alpha1, alpha2
 
 
@@ -1400,6 +1437,7 @@ def _update_pj1_from_psin_uniform_inputs_with_scratch(
         Ln_r,
         1.0 / (2.0 * np.pi * alpha1),
     )
+    _regularize_ffn_psin(out_FFn_psin, rho, n_axis_fix)
     return alpha1, alpha2
 
 
@@ -1485,6 +1523,7 @@ def _update_pj1_from_psin_grid_inputs_with_scratch(
         Ln_r,
         1.0 / (2.0 * np.pi * alpha1),
     )
+    _regularize_ffn_psin(out_FFn_psin, rho, n_axis_fix)
     return alpha1, alpha2
 
 
@@ -1562,6 +1601,7 @@ def _update_pj2_from_psin_uniform_inputs_with_scratch(
     full_differentiation(scratch_aux, F, differentiator)
     product_into(out_FFn_psin, F, scratch_aux)
     scaled_ratio_into(out_FFn_psin, out_FFn_psin, out_psin_r, 1.0 / (alpha1 * alpha2))
+    _regularize_ffn_psin(out_FFn_psin, rho, n_axis_fix)
     return alpha1, alpha2
 
 
@@ -1639,6 +1679,7 @@ def _update_pj2_from_psin_grid_inputs_with_scratch(
     full_differentiation(scratch_aux, F, differentiator)
     product_into(out_FFn_psin, F, scratch_aux)
     scaled_ratio_into(out_FFn_psin, out_FFn_psin, out_psin_r, 1.0 / (alpha1 * alpha2))
+    _regularize_ffn_psin(out_FFn_psin, rho, n_axis_fix)
     return alpha1, alpha2
 
 
@@ -1715,6 +1756,7 @@ def _update_pj2_from_rho_inputs_with_scratch(
     full_differentiation(F_r, F, differentiator)
     scaled_product_into(out_FFn_psin, F, F_r, 1.0 / (alpha1 * alpha2))
     scaled_ratio_into(out_FFn_psin, out_FFn_psin, out_psin_r, 1.0)
+    _regularize_ffn_psin(out_FFn_psin, rho, n_axis_fix)
     return alpha1, alpha2
 
 
@@ -1788,6 +1830,7 @@ def _update_pq_from_psin_uniform_inputs_with_scratch(
     full_differentiation(scratch_aux, F, differentiator)
     product_into(out_FFn_psin, F, scratch_aux)
     scaled_ratio_into(out_FFn_psin, out_FFn_psin, out_psin_r, 1.0 / (alpha1 * alpha2))
+    _regularize_ffn_psin(out_FFn_psin, rho, n_axis_fix)
     return alpha1, alpha2
 
 
@@ -1861,6 +1904,7 @@ def _update_pq_from_psin_grid_inputs_with_scratch(
     full_differentiation(scratch_aux, F, differentiator)
     product_into(out_FFn_psin, F, scratch_aux)
     scaled_ratio_into(out_FFn_psin, out_FFn_psin, out_psin_r, 1.0 / (alpha1 * alpha2))
+    _regularize_ffn_psin(out_FFn_psin, rho, n_axis_fix)
     return alpha1, alpha2
 
 
@@ -1928,6 +1972,7 @@ def _update_pq_from_rho_inputs_with_scratch(
     full_differentiation(F_r, F, differentiator)
     product_into(out_FFn_psin, F, F_r)
     scaled_ratio_into(out_FFn_psin, out_FFn_psin, out_psin_r, 1.0 / (alpha1 * alpha2))
+    _regularize_ffn_psin(out_FFn_psin, rho, n_axis_fix)
     return alpha1, alpha2
 
 
@@ -1952,6 +1997,10 @@ def materialize_profile_owned_psin_source(
     heat_input: np.ndarray,
     current_input: np.ndarray,
     parameterization_code: int,
+    rho: np.ndarray,
+    differentiator: np.ndarray,
+    accumulator: np.ndarray,
+    n_axis_fix: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     if psin_fields.ndim != 2 or psin_fields.shape[0] != 3:
         raise ValueError(f"Expected psin_fields to have shape (3, Nr), got {psin_fields.shape}")
@@ -1987,6 +2036,10 @@ def materialize_profile_owned_psin_source(
         heat,
         current,
         int(parameterization_code),
+        np.asarray(rho, dtype=np.float64),
+        np.asarray(differentiator, dtype=np.float64),
+        np.asarray(accumulator, dtype=np.float64),
+        int(n_axis_fix),
     )
     return out_heat_input, out_current_input
 
@@ -2365,12 +2418,20 @@ def _materialize_profile_owned_psin_source_impl(
     heat_input: np.ndarray,
     current_input: np.ndarray,
     parameterization_code: int,
+    rho: np.ndarray,
+    differentiator: np.ndarray,
+    accumulator: np.ndarray,
+    n_axis_fix: int,
 ) -> None:
     for i in range(out_psin.shape[0]):
-        psin_value = psin_fields[0, i]
-        out_psin[i] = psin_value
         out_psin_r[i] = psin_fields[1, i]
-        out_psin_rr[i] = psin_fields[2, i]
+
+    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
+    full_differentiation(out_psin_rr, out_psin_r, differentiator)
+    _update_psin_coordinate(out_psin, out_psin_r, accumulator)
+
+    for i in range(out_psin.shape[0]):
+        psin_value = out_psin[i]
         out_source_psin_query[i] = psin_value
         out_parameter_query[i] = psin_value
 

@@ -720,6 +720,7 @@ def _bind_profile_owned_psin_residual_runner_core(
     runtime_layout = backend_state.runtime_layout
     surface_workspace = runtime_layout.geometry_surface_workspace
     residual_workspace = runtime_layout.residual_surface_workspace
+    n_axis_fix = int(np.searchsorted(backend_state.static_layout.rho, fix_rho))
     root_fields = runtime_layout.root_fields
     hot_runtime_binding = backend_abi.build_fused_hot_runtime_abi(
         backend_state=backend_state,
@@ -768,6 +769,10 @@ def _bind_profile_owned_psin_residual_runner_core(
             profile_owned_psin_binding.heat_input,
             profile_owned_psin_binding.current_input,
             profile_owned_psin_binding.parameterization_code,
+            profile_owned_psin_binding.rho,
+            profile_owned_psin_binding.differentiator,
+            profile_owned_psin_binding.accumulator,
+            n_axis_fix,
         )
         # PI psin-uniform is more accurate with the direct source-owned interpolation
         # than with the extra projected rematerialization used by other routes.
@@ -833,10 +838,7 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
     quadrature = static_layout.quadrature
     differentiator = static_layout.differentiator
     accumulator = static_layout.accumulator
-    if source_plan.coordinate == "psin" and source_plan.nodes == "uniform":
-        n_axis_fix = 0
-    else:
-        n_axis_fix = int(np.searchsorted(rho, fix_rho))
+    n_axis_fix = int(np.searchsorted(rho, fix_rho))
     root_fields = runtime_layout.root_fields
     hot_runtime_binding = backend_abi.build_fused_hot_runtime_abi(
         backend_state=backend_state,
@@ -1062,10 +1064,7 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
     quadrature = static_layout.quadrature
     differentiator = static_layout.differentiator
     accumulator = static_layout.accumulator
-    if source_plan.coordinate == "psin" and source_plan.nodes == "uniform":
-        n_axis_fix = 0
-    else:
-        n_axis_fix = int(np.searchsorted(rho, fix_rho))
+    n_axis_fix = int(np.searchsorted(rho, fix_rho))
     root_fields = runtime_layout.root_fields
     hot_runtime_binding = backend_abi.build_fused_hot_runtime_abi(
         backend_state=backend_state,
