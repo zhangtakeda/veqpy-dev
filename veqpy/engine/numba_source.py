@@ -84,7 +84,7 @@ ENDPOINT_POLICY_RIGHT = 1
 ENDPOINT_POLICY_BOTH = 2
 ENDPOINT_POLICY_AFFINE_BOTH = 3
 
-# Scratch slot indices into SourceWorkState.scratch_1d (8 rows × Nr)
+# Scratch slot indices into SourceWorkState.scratch_1d (7 rows × Nr)
 _SLOT_INTEGRAND = 0
 _SLOT_AUX0 = 1
 _SLOT_AUX1 = 2
@@ -92,7 +92,6 @@ _SLOT_AUX2 = 3
 _SLOT_PNr = 4
 _SLOT_Pr = 5
 _SLOT_Fr = 6
-_SLOT_PSIN_R_SAFE = 7
 
 RouteKey = tuple[str, str, str]
 
@@ -281,65 +280,46 @@ def _normalize_psin_coordinate_inplace(psin: np.ndarray) -> np.ndarray:
 
 
 @njit(cache=True, fastmath=True, nogil=True)
-def _regularize_axis_linear_psin_r(
-    psin_r: np.ndarray, rho: np.ndarray, ref_rho: float = 0.05
-) -> np.ndarray:
-    """Repair head samples of ``psin_r`` polluted by cumulative integration at the axis.
+def _regularize_axis_linear(profile: np.ndarray, rho: np.ndarray, n_fix: int) -> np.ndarray:
+    if n_fix <= 0:
+        return profile
 
-    Non-endpoint quadrature grids start at a small positive ``rho``.  The
-    cumulative integration row for that first sample misses the interval between
-    the magnetic axis (``rho=0``) and the first node, so the head of ``psin_r``
-    systematically deviates from the true ``O(rho)`` profile.
-
-    Find the first node outside the affected region (``rho >= ref_rho``) and use
-    it together with the next node as clean anchors.  Extrapolate the smooth even
-    ratio ``psin_r / rho`` as a linear function of ``rho^2`` back to all nodes
-    inside the affected region.
-    """
-    n = psin_r.shape[0]
-    if n < 4:
-        return psin_r
-
-    anchor0 = 0
-    while anchor0 < n and rho[anchor0] < ref_rho:
-        anchor0 += 1
-    if anchor0 == 0 or anchor0 >= n - 1:
-        return psin_r
-
-    anchor1 = anchor0 + 1
+    anchor0 = n_fix
+    anchor1 = n_fix + 1
     rho0 = rho[anchor0]
     rho1 = rho[anchor1]
-    if abs(rho0) < 1.0e-14 or abs(rho1) < 1.0e-14:
-        return psin_r
-
     x0 = rho0 * rho0
     x1 = rho1 * rho1
-    if abs(x1 - x0) < 1.0e-14:
-        return psin_r
 
-    slope0 = psin_r[anchor0] / rho0
-    slope1 = psin_r[anchor1] / rho1
+    slope0 = profile[anchor0] / rho0
+    slope1 = profile[anchor1] / rho1
     slope_gradient = (slope1 - slope0) / (x1 - x0)
-    for i in range(anchor0):
+    for i in range(n_fix):
         x = rho[i] * rho[i]
-        psin_r[i] = rho[i] * (slope0 + slope_gradient * (x - x0))
-    return psin_r
+        profile[i] = rho[i] * (slope0 + slope_gradient * (x - x0))
+
+    return profile
 
 
 @njit(cache=True, fastmath=True, nogil=True)
-def _enforce_axis_quadratic_itor(itor: np.ndarray, rho: np.ndarray) -> np.ndarray:
-    if itor.shape[0] < 2:
-        return itor
-    if abs(rho[1]) < 1e-14:
-        return itor
-    if itor.shape[0] >= 3 and abs(rho[2]) >= 1e-14:
-        scale = itor[2] / (rho[2] * rho[2])
-        itor[0] = scale * rho[0] * rho[0]
-        itor[1] = scale * rho[1] * rho[1]
-        return itor
-    scale = itor[1] / (rho[1] * rho[1])
-    itor[0] = scale * rho[0] * rho[0]
-    return itor
+def _regularize_psin_r(psin_r: np.ndarray, rho: np.ndarray, n_fix: int) -> np.ndarray:
+    """Repair and floor ``psin_r`` before downstream divisions.
+
+    ``n_fix`` is the number of head samples whose ``rho`` lies inside the
+    axis-affected region.  It is pre-computed during operator setup from the
+    grid ``rho`` array and the ``fix_rho`` threshold.
+
+    The first two samples outside the affected region (indices ``n_fix`` and
+    ``n_fix + 1``) serve as clean anchors.  Extrapolate the smooth even ratio
+    ``psin_r / rho`` as a linear function of ``rho^2`` back to all head samples,
+    then enforce the single engine-level positive floor used by psin-space
+    divisions.
+    """
+    _regularize_axis_linear(psin_r, rho, n_fix)
+    for i in range(psin_r.shape[0]):
+        if psin_r[i] < 1.0e-10:
+            psin_r[i] = 1.0e-10
+    return psin_r
 
 
 @njit(cache=True, fastmath=True, nogil=True)
@@ -422,13 +402,13 @@ def _fill_g1n_rho_integrand(
     FFn_r: np.ndarray,
     R: np.ndarray,
     Pn_r: np.ndarray,
-    psin_r_safe: np.ndarray,
+    psin_r: np.ndarray,
 ) -> np.ndarray:
     nr, nt = out.shape
     for i in range(nr):
         ffn_i = FFn_r[i]
         pn_i = Pn_r[i]
-        psin_r_i = psin_r_safe[i]
+        psin_r_i = psin_r[i]
         for j in range(nt):
             out[i, j] = JdivR[i, j] * (ffn_i + R[i, j] * R[i, j] * pn_i) / psin_r_i
     return out
@@ -438,7 +418,6 @@ def _fill_g1n_rho_integrand(
 def _fill_pp_ffn_psin(
     out: np.ndarray,
     psin_r: np.ndarray,
-    psin_r_safe: np.ndarray,
     Kn_r: np.ndarray,
     Kn: np.ndarray,
     psin_rr: np.ndarray,
@@ -452,7 +431,7 @@ def _fill_pp_ffn_psin(
         term0 = alpha_ratio * (Kn_r[i] * psin_r[i] + Kn[i] * psin_rr[i])
         term1 = V_r[i] * Pn_psin[i] * pressure_factor
         ffn_r = -(term0 + term1) * (psin_r[i] / Ln_r[i])
-        out[i] = ffn_r / psin_r_safe[i]
+        out[i] = ffn_r / psin_r[i]
     return out
 
 
@@ -481,7 +460,6 @@ def _fill_pj_ffn_psin(
     V_r: np.ndarray,
     Pn_psin: np.ndarray,
     psin_r: np.ndarray,
-    psin_r_safe: np.ndarray,
     Ln_r: np.ndarray,
     current_scale: float,
 ) -> np.ndarray:
@@ -490,7 +468,7 @@ def _fill_pj_ffn_psin(
         term0 = current_scale * jtor[i] * S_r[i]
         term1 = V_r[i] * Pn_psin[i] * pressure_factor
         ffn_r = -(term0 + term1) * (psin_r[i] / Ln_r[i])
-        out[i] = ffn_r / psin_r_safe[i]
+        out[i] = ffn_r / psin_r[i]
     return out
 
 
@@ -598,6 +576,7 @@ def _update_pf_from_rho_inputs_with_scratch(
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
+    n_axis_fix: int,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
     F: np.ndarray,
@@ -618,24 +597,22 @@ def _update_pf_from_rho_inputs_with_scratch(
     out_psin_r *= -2.0
     out_psin_r[:] = np.sqrt(out_psin_r)
     out_psin_r /= Kn
-    _regularize_axis_linear_psin_r(out_psin_r, rho)
     prof = out_psin_r
     integral_prof = dot(prof, quadrature)
     out_psin_r /= integral_prof
+    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
-    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
-    maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
     if (not has_Ip) and (not has_beta):
         alpha2 = integral_prof
         alpha1 = -dot(heat_input, quadrature) / alpha2
-        scaled_ratio_into(out_Pn_psin, heat_input, psin_r_safe, 1.0 / (alpha1 * alpha2))
-        scaled_ratio_into(out_FFn_psin, current_input, psin_r_safe, 1.0 / (alpha1 * alpha2))
+        scaled_ratio_into(out_Pn_psin, heat_input, out_psin_r, 1.0 / (alpha1 * alpha2))
+        scaled_ratio_into(out_FFn_psin, current_input, out_psin_r, 1.0 / (alpha1 * alpha2))
         return alpha1, alpha2
     c2 = integral_prof * integral_prof
     if has_Ip and (not has_beta):
         g1n_integrand = source_scratch_2d[0]
-        _fill_g1n_rho_integrand(g1n_integrand, JdivR, current_input, R, heat_input, psin_r_safe)
+        _fill_g1n_rho_integrand(g1n_integrand, JdivR, current_input, R, heat_input, out_psin_r)
         radial_scratch = source_scratch_1d[_SLOT_AUX0]
         nt = g1n_integrand.shape[1]
         for j in range(nt):
@@ -656,8 +633,8 @@ def _update_pf_from_rho_inputs_with_scratch(
     else:
         raise ValueError("PF does not support applying Ip and beta constraints simultaneously")
     alpha2 = c2 * alpha1
-    scaled_ratio_into(out_Pn_psin, heat_input, psin_r_safe, 1.0)
-    scaled_ratio_into(out_FFn_psin, current_input, psin_r_safe, 1.0)
+    scaled_ratio_into(out_Pn_psin, heat_input, out_psin_r, 1.0)
+    scaled_ratio_into(out_FFn_psin, current_input, out_psin_r, 1.0)
     return alpha1, alpha2
 
 
@@ -676,6 +653,7 @@ def _update_pf_from_psin_uniform_inputs_with_scratch(
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
+    n_axis_fix: int,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
     F: np.ndarray,
@@ -698,10 +676,9 @@ def _update_pf_from_psin_uniform_inputs_with_scratch(
     prof = out_psin_r
     integral_prof = dot(prof, quadrature)
     out_psin_r /= integral_prof
+    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
-    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
-    maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
     if (not has_Ip) and (not has_beta):
         alpha2 = integral_prof
         pressure_profile = source_scratch_1d[_SLOT_AUX0]
@@ -756,6 +733,7 @@ def _update_pf_from_psin_grid_inputs_with_scratch(
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
+    n_axis_fix: int,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
     F: np.ndarray,
@@ -778,11 +756,9 @@ def _update_pf_from_psin_grid_inputs_with_scratch(
     prof = out_psin_r
     integral_prof = dot(prof, quadrature)
     out_psin_r /= integral_prof
-    _regularize_axis_linear_psin_r(out_psin_r, rho)
+    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
-    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
-    maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
     if (not has_Ip) and (not has_beta):
         alpha2 = integral_prof
         pressure_profile = source_scratch_1d[_SLOT_AUX0]
@@ -840,6 +816,7 @@ def _update_pp_from_rho_inputs_with_scratch(
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
+    n_axis_fix: int,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
     F: np.ndarray,
@@ -860,13 +837,11 @@ def _update_pp_from_rho_inputs_with_scratch(
     else:
         alpha2 = dot(current_input, quadrature)
         scale_into(out_psin_r, current_input, 1.0 / alpha2)
-    _regularize_axis_linear_psin_r(out_psin_r, rho)
+    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
-    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
-    maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
     if has_beta:
-        scaled_ratio_into(out_Pn_psin, heat_input, psin_r_safe, 1.0)
+        scaled_ratio_into(out_Pn_psin, heat_input, out_psin_r, 1.0)
         scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
         product_into(scratch_Pn_r, out_Pn_psin, out_psin_r)
         scratch_aux = source_scratch_1d[_SLOT_AUX0]
@@ -883,11 +858,10 @@ def _update_pp_from_rho_inputs_with_scratch(
         scratch_Pr = source_scratch_1d[_SLOT_Pr]
         copy_into(scratch_Pr, heat_input)
         alpha1 = -dot(scratch_Pr, quadrature) / alpha2
-        scaled_ratio_into(out_Pn_psin, scratch_Pr, psin_r_safe, 1.0 / (alpha1 * alpha2))
+        scaled_ratio_into(out_Pn_psin, scratch_Pr, out_psin_r, 1.0 / (alpha1 * alpha2))
     _fill_pp_ffn_psin(
         out_FFn_psin,
         out_psin_r,
-        psin_r_safe,
         Kn_r,
         Kn,
         out_psin_rr,
@@ -914,6 +888,7 @@ def _update_pp_from_psin_uniform_inputs_with_scratch(
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
+    n_axis_fix: int,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
     F: np.ndarray,
@@ -934,11 +909,9 @@ def _update_pp_from_psin_uniform_inputs_with_scratch(
     else:
         alpha2 = dot(current_input, quadrature)
         scale_into(out_psin_r, current_input, 1.0 / alpha2)
-    _regularize_axis_linear_psin_r(out_psin_r, rho)
+    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
-    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
-    maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
     if has_beta:
         copy_into(out_Pn_psin, heat_input)
         scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
@@ -957,11 +930,10 @@ def _update_pp_from_psin_uniform_inputs_with_scratch(
         scratch_Pr = source_scratch_1d[_SLOT_Pr]
         scaled_product_into(scratch_Pr, heat_input, out_psin_r, alpha2)
         alpha1 = -dot(scratch_Pr, quadrature) / alpha2
-        scaled_ratio_into(out_Pn_psin, scratch_Pr, psin_r_safe, 1.0 / (alpha1 * alpha2))
+        scaled_ratio_into(out_Pn_psin, scratch_Pr, out_psin_r, 1.0 / (alpha1 * alpha2))
     _fill_pp_ffn_psin(
         out_FFn_psin,
         out_psin_r,
-        psin_r_safe,
         Kn_r,
         Kn,
         out_psin_rr,
@@ -988,6 +960,7 @@ def _update_pp_from_psin_grid_inputs_with_scratch(
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
+    n_axis_fix: int,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
     F: np.ndarray,
@@ -1008,11 +981,9 @@ def _update_pp_from_psin_grid_inputs_with_scratch(
     else:
         alpha2 = dot(current_input, quadrature)
         scale_into(out_psin_r, current_input, 1.0 / alpha2)
-    _regularize_axis_linear_psin_r(out_psin_r, rho)
+    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
-    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
-    maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
     if has_beta:
         copy_into(out_Pn_psin, heat_input)
         scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
@@ -1031,11 +1002,10 @@ def _update_pp_from_psin_grid_inputs_with_scratch(
         scratch_Pr = source_scratch_1d[_SLOT_Pr]
         scaled_product_into(scratch_Pr, heat_input, out_psin_r, alpha2)
         alpha1 = -dot(scratch_Pr, quadrature) / alpha2
-        scaled_ratio_into(out_Pn_psin, scratch_Pr, psin_r_safe, 1.0 / (alpha1 * alpha2))
+        scaled_ratio_into(out_Pn_psin, scratch_Pr, out_psin_r, 1.0 / (alpha1 * alpha2))
     _fill_pp_ffn_psin(
         out_FFn_psin,
         out_psin_r,
-        psin_r_safe,
         Kn_r,
         Kn,
         out_psin_rr,
@@ -1065,6 +1035,7 @@ def _update_pi_from_rho_inputs_with_scratch(
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
+    n_axis_fix: int,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
     F: np.ndarray,
@@ -1084,23 +1055,20 @@ def _update_pi_from_rho_inputs_with_scratch(
         scale_into(Itor, current_input, Ip / current_input[-1])
     else:
         copy_into(Itor, current_input)
-    _enforce_axis_quadratic_itor(Itor, rho)
     itor_floor = max(Itor[-1], 1.0) * 1e-12
     maximum_floor_into(Itor, Itor, itor_floor)
     itor_over_kn = source_scratch_1d[_SLOT_INTEGRAND]
     scaled_ratio_into(itor_over_kn, Itor, Kn, 1.0 / (2.0 * np.pi))
     alpha2 = dot(itor_over_kn, quadrature)
     scaled_ratio_into(out_psin_r, Itor, Kn, 1.0 / (2.0 * np.pi * alpha2))
-    _regularize_axis_linear_psin_r(out_psin_r, rho)
+    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
-    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
-    maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
     Itor_r = source_scratch_1d[_SLOT_AUX1]
     full_differentiation(Itor_r, Itor, differentiator)
-    _regularize_axis_linear_psin_r(Itor_r, rho)
+    _regularize_axis_linear(Itor_r, rho, n_axis_fix)
     if has_beta:
-        scaled_ratio_into(out_Pn_psin, heat_input, psin_r_safe, 1.0)
+        scaled_ratio_into(out_Pn_psin, heat_input, out_psin_r, 1.0)
         scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
         product_into(scratch_Pn_r, out_Pn_psin, out_psin_r)
         scratch_aux = source_scratch_1d[_SLOT_AUX2]
@@ -1117,7 +1085,7 @@ def _update_pi_from_rho_inputs_with_scratch(
         scratch_Pr = source_scratch_1d[_SLOT_Pr]
         copy_into(scratch_Pr, heat_input)
         alpha1 = -dot(scratch_Pr, quadrature) / alpha2
-        scaled_ratio_into(out_Pn_psin, scratch_Pr, psin_r_safe, 1.0 / (alpha1 * alpha2))
+        scaled_ratio_into(out_Pn_psin, scratch_Pr, out_psin_r, 1.0 / (alpha1 * alpha2))
     _fill_pi_ffn_psin(out_FFn_psin, Itor_r, V_r, out_Pn_psin, Ln_r, 1.0 / (2.0 * np.pi * alpha1))
     return alpha1, alpha2
 
@@ -1137,6 +1105,7 @@ def _update_pi_from_psin_uniform_inputs_with_scratch(
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
+    n_axis_fix: int,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
     F: np.ndarray,
@@ -1156,20 +1125,18 @@ def _update_pi_from_psin_uniform_inputs_with_scratch(
         scale_into(Itor, current_input, Ip / current_input[-1])
     else:
         copy_into(Itor, current_input)
-    _enforce_axis_quadratic_itor(Itor, rho)
     itor_floor = max(Itor[-1], 1.0) * 1e-12
     maximum_floor_into(Itor, Itor, itor_floor)
     itor_over_kn = source_scratch_1d[_SLOT_INTEGRAND]
     scaled_ratio_into(itor_over_kn, Itor, Kn, 1.0 / (2.0 * np.pi))
     alpha2 = dot(itor_over_kn, quadrature)
     scaled_ratio_into(out_psin_r, Itor, Kn, 1.0 / (2.0 * np.pi * alpha2))
+    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
-    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
-    maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
     Itor_r = source_scratch_1d[_SLOT_AUX1]
     full_differentiation(Itor_r, Itor, differentiator)
-    _regularize_axis_linear_psin_r(Itor_r, rho)
+    _regularize_axis_linear(Itor_r, rho, n_axis_fix)
     if has_beta:
         copy_into(out_Pn_psin, heat_input)
         scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
@@ -1188,7 +1155,7 @@ def _update_pi_from_psin_uniform_inputs_with_scratch(
         scratch_Pr = source_scratch_1d[_SLOT_Pr]
         scaled_product_into(scratch_Pr, heat_input, out_psin_r, alpha2)
         alpha1 = -dot(scratch_Pr, quadrature) / alpha2
-        scaled_ratio_into(out_Pn_psin, scratch_Pr, psin_r_safe, 1.0 / (alpha1 * alpha2))
+        scaled_ratio_into(out_Pn_psin, scratch_Pr, out_psin_r, 1.0 / (alpha1 * alpha2))
     _fill_pi_ffn_psin(out_FFn_psin, Itor_r, V_r, out_Pn_psin, Ln_r, 1.0 / (2.0 * np.pi * alpha1))
     return alpha1, alpha2
 
@@ -1208,6 +1175,7 @@ def _update_pi_from_psin_grid_inputs_with_scratch(
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
+    n_axis_fix: int,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
     F: np.ndarray,
@@ -1227,21 +1195,18 @@ def _update_pi_from_psin_grid_inputs_with_scratch(
         scale_into(Itor, current_input, Ip / current_input[-1])
     else:
         copy_into(Itor, current_input)
-    _enforce_axis_quadratic_itor(Itor, rho)
     itor_floor = max(Itor[-1], 1.0) * 1e-12
     maximum_floor_into(Itor, Itor, itor_floor)
     itor_over_kn = source_scratch_1d[_SLOT_INTEGRAND]
     scaled_ratio_into(itor_over_kn, Itor, Kn, 1.0 / (2.0 * np.pi))
     alpha2 = dot(itor_over_kn, quadrature)
     scaled_ratio_into(out_psin_r, Itor, Kn, 1.0 / (2.0 * np.pi * alpha2))
-    _regularize_axis_linear_psin_r(out_psin_r, rho)
+    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
-    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
-    maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
     Itor_r = source_scratch_1d[_SLOT_AUX1]
     full_differentiation(Itor_r, Itor, differentiator)
-    _regularize_axis_linear_psin_r(Itor_r, rho)
+    _regularize_axis_linear(Itor_r, rho, n_axis_fix)
     if has_beta:
         copy_into(out_Pn_psin, heat_input)
         scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
@@ -1260,7 +1225,7 @@ def _update_pi_from_psin_grid_inputs_with_scratch(
         scratch_Pr = source_scratch_1d[_SLOT_Pr]
         scaled_product_into(scratch_Pr, heat_input, out_psin_r, alpha2)
         alpha1 = -dot(scratch_Pr, quadrature) / alpha2
-        scaled_ratio_into(out_Pn_psin, scratch_Pr, psin_r_safe, 1.0 / (alpha1 * alpha2))
+        scaled_ratio_into(out_Pn_psin, scratch_Pr, out_psin_r, 1.0 / (alpha1 * alpha2))
     _fill_pi_ffn_psin(out_FFn_psin, Itor_r, V_r, out_Pn_psin, Ln_r, 1.0 / (2.0 * np.pi * alpha1))
     return alpha1, alpha2
 
@@ -1283,6 +1248,7 @@ def _update_pj1_from_rho_inputs_with_scratch(
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
+    n_axis_fix: int,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
     F: np.ndarray,
@@ -1302,7 +1268,6 @@ def _update_pj1_from_rho_inputs_with_scratch(
     full_integration(out_psin_r, integrand_j, accumulator)
     I_tor_prof = source_scratch_1d[_SLOT_AUX0]
     copy_into(I_tor_prof, out_psin_r)
-    _enforce_axis_quadratic_itor(I_tor_prof, rho)
     I_tor = source_scratch_1d[_SLOT_AUX1]
     jtor = source_scratch_1d[_SLOT_AUX2]
     if has_Ip:
@@ -1318,13 +1283,11 @@ def _update_pj1_from_rho_inputs_with_scratch(
     scaled_ratio_into(itor_over_kn, I_tor, Kn, 1.0 / (2.0 * np.pi))
     alpha2 = dot(itor_over_kn, quadrature)
     scaled_ratio_into(out_psin_r, I_tor, Kn, 1.0 / (2.0 * np.pi * alpha2))
-    _regularize_axis_linear_psin_r(out_psin_r, rho)
+    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
-    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
-    maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
     if has_beta:
-        scaled_ratio_into(out_Pn_psin, heat_input, psin_r_safe, 1.0)
+        scaled_ratio_into(out_Pn_psin, heat_input, out_psin_r, 1.0)
         scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
         product_into(scratch_Pn_r, out_Pn_psin, out_psin_r)
         scratch_aux = source_scratch_1d[_SLOT_INTEGRAND]
@@ -1341,7 +1304,7 @@ def _update_pj1_from_rho_inputs_with_scratch(
         scratch_Pr = source_scratch_1d[_SLOT_Pr]
         copy_into(scratch_Pr, heat_input)
         alpha1 = -dot(scratch_Pr, quadrature) / alpha2
-        scaled_ratio_into(out_Pn_psin, scratch_Pr, psin_r_safe, 1.0 / (alpha1 * alpha2))
+        scaled_ratio_into(out_Pn_psin, scratch_Pr, out_psin_r, 1.0 / (alpha1 * alpha2))
     _fill_pj_ffn_psin(
         out_FFn_psin,
         jtor,
@@ -1349,7 +1312,6 @@ def _update_pj1_from_rho_inputs_with_scratch(
         V_r,
         out_Pn_psin,
         out_psin_r,
-        psin_r_safe,
         Ln_r,
         1.0 / (2.0 * np.pi * alpha1),
     )
@@ -1371,6 +1333,7 @@ def _update_pj1_from_psin_uniform_inputs_with_scratch(
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
+    n_axis_fix: int,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
     F: np.ndarray,
@@ -1390,7 +1353,6 @@ def _update_pj1_from_psin_uniform_inputs_with_scratch(
     full_integration(out_psin_r, integrand_j, accumulator)
     I_tor_prof = source_scratch_1d[_SLOT_AUX0]
     copy_into(I_tor_prof, out_psin_r)
-    _enforce_axis_quadratic_itor(I_tor_prof, rho)
     I_tor = source_scratch_1d[_SLOT_AUX1]
     jtor = source_scratch_1d[_SLOT_AUX2]
     if has_Ip:
@@ -1406,10 +1368,9 @@ def _update_pj1_from_psin_uniform_inputs_with_scratch(
     scaled_ratio_into(itor_over_kn, I_tor, Kn, 1.0 / (2.0 * np.pi))
     alpha2 = dot(itor_over_kn, quadrature)
     scaled_ratio_into(out_psin_r, I_tor, Kn, 1.0 / (2.0 * np.pi * alpha2))
+    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
-    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
-    maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
     if has_beta:
         copy_into(out_Pn_psin, heat_input)
         scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
@@ -1428,7 +1389,7 @@ def _update_pj1_from_psin_uniform_inputs_with_scratch(
         scratch_Pr = source_scratch_1d[_SLOT_Pr]
         scaled_product_into(scratch_Pr, heat_input, out_psin_r, alpha2)
         alpha1 = -dot(scratch_Pr, quadrature) / alpha2
-        scaled_ratio_into(out_Pn_psin, scratch_Pr, psin_r_safe, 1.0 / (alpha1 * alpha2))
+        scaled_ratio_into(out_Pn_psin, scratch_Pr, out_psin_r, 1.0 / (alpha1 * alpha2))
     _fill_pj_ffn_psin(
         out_FFn_psin,
         jtor,
@@ -1436,7 +1397,6 @@ def _update_pj1_from_psin_uniform_inputs_with_scratch(
         V_r,
         out_Pn_psin,
         out_psin_r,
-        psin_r_safe,
         Ln_r,
         1.0 / (2.0 * np.pi * alpha1),
     )
@@ -1458,6 +1418,7 @@ def _update_pj1_from_psin_grid_inputs_with_scratch(
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
+    n_axis_fix: int,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
     F: np.ndarray,
@@ -1477,7 +1438,6 @@ def _update_pj1_from_psin_grid_inputs_with_scratch(
     full_integration(out_psin_r, integrand_j, accumulator)
     I_tor_prof = source_scratch_1d[_SLOT_AUX0]
     copy_into(I_tor_prof, out_psin_r)
-    _enforce_axis_quadratic_itor(I_tor_prof, rho)
     I_tor = source_scratch_1d[_SLOT_AUX1]
     jtor = source_scratch_1d[_SLOT_AUX2]
     if has_Ip:
@@ -1493,11 +1453,9 @@ def _update_pj1_from_psin_grid_inputs_with_scratch(
     scaled_ratio_into(itor_over_kn, I_tor, Kn, 1.0 / (2.0 * np.pi))
     alpha2 = dot(itor_over_kn, quadrature)
     scaled_ratio_into(out_psin_r, I_tor, Kn, 1.0 / (2.0 * np.pi * alpha2))
-    _regularize_axis_linear_psin_r(out_psin_r, rho)
+    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
-    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
-    maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
     if has_beta:
         copy_into(out_Pn_psin, heat_input)
         scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
@@ -1516,7 +1474,7 @@ def _update_pj1_from_psin_grid_inputs_with_scratch(
         scratch_Pr = source_scratch_1d[_SLOT_Pr]
         scaled_product_into(scratch_Pr, heat_input, out_psin_r, alpha2)
         alpha1 = -dot(scratch_Pr, quadrature) / alpha2
-        scaled_ratio_into(out_Pn_psin, scratch_Pr, psin_r_safe, 1.0 / (alpha1 * alpha2))
+        scaled_ratio_into(out_Pn_psin, scratch_Pr, out_psin_r, 1.0 / (alpha1 * alpha2))
     _fill_pj_ffn_psin(
         out_FFn_psin,
         jtor,
@@ -1524,7 +1482,6 @@ def _update_pj1_from_psin_grid_inputs_with_scratch(
         V_r,
         out_Pn_psin,
         out_psin_r,
-        psin_r_safe,
         Ln_r,
         1.0 / (2.0 * np.pi * alpha1),
     )
@@ -1546,6 +1503,7 @@ def _update_pj2_from_psin_uniform_inputs_with_scratch(
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
+    n_axis_fix: int,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
     F: np.ndarray,
@@ -1564,7 +1522,6 @@ def _update_pj2_from_psin_uniform_inputs_with_scratch(
     integral_val = source_scratch_1d[_SLOT_AUX0]
     I_tor = source_scratch_1d[_SLOT_AUX1]
     scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
-    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
     scratch_aux = source_scratch_1d[_SLOT_AUX2]
 
     scaled_product_ratio_into(integrand, Ln_r, current_input, F, 1.0)
@@ -1578,9 +1535,9 @@ def _update_pj2_from_psin_uniform_inputs_with_scratch(
     scaled_ratio_into(integrand, I_tor, Kn, 1.0 / (2.0 * np.pi))
     alpha2 = dot(integrand, quadrature)
     scale_into(out_psin_r, integrand, 1.0 / alpha2)
+    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
-    maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
 
     if has_beta:
         product_into(scratch_Pn_r, heat_input, out_psin_r)
@@ -1600,11 +1557,11 @@ def _update_pj2_from_psin_uniform_inputs_with_scratch(
         copy_into(out_Pn_psin, heat_input)
     else:
         alpha1 = -weighted_dot(heat_input, out_psin_r, quadrature)
-        scaled_product_ratio_into(out_Pn_psin, heat_input, out_psin_r, psin_r_safe, 1.0 / alpha1)
+        scaled_product_ratio_into(out_Pn_psin, heat_input, out_psin_r, out_psin_r, 1.0 / alpha1)
 
     full_differentiation(scratch_aux, F, differentiator)
     product_into(out_FFn_psin, F, scratch_aux)
-    scaled_ratio_into(out_FFn_psin, out_FFn_psin, psin_r_safe, 1.0 / (alpha1 * alpha2))
+    scaled_ratio_into(out_FFn_psin, out_FFn_psin, out_psin_r, 1.0 / (alpha1 * alpha2))
     return alpha1, alpha2
 
 
@@ -1623,6 +1580,7 @@ def _update_pj2_from_psin_grid_inputs_with_scratch(
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
+    n_axis_fix: int,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
     F: np.ndarray,
@@ -1641,7 +1599,6 @@ def _update_pj2_from_psin_grid_inputs_with_scratch(
     integral_val = source_scratch_1d[_SLOT_AUX0]
     I_tor = source_scratch_1d[_SLOT_AUX1]
     scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
-    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
     scratch_aux = source_scratch_1d[_SLOT_AUX2]
 
     scaled_product_ratio_into(integrand, Ln_r, current_input, F, 1.0)
@@ -1655,10 +1612,9 @@ def _update_pj2_from_psin_grid_inputs_with_scratch(
     scaled_ratio_into(integrand, I_tor, Kn, 1.0 / (2.0 * np.pi))
     alpha2 = dot(integrand, quadrature)
     scale_into(out_psin_r, integrand, 1.0 / alpha2)
-    _regularize_axis_linear_psin_r(out_psin_r, rho)
+    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
-    maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
 
     if has_beta:
         product_into(scratch_Pn_r, heat_input, out_psin_r)
@@ -1678,11 +1634,11 @@ def _update_pj2_from_psin_grid_inputs_with_scratch(
         copy_into(out_Pn_psin, heat_input)
     else:
         alpha1 = -weighted_dot(heat_input, out_psin_r, quadrature)
-        scaled_product_ratio_into(out_Pn_psin, heat_input, out_psin_r, psin_r_safe, 1.0 / alpha1)
+        scaled_product_ratio_into(out_Pn_psin, heat_input, out_psin_r, out_psin_r, 1.0 / alpha1)
 
     full_differentiation(scratch_aux, F, differentiator)
     product_into(out_FFn_psin, F, scratch_aux)
-    scaled_ratio_into(out_FFn_psin, out_FFn_psin, psin_r_safe, 1.0 / (alpha1 * alpha2))
+    scaled_ratio_into(out_FFn_psin, out_FFn_psin, out_psin_r, 1.0 / (alpha1 * alpha2))
     return alpha1, alpha2
 
 
@@ -1704,6 +1660,7 @@ def _update_pj2_from_rho_inputs_with_scratch(
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
+    n_axis_fix: int,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
     F: np.ndarray,
@@ -1732,13 +1689,11 @@ def _update_pj2_from_rho_inputs_with_scratch(
     scaled_ratio_into(itor_over_kn, I_tor, Kn, 1.0 / (2.0 * np.pi))
     alpha2 = dot(itor_over_kn, quadrature)
     scaled_ratio_into(out_psin_r, I_tor, Kn, 1.0 / (2.0 * np.pi * alpha2))
-    _regularize_axis_linear_psin_r(out_psin_r, rho)
+    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
-    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
-    maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
     if has_beta:
-        scaled_ratio_into(out_Pn_psin, heat_input, psin_r_safe, 1.0)
+        scaled_ratio_into(out_Pn_psin, heat_input, out_psin_r, 1.0)
         scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
         product_into(scratch_Pn_r, out_Pn_psin, out_psin_r)
         scratch_aux = source_scratch_1d[_SLOT_AUX2]
@@ -1755,11 +1710,11 @@ def _update_pj2_from_rho_inputs_with_scratch(
         scratch_Pr = source_scratch_1d[_SLOT_Pr]
         copy_into(scratch_Pr, heat_input)
         alpha1 = -dot(scratch_Pr, quadrature) / alpha2
-        scaled_ratio_into(out_Pn_psin, scratch_Pr, psin_r_safe, 1.0 / (alpha1 * alpha2))
+        scaled_ratio_into(out_Pn_psin, scratch_Pr, out_psin_r, 1.0 / (alpha1 * alpha2))
     F_r = source_scratch_1d[_SLOT_Fr]
     full_differentiation(F_r, F, differentiator)
     scaled_product_into(out_FFn_psin, F, F_r, 1.0 / (alpha1 * alpha2))
-    scaled_ratio_into(out_FFn_psin, out_FFn_psin, psin_r_safe, 1.0)
+    scaled_ratio_into(out_FFn_psin, out_FFn_psin, out_psin_r, 1.0)
     return alpha1, alpha2
 
 
@@ -1778,6 +1733,7 @@ def _update_pq_from_psin_uniform_inputs_with_scratch(
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
+    n_axis_fix: int,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
     F: np.ndarray,
@@ -1794,7 +1750,6 @@ def _update_pq_from_psin_uniform_inputs_with_scratch(
     has_beta = not np.isnan(beta)
     q_prof = source_scratch_1d[_SLOT_INTEGRAND]
     scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
-    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
     scratch_aux = source_scratch_1d[_SLOT_AUX2]
 
     if has_Ip:
@@ -1806,9 +1761,9 @@ def _update_pq_from_psin_uniform_inputs_with_scratch(
         alpha2 = weighted_ratio_dot(F, Ln_r, current_input, quadrature)
         scaled_product_ratio_into(out_psin_r, F, Ln_r, current_input, 1.0 / alpha2)
 
+    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
-    maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
 
     if has_beta:
         product_into(scratch_Pn_r, heat_input, out_psin_r)
@@ -1828,11 +1783,11 @@ def _update_pq_from_psin_uniform_inputs_with_scratch(
         copy_into(out_Pn_psin, heat_input)
     else:
         alpha1 = -weighted_dot(heat_input, out_psin_r, quadrature)
-        scaled_product_ratio_into(out_Pn_psin, heat_input, out_psin_r, psin_r_safe, 1.0 / alpha1)
+        scaled_product_ratio_into(out_Pn_psin, heat_input, out_psin_r, out_psin_r, 1.0 / alpha1)
 
     full_differentiation(scratch_aux, F, differentiator)
     product_into(out_FFn_psin, F, scratch_aux)
-    scaled_ratio_into(out_FFn_psin, out_FFn_psin, psin_r_safe, 1.0 / (alpha1 * alpha2))
+    scaled_ratio_into(out_FFn_psin, out_FFn_psin, out_psin_r, 1.0 / (alpha1 * alpha2))
     return alpha1, alpha2
 
 
@@ -1851,6 +1806,7 @@ def _update_pq_from_psin_grid_inputs_with_scratch(
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
+    n_axis_fix: int,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
     F: np.ndarray,
@@ -1867,7 +1823,6 @@ def _update_pq_from_psin_grid_inputs_with_scratch(
     has_beta = not np.isnan(beta)
     q_prof = source_scratch_1d[_SLOT_INTEGRAND]
     scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
-    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
     scratch_aux = source_scratch_1d[_SLOT_AUX2]
 
     if has_Ip:
@@ -1879,9 +1834,9 @@ def _update_pq_from_psin_grid_inputs_with_scratch(
         alpha2 = weighted_ratio_dot(F, Ln_r, current_input, quadrature)
         scaled_product_ratio_into(out_psin_r, F, Ln_r, current_input, 1.0 / alpha2)
 
+    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
-    maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
 
     if has_beta:
         product_into(scratch_Pn_r, heat_input, out_psin_r)
@@ -1901,11 +1856,11 @@ def _update_pq_from_psin_grid_inputs_with_scratch(
         copy_into(out_Pn_psin, heat_input)
     else:
         alpha1 = -weighted_dot(heat_input, out_psin_r, quadrature)
-        scaled_product_ratio_into(out_Pn_psin, heat_input, out_psin_r, psin_r_safe, 1.0 / alpha1)
+        scaled_product_ratio_into(out_Pn_psin, heat_input, out_psin_r, out_psin_r, 1.0 / alpha1)
 
     full_differentiation(scratch_aux, F, differentiator)
     product_into(out_FFn_psin, F, scratch_aux)
-    scaled_ratio_into(out_FFn_psin, out_FFn_psin, psin_r_safe, 1.0 / (alpha1 * alpha2))
+    scaled_ratio_into(out_FFn_psin, out_FFn_psin, out_psin_r, 1.0 / (alpha1 * alpha2))
     return alpha1, alpha2
 
 
@@ -1927,6 +1882,7 @@ def _update_pq_from_rho_inputs_with_scratch(
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
+    n_axis_fix: int,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
     F: np.ndarray,
@@ -1951,12 +1907,11 @@ def _update_pq_from_rho_inputs_with_scratch(
     scaled_product_ratio_into(integrand_alpha2, F, Ln_r, q_prof, 1.0)
     alpha2 = dot(integrand_alpha2, quadrature)
     scaled_product_ratio_into(out_psin_r, F, Ln_r, q_prof, 1.0 / alpha2)
+    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
-    psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
-    maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
     if has_beta:
-        scaled_ratio_into(out_Pn_psin, heat_input, psin_r_safe, 1.0)
+        scaled_ratio_into(out_Pn_psin, heat_input, out_psin_r, 1.0)
         scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
         product_into(scratch_Pn_r, out_Pn_psin, out_psin_r)
         scratch_aux = source_scratch_1d[_SLOT_AUX1]
@@ -1968,11 +1923,11 @@ def _update_pq_from_rho_inputs_with_scratch(
         scratch_Pr = source_scratch_1d[_SLOT_Pr]
         copy_into(scratch_Pr, heat_input)
         alpha1 = -dot(scratch_Pr, quadrature) / alpha2
-        scaled_ratio_into(out_Pn_psin, scratch_Pr, psin_r_safe, 1.0 / (alpha1 * alpha2))
+        scaled_ratio_into(out_Pn_psin, scratch_Pr, out_psin_r, 1.0 / (alpha1 * alpha2))
     F_r = source_scratch_1d[_SLOT_Fr]
     full_differentiation(F_r, F, differentiator)
     product_into(out_FFn_psin, F, F_r)
-    scaled_ratio_into(out_FFn_psin, out_FFn_psin, psin_r_safe, 1.0 / (alpha1 * alpha2))
+    scaled_ratio_into(out_FFn_psin, out_FFn_psin, out_psin_r, 1.0 / (alpha1 * alpha2))
     return alpha1, alpha2
 
 

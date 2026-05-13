@@ -50,12 +50,14 @@ def bind_source_eval_runner(
     source_plan: "SourcePlan",
     backend_state: "BackendState",
     B0: float,
+    fix_rho: float,
 ) -> Callable:
     return _bind_source_eval_runner_for_fused_backend(
         source_eval_binding=backend_abi.build_fused_source_eval_abi(
             source_plan=source_plan,
             backend_state=backend_state,
             B0=B0,
+            fix_rho=fix_rho,
         )
     )
 
@@ -195,6 +197,7 @@ def _call_source_kernel_with_scratch(
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
+    n_axis_fix: int,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
     F_profile_u: np.ndarray,
@@ -216,6 +219,7 @@ def _call_source_kernel_with_scratch(
         differentiator,
         accumulator,
         rho,
+        n_axis_fix,
         radial_workspace,
         surface_workspace,
         F_profile_u,
@@ -247,6 +251,7 @@ def _run_fixed_point_linear_with_scratch_impl(
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
+    n_axis_fix: int,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
     F_profile_u: np.ndarray,
@@ -279,6 +284,7 @@ def _run_fixed_point_linear_with_scratch_impl(
             differentiator,
             accumulator,
             rho,
+            n_axis_fix,
             radial_workspace,
             surface_workspace,
             F_profile_u,
@@ -322,6 +328,7 @@ def _run_fixed_point_barycentric_with_scratch_impl(
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
+    n_axis_fix: int,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
     F_profile_u: np.ndarray,
@@ -355,6 +362,7 @@ def _run_fixed_point_barycentric_with_scratch_impl(
             differentiator,
             accumulator,
             rho,
+            n_axis_fix,
             radial_workspace,
             surface_workspace,
             F_profile_u,
@@ -402,6 +410,7 @@ def _run_projected_finalize_with_scratch_impl(
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
+    n_axis_fix: int,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
     F_profile_u: np.ndarray,
@@ -442,6 +451,7 @@ def _run_projected_finalize_with_scratch_impl(
             differentiator,
             accumulator,
             rho,
+            n_axis_fix,
             radial_workspace,
             surface_workspace,
             F_profile_u,
@@ -492,6 +502,7 @@ def _run_projected_finalize_with_scratch(
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
+    n_axis_fix: int,
     radial_workspace: np.ndarray,
     surface_workspace: np.ndarray,
     F_profile_u: np.ndarray,
@@ -524,6 +535,7 @@ def _run_projected_finalize_with_scratch(
         differentiator,
         accumulator,
         rho,
+        n_axis_fix,
         radial_workspace,
         surface_workspace,
         F_profile_u,
@@ -546,6 +558,7 @@ def bind_fused_residual_runner(
     R0: float,
     Z0: float,
     B0: float,
+    fix_rho: float,
 ) -> Callable[[np.ndarray], np.ndarray]:
     route_key = tuple(source_execution.route_key)
     if route_key != source_plan.route_key:
@@ -567,6 +580,7 @@ def bind_fused_residual_runner(
                 R0=R0,
                 Z0=Z0,
                 B0=B0,
+                fix_rho=fix_rho,
             )
         if route_key == ("PQ", "psin", "uniform"):
             return _bind_pq_psin_fixed_point_residual_runner_core(
@@ -580,6 +594,7 @@ def bind_fused_residual_runner(
                 R0=R0,
                 Z0=Z0,
                 B0=B0,
+                fix_rho=fix_rho,
             )
         raise ValueError(f"Unsupported fixed-point psin source route {route_key!r}")
 
@@ -595,6 +610,7 @@ def bind_fused_residual_runner(
             R0=R0,
             Z0=Z0,
             B0=B0,
+            fix_rho=fix_rho,
         )
 
     if source_execution.supports_fused_residual:
@@ -609,6 +625,7 @@ def bind_fused_residual_runner(
             R0=R0,
             Z0=Z0,
             B0=B0,
+            fix_rho=fix_rho,
         )
 
     raise ValueError(f"Unsupported source route key {route_key!r}")
@@ -626,6 +643,7 @@ def _bind_single_pass_residual_runner_core(
     R0: float,
     Z0: float,
     B0: float,
+    fix_rho: float,
 ) -> Callable[[np.ndarray], np.ndarray]:
     runtime_layout = backend_state.runtime_layout
     surface_workspace = runtime_layout.geometry_surface_workspace
@@ -647,6 +665,7 @@ def _bind_single_pass_residual_runner_core(
         source_plan=source_plan,
         backend_state=backend_state,
         B0=B0,
+        fix_rho=fix_rho,
     )
     residual_pack_binding = backend_abi.build_fused_residual_pack_abi(
         backend_state=backend_state,
@@ -696,6 +715,7 @@ def _bind_profile_owned_psin_residual_runner_core(
     R0: float,
     Z0: float,
     B0: float,
+    fix_rho: float,
 ) -> Callable[[np.ndarray], np.ndarray]:
     runtime_layout = backend_state.runtime_layout
     surface_workspace = runtime_layout.geometry_surface_workspace
@@ -714,6 +734,7 @@ def _bind_profile_owned_psin_residual_runner_core(
         source_plan=source_plan,
         backend_state=backend_state,
         B0=B0,
+        fix_rho=fix_rho,
     )
     residual_pack_binding = backend_abi.build_fused_residual_pack_abi(
         backend_state=backend_state,
@@ -801,6 +822,7 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
     R0: float,
     Z0: float,
     B0: float,
+    fix_rho: float,
 ) -> Callable[[np.ndarray], np.ndarray]:
     static_layout = backend_state.static_layout
     runtime_layout = backend_state.runtime_layout
@@ -811,6 +833,10 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
     quadrature = static_layout.quadrature
     differentiator = static_layout.differentiator
     accumulator = static_layout.accumulator
+    if source_plan.coordinate == "psin" and source_plan.nodes == "uniform":
+        n_axis_fix = 0
+    else:
+        n_axis_fix = int(np.searchsorted(rho, fix_rho))
     root_fields = runtime_layout.root_fields
     hot_runtime_binding = backend_abi.build_fused_hot_runtime_abi(
         backend_state=backend_state,
@@ -866,6 +892,7 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
                 differentiator,
                 accumulator,
                 rho,
+                n_axis_fix,
                 radial_workspace,
                 surface_workspace,
                 fixed_point_psin_binding.F_profile_u,
@@ -895,6 +922,7 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
                 differentiator,
                 accumulator,
                 rho,
+                n_axis_fix,
                 radial_workspace,
                 surface_workspace,
                 fixed_point_psin_binding.F_profile_u,
@@ -927,6 +955,7 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
             differentiator=differentiator,
             accumulator=accumulator,
             rho=rho,
+            n_axis_fix=n_axis_fix,
             radial_workspace=radial_workspace,
             surface_workspace=surface_workspace,
             F_profile_u=fixed_point_psin_binding.F_profile_u,
@@ -977,6 +1006,7 @@ def _bind_source_eval_runner_for_fused_backend(
                 source_eval_binding.differentiator,
                 source_eval_binding.accumulator,
                 source_eval_binding.rho,
+                source_eval_binding.n_axis_fix,
                 source_eval_binding.radial_workspace,
                 source_eval_binding.surface_workspace,
                 source_eval_binding.F_profile_u,
@@ -996,6 +1026,7 @@ def _bind_source_eval_runner_for_fused_backend(
             source_eval_binding.differentiator,
             source_eval_binding.accumulator,
             source_eval_binding.rho,
+            source_eval_binding.n_axis_fix,
             source_eval_binding.radial_workspace,
             source_eval_binding.surface_workspace,
             source_eval_binding.F_profile_u,
@@ -1020,6 +1051,7 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
     R0: float,
     Z0: float,
     B0: float,
+    fix_rho: float,
 ) -> Callable[[np.ndarray], np.ndarray]:
     static_layout = backend_state.static_layout
     runtime_layout = backend_state.runtime_layout
@@ -1030,6 +1062,10 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
     quadrature = static_layout.quadrature
     differentiator = static_layout.differentiator
     accumulator = static_layout.accumulator
+    if source_plan.coordinate == "psin" and source_plan.nodes == "uniform":
+        n_axis_fix = 0
+    else:
+        n_axis_fix = int(np.searchsorted(rho, fix_rho))
     root_fields = runtime_layout.root_fields
     hot_runtime_binding = backend_abi.build_fused_hot_runtime_abi(
         backend_state=backend_state,
@@ -1087,6 +1123,7 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
                 differentiator,
                 accumulator,
                 rho,
+                n_axis_fix,
                 radial_workspace,
                 surface_workspace,
                 fixed_point_psin_binding.F_profile_u,
@@ -1116,6 +1153,7 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
                 differentiator,
                 accumulator,
                 rho,
+                n_axis_fix,
                 radial_workspace,
                 surface_workspace,
                 fixed_point_psin_binding.F_profile_u,
@@ -1148,6 +1186,7 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
             differentiator=differentiator,
             accumulator=accumulator,
             rho=rho,
+            n_axis_fix=n_axis_fix,
             radial_workspace=radial_workspace,
             surface_workspace=surface_workspace,
             F_profile_u=fixed_point_psin_binding.F_profile_u,

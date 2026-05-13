@@ -290,6 +290,7 @@ class FusedSourceEvalABI:
     differentiator: np.ndarray
     accumulator: np.ndarray
     rho: np.ndarray
+    n_axis_fix: int
     radial_workspace: np.ndarray
     surface_workspace: np.ndarray
     F_profile_u: np.ndarray
@@ -391,11 +392,18 @@ def build_fused_source_eval_abi(
     source_plan: "SourcePlan",
     backend_state: "BackendState",
     B0: float,
+    fix_rho: float,
 ) -> FusedSourceEvalABI:
     source_kernel = source_plan.kernel
     static_layout = backend_state.static_layout
     runtime_layout = backend_state.runtime_layout
     source_work_state = backend_state.source_runtime_state.work_state
+
+    if source_plan.coordinate == "psin" and source_plan.nodes == "uniform":
+        n_axis_fix = 0
+    else:
+        n_axis_fix = int(np.searchsorted(static_layout.rho, fix_rho))
+
     return FusedSourceEvalABI(
         source_kernel=source_kernel,
         scratch_source_kernel=resolve_source_scratch_kernel(source_kernel),
@@ -404,6 +412,7 @@ def build_fused_source_eval_abi(
         differentiator=static_layout.differentiator,
         accumulator=static_layout.accumulator,
         rho=static_layout.rho,
+        n_axis_fix=n_axis_fix,
         radial_workspace=runtime_layout.geometry_radial_workspace,
         surface_workspace=runtime_layout.geometry_surface_workspace,
         F_profile_u=runtime_layout.F_profile_u,

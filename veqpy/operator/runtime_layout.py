@@ -436,7 +436,7 @@ def allocate_runtime_state(
         parameter_query=parameter_query,
         materialized_heat_input=materialized_heat_input,
         materialized_current_input=materialized_current_input,
-        scratch_1d=np.empty((8, nr), dtype=np.float64),
+        scratch_1d=np.empty((7, nr), dtype=np.float64),
         scratch_2d=np.empty((1, nr, nt), dtype=np.float64),
     )
     source_aux_state = SourceAuxState(

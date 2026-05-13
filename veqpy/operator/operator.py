@@ -68,6 +68,7 @@ class Operator:
 
     grid: InitVar[Grid]
     case: OperatorCase = field(repr=False)
+    fix_rho: float = 0.05
     static_layout: StaticLayout = field(init=False, repr=False)
     residual_binding_layout: ResidualBindingLayout = field(init=False, repr=False)
     runtime_layout: RuntimeLayout = field(init=False, repr=False)
@@ -636,6 +637,7 @@ class Operator:
             source_plan=self.source_plan,
             backend_state=self.backend_state,
             B0=self.case.B0,
+            fix_rho=self.fix_rho,
         )
 
     def _build_bound_residual_pack_stage_runner(self) -> Callable:
@@ -769,6 +771,7 @@ class Operator:
             R0=float(self.case.R0),
             Z0=float(self.case.Z0),
             B0=float(self.case.B0),
+            fix_rho=self.fix_rho,
         )
 
     def _snapshot_equilibrium_from_runtime(self, x: np.ndarray) -> Equilibrium:
