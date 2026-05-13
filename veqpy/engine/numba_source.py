@@ -778,6 +778,7 @@ def _update_pf_from_psin_grid_inputs_with_scratch(
     prof = out_psin_r
     integral_prof = dot(prof, quadrature)
     out_psin_r /= integral_prof
+    _regularize_axis_linear_psin_r(out_psin_r, rho)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
     psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
@@ -1233,6 +1234,7 @@ def _update_pi_from_psin_grid_inputs_with_scratch(
     scaled_ratio_into(itor_over_kn, Itor, Kn, 1.0 / (2.0 * np.pi))
     alpha2 = dot(itor_over_kn, quadrature)
     scaled_ratio_into(out_psin_r, Itor, Kn, 1.0 / (2.0 * np.pi * alpha2))
+    _regularize_axis_linear_psin_r(out_psin_r, rho)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
     psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
@@ -1316,6 +1318,7 @@ def _update_pj1_from_rho_inputs_with_scratch(
     scaled_ratio_into(itor_over_kn, I_tor, Kn, 1.0 / (2.0 * np.pi))
     alpha2 = dot(itor_over_kn, quadrature)
     scaled_ratio_into(out_psin_r, I_tor, Kn, 1.0 / (2.0 * np.pi * alpha2))
+    _regularize_axis_linear_psin_r(out_psin_r, rho)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
     psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
@@ -1490,6 +1493,7 @@ def _update_pj1_from_psin_grid_inputs_with_scratch(
     scaled_ratio_into(itor_over_kn, I_tor, Kn, 1.0 / (2.0 * np.pi))
     alpha2 = dot(itor_over_kn, quadrature)
     scaled_ratio_into(out_psin_r, I_tor, Kn, 1.0 / (2.0 * np.pi * alpha2))
+    _regularize_axis_linear_psin_r(out_psin_r, rho)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
     psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
@@ -1651,6 +1655,7 @@ def _update_pj2_from_psin_grid_inputs_with_scratch(
     scaled_ratio_into(integrand, I_tor, Kn, 1.0 / (2.0 * np.pi))
     alpha2 = dot(integrand, quadrature)
     scale_into(out_psin_r, integrand, 1.0 / alpha2)
+    _regularize_axis_linear_psin_r(out_psin_r, rho)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
     maximum_floor_into(psin_r_safe, out_psin_r, 1e-10)
@@ -1727,6 +1732,7 @@ def _update_pj2_from_rho_inputs_with_scratch(
     scaled_ratio_into(itor_over_kn, I_tor, Kn, 1.0 / (2.0 * np.pi))
     alpha2 = dot(itor_over_kn, quadrature)
     scaled_ratio_into(out_psin_r, I_tor, Kn, 1.0 / (2.0 * np.pi * alpha2))
+    _regularize_axis_linear_psin_r(out_psin_r, rho)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
     psin_r_safe = source_scratch_1d[_SLOT_PSIN_R_SAFE]
