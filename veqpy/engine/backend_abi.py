@@ -46,13 +46,13 @@ PROFILE_OWNED_PSIN_ROUTE_KEYS: frozenset[RouteKey] = frozenset(
         ("PP", "psin", "uniform"),
         ("PI", "psin", "uniform"),
         ("PJ1", "psin", "uniform"),
+        ("PQ", "psin", "uniform"),
     }
 )
 
 FIXED_POINT_PSIN_ROUTE_KEYS: frozenset[RouteKey] = frozenset(
     {
         ("PJ2", "psin", "uniform"),
-        ("PQ", "psin", "uniform"),
     }
 )
 
@@ -177,6 +177,8 @@ def build_source_execution_abi(
         raise ValueError("psin is active but has no active profile slot")
     if F_active_length > 0 and F_active_slot < 0:
         raise ValueError("F is active but has no active profile slot")
+    if route_key[0] == "PQ" and F_active_length > 0:
+        raise ValueError("PQ strict routes do not accept an active F profile")
 
     route_requires_optimized_psin_profile = route_key in PROFILE_OWNED_PSIN_ROUTE_KEYS
     if route_requires_optimized_psin_profile and psin_active_length <= 0:

@@ -600,8 +600,6 @@ def build_bound_source_stage_runner(operator_core: Any) -> Callable:
         raise ValueError(f"Unsupported source route key {route_key!r}")
     if route_key == ("PJ2", "psin", "uniform"):
         return _build_pj2_psin_uniform_source_stage_runner(operator_core)
-    if route_key == ("PQ", "psin", "uniform"):
-        return _build_pq_psin_uniform_source_stage_runner(operator_core)
     return _build_source_stage_runner_shared(operator_core)
 
 

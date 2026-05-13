@@ -638,8 +638,8 @@ def _profile_coeffs_for_case(
         coeffs = {name: list(values) for name, values in PSIN_ROBUST_COEFFS.items()}
     else:
         coeffs = {name: list(values) for name, values in BASE_COEFFS.items()}
-    if mode in {"PJ2", "PQ"}:
-        f_order = 7 if mode == "PQ" and constraint in {"Ip", "Ip_beta"} else 6
+    if mode in {"PJ2"}:
+        f_order = 5
         coeffs["F"] = [0.0] * f_order
     return coeffs
 

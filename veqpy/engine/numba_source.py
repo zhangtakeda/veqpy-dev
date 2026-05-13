@@ -84,7 +84,7 @@ ENDPOINT_POLICY_RIGHT = 1
 ENDPOINT_POLICY_BOTH = 2
 ENDPOINT_POLICY_AFFINE_BOTH = 3
 
-# Scratch slot indices into SourceWorkState.scratch_1d (7 rows × Nr)
+# Scratch slot indices into SourceWorkState.scratch_1d (7 + Nr rows × Nr)
 _SLOT_INTEGRAND = 0
 _SLOT_AUX0 = 1
 _SLOT_AUX1 = 2
@@ -92,6 +92,7 @@ _SLOT_AUX2 = 3
 _SLOT_PNr = 4
 _SLOT_Pr = 5
 _SLOT_Fr = 6
+_SLOT_PQ_MATRIX = 7
 
 RouteKey = tuple[str, str, str]
 
@@ -494,6 +495,287 @@ def _fill_pj_ffn_psin(
         ffn_r = -(term0 + term1) * (psin_r[i] / Ln_r[i])
         out[i] = ffn_r / psin_r[i]
     return out
+
+
+
+@njit(cache=True, nogil=True)
+def _dense_solve_one_rhs_inplace(A: np.ndarray, b: np.ndarray, n: int, pivot_tol: float) -> None:
+    """Solve ``A x = b`` in-place using dense Gaussian elimination with partial pivoting.
+
+    ``A`` is overwritten by its LU factors and ``b`` is overwritten by the solution.  Only
+    the leading ``n x n`` block of ``A`` and the first ``n`` entries of ``b`` are used.
+    """
+    scale = 0.0
+    for i in range(n):
+        for j in range(n):
+            value = abs(A[i, j])
+            if value > scale:
+                scale = value
+    threshold = pivot_tol
+    if scale > 1.0:
+        threshold = pivot_tol * scale
+
+    for k in range(n - 1):
+        pivot = k
+        pivot_abs = abs(A[k, k])
+        for i in range(k + 1, n):
+            value = abs(A[i, k])
+            if value > pivot_abs:
+                pivot = i
+                pivot_abs = value
+        if pivot_abs <= threshold or not np.isfinite(pivot_abs):
+            raise ValueError("PQ dense solve failed: singular pivot")
+
+        if pivot != k:
+            for j in range(n):
+                tmp = A[k, j]
+                A[k, j] = A[pivot, j]
+                A[pivot, j] = tmp
+            tmp_b = b[k]
+            b[k] = b[pivot]
+            b[pivot] = tmp_b
+
+        akk = A[k, k]
+        for i in range(k + 1, n):
+            factor = A[i, k] / akk
+            A[i, k] = factor
+            for j in range(k + 1, n):
+                A[i, j] -= factor * A[k, j]
+            b[i] -= factor * b[k]
+
+    last_pivot = abs(A[n - 1, n - 1])
+    if last_pivot <= threshold or not np.isfinite(last_pivot):
+        raise ValueError("PQ dense solve failed: singular last pivot")
+
+    for ii in range(n):
+        i = n - 1 - ii
+        accum = b[i]
+        for j in range(i + 1, n):
+            accum -= A[i, j] * b[j]
+        b[i] = accum / A[i, i]
+        if not np.isfinite(b[i]):
+            raise ValueError("PQ dense solve produced non-finite solution")
+
+
+@njit(cache=True, nogil=True)
+def _fill_pq_linear_matrix(
+    A: np.ndarray,
+    rhs: np.ndarray,
+    D: np.ndarray,
+    coeff_d: np.ndarray,
+    coeff_y: np.ndarray,
+    forcing: np.ndarray,
+    edge_value: float,
+    n: int,
+) -> None:
+    """Assemble the dense first-order PQ collocation system and impose edge value."""
+    for i in range(n):
+        for j in range(n):
+            A[i, j] = coeff_d[i] * D[i, j]
+        A[i, i] += coeff_y[i]
+        rhs[i] = forcing[i]
+
+    edge = n - 1
+    for j in range(n):
+        A[edge, j] = 0.0
+    A[edge, edge] = 1.0
+    rhs[edge] = edge_value
+
+
+@njit(cache=True, nogil=True)
+def _validate_pq_source_scalar(value: float, label_code: int) -> None:
+    if not np.isfinite(value):
+        raise ValueError("PQ strict solve produced non-finite scalar")
+    if label_code == 0 and value <= 0.0:
+        raise ValueError("PQ strict solve produced non-positive alpha2")
+    if label_code == 1 and abs(value) <= 1.0e-14:
+        raise ValueError("PQ strict solve produced near-zero alpha1")
+
+
+@njit(cache=True, nogil=True)
+def _fill_pq_q_profile(
+    out_q: np.ndarray,
+    current_input: np.ndarray,
+    Kn: np.ndarray,
+    Ln_r: np.ndarray,
+    edge_F: float,
+    Ip: float,
+) -> None:
+    has_Ip = not np.isnan(Ip)
+    if has_Ip:
+        if abs(Ip) <= 1.0e-14:
+            raise ValueError("PQ strict solve received near-zero Ip")
+        if abs(current_input[-1]) <= 1.0e-14:
+            raise ValueError("PQ strict solve received near-zero edge q input")
+        q_scale = (2.0 * np.pi * edge_F) / Ip
+        q_scale *= Kn[-1] * Ln_r[-1] / current_input[-1]
+        for i in range(out_q.shape[0]):
+            out_q[i] = current_input[i] * q_scale
+    else:
+        for i in range(out_q.shape[0]):
+            out_q[i] = current_input[i]
+
+    for i in range(out_q.shape[0]):
+        if not np.isfinite(out_q[i]) or abs(out_q[i]) <= 1.0e-14:
+            raise ValueError("PQ strict solve received invalid q profile")
+
+
+@njit(cache=True, nogil=True)
+def _fill_pq_W_and_derivative(
+    W: np.ndarray,
+    W_r: np.ndarray,
+    Kn: np.ndarray,
+    Ln_r: np.ndarray,
+    q_prof: np.ndarray,
+    differentiator: np.ndarray,
+) -> None:
+    for i in range(W.shape[0]):
+        if not np.isfinite(Ln_r[i]) or abs(Ln_r[i]) <= 1.0e-14:
+            raise ValueError("PQ strict solve received invalid Ln_r")
+        W[i] = Kn[i] * Ln_r[i] / q_prof[i]
+        if not np.isfinite(W[i]):
+            raise ValueError("PQ strict solve produced invalid W")
+    full_differentiation(W_r, W, differentiator)
+
+@njit(cache=True, nogil=True)
+def _pq_psin_beta_residual(
+    alpha1: float,
+    F0: np.ndarray,
+    F1: np.ndarray,
+    q_prof: np.ndarray,
+    Ln_r: np.ndarray,
+    heat_input: np.ndarray,
+    V_r: np.ndarray,
+    quadrature: np.ndarray,
+    accumulator: np.ndarray,
+    trial_psin_r: np.ndarray,
+    trial_Pn_r: np.ndarray,
+    trial_Pn: np.ndarray,
+    beta_target: float,
+) -> float:
+    n = F0.shape[0]
+    alpha2 = 0.0
+    for i in range(n):
+        F_value = F0[i] + alpha1 * F1[i]
+        psi_r = F_value * Ln_r[i] / q_prof[i]
+        if not np.isfinite(psi_r) or psi_r <= 0.0:
+            return np.nan
+        trial_psin_r[i] = psi_r
+        alpha2 += psi_r * quadrature[i]
+    if not np.isfinite(alpha2) or alpha2 <= 0.0:
+        return np.nan
+    for i in range(n):
+        trial_psin_r[i] /= alpha2
+        trial_Pn_r[i] = heat_input[i] * trial_psin_r[i]
+    _compute_Pn_out(trial_Pn, trial_Pn_r, accumulator, quadrature)
+    beta_den = weighted_dot(trial_Pn, V_r, quadrature)
+    if not np.isfinite(beta_den):
+        return np.nan
+    return alpha1 * alpha2 * beta_den - beta_target
+
+
+@njit(cache=True, nogil=True)
+def _solve_pq_psin_beta_alpha1(
+    F0: np.ndarray,
+    F1: np.ndarray,
+    q_prof: np.ndarray,
+    Ln_r: np.ndarray,
+    heat_input: np.ndarray,
+    V_r: np.ndarray,
+    quadrature: np.ndarray,
+    accumulator: np.ndarray,
+    trial_psin_r: np.ndarray,
+    trial_Pn_r: np.ndarray,
+    trial_Pn: np.ndarray,
+    beta_target: float,
+) -> float:
+    lower = 0.0
+    r_lower = _pq_psin_beta_residual(
+        lower,
+        F0,
+        F1,
+        q_prof,
+        Ln_r,
+        heat_input,
+        V_r,
+        quadrature,
+        accumulator,
+        trial_psin_r,
+        trial_Pn_r,
+        trial_Pn,
+        beta_target,
+    )
+    if not np.isfinite(r_lower):
+        raise ValueError("PQ/psin strict beta solve failed at lower bracket")
+
+    upper = 1.0
+    r_upper = _pq_psin_beta_residual(
+        upper,
+        F0,
+        F1,
+        q_prof,
+        Ln_r,
+        heat_input,
+        V_r,
+        quadrature,
+        accumulator,
+        trial_psin_r,
+        trial_Pn_r,
+        trial_Pn,
+        beta_target,
+    )
+    for _ in range(80):
+        if np.isfinite(r_upper) and r_lower * r_upper <= 0.0:
+            break
+        upper *= 2.0
+        r_upper = _pq_psin_beta_residual(
+            upper,
+            F0,
+            F1,
+            q_prof,
+            Ln_r,
+            heat_input,
+            V_r,
+            quadrature,
+            accumulator,
+            trial_psin_r,
+            trial_Pn_r,
+            trial_Pn,
+            beta_target,
+        )
+    if not np.isfinite(r_upper) or r_lower * r_upper > 0.0:
+        raise ValueError("PQ/psin strict beta solve failed to bracket alpha1")
+
+    for _ in range(80):
+        mid = 0.5 * (lower + upper)
+        r_mid = _pq_psin_beta_residual(
+            mid,
+            F0,
+            F1,
+            q_prof,
+            Ln_r,
+            heat_input,
+            V_r,
+            quadrature,
+            accumulator,
+            trial_psin_r,
+            trial_Pn_r,
+            trial_Pn,
+            beta_target,
+        )
+        if not np.isfinite(r_mid):
+            upper = mid
+            continue
+        if abs(r_mid) <= 1.0e-12 * (1.0 + abs(beta_target)):
+            return mid
+        if r_lower * r_mid <= 0.0:
+            upper = mid
+            r_upper = r_mid
+        else:
+            lower = mid
+            r_lower = r_mid
+    return 0.5 * (lower + upper)
+
 
 
 def build_source_remap_cache(
@@ -1830,9 +2112,12 @@ def _update_pj2_from_rho_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(("PQ", "psin", "uniform"))
+@register_route(
+    ("PQ", "psin", "uniform"),
+    ("PQ", "psin", "grid"),
+)
 @njit(cache=True, nogil=True)
-def _update_pq_from_psin_uniform_inputs_with_scratch(
+def _update_pq_from_psin_inputs_with_scratch(
     out_root_fields: np.ndarray,
     out_FFn_psin: np.ndarray,
     out_Pn_psin: np.ndarray,
@@ -1858,122 +2143,102 @@ def _update_pq_from_psin_uniform_inputs_with_scratch(
     V_r, Kn, _, Ln_r, _, _, _ = _source_geometry_workspace_views(
         radial_workspace, surface_workspace
     )
-    has_Ip = not np.isnan(Ip)
+    n = rho.shape[0]
+    edge_F = R0 * B0
+    if not np.isfinite(edge_F) or abs(edge_F) <= 1.0e-14:
+        raise ValueError("PQ/psin strict solve received invalid edge F")
+
+    W = source_scratch_1d[_SLOT_INTEGRAND]
+    q_prof = source_scratch_1d[_SLOT_AUX0]
+    coeff_d = source_scratch_1d[_SLOT_AUX1]
+    coeff_y = source_scratch_1d[_SLOT_AUX2]
+    rhs = source_scratch_1d[_SLOT_PNr]
+    F_solved = source_scratch_1d[_SLOT_Pr]
+    F_r = source_scratch_1d[_SLOT_Fr]
+    A = source_scratch_1d[_SLOT_PQ_MATRIX : _SLOT_PQ_MATRIX + n, :]
+
+    _fill_pq_q_profile(q_prof, current_input, Kn, Ln_r, edge_F, Ip)
+    _fill_pq_W_and_derivative(W, F_r, Kn, Ln_r, q_prof, differentiator)
+
+    pressure_factor = 1.0 / (4.0 * np.pi**2)
+    for i in range(n):
+        coeff_d[i] = W[i] + q_prof[i]
+        coeff_y[i] = F_r[i]
+        if not np.isfinite(coeff_d[i]) or not np.isfinite(coeff_y[i]):
+            raise ValueError("PQ/psin strict solve assembled non-finite matrix")
+
     has_beta = not np.isnan(beta)
-    q_prof = source_scratch_1d[_SLOT_INTEGRAND]
-    scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
-    scratch_aux = source_scratch_1d[_SLOT_AUX2]
+    if has_beta:
+        # Solve A F0 = b_edge and A F1 = b_pressure, then determine alpha1 from
+        # the scalar beta constraint with F = F0 + alpha1 * F1.
+        for i in range(n):
+            rhs[i] = 0.0
+        _fill_pq_linear_matrix(A, rhs, differentiator, coeff_d, coeff_y, rhs, edge_F, n)
+        copy_into(F_solved, rhs)
+        _dense_solve_one_rhs_inplace(A, F_solved, n, 1.0e-12)
 
-    if has_Ip:
-        q_scale = (2.0 * np.pi * F[-1]) / Ip
-        scale_into(q_prof, current_input, q_scale * (Kn[-1] * Ln_r[-1] / current_input[-1]))
-        alpha2 = weighted_ratio_dot(F, Ln_r, q_prof, quadrature)
-        scaled_product_ratio_into(out_psin_r, F, Ln_r, q_prof, 1.0 / alpha2)
+        for i in range(n):
+            rhs[i] = -pressure_factor * V_r[i] * heat_input[i]
+            if not np.isfinite(rhs[i]):
+                raise ValueError("PQ/psin strict beta solve assembled non-finite pressure RHS")
+        _fill_pq_linear_matrix(A, rhs, differentiator, coeff_d, coeff_y, rhs, 0.0, n)
+        copy_into(W, rhs)
+        _dense_solve_one_rhs_inplace(A, W, n, 1.0e-12)
+
+        beta_target = 0.5 * beta * B0**2 * dot(V_r, quadrature)
+        alpha1 = _solve_pq_psin_beta_alpha1(
+            F_solved,
+            W,
+            q_prof,
+            Ln_r,
+            heat_input,
+            V_r,
+            quadrature,
+            accumulator,
+            out_psin_r,
+            coeff_d,
+            coeff_y,
+            beta_target,
+        )
+        for i in range(n):
+            F_solved[i] = F_solved[i] + alpha1 * W[i]
+        copy_into(out_Pn_psin, heat_input)
     else:
-        alpha2 = weighted_ratio_dot(F, Ln_r, current_input, quadrature)
-        scaled_product_ratio_into(out_psin_r, F, Ln_r, current_input, 1.0 / alpha2)
+        for i in range(n):
+            rhs[i] = -pressure_factor * V_r[i] * heat_input[i]
+            if not np.isfinite(rhs[i]):
+                raise ValueError("PQ/psin strict solve assembled non-finite pressure RHS")
+        _fill_pq_linear_matrix(A, rhs, differentiator, coeff_d, coeff_y, rhs, edge_F, n)
+        copy_into(F_solved, rhs)
+        _dense_solve_one_rhs_inplace(A, F_solved, n, 1.0e-12)
+        alpha1 = 0.0
 
+    for i in range(n):
+        out_psin_r[i] = F_solved[i] * Ln_r[i] / q_prof[i]
+        if not np.isfinite(out_psin_r[i]) or out_psin_r[i] <= 0.0:
+            raise ValueError("PQ/psin strict solve produced invalid psi_r")
+
+    alpha2 = dot(out_psin_r, quadrature)
+    _validate_pq_source_scalar(alpha2, 0)
+    scale_into(out_psin_r, out_psin_r, 1.0 / alpha2)
     _regularize_psin_r(out_psin_r, rho, n_axis_fix)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
 
-    if has_beta:
-        product_into(scratch_Pn_r, heat_input, out_psin_r)
-        _compute_Pn_out(scratch_aux, scratch_Pn_r, accumulator, quadrature)
-        alpha1 = (
-            0.5
-            * beta
-            * B0**2
-            / alpha2
-            * dot(V_r, quadrature)
-            / weighted_dot(
-                scratch_aux,
-                V_r,
-                quadrature,
-            )
-        )
-        copy_into(out_Pn_psin, heat_input)
-    else:
+    if not has_beta:
         alpha1 = -weighted_dot(heat_input, out_psin_r, quadrature)
-        scaled_product_ratio_into(out_Pn_psin, heat_input, out_psin_r, out_psin_r, 1.0 / alpha1)
+        for i in range(n):
+            out_Pn_psin[i] = heat_input[i] / alpha1
+    _validate_pq_source_scalar(alpha1, 1)
 
-    full_differentiation(scratch_aux, F, differentiator)
-    product_into(out_FFn_psin, F, scratch_aux)
-    scaled_ratio_into(out_FFn_psin, out_FFn_psin, out_psin_r, 1.0 / (alpha1 * alpha2))
-    _regularize_ffn_psin(out_FFn_psin, rho, n_axis_fix)
-    return alpha1, alpha2
+    full_differentiation(F_r, F_solved, differentiator)
 
-
-@register_route(("PQ", "psin", "grid"))
-@njit(cache=True, nogil=True)
-def _update_pq_from_psin_grid_inputs_with_scratch(
-    out_root_fields: np.ndarray,
-    out_FFn_psin: np.ndarray,
-    out_Pn_psin: np.ndarray,
-    heat_input: np.ndarray,
-    current_input: np.ndarray,
-    coordinate_code: int,
-    R0: float,
-    B0: float,
-    quadrature: np.ndarray,
-    differentiator: np.ndarray,
-    accumulator: np.ndarray,
-    rho: np.ndarray,
-    n_axis_fix: int,
-    radial_workspace: np.ndarray,
-    surface_workspace: np.ndarray,
-    F: np.ndarray,
-    Ip: float,
-    beta: float,
-    source_scratch_1d: np.ndarray,
-    source_scratch_2d: np.ndarray,
-) -> tuple[float, float]:
-    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
-    V_r, Kn, _, Ln_r, _, _, _ = _source_geometry_workspace_views(
-        radial_workspace, surface_workspace
-    )
-    has_Ip = not np.isnan(Ip)
-    has_beta = not np.isnan(beta)
-    q_prof = source_scratch_1d[_SLOT_INTEGRAND]
-    scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
-    scratch_aux = source_scratch_1d[_SLOT_AUX2]
-
-    if has_Ip:
-        q_scale = (2.0 * np.pi * F[-1]) / Ip
-        scale_into(q_prof, current_input, q_scale * (Kn[-1] * Ln_r[-1] / current_input[-1]))
-        alpha2 = weighted_ratio_dot(F, Ln_r, q_prof, quadrature)
-        scaled_product_ratio_into(out_psin_r, F, Ln_r, q_prof, 1.0 / alpha2)
-    else:
-        alpha2 = weighted_ratio_dot(F, Ln_r, current_input, quadrature)
-        scaled_product_ratio_into(out_psin_r, F, Ln_r, current_input, 1.0 / alpha2)
-
-    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
-    full_differentiation(out_psin_rr, out_psin_r, differentiator)
-    _update_psin_coordinate(out_psin, out_psin_r, accumulator)
-
-    if has_beta:
-        product_into(scratch_Pn_r, heat_input, out_psin_r)
-        _compute_Pn_out(scratch_aux, scratch_Pn_r, accumulator, quadrature)
-        alpha1 = (
-            0.5
-            * beta
-            * B0**2
-            / alpha2
-            * dot(V_r, quadrature)
-            / weighted_dot(
-                scratch_aux,
-                V_r,
-                quadrature,
-            )
-        )
-        copy_into(out_Pn_psin, heat_input)
-    else:
-        alpha1 = -weighted_dot(heat_input, out_psin_r, quadrature)
-        scaled_product_ratio_into(out_Pn_psin, heat_input, out_psin_r, out_psin_r, 1.0 / alpha1)
-
-    full_differentiation(scratch_aux, F, differentiator)
-    product_into(out_FFn_psin, F, scratch_aux)
-    scaled_ratio_into(out_FFn_psin, out_FFn_psin, out_psin_r, 1.0 / (alpha1 * alpha2))
+    for i in range(n):
+        if abs(Ln_r[i]) <= 1.0e-14:
+            raise ValueError("PQ/psin strict solve received invalid Ln_r")
+        out_FFn_psin[i] = (q_prof[i] * F_r[i] / Ln_r[i]) / alpha1
+        if not np.isfinite(out_FFn_psin[i]) or not np.isfinite(out_Pn_psin[i]):
+            raise ValueError("PQ/psin strict solve produced non-finite normalized source")
     _regularize_ffn_psin(out_FFn_psin, rho, n_axis_fix)
     return alpha1, alpha2
 
@@ -2006,44 +2271,91 @@ def _update_pq_from_rho_inputs_with_scratch(
     source_scratch_2d: np.ndarray,
 ) -> tuple[float, float]:
     out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
-    V_r, Kn, Kn_r, Ln_r, S_r, R, JdivR = _source_geometry_workspace_views(
+    V_r, Kn, _, Ln_r, _, _, _ = _source_geometry_workspace_views(
         radial_workspace, surface_workspace
     )
-    has_Ip = not np.isnan(Ip)
-    has_beta = not np.isnan(beta)
+    n = rho.shape[0]
+    edge_F = R0 * B0
+    if not np.isfinite(edge_F) or abs(edge_F) <= 1.0e-14:
+        raise ValueError("PQ/rho strict solve received invalid edge F")
+
+    W = source_scratch_1d[_SLOT_INTEGRAND]
     q_prof = source_scratch_1d[_SLOT_AUX0]
-    if has_Ip:
-        q_scale = (2.0 * np.pi * F[-1]) / Ip
-        scale_into(q_prof, current_input, q_scale * (Kn[-1] * Ln_r[-1] / current_input[-1]))
-    else:
-        copy_into(q_prof, current_input)
-    integrand_alpha2 = source_scratch_1d[_SLOT_INTEGRAND]
-    scaled_product_ratio_into(integrand_alpha2, F, Ln_r, q_prof, 1.0)
-    alpha2 = dot(integrand_alpha2, quadrature)
-    scaled_product_ratio_into(out_psin_r, F, Ln_r, q_prof, 1.0 / alpha2)
+    coeff_d = source_scratch_1d[_SLOT_AUX1]
+    coeff_y = source_scratch_1d[_SLOT_AUX2]
+    rhs = source_scratch_1d[_SLOT_PNr]
+    Y = source_scratch_1d[_SLOT_Pr]
+    Y_r = source_scratch_1d[_SLOT_Fr]
+    A = source_scratch_1d[_SLOT_PQ_MATRIX : _SLOT_PQ_MATRIX + n, :]
+
+    _fill_pq_q_profile(q_prof, current_input, Kn, Ln_r, edge_F, Ip)
+    _fill_pq_W_and_derivative(W, Y_r, Kn, Ln_r, q_prof, differentiator)
+
+    has_beta = not np.isnan(beta)
+    pressure_scale = 1.0
+    beta_C = 0.0
+    if has_beta:
+        copy_into(rhs, heat_input)
+        _compute_Pn_out(coeff_y, rhs, accumulator, quadrature)
+        beta_den_pre = weighted_dot(coeff_y, V_r, quadrature)
+        if not np.isfinite(beta_den_pre) or abs(beta_den_pre) <= 1.0e-14:
+            raise ValueError("PQ/rho strict beta solve produced invalid pressure integral")
+        beta_C = 0.5 * beta * B0**2 * dot(V_r, quadrature) / beta_den_pre
+        pressure_scale = beta_C
+
+    pressure_factor = 1.0 / (2.0 * np.pi**2)
+    for i in range(n):
+        coeff_d[i] = W[i] + q_prof[i]
+        coeff_y[i] = 2.0 * Y_r[i]
+        rhs[i] = -pressure_factor * pressure_scale * V_r[i] * heat_input[i] * q_prof[i] / Ln_r[i]
+        if not np.isfinite(coeff_d[i]) or not np.isfinite(coeff_y[i]) or not np.isfinite(rhs[i]):
+            raise ValueError("PQ/rho strict solve assembled non-finite system")
+
+    _fill_pq_linear_matrix(A, rhs, differentiator, coeff_d, coeff_y, rhs, edge_F * edge_F, n)
+    copy_into(Y, rhs)
+    _dense_solve_one_rhs_inplace(A, Y, n, 1.0e-12)
+
+    sign_F = 1.0
+    if edge_F < 0.0:
+        sign_F = -1.0
+    for i in range(n):
+        if not np.isfinite(Y[i]) or Y[i] <= 0.0:
+            raise ValueError("PQ/rho strict solve produced non-positive F squared")
+        F_i = sign_F * np.sqrt(Y[i])
+        out_psin_r[i] = F_i * Ln_r[i] / q_prof[i]
+        if not np.isfinite(out_psin_r[i]) or out_psin_r[i] <= 0.0:
+            raise ValueError("PQ/rho strict solve produced invalid psi_r")
+
+    alpha2 = dot(out_psin_r, quadrature)
+    _validate_pq_source_scalar(alpha2, 0)
+    scale_into(out_psin_r, out_psin_r, 1.0 / alpha2)
     _regularize_psin_r(out_psin_r, rho, n_axis_fix)
     full_differentiation(out_psin_rr, out_psin_r, differentiator)
     _update_psin_coordinate(out_psin, out_psin_r, accumulator)
+
     if has_beta:
         scaled_ratio_into(out_Pn_psin, heat_input, out_psin_r, 1.0)
-        scratch_Pn_r = source_scratch_1d[_SLOT_PNr]
-        product_into(scratch_Pn_r, out_Pn_psin, out_psin_r)
-        scratch_aux = source_scratch_1d[_SLOT_AUX1]
-        _compute_Pn_out(scratch_aux, scratch_Pn_r, accumulator, quadrature)
-        alpha1_num = 0.5 * beta * B0**2 * dot(V_r, quadrature)
-        alpha1_den = alpha2 * weighted_dot(scratch_aux, V_r, quadrature)
-        alpha1 = alpha1_num / alpha1_den
+        alpha1 = beta_C / alpha2
     else:
-        scratch_Pr = source_scratch_1d[_SLOT_Pr]
-        copy_into(scratch_Pr, heat_input)
-        alpha1 = -dot(scratch_Pr, quadrature) / alpha2
-        scaled_ratio_into(out_Pn_psin, scratch_Pr, out_psin_r, 1.0 / (alpha1 * alpha2))
-    F_r = source_scratch_1d[_SLOT_Fr]
-    full_differentiation(F_r, F, differentiator)
-    product_into(out_FFn_psin, F, F_r)
-    scaled_ratio_into(out_FFn_psin, out_FFn_psin, out_psin_r, 1.0 / (alpha1 * alpha2))
+        alpha1 = -dot(heat_input, quadrature) / alpha2
+        for i in range(n):
+            denom = alpha1 * alpha2 * out_psin_r[i]
+            if abs(denom) <= 1.0e-14:
+                raise ValueError("PQ/rho strict solve produced invalid pressure denominator")
+            out_Pn_psin[i] = heat_input[i] / denom
+    _validate_pq_source_scalar(alpha1, 1)
+
+    full_differentiation(Y_r, Y, differentiator)
+    for i in range(n):
+        denom = alpha1 * alpha2 * out_psin_r[i]
+        if abs(denom) <= 1.0e-14:
+            raise ValueError("PQ/rho strict solve produced invalid FFn denominator")
+        out_FFn_psin[i] = 0.5 * Y_r[i] / denom
+        if not np.isfinite(out_FFn_psin[i]) or not np.isfinite(out_Pn_psin[i]):
+            raise ValueError("PQ/rho strict solve produced non-finite normalized source")
     _regularize_ffn_psin(out_FFn_psin, rho, n_axis_fix)
     return alpha1, alpha2
+
 
 
 def resolve_source_scratch_kernel(operator_kernel: Callable) -> Callable | None:
@@ -2809,4 +3121,5 @@ _assert_default_source_routes_registered()
 
 # Compatibility names for callers that still refer to the pre-split psin kernels.
 _update_pj2_from_psin_inputs_with_scratch = _update_pj2_from_psin_uniform_inputs_with_scratch
-_update_pq_from_psin_inputs_with_scratch = _update_pq_from_psin_uniform_inputs_with_scratch
+_update_pq_from_psin_uniform_inputs_with_scratch = _update_pq_from_psin_inputs_with_scratch
+_update_pq_from_psin_grid_inputs_with_scratch = _update_pq_from_psin_inputs_with_scratch
