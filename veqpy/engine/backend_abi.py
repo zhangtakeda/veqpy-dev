@@ -511,6 +511,7 @@ def _build_fixed_point_psin_source_abi(
         F_active_slot=int(source_execution.F_active_slot),
         F_active_length=int(source_execution.F_active_length),
         F_coeff_start=int(source_execution.F_coeff_start),
+        has_projection_policy=bool(source_plan.has_projection_policy),
         projection_domain_code=int(source_plan.projection_domain_code),
         endpoint_policy_code=int(source_plan.endpoint_policy_code),
         barycentric_weights=uniform_barycentric_weights(
