@@ -15,6 +15,7 @@ Notes:
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -302,14 +303,49 @@ SOURCE_PARAMETERIZATION_CODES = {
 }
 
 
+SOURCE_PROJECTION_DISABLE_ENV = "VEQPY_DISABLE_SOURCE_PROJECTION"
+_SOURCE_PROJECTION_DISABLE_VALUES = frozenset({"1", "true", "yes", "on"})
+
+
+def source_projection_enabled() -> bool:
+    """Return whether optional Chebyshev source projection is enabled.
+
+    The switch is intentionally evaluated while building the source plan, not
+    inside the numba hot kernels.  This makes it useful for benchmark A/B runs
+    without changing the steady-state residual call overhead.
+    """
+
+    value = os.environ.get(SOURCE_PROJECTION_DISABLE_ENV, "")
+    return value.strip().lower() not in _SOURCE_PROJECTION_DISABLE_VALUES
+
+
+def _resolve_source_projection_policy(
+    route: str,
+    coordinate: str,
+    nodes: str,
+    has_ip_constraint: bool,
+    has_beta_constraint: bool,
+) -> SourceProjectionPolicy | None:
+    if not source_projection_enabled():
+        return None
+    return SOURCE_PROJECTION_POLICIES.get((route, coordinate, nodes))
+
+
 def build_source_plan(
     *,
     case: "OperatorCase",
     source_route_spec: object,
 ) -> SourcePlan:
-    policy = SOURCE_PROJECTION_POLICIES.get((case.route, case.coordinate, case.nodes))
-    has_projection_policy = policy is not None
     has_ip_constraint = bool(np.isfinite(case.Ip))
+    has_beta_constraint = bool(np.isfinite(case.beta))
+    policy = _resolve_source_projection_policy(
+        route=str(case.route),
+        coordinate=str(case.coordinate),
+        nodes=str(case.nodes),
+        has_ip_constraint=has_ip_constraint,
+        has_beta_constraint=has_beta_constraint,
+    )
+    has_projection_policy = policy is not None
     projection_domain = "psin"
     heat_projection_degree = 0
     current_projection_degree = 0
@@ -740,30 +776,31 @@ def _build_pj2_psin_uniform_source_stage_runner(
             ):
                 break
         np.copyto(source_work_state.psin_query, target_root_fields[0])
-        for _ in range(8):
-            materialize_projected_source_inputs(
-                source_work_state.materialized_heat_input,
-                source_work_state.materialized_current_input,
-                source_aux_state.heat_projection_coeff,
-                source_aux_state.current_projection_coeff,
-                source_plan.current_input,
-                source_work_state.psin_query,
-                source_plan.projection_domain_code,
-                source_plan.endpoint_policy_code,
-                source_runtime_state.const_state.endpoint_blend,
-            )
-            alpha1, alpha2 = source_eval_runner(
-                target_root_fields,
-                operator_core.FFn_psin,
-                operator_core.Pn_psin,
-                source_work_state.materialized_heat_input,
-                source_work_state.materialized_current_input,
-                float(operator_core.case.R0),
-            )
-            if update_fixed_point_psin_query(
-                source_work_state.psin_query, target_root_fields[0], max_residual
-            ):
-                break
+        if source_plan.has_projection_policy:
+            for _ in range(8):
+                materialize_projected_source_inputs(
+                    source_work_state.materialized_heat_input,
+                    source_work_state.materialized_current_input,
+                    source_aux_state.heat_projection_coeff,
+                    source_aux_state.current_projection_coeff,
+                    source_plan.current_input,
+                    source_work_state.psin_query,
+                    source_plan.projection_domain_code,
+                    source_plan.endpoint_policy_code,
+                    source_runtime_state.const_state.endpoint_blend,
+                )
+                alpha1, alpha2 = source_eval_runner(
+                    target_root_fields,
+                    operator_core.FFn_psin,
+                    operator_core.Pn_psin,
+                    source_work_state.materialized_heat_input,
+                    source_work_state.materialized_current_input,
+                    float(operator_core.case.R0),
+                )
+                if update_fixed_point_psin_query(
+                    source_work_state.psin_query, target_root_fields[0], max_residual
+                ):
+                    break
         np.copyto(operator_core.psin, target_root_fields[0])
         np.copyto(operator_core.psin_r, target_root_fields[1])
         np.copyto(operator_core.psin_rr, target_root_fields[2])
@@ -845,30 +882,31 @@ def _build_pq_psin_uniform_source_stage_runner(
             ):
                 break
         np.copyto(source_work_state.psin_query, target_root_fields[0])
-        for _ in range(16):
-            materialize_projected_source_inputs(
-                source_work_state.materialized_heat_input,
-                source_work_state.materialized_current_input,
-                source_aux_state.heat_projection_coeff,
-                source_aux_state.current_projection_coeff,
-                source_plan.current_input,
-                source_work_state.psin_query,
-                source_plan.projection_domain_code,
-                source_plan.endpoint_policy_code,
-                source_runtime_state.const_state.endpoint_blend,
-            )
-            alpha1, alpha2 = source_eval_runner(
-                target_root_fields,
-                operator_core.FFn_psin,
-                operator_core.Pn_psin,
-                source_work_state.materialized_heat_input,
-                source_work_state.materialized_current_input,
-                float(operator_core.case.R0),
-            )
-            if update_fixed_point_psin_query(
-                source_work_state.psin_query, target_root_fields[0], max_residual
-            ):
-                break
+        if source_plan.has_projection_policy:
+            for _ in range(16):
+                materialize_projected_source_inputs(
+                    source_work_state.materialized_heat_input,
+                    source_work_state.materialized_current_input,
+                    source_aux_state.heat_projection_coeff,
+                    source_aux_state.current_projection_coeff,
+                    source_plan.current_input,
+                    source_work_state.psin_query,
+                    source_plan.projection_domain_code,
+                    source_plan.endpoint_policy_code,
+                    source_runtime_state.const_state.endpoint_blend,
+                )
+                alpha1, alpha2 = source_eval_runner(
+                    target_root_fields,
+                    operator_core.FFn_psin,
+                    operator_core.Pn_psin,
+                    source_work_state.materialized_heat_input,
+                    source_work_state.materialized_current_input,
+                    float(operator_core.case.R0),
+                )
+                if update_fixed_point_psin_query(
+                    source_work_state.psin_query, target_root_fields[0], max_residual
+                ):
+                    break
         np.copyto(operator_core.psin, target_root_fields[0])
         np.copyto(operator_core.psin_r, target_root_fields[1])
         np.copyto(operator_core.psin_rr, target_root_fields[2])
