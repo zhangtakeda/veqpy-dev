@@ -315,7 +315,7 @@ def source_projection_enabled() -> bool:
     without changing the steady-state residual call overhead.
     """
 
-    value = os.environ.get(SOURCE_PROJECTION_DISABLE_ENV, "")
+    value = os.environ.get(SOURCE_PROJECTION_DISABLE_ENV, "1")
     return value.strip().lower() not in _SOURCE_PROJECTION_DISABLE_VALUES
 
 
