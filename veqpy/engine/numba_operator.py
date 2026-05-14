@@ -174,7 +174,7 @@ def _pack_residual_output(
         residual_pack_binding.rho_powers,
         residual_pack_binding.y,
         residual_pack_binding.T,
-        residual_pack_binding.quadrature,
+        residual_pack_binding.weights,
         residual_pack_binding.a,
         residual_pack_binding.R0,
         residual_pack_binding.B0,
@@ -193,7 +193,7 @@ def _call_source_kernel_with_scratch(
     coordinate_code: int,
     R0: float,
     B0: float,
-    quadrature: np.ndarray,
+    weights: np.ndarray,
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
@@ -215,7 +215,7 @@ def _call_source_kernel_with_scratch(
         coordinate_code,
         R0,
         B0,
-        quadrature,
+        weights,
         differentiator,
         accumulator,
         rho,
@@ -249,7 +249,7 @@ def _run_fixed_point_spline_with_scratch_impl(
     coordinate_code: int,
     R0: float,
     B0: float,
-    quadrature: np.ndarray,
+    weights: np.ndarray,
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
@@ -282,7 +282,7 @@ def _run_fixed_point_spline_with_scratch_impl(
             coordinate_code,
             R0,
             B0,
-            quadrature,
+            weights,
             differentiator,
             accumulator,
             rho,
@@ -328,7 +328,7 @@ def _run_fixed_point_barycentric_with_scratch_impl(
     coordinate_code: int,
     R0: float,
     B0: float,
-    quadrature: np.ndarray,
+    weights: np.ndarray,
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
@@ -362,7 +362,7 @@ def _run_fixed_point_barycentric_with_scratch_impl(
             coordinate_code,
             R0,
             B0,
-            quadrature,
+            weights,
             differentiator,
             accumulator,
             rho,
@@ -410,7 +410,7 @@ def _run_projected_finalize_with_scratch_impl(
     coordinate_code: int,
     R0: float,
     B0: float,
-    quadrature: np.ndarray,
+    weights: np.ndarray,
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
@@ -451,7 +451,7 @@ def _run_projected_finalize_with_scratch_impl(
             coordinate_code,
             R0,
             B0,
-            quadrature,
+            weights,
             differentiator,
             accumulator,
             rho,
@@ -502,7 +502,7 @@ def _run_projected_finalize_with_scratch(
     coordinate_code: int,
     R0: float,
     B0: float,
-    quadrature: np.ndarray,
+    weights: np.ndarray,
     differentiator: np.ndarray,
     accumulator: np.ndarray,
     rho: np.ndarray,
@@ -535,7 +535,7 @@ def _run_projected_finalize_with_scratch(
         coordinate_code,
         R0,
         B0,
-        quadrature,
+        weights,
         differentiator,
         accumulator,
         rho,
@@ -841,7 +841,7 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
     radial_workspace = runtime_layout.geometry_radial_workspace
     residual_workspace = runtime_layout.residual_surface_workspace
     rho = static_layout.rho
-    quadrature = static_layout.quadrature
+    weights = static_layout.weights
     differentiator = static_layout.differentiator
     accumulator = static_layout.accumulator
     n_axis_fix = int(np.searchsorted(rho, fix_rho))
@@ -896,7 +896,7 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
                 fixed_point_psin_binding.coordinate_code,
                 R0,
                 B0,
-                quadrature,
+                weights,
                 differentiator,
                 accumulator,
                 rho,
@@ -928,7 +928,7 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
                 fixed_point_psin_binding.coordinate_code,
                 R0,
                 B0,
-                quadrature,
+                weights,
                 differentiator,
                 accumulator,
                 rho,
@@ -961,7 +961,7 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
             coordinate_code=fixed_point_psin_binding.coordinate_code,
             R0=R0,
             B0=B0,
-            quadrature=quadrature,
+            weights=weights,
             differentiator=differentiator,
             accumulator=accumulator,
             rho=rho,
@@ -1012,7 +1012,7 @@ def _bind_source_eval_runner_for_fused_backend(
                 source_eval_binding.coordinate_code,
                 R0,
                 source_eval_binding.B0,
-                source_eval_binding.quadrature,
+                source_eval_binding.weights,
                 source_eval_binding.differentiator,
                 source_eval_binding.accumulator,
                 source_eval_binding.rho,
@@ -1032,7 +1032,7 @@ def _bind_source_eval_runner_for_fused_backend(
             source_eval_binding.coordinate_code,
             R0,
             source_eval_binding.B0,
-            source_eval_binding.quadrature,
+            source_eval_binding.weights,
             source_eval_binding.differentiator,
             source_eval_binding.accumulator,
             source_eval_binding.rho,
@@ -1069,7 +1069,7 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
     radial_workspace = runtime_layout.geometry_radial_workspace
     residual_workspace = runtime_layout.residual_surface_workspace
     rho = static_layout.rho
-    quadrature = static_layout.quadrature
+    weights = static_layout.weights
     differentiator = static_layout.differentiator
     accumulator = static_layout.accumulator
     n_axis_fix = int(np.searchsorted(rho, fix_rho))
@@ -1126,7 +1126,7 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
                 fixed_point_psin_binding.coordinate_code,
                 R0,
                 B0,
-                quadrature,
+                weights,
                 differentiator,
                 accumulator,
                 rho,
@@ -1158,7 +1158,7 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
                 fixed_point_psin_binding.coordinate_code,
                 R0,
                 B0,
-                quadrature,
+                weights,
                 differentiator,
                 accumulator,
                 rho,
@@ -1191,7 +1191,7 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
             coordinate_code=fixed_point_psin_binding.coordinate_code,
             R0=R0,
             B0=B0,
-            quadrature=quadrature,
+            weights=weights,
             differentiator=differentiator,
             accumulator=accumulator,
             rho=rho,

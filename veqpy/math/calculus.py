@@ -30,18 +30,18 @@ DEFAULT_CALCULUS = "spectral"
 def make_calculus(
     nodes: np.ndarray,
     *,
-    calculus: str | None = None,
+    scheme: str | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Build ``(accumulator, differentiator)`` for a calculus scheme."""
 
-    if calculus is None:
-        calculus = DEFAULT_CALCULUS
+    if scheme is None:
+        scheme = DEFAULT_CALCULUS
 
-    calculus = calculus.lower()
-    if calculus not in calculus_generator:
+    scheme = scheme.lower()
+    if scheme not in calculus_generator:
         available = ", ".join(sorted(calculus_generator.registry))
-        raise ValueError(f"Unknown calculus scheme: {calculus}. Available schemes: {available}")
-    return calculus_generator[calculus](nodes)
+        raise ValueError(f"Unknown calculus scheme: {scheme}. Available schemes: {available}")
+    return calculus_generator[scheme](nodes)
 
 
 @calculus_generator("spectral")

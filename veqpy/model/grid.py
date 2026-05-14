@@ -33,7 +33,15 @@ from veqpy.math.quadrature import make_quadrature
 class Grid(Reactive, Serial):
     """径向-极角离散化的网格配置."""
 
-    root_properties = {"Nr", "Nt", "L_max", "M_max", "K_max", "scheme", "calculus"}
+    root_properties = {
+        "Nr",
+        "Nt",
+        "L_max",
+        "M_max",
+        "K_max",
+        "quadrature_scheme",
+        "calculus_scheme",
+    }
 
     def __init__(
         self,
@@ -42,8 +50,8 @@ class Grid(Reactive, Serial):
         L_max: int = 20,
         M_max: int = 20,
         K_max: int | None = None,
-        scheme: str = "legendre",
-        calculus: str = "spectral",
+        quadrature_scheme: str = "legendre",
+        calculus_scheme: str = "spectral",
     ):
         super().__init__()
 
@@ -52,22 +60,29 @@ class Grid(Reactive, Serial):
         self.L_max = L_max
         self.M_max = M_max
         self.K_max = K_max
-        self.scheme = scheme
-        self.calculus = calculus
+        self.quadrature_scheme = quadrature_scheme
+        self.calculus_scheme = calculus_scheme
 
-    @classmethod
-    def serial_attributes(cls) -> dict[str, type]:
-        """声明可序列化的根属性."""
+    def __rich__(self):
+        tree = Tree("[bold blue]Grid[/]")
+        tree.add(f"Nr: {self.Nr}")
+        tree.add(f"Nt: {self.Nt}")
+        tree.add(f"quadrature_scheme: {self.quadrature_scheme}")
+        tree.add(f"calculus_scheme: {self.calculus_scheme}")
+        if self.K_max is not None:
+            tree.add(f"K_max: {self.K_max}")
+        return tree
 
-        return {
-            "Nr": int,
-            "Nt": int,
-            "scheme": str,
-            "calculus": str,
-            "L_max": int,
-            "M_max": int,
-            "K_max": int | None,
-        }
+    def __str__(self) -> str:
+        console = Console(
+            color_system=None, force_terminal=False, width=120, record=True, soft_wrap=False
+        )
+        with console.capture() as capture:
+            console.print(self.__rich__())
+        return capture.get().rstrip()
+
+    def __repr__(self) -> str:
+        return str(self)
 
     @classmethod
     def reactive_inspections(cls, name: str, value):
@@ -104,28 +119,141 @@ class Grid(Reactive, Serial):
                     raise ValueError("K_max must be at least 2")
                 return value
 
-            case "scheme" | "calculus":
+            case "quadrature_scheme" | "calculus_scheme":
                 return str(value).lower()
 
         return value
 
+    @classmethod
+    def serial_attributes(cls) -> dict[str, type]:
+        """声明可序列化的根属性."""
+
+        return {
+            "Nr": int,
+            "Nt": int,
+            "quadrature_scheme": str,
+            "calculus_scheme": str,
+            "L_max": int,
+            "M_max": int,
+            "K_max": int | None,
+        }
+
     @property
-    def _rho_quadrature(self) -> tuple[np.ndarray, np.ndarray]:
-        rho, quadrature = make_quadrature(self.Nr, quadrature=self.scheme)
-        return _const_array(rho), _const_array(quadrature)
+    def quadrature(self) -> tuple[np.ndarray, np.ndarray]:
+        rho, weights = make_quadrature(self.Nr, scheme=self.quadrature_scheme)
+        return _const_array(rho), _const_array(weights)
 
     @property
     def rho(self) -> np.ndarray:
-        return self._rho_quadrature[0]
+        return self.quadrature[0]
 
     @property
-    def quadrature(self) -> np.ndarray:
-        return self._rho_quadrature[1]
+    def weights(self) -> np.ndarray:
+        return self.quadrature[1]
 
     @property
     def theta(self) -> np.ndarray:
         theta = np.linspace(0.0, 2.0 * np.pi, self.Nt, endpoint=False)
         return _const_array(theta)
+
+    @property
+    def calculus(self) -> tuple[np.ndarray, np.ndarray]:
+        accumulator, differentiator = make_calculus(self.rho, scheme=self.calculus_scheme)
+        return _const_array(accumulator), _const_array(differentiator)
+
+    @property
+    def accumulator(self) -> np.ndarray:
+        return self.calculus[0]
+
+    @property
+    def differentiator(self) -> np.ndarray:
+        return self.calculus[1]
+
+    def differentiate(
+        self,
+        f_1D: np.ndarray,
+        *,
+        out: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """在当前 Grid 上对 1D 场做谱微分."""
+        if out is None:
+            out = np.empty_like(f_1D)
+        return full_differentiation(out, f_1D, self.differentiator)
+
+    def accumulate(
+        self,
+        f_1D: np.ndarray,
+        *,
+        out: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """在当前 Grid 上对 1D 场做前缀积分。"""
+        if out is None:
+            out = np.empty_like(f_1D)
+        return full_integration(out, f_1D, self.accumulator)
+
+    def integrate(
+        self,
+        f: np.ndarray,
+        *,
+        axis: int | None = None,
+        out: np.ndarray | None = None,
+    ) -> float | np.ndarray:
+        """在当前 Grid 上执行求积."""
+        if out is None:
+            if axis is None:
+                if f.ndim == 1:
+                    return dot(f, self.weights)
+                if f.ndim != 2:
+                    raise ValueError(f"Expected a 1D or 2D array, got shape {f.shape}")
+                scratch = np.empty(f.shape[1], dtype=f.dtype)
+                colwise_weighted_sum_into(scratch, f, self.weights)
+                total = 0.0
+                for j in range(f.shape[1]):
+                    total += scratch[j]
+                return (2.0 * np.pi / f.shape[1]) * total
+
+            if f.ndim != 2:
+                raise ValueError(f"Expected a 2D array when axis={axis}, got {f.shape}")
+            if axis == RHO_AXIS:
+                out = np.empty(f.shape[1], dtype=f.dtype)
+            elif axis == THETA_AXIS:
+                out = np.empty(f.shape[0], dtype=f.dtype)
+            else:
+                raise ValueError(f"Unsupported quadrature axis {axis}")
+
+        if axis == RHO_AXIS:
+            colwise_weighted_sum_into(out, f, self.weights)
+        elif axis == THETA_AXIS:
+            nt = f.shape[1]
+            rowwise_sum_into(out, f)
+            out *= 2.0 * np.pi / nt
+        else:
+            raise ValueError(f"Unsupported quadrature axis {axis}")
+        return out
+
+    @property
+    def x(self) -> np.ndarray:
+        return _const_array(2.0 * self.rho * self.rho - 1.0)
+
+    @property
+    def y(self) -> np.ndarray:
+        return _const_array(1.0 - self.rho * self.rho)
+
+    @property
+    def T_fields(self) -> np.ndarray:
+        return _const_array(_build_chebyshev_tables(self.rho, self.x, self.L_max))
+
+    @property
+    def T(self) -> np.ndarray:
+        return self.T_fields[0]
+
+    @property
+    def T_r(self) -> np.ndarray:
+        return self.T_fields[1]
+
+    @property
+    def T_rr(self) -> np.ndarray:
+        return self.T_fields[2]
 
     @property
     def _trig_tables(
@@ -186,137 +314,6 @@ class Grid(Reactive, Serial):
         for power in range(1, max_rho_power + 1):
             rho_powers[power] = self.rho**power
         return _const_array(rho_powers)
-
-    @property
-    def x(self) -> np.ndarray:
-        return _const_array(2.0 * self.rho * self.rho - 1.0)
-
-    @property
-    def y(self) -> np.ndarray:
-        return _const_array(1.0 - self.rho * self.rho)
-
-    @property
-    def _calculus_matrices(self) -> tuple[np.ndarray, np.ndarray]:
-        accumulator, differentiator = make_calculus(self.rho, calculus=self.calculus)
-        return _const_array(accumulator), _const_array(differentiator)
-
-    @property
-    def accumulator(self) -> np.ndarray:
-        return self._calculus_matrices[0]
-
-    @property
-    def differentiator(self) -> np.ndarray:
-        return self._calculus_matrices[1]
-
-    @property
-    def T_fields(self) -> np.ndarray:
-        return _const_array(_build_chebyshev_tables(self.rho, self.x, self.L_max))
-
-    def __rich__(self):
-        tree = Tree("[bold blue]Grid[/]")
-        tree.add(f"Nr: {self.Nr}")
-        tree.add(f"Nt: {self.Nt}")
-        tree.add(f"scheme: {self.scheme}")
-        tree.add(f"calculus: {self.calculus}")
-        if self.K_max is not None:
-            tree.add(f"K_max: {self.K_max}")
-        return tree
-
-    def __str__(self) -> str:
-        console = Console(
-            color_system=None, force_terminal=False, width=120, record=True, soft_wrap=False
-        )
-        with console.capture() as capture:
-            console.print(self.__rich__())
-        return capture.get().rstrip()
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def resolve_fourier_power(self, order: int) -> int:
-        """返回当前 Grid 规则下 Fourier shape profile 的径向 prefactor 幂次."""
-        order = int(order)
-        if order <= 0:
-            return 0
-        if order <= self.M_max:
-            return int(self.K_values[order])
-        if self.K_max is None:
-            return order
-        return min(order, self.K_max)
-
-    @property
-    def T(self) -> np.ndarray:
-        return self.T_fields[0]
-
-    @property
-    def T_r(self) -> np.ndarray:
-        return self.T_fields[1]
-
-    @property
-    def T_rr(self) -> np.ndarray:
-        return self.T_fields[2]
-
-    def differentiate(
-        self,
-        f_1D: np.ndarray,
-        *,
-        out: np.ndarray | None = None,
-    ) -> np.ndarray:
-        """在当前 Grid 上对 1D 场做谱微分."""
-        if out is None:
-            out = np.empty_like(f_1D)
-        return full_differentiation(out, f_1D, self.differentiator)
-
-    def accumulate(
-        self,
-        f_1D: np.ndarray,
-        *,
-        out: np.ndarray | None = None,
-    ) -> np.ndarray:
-        """在当前 Grid 上对 1D 场做前缀积分。"""
-        if out is None:
-            out = np.empty_like(f_1D)
-        return full_integration(out, f_1D, self.accumulator)
-
-    def integrate(
-        self,
-        f: np.ndarray,
-        *,
-        axis: int | None = None,
-        out: np.ndarray | None = None,
-    ) -> float | np.ndarray:
-        """在当前 Grid 上执行求积."""
-        if out is None:
-            if axis is None:
-                if f.ndim == 1:
-                    return dot(f, self.quadrature)
-                if f.ndim != 2:
-                    raise ValueError(f"Expected a 1D or 2D array, got shape {f.shape}")
-                scratch = np.empty(f.shape[1], dtype=f.dtype)
-                colwise_weighted_sum_into(scratch, f, self.quadrature)
-                total = 0.0
-                for j in range(f.shape[1]):
-                    total += scratch[j]
-                return (2.0 * np.pi / f.shape[1]) * total
-
-            if f.ndim != 2:
-                raise ValueError(f"Expected a 2D array when axis={axis}, got {f.shape}")
-            if axis == RHO_AXIS:
-                out = np.empty(f.shape[1], dtype=f.dtype)
-            elif axis == THETA_AXIS:
-                out = np.empty(f.shape[0], dtype=f.dtype)
-            else:
-                raise ValueError(f"Unsupported quadrature axis {axis}")
-
-        if axis == RHO_AXIS:
-            colwise_weighted_sum_into(out, f, self.quadrature)
-        elif axis == THETA_AXIS:
-            nt = f.shape[1]
-            rowwise_sum_into(out, f)
-            out *= 2.0 * np.pi / nt
-        else:
-            raise ValueError(f"Unsupported quadrature axis {axis}")
-        return out
 
 
 def _const_array(value: np.ndarray) -> np.ndarray:

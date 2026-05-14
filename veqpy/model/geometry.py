@@ -101,7 +101,7 @@ class Geometry:
             grid.m_sin_mtheta,
             grid.m2_cos_mtheta,
             grid.m2_sin_mtheta,
-            grid.quadrature,
+            grid.weights,
             h_fields,
             v_fields,
             k_fields,

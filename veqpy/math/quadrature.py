@@ -30,19 +30,19 @@ DEFAULT_QUADRATURE = "legendre"
 def make_quadrature(
     n: int,
     *,
-    quadrature: str | None = None,
+    scheme: str | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Build quadrature ``(nodes, weights)`` for a quadrature scheme."""
 
-    if quadrature is None:
-        quadrature = DEFAULT_QUADRATURE
+    if scheme is None:
+        scheme = DEFAULT_QUADRATURE
 
-    quadrature = quadrature.lower()
-    if quadrature not in quadrature_generator:
+    scheme = scheme.lower()
+    if scheme not in quadrature_generator:
         available = ", ".join(sorted(quadrature_generator.registry))
-        raise ValueError(f"Unknown quadrature scheme: {quadrature}. Available schemes: {available}")
+        raise ValueError(f"Unknown quadrature scheme: {scheme}. Available schemes: {available}")
 
-    return quadrature_generator[quadrature](n)
+    return quadrature_generator[scheme](n)
 
 
 @quadrature_generator("chebyshev")

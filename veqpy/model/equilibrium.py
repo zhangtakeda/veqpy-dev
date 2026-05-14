@@ -626,7 +626,7 @@ def _normalize_shape_profiles(shape_profiles: dict[str, Profile]) -> dict[str, P
 def _build_default_shape_profile(name: str, grid: Grid) -> Profile:
     power = 0
     if name.startswith(("c", "s")) and name[1:].isdigit():
-        power = grid.resolve_fourier_power(int(name[1:]))
+        power = int(grid.K_values[int(name[1:])])
     return Profile(scale=1.0, power=power, envelope_power=1, offset=0.0, coeff=None)
 
 
@@ -697,7 +697,7 @@ def _compare_equilibrium(
     compare_grid = grid or Grid(
         Nr=64,
         Nt=64,
-        scheme="uniform",
+        quadrature_scheme="uniform",
         L_max=max(reference.grid.L_max, other.grid.L_max),
         M_max=max(reference.grid.M_max, other.grid.M_max),
         K_max=reference.grid.K_max if reference.grid.K_max == other.grid.K_max else None,
@@ -889,7 +889,7 @@ def _build_resampled_equilibrium(
     plot_grid = grid or Grid(
         Nr=64,
         Nt=64,
-        scheme="uniform",
+        quadrature_scheme="uniform",
         L_max=source_grid.L_max,
         M_max=source_grid.M_max,
         K_max=source_grid.K_max,

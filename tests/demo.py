@@ -154,9 +154,9 @@ def main() -> None:
         current_input=current_input,
         Ip=MU0 * 3.0e6,
     )
-    solve_grid = Grid(Nr=16, Nt=16, scheme="legendre")
+    solve_grid = Grid(Nr=16, Nt=16, quadrature_scheme="legendre")
     plot_grid = Grid(
-        Nr=128, Nt=256, scheme="uniform", L_max=solve_grid.L_max, M_max=solve_grid.M_max
+        Nr=128, Nt=256, quadrature_scheme="uniform", L_max=solve_grid.L_max, M_max=solve_grid.M_max
     )
     solver = Solver(
         operator=Operator(grid=solve_grid, case=case),

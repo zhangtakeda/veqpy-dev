@@ -124,10 +124,10 @@ class StaticLayout:
     M_max: int
     L_max: int
     K_max: int
-    scheme: str
-    calculus: str
+    quadrature_scheme: str
+    calculus_scheme: str
     K_values: np.ndarray
-    quadrature: np.ndarray
+    weights: np.ndarray
     differentiator: np.ndarray
     accumulator: np.ndarray
     radial_block: np.ndarray  # (8+K_max+3*L_max, Nr)
@@ -189,15 +189,6 @@ class StaticLayout:
     def m2_sin_mtheta(self) -> np.ndarray:
         return self.poloidal_block[6 + 5 * self.M_max : 7 + 6 * self.M_max]
 
-    def resolve_fourier_power(self, order: int) -> int:
-        """返回 Fourier shape profile 的径向 prefactor 幂次."""
-        order = int(order)
-        if order <= 0:
-            return 0
-        if order <= self.M_max:
-            return int(self.K_values[order])
-        return min(order, self.K_max)
-
     def to_grid(self) -> Grid:
         """从快照重建完整 Grid（用于 Equilibrium 物化等需要真实 Grid 的场景）."""
         from veqpy.model.grid import Grid
@@ -208,8 +199,8 @@ class StaticLayout:
             L_max=self.L_max,
             M_max=self.M_max,
             K_max=self.K_max,
-            scheme=self.scheme,
-            calculus=self.calculus,
+            quadrature_scheme=self.quadrature_scheme,
+            calculus_scheme=self.calculus_scheme,
         )
 
 

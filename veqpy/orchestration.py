@@ -148,27 +148,6 @@ def build_profile_names(
     return tuple(profile_names)
 
 
-def normalize_fourier_power_K_max(value: int | None) -> int | None:
-    """Normalize and validate a Fourier radial-power cap."""
-    if value is None:
-        return None
-    K_max = int(value)
-    if K_max < 1:
-        raise ValueError(f"K_max must be None or an integer >= 1, got {value!r}")
-    return K_max
-
-
-def resolve_fourier_power(order: int, K_max: int | None = None) -> int:
-    """Resolve the radial prefactor power for a Fourier shape profile order."""
-    order = int(order)
-    if order <= 0:
-        return 0
-    normalized_K_max = normalize_fourier_power_K_max(K_max)
-    if normalized_K_max is None:
-        return order
-    return min(order, normalized_K_max)
-
-
 def _decode_residual_block_code(name: str) -> tuple[int, int]:
     if name.startswith("c") and name[1:].isdigit():
         order = int(name[1:])
@@ -198,17 +177,14 @@ def build_residual_block_metadata(profile_names: tuple[str, ...]) -> tuple[np.nd
 def build_residual_block_radial_powers(
     profile_names: tuple[str, ...],
     *,
-    K_max: int | None = None,
-    K_values: np.ndarray | None = None,
+    K_values: np.ndarray,
 ) -> np.ndarray:
     radial_powers = np.zeros(len(profile_names), dtype=np.int64)
     for i, name in enumerate(profile_names):
         if name.startswith(("c", "s")) and name[1:].isdigit():
             order = int(name[1:])
-            if K_values is not None and order < K_values.size:
+            if order < K_values.size:
                 radial_powers[i] = int(K_values[order])
-            else:
-                radial_powers[i] = resolve_fourier_power(order, K_max)
     return radial_powers
 
 
@@ -326,68 +302,12 @@ SOURCE_PARAMETERIZATION_CODES = {
 }
 
 
-def _resolve_source_projection_policy(
-    route: str,
-    coordinate: str,
-    nodes: str,
-    *,
-    has_ip_constraint: bool,
-    has_beta_constraint: bool,
-) -> SourceProjectionPolicy | None:
-    policy = SOURCE_PROJECTION_POLICIES.get((route, coordinate, nodes))
-    if policy is None:
-        return None
-    if route != "PQ" or coordinate != "psin" or nodes != "uniform":
-        return policy
-    if has_ip_constraint and has_beta_constraint:
-        return SourceProjectionPolicy(
-            domain="sqrt_psin",
-            heat_degree=7,
-            current_degree=7,
-            ip_current_degree=7,
-            current_ip_endpoint_policy="affine_both",
-            current_other_endpoint_policy="none",
-        )
-    if has_ip_constraint:
-        return SourceProjectionPolicy(
-            domain="sqrt_psin",
-            heat_degree=7,
-            current_degree=9,
-            ip_current_degree=7,
-            current_ip_endpoint_policy="affine_both",
-            current_other_endpoint_policy="none",
-        )
-    if has_beta_constraint:
-        return SourceProjectionPolicy(
-            domain="sqrt_psin",
-            heat_degree=7,
-            current_degree=9,
-            ip_current_degree=7,
-            current_ip_endpoint_policy="affine_both",
-            current_other_endpoint_policy="both",
-        )
-    return SourceProjectionPolicy(
-        domain="sqrt_psin",
-        heat_degree=7,
-        current_degree=10,
-        ip_current_degree=7,
-        current_ip_endpoint_policy="affine_both",
-        current_other_endpoint_policy="both",
-    )
-
-
 def build_source_plan(
     *,
     case: "OperatorCase",
     source_route_spec: object,
 ) -> SourcePlan:
-    policy = _resolve_source_projection_policy(
-        case.route,
-        case.coordinate,
-        case.nodes,
-        has_ip_constraint=bool(np.isfinite(case.Ip)),
-        has_beta_constraint=bool(np.isfinite(case.beta)),
-    )
+    policy = SOURCE_PROJECTION_POLICIES.get((case.route, case.coordinate, case.nodes))
     has_projection_policy = policy is not None
     has_ip_constraint = bool(np.isfinite(case.Ip))
     projection_domain = "psin"
@@ -1041,9 +961,7 @@ __all__ = [
     "build_source_plan",
     "expand_profile_family",
     "get_prefix_profile_names",
-    "normalize_fourier_power_K_max",
     "refresh_source_runtime",
-    "resolve_fourier_power",
     "validate_profile_family_order",
     "validate_source_inputs",
     "validate_source_plan_profile_support",

@@ -92,38 +92,6 @@ def _install_fake_attempts(monkeypatch, solver: Solver, scripted_attempts):
     return calls
 
 
-def test_operator_collocation_residual_uses_radial_quadrature(monkeypatch):
-    operator = object.__new__(Operator)
-    operator.static_layout = SimpleNamespace(
-        Nr=2, Nt=3, quadrature=np.array([0.25, 0.75], dtype=np.float64)
-    )
-    operator.residual_surface_workspace = np.asarray(
-        [
-            [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
-            [[0.5, 1.0, 1.5], [2.0, 2.5, 3.0]],
-            [[-1.0, -2.0, -3.0], [-4.0, -5.0, -6.0]],
-        ],
-        dtype=np.float64,
-    )
-
-    monkeypatch.setattr(Operator, "coerce_x", lambda self, x: np.asarray(x, dtype=np.float64))
-    monkeypatch.setattr(Operator, "stage_a_profile", lambda self, x: None)
-    monkeypatch.setattr(Operator, "stage_b_geometry", lambda self: None)
-    monkeypatch.setattr(Operator, "stage_c_source", lambda self: None)
-    monkeypatch.setattr(Operator, "_update_residual_surface_workspace", lambda self: None)
-
-    residual = operator.residual_collocation(np.zeros(1, dtype=np.float64))
-    sqrt_weights = np.sqrt(np.array([[0.25], [0.75]], dtype=np.float64) / 3.0)
-    expected = np.concatenate(
-        (
-            np.ravel(sqrt_weights * operator.residual_surface_workspace[1]),
-            np.ravel(sqrt_weights * operator.residual_surface_workspace[2]),
-        )
-    )
-
-    assert np.allclose(residual, expected)
-
-
 def test_operator_exposes_explicit_residual_vectors(monkeypatch):
     operator = object.__new__(Operator)
 

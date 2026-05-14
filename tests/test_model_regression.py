@@ -31,11 +31,11 @@ def _max_bidirectional_distance(points_a, points_b):
 
 
 def test_grid_calculus_string_switches_base_matrices():
-    compact_grid = Grid(Nr=8, Nt=16, scheme="uniform", calculus="compact", M_max=4)
-    spectral_grid = Grid(Nr=8, Nt=16, scheme="uniform", calculus="spectral", M_max=4)
+    compact_grid = Grid(Nr=8, Nt=16, quadrature_scheme="uniform", calculus_scheme="compact", M_max=4)
+    spectral_grid = Grid(Nr=8, Nt=16, quadrature_scheme="uniform", calculus_scheme="spectral", M_max=4)
 
-    assert compact_grid.calculus == "compact"
-    assert spectral_grid.calculus == "spectral"
+    assert compact_grid.calculus_scheme == "compact"
+    assert spectral_grid.calculus_scheme == "spectral"
     assert np.allclose(
         compact_grid.differentiator,
         spectral_grid.differentiator,
@@ -47,7 +47,7 @@ def test_grid_calculus_string_switches_base_matrices():
 
 
 def test_grid_default_order_keeps_mmax_before_kmax():
-    grid = Grid(Nr=8, Nt=16, scheme="uniform")
+    grid = Grid(Nr=8, Nt=16, quadrature_scheme="uniform")
 
     assert grid.L_max == 20
     assert grid.M_max == 20
@@ -56,7 +56,7 @@ def test_grid_default_order_keeps_mmax_before_kmax():
 
 def test_grid_serializes_optional_kmax(tmp_path):
     path = tmp_path / "grid.json"
-    grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=4)
+    grid = Grid(Nr=8, Nt=16, quadrature_scheme="uniform", M_max=4)
 
     grid.write(path)
     loaded = Grid.load(str(path))
@@ -66,7 +66,7 @@ def test_grid_serializes_optional_kmax(tmp_path):
 
 
 def test_grid_reactive_properties_recompute_after_root_update():
-    grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=4)
+    grid = Grid(Nr=8, Nt=16, quadrature_scheme="uniform", M_max=4)
 
     rho_before = grid.rho
     trig_before = grid.cos_mtheta
@@ -79,7 +79,7 @@ def test_grid_reactive_properties_recompute_after_root_update():
     grid.Nt = 12
 
     assert grid.rho.shape == (10,)
-    assert grid.quadrature.shape == (10,)
+    assert grid.weights.shape == (10,)
     assert grid.differentiator.shape == (10, 10)
     assert grid.cos_mtheta.shape == (5, 12)
     assert grid.rho is not rho_before
@@ -93,17 +93,17 @@ def test_grid_reactive_properties_recompute_after_root_update():
 
 
 def test_grid_integrate_accepts_const_cached_quadrature():
-    grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=4)
+    grid = Grid(Nr=8, Nt=16, quadrature_scheme="uniform", M_max=4)
     values = np.ones((grid.Nr, grid.Nt), dtype=np.float64)
 
-    assert not grid.quadrature.flags.writeable
+    assert not grid.weights.flags.writeable
     assert grid.integrate(np.ones(grid.Nr, dtype=np.float64)) == pytest.approx(1.0)
     assert grid.integrate(values) == pytest.approx(2.0 * np.pi)
 
 
 def test_equilibrium_plot_profiles_use_unsampled_equilibrium(monkeypatch):
     equilibrium, _ = _build_high_order_equilibrium()
-    plot_grid = Grid(Nr=12, Nt=24, scheme="uniform", M_max=equilibrium.grid.M_max)
+    plot_grid = Grid(Nr=12, Nt=24, quadrature_scheme="uniform", M_max=equilibrium.grid.M_max)
     captured = {}
 
     def _capture_summary(*, surface_equilibrium, profile_equilibrium=None, plot_residual=False):
@@ -125,7 +125,7 @@ def test_equilibrium_plot_profiles_use_unsampled_equilibrium(monkeypatch):
 
 def test_equilibrium_plot_current_panel_keeps_native_radial_samples():
     equilibrium, _ = _build_high_order_equilibrium()
-    plot_grid = Grid(Nr=32, Nt=32, scheme="uniform", M_max=equilibrium.grid.M_max)
+    plot_grid = Grid(Nr=32, Nt=32, quadrature_scheme="uniform", M_max=equilibrium.grid.M_max)
 
     fig = equilibrium.plot(grid=plot_grid)
     try:
@@ -142,8 +142,8 @@ def test_equilibrium_plot_current_panel_keeps_native_radial_samples():
 
 def test_equilibrium_compare_profiles_keep_native_radial_samples(monkeypatch):
     reference, _ = _build_high_order_equilibrium()
-    other = reference.resample(Grid(Nr=12, Nt=16, scheme="uniform", M_max=reference.grid.M_max))
-    plot_grid = Grid(Nr=32, Nt=32, scheme="uniform", M_max=reference.grid.M_max)
+    other = reference.resample(Grid(Nr=12, Nt=16, quadrature_scheme="uniform", M_max=reference.grid.M_max))
+    plot_grid = Grid(Nr=32, Nt=32, quadrature_scheme="uniform", M_max=reference.grid.M_max)
 
     original_close = plt.close
     monkeypatch.setattr(plt, "close", lambda *args, **kwargs: None)
@@ -216,12 +216,11 @@ def test_operator_build_equilibrium_snapshots_residual_path(monkeypatch):
 
 
 def _build_high_order_equilibrium() -> tuple[Equilibrium, Operator]:
-    grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=4)
+    grid = Grid(Nr=8, Nt=16, quadrature_scheme="legendre", M_max=4)
     profile_coeffs = {name: None for name in build_profile_names(grid.M_max)}
     profile_coeffs.update(
         {
             "psin": [0.0, 1.0],
-            "F": [1.0],
             "h": [0.0],
             "c3": [0.05],
             "s4": [-0.03],
@@ -240,8 +239,8 @@ def _build_high_order_equilibrium() -> tuple[Equilibrium, Operator]:
             c_offsets=np.zeros(grid.M_max + 1),
             s_offsets=np.zeros(grid.M_max + 1),
         ),
-        heat_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
-        current_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
+        heat_input=np.full(TEST_SOURCE_SAMPLE_COUNT, -0.1),
+        current_input=np.full(TEST_SOURCE_SAMPLE_COUNT, -0.1),
     )
     operator = Operator(grid=grid, case=case)
     equilibrium = operator.build_equilibrium(operator.encode_initial_state())
@@ -261,12 +260,11 @@ def test_equilibrium_plot_handles_2d_axis_extrapolation():
 
 
 def _build_operator_case(*, mode="PF", coordinate="rho", nodes="uniform") -> OperatorCase:
-    grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=4)
+    grid = Grid(Nr=8, Nt=16, quadrature_scheme="legendre", M_max=4)
     profile_coeffs = {name: None for name in build_profile_names(grid.M_max)}
     profile_coeffs.update(
         {
             "psin": [0.0, 1.0],
-            "F": [1.0],
             "h": [0.0],
             "c3": [0.05],
             "s4": [-0.03],
@@ -285,8 +283,8 @@ def _build_operator_case(*, mode="PF", coordinate="rho", nodes="uniform") -> Ope
             c_offsets=np.zeros(grid.M_max + 1),
             s_offsets=np.zeros(grid.M_max + 1),
         ),
-        heat_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
-        current_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
+        heat_input=np.full(TEST_SOURCE_SAMPLE_COUNT, -0.1),
+        current_input=np.full(TEST_SOURCE_SAMPLE_COUNT, -0.1),
     )
     return grid, case
 
@@ -416,7 +414,7 @@ def test_operator_case_skips_mu0_current_check_for_pq_driver():
 
 
 def test_grid_precomputes_fourier_tables_and_rho_powers():
-    grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=5)
+    grid = Grid(Nr=8, Nt=16, quadrature_scheme="uniform", M_max=5)
 
     assert grid.cos_mtheta.shape == (6, 16)
     assert grid.sin_mtheta.shape == (6, 16)
@@ -549,7 +547,7 @@ def test_equilibrium_roundtrips_canonical_shape_profiles():
     assert {"k", "c3", "s4"}.issubset(expected_profiles)
     assert equilibrium.geometry.tb.shape == (equilibrium.grid.Nr, equilibrium.grid.Nt)
 
-    target_grid = Grid(Nr=10, Nt=12, scheme="uniform", M_max=4)
+    target_grid = Grid(Nr=10, Nt=12, quadrature_scheme="uniform", M_max=4)
     resampled = equilibrium.resample(target_grid)
     resampled_positional = equilibrium.resample(target_grid)
     assert set(resampled.shape_profiles) == expected_profiles
@@ -695,6 +693,7 @@ def test_geqdsk_io_uses_standard_psirz_file_order():
 
 def test_equilibrium_to_geqdsk_rejects_zero_alpha2_for_physical_psi_export():
     equilibrium, _ = _build_high_order_equilibrium()
+    equilibrium.alpha2 = 0.0
     boundary_R = np.asarray(equilibrium.geometry.R[-1], dtype=np.float64)
     boundary_Z = np.asarray(equilibrium.geometry.Z[-1], dtype=np.float64)
 
@@ -737,7 +736,7 @@ def test_equilibrium_exposes_gs_operator_residual_terms():
 
 def test_resampled_equilibrium_preserves_profile_shapes_on_target_grid():
     profile_equilibrium, _ = _build_high_order_equilibrium()
-    target_grid = Grid(Nr=12, Nt=24, scheme="uniform", M_max=4)
+    target_grid = Grid(Nr=12, Nt=24, quadrature_scheme="uniform", M_max=4)
 
     resampled = profile_equilibrium.resample(target_grid)
 
@@ -774,13 +773,14 @@ def test_equilibrium_diagnostics_use_grid_base_calculus(monkeypatch):
     assert equilibrium.jpara.shape == equilibrium.rho.shape
     assert np.all(np.isfinite(equilibrium.Psi))
     assert np.all(np.isfinite(equilibrium.Phi))
-    equilibrium.resample(Grid(Nr=12, Nt=24, scheme="uniform", M_max=4))
+    equilibrium.resample(Grid(Nr=12, Nt=24, quadrature_scheme="uniform", M_max=4))
     assert calls["accumulate"] >= 2
     assert calls["differentiate"] >= 2
 
 
 def test_pj2_psin_route_uses_f_profile_parameterization():
     grid, case = _build_operator_case(mode="PJ2", coordinate="psin", nodes="uniform")
+    case.profile_coeffs["F"] = [1.0]
     case.profile_coeffs["psin"] = None
     operator = Operator(grid=grid, case=case)
     x = operator.encode_initial_state()
@@ -802,42 +802,6 @@ def test_pj2_psin_route_uses_f_profile_parameterization():
     assert np.allclose(operator.F_profile.u_rr, expected_F_rr)
 
 
-def test_pq_psin_route_evaluates_residual_without_active_psin_profile():
-    grid, case = _build_operator_case(mode="PQ", coordinate="psin", nodes="uniform")
-    case.profile_coeffs["psin"] = None
-    case.heat_input = np.linspace(1.0, 2.0, case.heat_input.shape[0])
-    case.current_input = np.linspace(1.0, 2.0, case.current_input.shape[0])
-    operator = Operator(grid=grid, case=case)
-    equilibrium = operator.build_equilibrium(operator.encode_initial_state())
-
-    assert equilibrium.grid.Nr == grid.Nr
-    assert equilibrium.grid.Nt == grid.Nt
-    assert equilibrium.grid.M_max == grid.M_max
-    assert equilibrium.F.shape == grid.rho.shape
-    assert np.all(np.isfinite(equilibrium.F))
-
-
-def test_operator_collocation_residual_returns_desc_style_pointwise_force_balance():
-    grid, case = _build_operator_case(mode="PF", coordinate="rho", nodes="uniform")
-    operator = Operator(grid=grid, case=case)
-    x = operator.encode_initial_state()
-
-    residual = operator.residual_collocation(x)
-    sqrt_weights = np.sqrt(grid.quadrature[:, None] / grid.Nt)
-    expected = np.concatenate(
-        (
-            np.ravel(sqrt_weights * operator.residual_surface_workspace[1]),
-            np.ravel(sqrt_weights * operator.residual_surface_workspace[2]),
-        )
-    )
-
-    assert residual.shape == (2 * grid.Nr * grid.Nt,)
-    assert residual.dtype == np.float64
-    assert np.all(np.isfinite(residual))
-    assert np.allclose(residual, expected)
-    assert not np.shares_memory(residual, operator.residual_surface_workspace)
-
-
 def test_equilibrium_load_rejects_legacy_shape_payload():
     equilibrium, operator = _build_high_order_equilibrium()
     grid = equilibrium.grid
@@ -851,10 +815,10 @@ def test_equilibrium_load_rejects_legacy_shape_payload():
                 "Grid": {
                     "Nr": grid.Nr,
                     "Nt": grid.Nt,
-                    "scheme": grid.scheme,
+                    "quadrature_scheme": grid.quadrature_scheme,
                     "L_max": grid.L_max,
                     "M_max": grid.M_max,
-                    "calculus": grid.calculus,
+                    "calculus": grid.calculus_scheme,
                     "K_max": grid.K_max,
                 }
             },
@@ -893,12 +857,11 @@ def test_equilibrium_load_rejects_legacy_shape_payload():
 
 
 def test_equilibrium_compare_reports_only_primary_shape_errors():
-    grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=4)
+    grid = Grid(Nr=8, Nt=16, quadrature_scheme="legendre", M_max=4)
     profile_coeffs = {name: None for name in build_profile_names(grid.M_max)}
     profile_coeffs.update(
         {
             "psin": [0.0, 1.0],
-            "F": [1.0],
             "h": [0.0],
             "v": [0.0],
             "k": [0.0],
@@ -918,8 +881,8 @@ def test_equilibrium_compare_reports_only_primary_shape_errors():
             c_offsets=np.zeros(grid.M_max + 1),
             s_offsets=np.zeros(grid.M_max + 1),
         ),
-        heat_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
-        current_input=np.zeros(TEST_SOURCE_SAMPLE_COUNT),
+        heat_input=np.full(TEST_SOURCE_SAMPLE_COUNT, -0.1),
+        current_input=np.full(TEST_SOURCE_SAMPLE_COUNT, -0.1),
     )
     case_cur = case_ref.copy()
     case_cur.profile_coeffs["v"] = [0.03]

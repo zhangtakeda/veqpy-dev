@@ -10,7 +10,6 @@ def _build_case(grid: Grid) -> OperatorCase:
     profile_coeffs.update(
         {
             "psin": [0.0, 1.0],
-            "F": [1.0],
             "h": [0.0],
             "c4": [0.05],
             "s5": [-0.03],
@@ -29,24 +28,23 @@ def _build_case(grid: Grid) -> OperatorCase:
             c_offsets=np.zeros(grid.M_max + 1),
             s_offsets=np.zeros(grid.M_max + 1),
         ),
-        heat_input=np.zeros(21),
-        current_input=np.zeros(21),
+        heat_input=np.full(21, -0.1),
+        current_input=np.full(21, -0.1),
     )
 
 
 def test_grid_owns_fourier_radial_power_cap() -> None:
-    grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=5, K_max=2)
+    grid = Grid(Nr=8, Nt=16, quadrature_scheme="uniform", M_max=5, K_max=2)
 
     assert grid.K_max == 2
     np.testing.assert_array_equal(grid.K_values, np.array([0, 1, 2, 2, 2, 2]))
     assert grid.rho_powers.shape == (4, 8)
     np.testing.assert_allclose(grid.rho_powers[3], grid.rho**3)
-    assert grid.resolve_fourier_power(5) == 2
-    assert grid.resolve_fourier_power(7) == 2
+    assert grid.K_values[5] == 2
 
 
 def test_grid_kmax_drives_operator_profile_and_residual_metadata() -> None:
-    grid = Grid(Nr=8, Nt=16, scheme="uniform", M_max=5, K_max=2)
+    grid = Grid(Nr=8, Nt=16, quadrature_scheme="legendre", M_max=5, K_max=2)
     operator = Operator(grid=grid, case=_build_case(grid))
 
     assert not hasattr(operator, "K_max")
@@ -66,4 +64,4 @@ def test_grid_kmax_drives_operator_profile_and_residual_metadata() -> None:
 
 def test_grid_rejects_invalid_kmax() -> None:
     with pytest.raises(ValueError, match="K_max"):
-        Grid(Nr=8, Nt=16, scheme="uniform", M_max=5, K_max=0)
+        Grid(Nr=8, Nt=16, quadrature_scheme="uniform", M_max=5, K_max=0)

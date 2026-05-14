@@ -271,7 +271,7 @@ class Operator:
         return np.ravel(sqrt_weights * field).copy()
 
     def _collocation_sqrt_weights(self) -> np.ndarray:
-        radial_weights = np.asarray(self.static_layout.quadrature, dtype=np.float64)
+        radial_weights = np.asarray(self.static_layout.weights, dtype=np.float64)
         if radial_weights.ndim != 1 or radial_weights.size != int(self.static_layout.Nr):
             raise ValueError(f"Invalid radial weights shape {radial_weights.shape}")
         return np.sqrt(radial_weights[:, None] / max(int(self.static_layout.Nt), 1))
@@ -344,10 +344,10 @@ class Operator:
             M_max=int(grid.M_max),
             L_max=int(grid.L_max),
             K_max=grid.K_max or grid.M_max,
-            scheme=grid.scheme,
-            calculus=grid.calculus,
+            quadrature_scheme=grid.quadrature_scheme,
+            calculus_scheme=grid.calculus_scheme,
             K_values=grid.K_values.copy(),
-            quadrature=grid.quadrature.copy(),
+            weights=grid.weights.copy(),
             differentiator=grid.differentiator.copy(),
             accumulator=grid.accumulator.copy(),
             radial_block=_pack_radial_block(
@@ -508,7 +508,7 @@ class Operator:
         for name in self.c_profile_names + self.s_profile_names:
             order = int(name[1:])
             self.profile_static_kwargs_by_name[name] = (
-                {} if order == 0 else {"power": self.static_layout.resolve_fourier_power(order)}
+                {} if order == 0 else {"power": int(self.static_layout.K_values[order])}
             )
         self.profile_offset_specs = dict(orchestration.PROFILE_OFFSET_SPECS)
 
@@ -650,7 +650,7 @@ class Operator:
         rho_powers = self.static_layout.rho_powers
         y = self.static_layout.y
         T = self.static_layout.T
-        quadrature = self.static_layout.quadrature
+        weights = self.static_layout.weights
         a = self.case.a
         R0 = self.case.R0
         B0 = self.case.B0
@@ -679,7 +679,7 @@ class Operator:
                 rho_powers,
                 y,
                 T,
-                quadrature,
+                weights,
                 a,
                 R0,
                 B0,
@@ -699,7 +699,7 @@ class Operator:
         rho_powers = self.static_layout.rho_powers
         y = self.static_layout.y
         T = self.static_layout.T
-        quadrature = self.static_layout.quadrature
+        weights = self.static_layout.weights
         a = self.case.a
         R0 = self.case.R0
         B0 = self.case.B0
@@ -728,7 +728,7 @@ class Operator:
                 rho_powers,
                 y,
                 T,
-                quadrature,
+                weights,
                 a,
                 R0,
                 B0,

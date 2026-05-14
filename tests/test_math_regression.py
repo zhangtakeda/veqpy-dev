@@ -8,19 +8,19 @@ HIGH_ORDER_NODE_COUNT = 129
 
 
 def _compact_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    return math_api.make_calculus(nodes, calculus="compact")
+    return math_api.make_calculus(nodes, scheme="compact")
 
 
 def _cfd35_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    return math_api.make_calculus(nodes, calculus="cfd35")
+    return math_api.make_calculus(nodes, scheme="cfd35")
 
 
 def _cfd55_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    return math_api.make_calculus(nodes, calculus="cfd55")
+    return math_api.make_calculus(nodes, scheme="cfd55")
 
 
 def _spectral_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    return math_api.make_calculus(nodes, calculus="spectral")
+    return math_api.make_calculus(nodes, scheme="spectral")
 
 
 def test_math_public_api_hides_base_calculus_builders():
@@ -39,7 +39,7 @@ def test_make_calculus_rejects_non_1d_nodes():
     nodes = np.eye(4, dtype=np.float64)
 
     try:
-        math_api.make_calculus(nodes, calculus="spectral")
+        math_api.make_calculus(nodes, scheme="spectral")
     except ValueError as exc:
         assert "one-dimensional" in str(exc)
     else:
@@ -92,7 +92,7 @@ def test_higher_order_compact_calculus_requires_at_least_five_nodes():
 
     for calculus in ("cfd35", "cfd55"):
         try:
-            math_api.make_calculus(nodes, calculus=calculus)
+            math_api.make_calculus(nodes, scheme=calculus)
         except ValueError as exc:
             assert "at least 5 nodes" in str(exc)
         else:
@@ -103,7 +103,7 @@ def test_higher_order_compact_calculus_preserves_polynomial_derivatives():
     nodes = np.linspace(0.0, 1.0, 17)
 
     for calculus, exact_degree in (("cfd35", 6), ("cfd55", 8)):
-        _, differentiator = math_api.make_calculus(nodes, calculus=calculus)
+        _, differentiator = math_api.make_calculus(nodes, scheme=calculus)
 
         assert np.all(np.isfinite(differentiator))
         for degree in range(exact_degree + 1):
@@ -121,7 +121,7 @@ def test_higher_order_compact_calculus_integrates_constant_and_linear_data():
     nodes, _ = legendre_quadrature(17)
 
     for calculus in ("cfd35", "cfd55"):
-        accumulator, differentiator = math_api.make_calculus(nodes, calculus=calculus)
+        accumulator, differentiator = math_api.make_calculus(nodes, scheme=calculus)
 
         assert np.all(np.isfinite(accumulator))
         assert np.allclose(accumulator @ np.ones_like(nodes), nodes, rtol=1.0e-10, atol=1.0e-10)
@@ -143,7 +143,7 @@ def test_calculus_registry_selects_compact_and_uniform_spectral_matrices():
 
 def test_calculus_registry_selects_cfd35_and_cfd55_matrices():
     nodes = np.linspace(0.0, 1.0, 9)
-    cfd33_integration, cfd33_differentiation = math_api.make_calculus(nodes, calculus="cfd33")
+    cfd33_integration, cfd33_differentiation = math_api.make_calculus(nodes, scheme="cfd33")
     cfd35_integration, cfd35_differentiation = _cfd35_calculus(nodes)
     cfd55_integration, cfd55_differentiation = _cfd55_calculus(nodes)
 
@@ -243,7 +243,7 @@ def test_high_order_quadrature_rules_preserve_expected_moments():
     }
 
     for scheme in ["legendre", "chebyshev", "lobatto", "radau", "uniform"]:
-        nodes, weights = make_quadrature(HIGH_ORDER_NODE_COUNT, quadrature=scheme)
+        nodes, weights = make_quadrature(HIGH_ORDER_NODE_COUNT, scheme=scheme)
         assert np.all(np.isfinite(nodes))
         assert np.all(np.isfinite(weights))
         assert np.all(np.diff(nodes) > 0.0)

@@ -35,7 +35,7 @@ def make_profile(
     if static_kwargs is None and name.startswith(("c", "s")) and name[1:].isdigit():
         order = int(name[1:])
         static_kwargs = (
-            {} if order == 0 else {"power": _resolve_fourier_power(operator_grid, order)}
+            {} if order == 0 else {"power": int(operator_grid.K_values[order])}
         )
     if static_kwargs is not None:
         kwargs.update(static_kwargs)
@@ -86,7 +86,7 @@ def refresh_profile_runtime(
         if static_kwargs is None and name.startswith(("c", "s")) and name[1:].isdigit():
             order = int(name[1:])
             static_kwargs = (
-                {} if order == 0 else {"power": operator_grid.resolve_fourier_power(order)}
+                {} if order == 0 else {"power": int(operator_grid.K_values[order])}
             )
         elif static_kwargs is None:
             static_kwargs = {}
@@ -125,12 +125,6 @@ def _profile_scale(case: OperatorCase, name: str) -> float:
     if name == "F":
         return float(case.R0 * case.B0) ** 2
     return 1.0
-
-
-def _resolve_fourier_power(operator_grid: StaticLayout | None, order: int) -> int:
-    if operator_grid is None:
-        return int(order)
-    return operator_grid.resolve_fourier_power(order)
 
 
 def refresh_stage_a_runtime(

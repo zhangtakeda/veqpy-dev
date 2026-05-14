@@ -156,9 +156,9 @@ def main() -> None:
         current_input=np.asarray(geqdsk.FF_psi, dtype=np.float64),
         Ip=MU0 * float(geqdsk.Ip),
     )
-    solve_grid = Grid(Nr=32, Nt=32, scheme="legendre")
+    solve_grid = Grid(Nr=32, Nt=32, quadrature_scheme="legendre")
     plot_grid = Grid(
-        Nr=128, Nt=256, scheme="uniform", L_max=solve_grid.L_max, M_max=solve_grid.M_max
+        Nr=128, Nt=256, quadrature_scheme="uniform", L_max=solve_grid.L_max, M_max=solve_grid.M_max
     )
     solver = Solver(
         operator=Operator(grid=solve_grid, case=case),

@@ -281,7 +281,7 @@ class FusedResidualPackABI:
     rho_powers: np.ndarray
     y: np.ndarray
     T: np.ndarray
-    quadrature: np.ndarray
+    weights: np.ndarray
     a: float
     R0: float
     B0: float
@@ -292,7 +292,7 @@ class FusedSourceEvalABI:
     source_kernel: Callable
     scratch_source_kernel: Callable | None
     coordinate_code: int
-    quadrature: np.ndarray
+    weights: np.ndarray
     differentiator: np.ndarray
     accumulator: np.ndarray
     rho: np.ndarray
@@ -386,7 +386,7 @@ def build_fused_residual_pack_abi(
         rho_powers=static_layout.rho_powers,
         y=static_layout.y,
         T=static_layout.T,
-        quadrature=static_layout.quadrature,
+        weights=static_layout.weights,
         a=a,
         R0=R0,
         B0=B0,
@@ -411,7 +411,7 @@ def build_fused_source_eval_abi(
         source_kernel=source_kernel,
         scratch_source_kernel=resolve_source_scratch_kernel(source_kernel),
         coordinate_code=int(source_plan.coordinate_code),
-        quadrature=static_layout.quadrature,
+        weights=static_layout.weights,
         differentiator=static_layout.differentiator,
         accumulator=static_layout.accumulator,
         rho=static_layout.rho,

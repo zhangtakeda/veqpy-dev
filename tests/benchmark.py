@@ -47,19 +47,19 @@ MU0 = 4.0e-7 * np.pi
 REFERENCE_GRID = Grid(
     Nr=64,
     Nt=32,
-    scheme="legendre",
+    quadrature_scheme="legendre",
 )
 
 TEST_GRID = Grid(
     Nr=32,
     Nt=16,
-    scheme="chebyshev",
+    quadrature_scheme="chebyshev",
 )
 
 REFERENCE_SUMMARY_GRID = Grid(
     Nr=64,
     Nt=128,
-    scheme="uniform",
+    quadrature_scheme="uniform",
 )
 
 CONFIG = SolverConfig(
@@ -390,8 +390,8 @@ def _reference_cache_signature() -> dict[str, object]:
         "reference_grid": {
             "Nr": int(REFERENCE_GRID.Nr),
             "Nt": int(REFERENCE_GRID.Nt),
-            "scheme": REFERENCE_GRID.scheme,
-            "calculus": REFERENCE_GRID.calculus,
+            "quadrature_scheme": REFERENCE_GRID.quadrature_scheme,
+            "calculus": REFERENCE_GRID.calculus_scheme,
             "L_max": int(REFERENCE_GRID.L_max),
             "M_max": int(REFERENCE_GRID.M_max),
         },
@@ -912,10 +912,10 @@ def _write_report(
                 ("reference_case", "PF_RHO + Ip"),
                 (
                     "reference_grid",
-                    f"{REFERENCE_GRID.Nr}x{REFERENCE_GRID.Nt} ({REFERENCE_GRID.scheme})",
+                    f"{REFERENCE_GRID.Nr}x{REFERENCE_GRID.Nt} ({REFERENCE_GRID.quadrature_scheme})",
                 ),
                 ("reference_source_samples", str(REFERENCE_SOURCE_SAMPLE_COUNT)),
-                ("test_grid", f"{TEST_GRID.Nr}x{TEST_GRID.Nt} ({TEST_GRID.scheme})"),
+                ("test_grid", f"{TEST_GRID.Nr}x{TEST_GRID.Nt} ({TEST_GRID.quadrature_scheme})"),
                 ("test_source_samples", str(TEST_SOURCE_SAMPLE_COUNT)),
                 ("repeat_count", str(BENCHMARK_REPEAT_COUNT)),
                 ("shape_tol", f"{SHAPE_MATCH_TOL:.3e}"),
@@ -1260,7 +1260,7 @@ def _write_reference_summary_json(reference: ReferenceBundle) -> None:
         "sampling": {
             "Nr": int(REFERENCE_SUMMARY_GRID.Nr),
             "Nt": int(REFERENCE_SUMMARY_GRID.Nt),
-            "scheme": REFERENCE_SUMMARY_GRID.scheme,
+            "quadrature_scheme": REFERENCE_SUMMARY_GRID.quadrature_scheme,
         },
         "geometry": {
             "R0": float(native_eq.R0),
