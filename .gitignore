@@ -45,4 +45,5 @@ tests/**
 uv.lock
 /**.md
 /**.py
+/**.patch
 !README.md
