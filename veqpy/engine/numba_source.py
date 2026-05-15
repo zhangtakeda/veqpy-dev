@@ -52,6 +52,15 @@ from veqpy.math.fast import (
 from veqpy.math.interpolate import build_uniform_source_interpolation_matrix
 
 DEFAULT_LOCAL_BARYCENTRIC_STENCIL = 8
+
+# PJ2-psin-uniform is the only route that materializes psin by a
+# fixed-point loop. Keep these as route constants instead of user-facing
+# source-plan parameters.
+PJ2_PSIN_UNIFORM_FIXED_POINT_MAX_ITER = 16
+PJ2_PSIN_UNIFORM_FIXED_POINT_MAX_RESIDUAL = 1.0e-10
+PJ2_PSIN_UNIFORM_FIXED_POINT_FINALIZE_ITER = 8
+PJ2_PSIN_UNIFORM_BARYCENTRIC_ORDER_CAP = 8
+
 RHO_AXIS = 0
 THETA_AXIS = 1
 

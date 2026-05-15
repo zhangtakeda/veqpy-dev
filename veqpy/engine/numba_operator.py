@@ -10,7 +10,7 @@ Public API:
 
 Notes:
 - 这里只覆盖 common route.
-- fixed-point psin 仍由上层保留 staged orchestration.
+- PJ2-psin-uniform fixed-point psin 在对应 route 内局部执行.
 """
 
 from __future__ import annotations
@@ -28,6 +28,10 @@ from veqpy.engine.numba_residual import (
     update_residual_compact,
 )
 from veqpy.engine.numba_source import (
+    PJ2_PSIN_UNIFORM_BARYCENTRIC_ORDER_CAP,
+    PJ2_PSIN_UNIFORM_FIXED_POINT_FINALIZE_ITER,
+    PJ2_PSIN_UNIFORM_FIXED_POINT_MAX_ITER,
+    PJ2_PSIN_UNIFORM_FIXED_POINT_MAX_RESIDUAL,
     _local_barycentric_interpolate_pair,
     _materialize_profile_owned_psin_source_impl,
     _materialize_projected_source_inputs_impl,
@@ -37,8 +41,9 @@ from veqpy.engine.numba_source import (
     _update_fixed_point_psin_query_and_spline_uniform_inputs_impl,
     _update_fourier_family_fields_impl,
     _update_pj2_from_psin_inputs_with_scratch,
-    _update_pq_from_psin_inputs_with_scratch,
+    uniform_barycentric_weights,
 )
+from veqpy.math.interpolate import build_uniform_source_interpolation_coefficients
 
 if TYPE_CHECKING:
     from veqpy.operator.runtime_layout import BackendState
@@ -183,58 +188,7 @@ def _pack_residual_output(
 
 
 @njit(cache=True, nogil=True)
-def _call_source_kernel_with_scratch(
-    scratch_source_kernel,
-    root_fields: np.ndarray,
-    FFn_psin: np.ndarray,
-    Pn_psin: np.ndarray,
-    materialized_heat_input: np.ndarray,
-    materialized_current_input: np.ndarray,
-    coordinate_code: int,
-    R0: float,
-    B0: float,
-    weights: np.ndarray,
-    differentiator: np.ndarray,
-    accumulator: np.ndarray,
-    rho: np.ndarray,
-    n_axis_fix: int,
-    radial_workspace: np.ndarray,
-    surface_workspace: np.ndarray,
-    F_profile_u: np.ndarray,
-    Ip: float,
-    beta: float,
-    source_scratch_1d: np.ndarray,
-    source_scratch_2d: np.ndarray,
-) -> tuple[float, float]:
-    return scratch_source_kernel(
-        root_fields,
-        FFn_psin,
-        Pn_psin,
-        materialized_heat_input,
-        materialized_current_input,
-        coordinate_code,
-        R0,
-        B0,
-        weights,
-        differentiator,
-        accumulator,
-        rho,
-        n_axis_fix,
-        radial_workspace,
-        surface_workspace,
-        F_profile_u,
-        Ip,
-        beta,
-        source_scratch_1d,
-        source_scratch_2d,
-    )
-
-
-@njit(cache=True, nogil=True)
-def _run_fixed_point_spline_with_scratch_impl(
-    scratch_source_kernel,
-    max_iter: int,
-    max_residual: float,
+def _run_pj2_psin_uniform_spline_with_scratch_impl(
     source_psin_query: np.ndarray,
     psin: np.ndarray,
     root_fields: np.ndarray,
@@ -271,9 +225,8 @@ def _run_fixed_point_spline_with_scratch_impl(
     )
     alpha1 = np.nan
     alpha2 = np.nan
-    for _ in range(max_iter):
-        alpha1, alpha2 = _call_source_kernel_with_scratch(
-            scratch_source_kernel,
+    for _ in range(PJ2_PSIN_UNIFORM_FIXED_POINT_MAX_ITER):
+        alpha1, alpha2 = _update_pj2_from_psin_inputs_with_scratch(
             root_fields,
             FFn_psin,
             Pn_psin,
@@ -298,7 +251,7 @@ def _run_fixed_point_spline_with_scratch_impl(
         if _update_fixed_point_psin_query_and_spline_uniform_inputs_impl(
             source_psin_query,
             psin,
-            max_residual,
+            PJ2_PSIN_UNIFORM_FIXED_POINT_MAX_RESIDUAL,
             materialized_heat_input,
             materialized_current_input,
             heat_input,
@@ -311,10 +264,7 @@ def _run_fixed_point_spline_with_scratch_impl(
 
 
 @njit(cache=True, nogil=True)
-def _run_fixed_point_barycentric_with_scratch_impl(
-    scratch_source_kernel,
-    max_iter: int,
-    max_residual: float,
+def _run_pj2_psin_uniform_barycentric_with_scratch_impl(
     source_psin_query: np.ndarray,
     psin: np.ndarray,
     root_fields: np.ndarray,
@@ -351,9 +301,8 @@ def _run_fixed_point_barycentric_with_scratch_impl(
     )
     alpha1 = np.nan
     alpha2 = np.nan
-    for _ in range(max_iter):
-        alpha1, alpha2 = _call_source_kernel_with_scratch(
-            scratch_source_kernel,
+    for _ in range(PJ2_PSIN_UNIFORM_FIXED_POINT_MAX_ITER):
+        alpha1, alpha2 = _update_pj2_from_psin_inputs_with_scratch(
             root_fields,
             FFn_psin,
             Pn_psin,
@@ -378,7 +327,7 @@ def _run_fixed_point_barycentric_with_scratch_impl(
         if _update_fixed_point_psin_query_and_local_barycentric_inputs_impl(
             source_psin_query,
             psin,
-            max_residual,
+            PJ2_PSIN_UNIFORM_FIXED_POINT_MAX_RESIDUAL,
             materialized_heat_input,
             materialized_current_input,
             heat_input,
@@ -390,10 +339,7 @@ def _run_fixed_point_barycentric_with_scratch_impl(
 
 
 @njit(cache=True, nogil=True)
-def _run_projected_finalize_with_scratch_impl(
-    scratch_source_kernel,
-    finalize_iter: int,
-    max_residual: float,
+def _run_pj2_psin_uniform_projected_finalize_with_scratch_impl(
     source_psin_query: np.ndarray,
     psin: np.ndarray,
     root_fields: np.ndarray,
@@ -440,9 +386,8 @@ def _run_projected_finalize_with_scratch_impl(
 
     alpha1 = np.nan
     alpha2 = np.nan
-    for _ in range(finalize_iter):
-        alpha1, alpha2 = _call_source_kernel_with_scratch(
-            scratch_source_kernel,
+    for _ in range(PJ2_PSIN_UNIFORM_FIXED_POINT_FINALIZE_ITER):
+        alpha1, alpha2 = _update_pj2_from_psin_inputs_with_scratch(
             root_fields,
             FFn_psin,
             Pn_psin,
@@ -467,7 +412,7 @@ def _run_projected_finalize_with_scratch_impl(
         if _update_fixed_point_psin_query_and_projected_inputs_impl(
             source_psin_query,
             psin,
-            max_residual,
+            PJ2_PSIN_UNIFORM_FIXED_POINT_MAX_RESIDUAL,
             materialized_heat_input,
             materialized_current_input,
             heat_projection_coeff,
@@ -479,75 +424,6 @@ def _run_projected_finalize_with_scratch_impl(
         ):
             break
     return alpha1, alpha2
-
-
-def _run_projected_finalize_with_scratch(
-    *,
-    scratch_source_kernel,
-    finalize_iter: int,
-    max_residual: float,
-    source_psin_query: np.ndarray,
-    psin: np.ndarray,
-    root_fields: np.ndarray,
-    FFn_psin: np.ndarray,
-    Pn_psin: np.ndarray,
-    materialized_heat_input: np.ndarray,
-    materialized_current_input: np.ndarray,
-    heat_projection_coeff: np.ndarray,
-    current_projection_coeff: np.ndarray,
-    current_input: np.ndarray,
-    projection_domain_code: int,
-    endpoint_policy_code: int,
-    endpoint_blend: np.ndarray,
-    coordinate_code: int,
-    R0: float,
-    B0: float,
-    weights: np.ndarray,
-    differentiator: np.ndarray,
-    accumulator: np.ndarray,
-    rho: np.ndarray,
-    n_axis_fix: int,
-    radial_workspace: np.ndarray,
-    surface_workspace: np.ndarray,
-    F_profile_u: np.ndarray,
-    Ip: float,
-    beta: float,
-    source_scratch_1d: np.ndarray,
-    source_scratch_2d: np.ndarray,
-) -> tuple[float, float]:
-    return _run_projected_finalize_with_scratch_impl(
-        scratch_source_kernel,
-        finalize_iter,
-        max_residual,
-        source_psin_query,
-        psin,
-        root_fields,
-        FFn_psin,
-        Pn_psin,
-        materialized_heat_input,
-        materialized_current_input,
-        heat_projection_coeff,
-        current_projection_coeff,
-        current_input,
-        projection_domain_code,
-        endpoint_policy_code,
-        endpoint_blend,
-        coordinate_code,
-        R0,
-        B0,
-        weights,
-        differentiator,
-        accumulator,
-        rho,
-        n_axis_fix,
-        radial_workspace,
-        surface_workspace,
-        F_profile_u,
-        Ip,
-        beta,
-        source_scratch_1d,
-        source_scratch_2d,
-    )
 
 
 def bind_fused_residual_runner(
@@ -571,36 +447,20 @@ def bind_fused_residual_runner(
             f"binding={route_key!r}"
         )
 
-    if source_execution.requires_fixed_point_psin_materialization:
-        if route_key == ("PJ2", "psin", "uniform"):
-            return _bind_pj2_psin_fixed_point_residual_runner_core(
-                source_plan=source_plan,
-                source_execution=source_execution,
-                backend_state=backend_state,
-                alpha_state=alpha_state,
-                c_active_order=c_active_order,
-                s_active_order=s_active_order,
-                a=a,
-                R0=R0,
-                Z0=Z0,
-                B0=B0,
-                fix_rho=fix_rho,
-            )
-        if route_key == ("PQ", "psin", "uniform"):
-            return _bind_pq_psin_fixed_point_residual_runner_core(
-                source_plan=source_plan,
-                source_execution=source_execution,
-                backend_state=backend_state,
-                alpha_state=alpha_state,
-                c_active_order=c_active_order,
-                s_active_order=s_active_order,
-                a=a,
-                R0=R0,
-                Z0=Z0,
-                B0=B0,
-                fix_rho=fix_rho,
-            )
-        raise ValueError(f"Unsupported fixed-point psin source route {route_key!r}")
+    if route_key == ("PJ2", "psin", "uniform"):
+        return _bind_pj2_psin_uniform_residual_runner_core(
+            source_plan=source_plan,
+            source_execution=source_execution,
+            backend_state=backend_state,
+            alpha_state=alpha_state,
+            c_active_order=c_active_order,
+            s_active_order=s_active_order,
+            a=a,
+            R0=R0,
+            Z0=Z0,
+            B0=B0,
+            fix_rho=fix_rho,
+        )
 
     if source_execution.requires_optimized_psin_profile:
         return _bind_profile_owned_psin_residual_runner_core(
@@ -823,7 +683,7 @@ def _bind_profile_owned_psin_residual_runner_core(
     return runner
 
 
-def _bind_pj2_psin_fixed_point_residual_runner_core(
+def _bind_pj2_psin_uniform_residual_runner_core(
     *,
     source_plan: SourcePlan,
     source_execution: backend_abi.SourceExecutionABI,
@@ -839,6 +699,10 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
 ) -> Callable[[np.ndarray], np.ndarray]:
     static_layout = backend_state.static_layout
     runtime_layout = backend_state.runtime_layout
+    source_runtime_state = backend_state.source_runtime_state
+    source_work_state = source_runtime_state.work_state
+    source_aux_state = source_runtime_state.aux_state
+
     surface_workspace = runtime_layout.geometry_surface_workspace
     radial_workspace = runtime_layout.geometry_radial_workspace
     residual_workspace = runtime_layout.residual_surface_workspace
@@ -848,6 +712,7 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
     accumulator = static_layout.accumulator
     n_axis_fix = int(np.searchsorted(rho, fix_rho))
     root_fields = runtime_layout.root_fields
+
     hot_runtime_binding = backend_abi.build_fused_hot_runtime_abi(
         backend_state=backend_state,
         source_execution=source_execution,
@@ -863,11 +728,42 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
         R0=R0,
         B0=B0,
     )
-    fixed_point_psin_binding = backend_abi.build_pj2_fixed_point_psin_source_abi(
-        source_plan=source_plan,
-        source_execution=source_execution,
-        backend_state=backend_state,
+
+    source_psin_query = source_work_state.psin_query
+    materialized_heat_input = source_work_state.materialized_heat_input
+    materialized_current_input = source_work_state.materialized_current_input
+    source_scratch_1d = source_work_state.scratch_1d
+    source_scratch_2d = source_work_state.scratch_2d
+    heat_projection_coeff = source_aux_state.heat_projection_coeff
+    current_projection_coeff = source_aux_state.current_projection_coeff
+    endpoint_blend = source_runtime_state.const_state.endpoint_blend
+    F_profile_u = runtime_layout.F_profile_u
+    psin_profile_u = runtime_layout.psin_profile_u
+    heat_input = source_plan.heat_input
+    current_input = source_plan.current_input
+    heat_spline_coeff = build_uniform_source_interpolation_coefficients(
+        heat_input,
+        kind=source_plan.interpolation_kind,
     )
+    current_spline_coeff = build_uniform_source_interpolation_coefficients(
+        current_input,
+        kind=source_plan.interpolation_kind,
+    )
+    coordinate_code = int(source_plan.coordinate_code)
+    Ip = float(source_plan.Ip)
+    beta = float(source_plan.beta)
+    has_Ip = bool(np.isfinite(Ip))
+    has_projection_policy = bool(source_plan.has_projection_policy)
+    projection_domain_code = int(source_plan.projection_domain_code)
+    endpoint_policy_code = int(source_plan.endpoint_policy_code)
+    use_local_barycentric = bool(source_plan.uses_barycentric_interpolation)
+    barycentric_weights = uniform_barycentric_weights(
+        min(
+            PJ2_PSIN_UNIFORM_BARYCENTRIC_ORDER_CAP,
+            int(source_plan.source_sample_count),
+        )
+    )
+
     scratch_holder: list[np.ndarray | None] = [None]
     psin = root_fields[0]
     FFn_psin = root_fields[3]
@@ -875,27 +771,21 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
 
     def runner(x: np.ndarray) -> np.ndarray:
         _refresh_hot_runtime(x, hot_runtime_binding=hot_runtime_binding)
-        if fixed_point_psin_binding.source_psin_query[0] < 0.0:
-            _normalize_psin_query(
-                fixed_point_psin_binding.source_psin_query,
-                fixed_point_psin_binding.psin_profile_u,
-            )
-        if fixed_point_psin_binding.has_Ip and fixed_point_psin_binding.use_local_barycentric:
-            alpha1, alpha2 = _run_fixed_point_barycentric_with_scratch_impl(
-                _update_pj2_from_psin_inputs_with_scratch,
-                16,
-                1.0e-10,
-                fixed_point_psin_binding.source_psin_query,
+        if source_psin_query[0] < 0.0:
+            _normalize_psin_query(source_psin_query, psin_profile_u)
+        if has_Ip and use_local_barycentric:
+            alpha1, alpha2 = _run_pj2_psin_uniform_barycentric_with_scratch_impl(
+                source_psin_query,
                 psin,
                 root_fields,
                 FFn_psin,
                 Pn_psin,
-                fixed_point_psin_binding.materialized_heat_input,
-                fixed_point_psin_binding.materialized_current_input,
-                fixed_point_psin_binding.heat_input,
-                fixed_point_psin_binding.current_input,
-                fixed_point_psin_binding.barycentric_weights,
-                fixed_point_psin_binding.coordinate_code,
+                materialized_heat_input,
+                materialized_current_input,
+                heat_input,
+                current_input,
+                barycentric_weights,
+                coordinate_code,
                 R0,
                 B0,
                 weights,
@@ -905,29 +795,26 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
                 n_axis_fix,
                 radial_workspace,
                 surface_workspace,
-                fixed_point_psin_binding.F_profile_u,
-                fixed_point_psin_binding.Ip,
-                fixed_point_psin_binding.beta,
-                fixed_point_psin_binding.source_scratch_1d,
-                fixed_point_psin_binding.source_scratch_2d,
+                F_profile_u,
+                Ip,
+                beta,
+                source_scratch_1d,
+                source_scratch_2d,
             )
         else:
-            alpha1, alpha2 = _run_fixed_point_spline_with_scratch_impl(
-                _update_pj2_from_psin_inputs_with_scratch,
-                16,
-                1.0e-10,
-                fixed_point_psin_binding.source_psin_query,
+            alpha1, alpha2 = _run_pj2_psin_uniform_spline_with_scratch_impl(
+                source_psin_query,
                 psin,
                 root_fields,
                 FFn_psin,
                 Pn_psin,
-                fixed_point_psin_binding.materialized_heat_input,
-                fixed_point_psin_binding.materialized_current_input,
-                fixed_point_psin_binding.heat_input,
-                fixed_point_psin_binding.current_input,
-                fixed_point_psin_binding.heat_spline_coeff,
-                fixed_point_psin_binding.current_spline_coeff,
-                fixed_point_psin_binding.coordinate_code,
+                materialized_heat_input,
+                materialized_current_input,
+                heat_input,
+                current_input,
+                heat_spline_coeff,
+                current_spline_coeff,
+                coordinate_code,
                 R0,
                 B0,
                 weights,
@@ -937,45 +824,42 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
                 n_axis_fix,
                 radial_workspace,
                 surface_workspace,
-                fixed_point_psin_binding.F_profile_u,
-                fixed_point_psin_binding.Ip,
-                fixed_point_psin_binding.beta,
-                fixed_point_psin_binding.source_scratch_1d,
-                fixed_point_psin_binding.source_scratch_2d,
+                F_profile_u,
+                Ip,
+                beta,
+                source_scratch_1d,
+                source_scratch_2d,
             )
-        if fixed_point_psin_binding.has_projection_policy:
-            alpha1, alpha2 = _run_projected_finalize_with_scratch(
-                scratch_source_kernel=_update_pj2_from_psin_inputs_with_scratch,
-                finalize_iter=fixed_point_psin_binding.finalize_iter,
-                max_residual=1.0e-10,
-                source_psin_query=fixed_point_psin_binding.source_psin_query,
-                psin=psin,
-                root_fields=root_fields,
-                FFn_psin=FFn_psin,
-                Pn_psin=Pn_psin,
-                materialized_heat_input=fixed_point_psin_binding.materialized_heat_input,
-                materialized_current_input=fixed_point_psin_binding.materialized_current_input,
-                heat_projection_coeff=fixed_point_psin_binding.heat_projection_coeff,
-                current_projection_coeff=fixed_point_psin_binding.current_projection_coeff,
-                current_input=fixed_point_psin_binding.current_input,
-                projection_domain_code=fixed_point_psin_binding.projection_domain_code,
-                endpoint_policy_code=fixed_point_psin_binding.endpoint_policy_code,
-                endpoint_blend=fixed_point_psin_binding.endpoint_blend,
-                coordinate_code=fixed_point_psin_binding.coordinate_code,
-                R0=R0,
-                B0=B0,
-                weights=weights,
-                differentiator=differentiator,
-                accumulator=accumulator,
-                rho=rho,
-                n_axis_fix=n_axis_fix,
-                radial_workspace=radial_workspace,
-                surface_workspace=surface_workspace,
-                F_profile_u=fixed_point_psin_binding.F_profile_u,
-                Ip=fixed_point_psin_binding.Ip,
-                beta=fixed_point_psin_binding.beta,
-                source_scratch_1d=fixed_point_psin_binding.source_scratch_1d,
-                source_scratch_2d=fixed_point_psin_binding.source_scratch_2d,
+        if has_projection_policy:
+            alpha1, alpha2 = _run_pj2_psin_uniform_projected_finalize_with_scratch_impl(
+                source_psin_query,
+                psin,
+                root_fields,
+                FFn_psin,
+                Pn_psin,
+                materialized_heat_input,
+                materialized_current_input,
+                heat_projection_coeff,
+                current_projection_coeff,
+                current_input,
+                projection_domain_code,
+                endpoint_policy_code,
+                endpoint_blend,
+                coordinate_code,
+                R0,
+                B0,
+                weights,
+                differentiator,
+                accumulator,
+                rho,
+                n_axis_fix,
+                radial_workspace,
+                surface_workspace,
+                F_profile_u,
+                Ip,
+                beta,
+                source_scratch_1d,
+                source_scratch_2d,
             )
         alpha_state[0] = alpha1
         alpha_state[1] = alpha2
@@ -1047,178 +931,6 @@ def _bind_source_eval_runner_for_fused_backend(
             source_eval_binding.beta,
             source_eval_binding.source_scratch_1d,
             source_eval_binding.source_scratch_2d,
-        )
-
-    return runner
-
-
-def _bind_pq_psin_fixed_point_residual_runner_core(
-    *,
-    source_plan: SourcePlan,
-    source_execution: backend_abi.SourceExecutionABI,
-    backend_state: "BackendState",
-    alpha_state: np.ndarray,
-    c_active_order: int,
-    s_active_order: int,
-    a: float,
-    R0: float,
-    Z0: float,
-    B0: float,
-    fix_rho: float,
-) -> Callable[[np.ndarray], np.ndarray]:
-    static_layout = backend_state.static_layout
-    runtime_layout = backend_state.runtime_layout
-    surface_workspace = runtime_layout.geometry_surface_workspace
-    radial_workspace = runtime_layout.geometry_radial_workspace
-    residual_workspace = runtime_layout.residual_surface_workspace
-    rho = static_layout.rho
-    weights = static_layout.weights
-    differentiator = static_layout.differentiator
-    accumulator = static_layout.accumulator
-    n_axis_fix = int(np.searchsorted(rho, fix_rho))
-    root_fields = runtime_layout.root_fields
-    hot_runtime_binding = backend_abi.build_fused_hot_runtime_abi(
-        backend_state=backend_state,
-        source_execution=source_execution,
-        c_active_order=c_active_order,
-        s_active_order=s_active_order,
-        a=a,
-        R0=R0,
-        Z0=Z0,
-    )
-    residual_pack_binding = backend_abi.build_fused_residual_pack_abi(
-        backend_state=backend_state,
-        a=a,
-        R0=R0,
-        B0=B0,
-    )
-    fixed_point_psin_binding = backend_abi.build_pq_fixed_point_psin_source_abi(
-        source_plan=source_plan,
-        source_execution=source_execution,
-        backend_state=backend_state,
-    )
-    scratch_holder: list[np.ndarray | None] = [None]
-    psin = root_fields[0]
-    FFn_psin = root_fields[3]
-    Pn_psin = root_fields[4]
-
-    def runner(x: np.ndarray) -> np.ndarray:
-        _refresh_hot_runtime(x, hot_runtime_binding=hot_runtime_binding)
-        if (
-            not fixed_point_psin_binding.allow_query_warmstart
-        ) or fixed_point_psin_binding.source_psin_query[0] < 0.0:
-            _normalize_psin_query(
-                fixed_point_psin_binding.source_psin_query,
-                fixed_point_psin_binding.psin_profile_u,
-            )
-        if fixed_point_psin_binding.has_Ip and fixed_point_psin_binding.use_local_barycentric:
-            alpha1, alpha2 = _run_fixed_point_barycentric_with_scratch_impl(
-                _update_pq_from_psin_inputs_with_scratch,
-                16,
-                1.0e-10,
-                fixed_point_psin_binding.source_psin_query,
-                psin,
-                root_fields,
-                FFn_psin,
-                Pn_psin,
-                fixed_point_psin_binding.materialized_heat_input,
-                fixed_point_psin_binding.materialized_current_input,
-                fixed_point_psin_binding.heat_input,
-                fixed_point_psin_binding.current_input,
-                fixed_point_psin_binding.barycentric_weights,
-                fixed_point_psin_binding.coordinate_code,
-                R0,
-                B0,
-                weights,
-                differentiator,
-                accumulator,
-                rho,
-                n_axis_fix,
-                radial_workspace,
-                surface_workspace,
-                fixed_point_psin_binding.F_profile_u,
-                fixed_point_psin_binding.Ip,
-                fixed_point_psin_binding.beta,
-                fixed_point_psin_binding.source_scratch_1d,
-                fixed_point_psin_binding.source_scratch_2d,
-            )
-        else:
-            alpha1, alpha2 = _run_fixed_point_spline_with_scratch_impl(
-                _update_pq_from_psin_inputs_with_scratch,
-                16,
-                1.0e-10,
-                fixed_point_psin_binding.source_psin_query,
-                psin,
-                root_fields,
-                FFn_psin,
-                Pn_psin,
-                fixed_point_psin_binding.materialized_heat_input,
-                fixed_point_psin_binding.materialized_current_input,
-                fixed_point_psin_binding.heat_input,
-                fixed_point_psin_binding.current_input,
-                fixed_point_psin_binding.heat_spline_coeff,
-                fixed_point_psin_binding.current_spline_coeff,
-                fixed_point_psin_binding.coordinate_code,
-                R0,
-                B0,
-                weights,
-                differentiator,
-                accumulator,
-                rho,
-                n_axis_fix,
-                radial_workspace,
-                surface_workspace,
-                fixed_point_psin_binding.F_profile_u,
-                fixed_point_psin_binding.Ip,
-                fixed_point_psin_binding.beta,
-                fixed_point_psin_binding.source_scratch_1d,
-                fixed_point_psin_binding.source_scratch_2d,
-            )
-        if fixed_point_psin_binding.has_projection_policy:
-            alpha1, alpha2 = _run_projected_finalize_with_scratch(
-                scratch_source_kernel=_update_pq_from_psin_inputs_with_scratch,
-                finalize_iter=fixed_point_psin_binding.finalize_iter,
-                max_residual=1.0e-10,
-                source_psin_query=fixed_point_psin_binding.source_psin_query,
-                psin=psin,
-                root_fields=root_fields,
-                FFn_psin=FFn_psin,
-                Pn_psin=Pn_psin,
-                materialized_heat_input=fixed_point_psin_binding.materialized_heat_input,
-                materialized_current_input=fixed_point_psin_binding.materialized_current_input,
-                heat_projection_coeff=fixed_point_psin_binding.heat_projection_coeff,
-                current_projection_coeff=fixed_point_psin_binding.current_projection_coeff,
-                current_input=fixed_point_psin_binding.current_input,
-                projection_domain_code=fixed_point_psin_binding.projection_domain_code,
-                endpoint_policy_code=fixed_point_psin_binding.endpoint_policy_code,
-                endpoint_blend=fixed_point_psin_binding.endpoint_blend,
-                coordinate_code=fixed_point_psin_binding.coordinate_code,
-                R0=R0,
-                B0=B0,
-                weights=weights,
-                differentiator=differentiator,
-                accumulator=accumulator,
-                rho=rho,
-                n_axis_fix=n_axis_fix,
-                radial_workspace=radial_workspace,
-                surface_workspace=surface_workspace,
-                F_profile_u=fixed_point_psin_binding.F_profile_u,
-                Ip=fixed_point_psin_binding.Ip,
-                beta=fixed_point_psin_binding.beta,
-                source_scratch_1d=fixed_point_psin_binding.source_scratch_1d,
-                source_scratch_2d=fixed_point_psin_binding.source_scratch_2d,
-            )
-        alpha_state[0] = alpha1
-        alpha_state[1] = alpha2
-        update_residual_compact(
-            residual_workspace,
-            alpha1,
-            alpha2,
-            root_fields,
-            surface_workspace,
-        )
-        return _pack_residual_output(
-            residual_pack_binding=residual_pack_binding, scratch_holder=scratch_holder
         )
 
     return runner

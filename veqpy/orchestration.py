@@ -25,6 +25,9 @@ from numpy.polynomial.chebyshev import chebvander
 from veqpy.engine.numba_geometry import update_geometry_hot
 from veqpy.engine.numba_source import (
     COORDINATE_CODES,
+    PJ2_PSIN_UNIFORM_FIXED_POINT_FINALIZE_ITER,
+    PJ2_PSIN_UNIFORM_FIXED_POINT_MAX_ITER,
+    PJ2_PSIN_UNIFORM_FIXED_POINT_MAX_RESIDUAL,
     build_source_remap_cache,
     materialize_profile_owned_psin_source,
     materialize_projected_source_inputs,
@@ -572,7 +575,7 @@ def refresh_source_runtime(
                 psin,
                 source_plan.uses_barycentric_interpolation,
             )
-    elif source_execution.requires_fixed_point_psin_materialization:
+    elif tuple(source_execution.route_key) == ("PJ2", "psin", "uniform"):
         source_work_state.psin_query.fill(-1.0)
 
 
@@ -751,7 +754,6 @@ def _build_pj2_psin_uniform_source_stage_runner(
     source_aux_state = source_runtime_state.aux_state
     target_root_fields = source_aux_state.target_root_fields
     psin_profile_u = runtime_layout.psin_profile_u
-    max_residual = 1.0e-10
 
     def runner() -> tuple[float, float]:
         if source_work_state.psin_query[0] < 0.0:
@@ -773,7 +775,7 @@ def _build_pj2_psin_uniform_source_stage_runner(
             source_work_state.psin_query[-1] = 1.0
         alpha1 = float("nan")
         alpha2 = float("nan")
-        for _ in range(16):
+        for _ in range(PJ2_PSIN_UNIFORM_FIXED_POINT_MAX_ITER):
             if source_plan.parameterization == "identity":
                 np.copyto(source_work_state.parameter_query, source_work_state.psin_query)
             elif source_plan.parameterization == "sqrt_psin":
@@ -809,12 +811,12 @@ def _build_pj2_psin_uniform_source_stage_runner(
                 float(operator_core.case.R0),
             )
             if update_fixed_point_psin_query(
-                source_work_state.psin_query, target_root_fields[0], max_residual
+                source_work_state.psin_query, target_root_fields[0], PJ2_PSIN_UNIFORM_FIXED_POINT_MAX_RESIDUAL
             ):
                 break
         np.copyto(source_work_state.psin_query, target_root_fields[0])
         if source_plan.has_projection_policy:
-            for _ in range(8):
+            for _ in range(PJ2_PSIN_UNIFORM_FIXED_POINT_FINALIZE_ITER):
                 materialize_projected_source_inputs(
                     source_work_state.materialized_heat_input,
                     source_work_state.materialized_current_input,
@@ -835,114 +837,7 @@ def _build_pj2_psin_uniform_source_stage_runner(
                     float(operator_core.case.R0),
                 )
                 if update_fixed_point_psin_query(
-                    source_work_state.psin_query, target_root_fields[0], max_residual
-                ):
-                    break
-        np.copyto(operator_core.psin, target_root_fields[0])
-        np.copyto(operator_core.psin_r, target_root_fields[1])
-        np.copyto(operator_core.psin_rr, target_root_fields[2])
-        return alpha1, alpha2
-
-    return runner
-
-
-def _build_pq_psin_uniform_source_stage_runner(
-    operator_core: Any,
-) -> Callable[[], tuple[float, float]]:
-    source_plan = operator_core.source_plan
-    source_eval_runner = operator_core.execution_state.source_eval_runner
-    runtime_layout = operator_core.runtime_layout
-    source_runtime_state = operator_core.source_runtime_state
-    source_work_state = source_runtime_state.work_state
-    source_aux_state = source_runtime_state.aux_state
-    target_root_fields = source_aux_state.target_root_fields
-    psin_profile_u = runtime_layout.psin_profile_u
-    max_residual = 1.0e-10
-    allow_query_warmstart = bool(source_plan.endpoint_policy_code != ENDPOINT_POLICY_CODES["none"])
-
-    def runner() -> tuple[float, float]:
-        if (not allow_query_warmstart) or source_work_state.psin_query[0] < 0.0:
-            if psin_profile_u is None:
-                raise RuntimeError("psin_profile.u is not initialized")
-            np.copyto(source_work_state.psin_query, np.asarray(psin_profile_u, dtype=np.float64))
-            if source_work_state.psin_query.ndim != 1 or source_work_state.psin_query.size < 2:
-                raise ValueError(
-                    f"Expected psin query to be 1D with at least two points, "
-                    f"got {source_work_state.psin_query.shape}"
-                )
-            offset = float(source_work_state.psin_query[0])
-            scale = float(source_work_state.psin_query[-1] - offset)
-            if abs(scale) < 1e-12:
-                raise ValueError("psin query does not span a valid normalized flux interval")
-            source_work_state.psin_query -= offset
-            source_work_state.psin_query /= scale
-            source_work_state.psin_query[0] = 0.0
-            source_work_state.psin_query[-1] = 1.0
-        alpha1 = float("nan")
-        alpha2 = float("nan")
-        for _ in range(16):
-            if source_plan.parameterization == "identity":
-                np.copyto(source_work_state.parameter_query, source_work_state.psin_query)
-            elif source_plan.parameterization == "sqrt_psin":
-                np.copyto(source_work_state.parameter_query, source_work_state.psin_query)
-                np.maximum(
-                    source_work_state.parameter_query, 0.0, out=source_work_state.parameter_query
-                )
-                np.sqrt(source_work_state.parameter_query, out=source_work_state.parameter_query)
-            else:
-                raise ValueError(
-                    f"Unsupported source parameterization {source_plan.parameterization!r}"
-                )
-            resolve_source_inputs(
-                source_work_state.materialized_heat_input,
-                source_work_state.materialized_current_input,
-                source_plan.heat_input,
-                source_plan.current_input,
-                source_plan.coordinate_code,
-                source_plan.source_sample_count,
-                source_runtime_state.const_state.barycentric_weights,
-                source_runtime_state.const_state.fixed_remap_matrix,
-                source_aux_state.heat_spline_coeff,
-                source_aux_state.current_spline_coeff,
-                source_work_state.parameter_query,
-                source_plan.uses_barycentric_interpolation,
-            )
-            alpha1, alpha2 = source_eval_runner(
-                target_root_fields,
-                operator_core.FFn_psin,
-                operator_core.Pn_psin,
-                source_work_state.materialized_heat_input,
-                source_work_state.materialized_current_input,
-                float(operator_core.case.R0),
-            )
-            if update_fixed_point_psin_query(
-                source_work_state.psin_query, target_root_fields[0], max_residual
-            ):
-                break
-        np.copyto(source_work_state.psin_query, target_root_fields[0])
-        if source_plan.has_projection_policy:
-            for _ in range(16):
-                materialize_projected_source_inputs(
-                    source_work_state.materialized_heat_input,
-                    source_work_state.materialized_current_input,
-                    source_aux_state.heat_projection_coeff,
-                    source_aux_state.current_projection_coeff,
-                    source_plan.current_input,
-                    source_work_state.psin_query,
-                    source_plan.projection_domain_code,
-                    source_plan.endpoint_policy_code,
-                    source_runtime_state.const_state.endpoint_blend,
-                )
-                alpha1, alpha2 = source_eval_runner(
-                    target_root_fields,
-                    operator_core.FFn_psin,
-                    operator_core.Pn_psin,
-                    source_work_state.materialized_heat_input,
-                    source_work_state.materialized_current_input,
-                    float(operator_core.case.R0),
-                )
-                if update_fixed_point_psin_query(
-                    source_work_state.psin_query, target_root_fields[0], max_residual
+                    source_work_state.psin_query, target_root_fields[0], PJ2_PSIN_UNIFORM_FIXED_POINT_MAX_RESIDUAL
                 ):
                     break
         np.copyto(operator_core.psin, target_root_fields[0])

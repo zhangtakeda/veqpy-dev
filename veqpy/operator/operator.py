@@ -751,7 +751,7 @@ class Operator:
         )
 
     def invalidate_source_state(self) -> None:
-        if self.source_execution.requires_fixed_point_psin_materialization:
+        if tuple(self.source_execution.route_key) == ("PJ2", "psin", "uniform"):
             self.source_runtime_state.work_state.psin_query.fill(-1.0)
 
     def _build_fused_residual_runner(self) -> Callable[[np.ndarray], np.ndarray]:
