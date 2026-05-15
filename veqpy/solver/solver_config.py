@@ -58,6 +58,7 @@ SUPPORTED_METHODS: dict[str, OptimizeMethod] = {
 DEFAULT_VARIATIONAL_METHOD = "hybr"
 DEFAULT_COLLOCATION_METHOD = "trf"
 DEFAULT_VARIATIONAL_FALLBACK_METHODS = ("lm",)
+SUPPORTED_INITIAL_POLICIES = frozenset(("zeros", "warm", "homothetic", "optimize"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,7 +68,9 @@ class SolverConfig:
     method: str | None = None
     max_residual: float = 1e-6
     max_evaluations: int = 1000
-    enable_warmstart: bool = True
+    enable_warmstart: bool = False
+    initial_policy: str | None = None
+    initial_homothetic_lambda: float = 1.0
     enable_fallback: bool = True
     fallback_methods: tuple[str, ...] | list[str] | None = field(default=None)
     enable_verbose: bool = False
@@ -98,9 +101,7 @@ class SolverConfig:
 
         if method not in SUPPORTED_METHODS:
             supported = ", ".join(SUPPORTED_METHODS)
-            raise ValueError(
-                f"Unsupported solver method {method!r}; supported: {supported}."
-            )
+            raise ValueError(f"Unsupported solver method {method!r}; supported: {supported}.")
         collocation_method = str(self.collocation_method)
         if collocation_method not in LEAST_SQUARES_METHODS:
             supported = ", ".join(LEAST_SQUARES_METHODS)
@@ -121,6 +122,22 @@ class SolverConfig:
             )
         max_residual = float(self.max_residual)
         max_evaluations = int(self.max_evaluations)
+        initial_policy = None if self.initial_policy is None else str(self.initial_policy).lower()
+        if initial_policy == "zero":
+            initial_policy = "zeros"
+        if initial_policy == "warmstart":
+            initial_policy = "warm"
+        if initial_policy is not None and initial_policy not in SUPPORTED_INITIAL_POLICIES:
+            supported = ", ".join(sorted(SUPPORTED_INITIAL_POLICIES))
+            raise ValueError(
+                f"Unsupported initial_policy {self.initial_policy!r}; supported: {supported}."
+            )
+        initial_homothetic_lambda = float(self.initial_homothetic_lambda)
+        if not isfinite(initial_homothetic_lambda):
+            raise ValueError(
+                "SolverConfig.initial_homothetic_lambda must be finite; "
+                f"got {self.initial_homothetic_lambda!r}."
+            )
         if not isfinite(max_residual) or max_residual <= 0.0:
             raise ValueError(
                 f"SolverConfig.max_residual must be a positive finite float, "
@@ -157,6 +174,8 @@ class SolverConfig:
         object.__setattr__(self, "collocation_max_evaluations", collocation_max_evaluations)
         object.__setattr__(self, "max_residual", max_residual)
         object.__setattr__(self, "max_evaluations", max_evaluations)
+        object.__setattr__(self, "initial_policy", initial_policy)
+        object.__setattr__(self, "initial_homothetic_lambda", initial_homothetic_lambda)
         object.__setattr__(self, "enable_fallback", bool(self.enable_fallback))
         object.__setattr__(self, "fallback_methods", tuple(deduped_fallback_methods))
 
@@ -172,6 +191,9 @@ class SolverConfig:
                 tree.add(f"collocation_max_evaluations: {self.collocation_max_evaluations}")
         tree.add(f"max_residual: {self.max_residual:.6g}")
         tree.add(f"max_evaluations: {self.max_evaluations}")
+        tree.add(f"initial_policy: {self.initial_policy}")
+        if self.initial_policy == "homothetic":
+            tree.add(f"initial_homothetic_lambda: {self.initial_homothetic_lambda:.6g}")
         tree.add(f"enable_warmstart: {self.enable_warmstart}")
         tree.add(f"enable_fallback: {self.enable_fallback}")
         if self.enable_fallback:

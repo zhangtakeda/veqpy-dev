@@ -17,7 +17,6 @@ data/
 dist/
 docs/
 paper/
-scripts/
 figures/
 
 # Keep tests reviewable: only Python tests and GEQDSK fixtures may be added.

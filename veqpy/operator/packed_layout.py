@@ -92,8 +92,7 @@ def build_profile_layout(
     for name, coeff in profile_coeffs.items():
         if coeff is None:
             continue
-        coeff_arr = coeff_array_from_list(name, coeff)
-        profile_L[profile_index[name]] = coeff_arr.size - 1
+        profile_L[profile_index[name]] = coeff_array_from_list(name, coeff).size - 1
 
     max_L = int(np.max(profile_L))
     if max_L < 0:
@@ -231,9 +230,7 @@ def coeff_array_from_list(name: str, coeff: ProfileCoeffValue) -> np.ndarray:
             raise ValueError(f"{name} coeff length indicator must be positive, got {coeff}")
         return np.zeros(length, dtype=np.float64)
     if not isinstance(coeff, (list, np.ndarray)):
-        raise TypeError(
-            f"Invalid {name} coeff type {type(coeff).__name__}"
-        )
+        raise TypeError(f"Invalid {name} coeff type {type(coeff).__name__}")
     coeff_arr = np.asarray(coeff, dtype=np.float64)
     if coeff_arr.ndim != 1:
         raise ValueError(f"{name} coeff must be 1D, got {coeff_arr.shape}")

@@ -69,6 +69,7 @@ class Operator:
     grid: InitVar[Grid]
     case: OperatorCase = field(repr=False)
     fix_rho: float = 0.05
+    source_interpolation_kind: str = "quadratic"
     static_layout: StaticLayout = field(init=False, repr=False)
     residual_binding_layout: ResidualBindingLayout = field(init=False, repr=False)
     runtime_layout: RuntimeLayout = field(init=False, repr=False)
@@ -490,6 +491,7 @@ class Operator:
         self.source_plan = orchestration.build_source_plan(
             case=self.case,
             source_route_spec=self._source_route_spec,
+            interpolation_kind=self.source_interpolation_kind,
         )
 
     def _refresh_source_execution_binding(self) -> None:

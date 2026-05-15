@@ -15,7 +15,7 @@ import numpy as np
 from veqpy.engine.numba_source import validate_route
 from veqpy.model.profile import Profile
 from veqpy.operator.operator_case import OperatorCase
-from veqpy.operator.packed_layout import build_profile_layout
+from veqpy.operator.packed_layout import build_profile_layout, coeff_array_from_list
 from veqpy.operator.runtime_layout import StaticLayout
 
 
@@ -63,7 +63,7 @@ def make_profile(
     L = int(profile_L[p])
     coeff = case.profile_coeffs.get(name)
     kwargs["coeff"] = (
-        None if L < 0 or coeff is None else np.asarray(coeff, dtype=np.float64)[: L + 1].copy()
+        None if L < 0 or coeff is None else coeff_array_from_list(name, coeff)[: L + 1].copy()
     )
     return Profile(**kwargs)
 
@@ -114,7 +114,7 @@ def refresh_profile_runtime(
         L = int(profile_L[p])
         coeff = case.profile_coeffs.get(name)
         profile.coeff = (
-            None if L < 0 or coeff is None else np.asarray(coeff, dtype=np.float64)[: L + 1].copy()
+            None if L < 0 or coeff is None else coeff_array_from_list(name, coeff)[: L + 1].copy()
         )
         profile._prepare_runtime_cache(operator_grid)
         profile.update()
@@ -220,7 +220,7 @@ def refresh_fourier_family_metadata(
     *,
     c_profile_names: tuple[str, ...],
     s_profile_names: tuple[str, ...],
-    profile_coeffs: dict[str, list[float] | None],
+    profile_coeffs: dict[str, list[float] | np.ndarray | int | None],
     c_offsets: np.ndarray | None,
     s_offsets: np.ndarray | None,
     c_family_fields: np.ndarray,

@@ -175,6 +175,30 @@ def test_solver_config_uses_variational_root_default_with_single_least_squares_f
     assert config.fallback_methods == DEFAULT_VARIATIONAL_FALLBACK_METHODS
 
 
+def test_solver_initial_policy_rejects_case_seed():
+    with pytest.raises(ValueError, match="Unsupported initial_policy"):
+        SolverConfig(initial_policy="case")
+
+
+def test_solver_config_defaults_to_case_initial_policy():
+    config = SolverConfig()
+
+    assert config.initial_policy is None
+
+
+def test_solver_config_accepts_initial_homothetic_lambda():
+    config = SolverConfig(initial_policy="homothetic", initial_homothetic_lambda=0.75)
+
+    assert config.initial_policy == "homothetic"
+    assert config.initial_homothetic_lambda == 0.75
+    assert "initial_homothetic_lambda: 0.75" in str(config)
+
+
+def test_solver_config_rejects_nonfinite_initial_homothetic_lambda():
+    with pytest.raises(ValueError, match="initial_homothetic_lambda"):
+        SolverConfig(initial_policy="homothetic", initial_homothetic_lambda=float("inf"))
+
+
 def test_solver_enable_collocation_routes_polish_to_collocation_residual(monkeypatch):
     operator = _DummyOperator()
     solver = Solver(
@@ -351,6 +375,7 @@ def test_solver_warmstart_failure_falls_back_from_cold_reset_state(monkeypatch):
         warnings.simplefilter("ignore", RuntimeWarning)
         x_final = solver.solve(
             enable_history=False,
+            initial_policy="warm",
             fallback_methods=("lm", "trf"),
         )
 

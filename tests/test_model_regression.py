@@ -31,8 +31,12 @@ def _max_bidirectional_distance(points_a, points_b):
 
 
 def test_grid_calculus_string_switches_base_matrices():
-    compact_grid = Grid(Nr=8, Nt=16, quadrature_scheme="uniform", calculus_scheme="compact", M_max=4)
-    spectral_grid = Grid(Nr=8, Nt=16, quadrature_scheme="uniform", calculus_scheme="spectral", M_max=4)
+    compact_grid = Grid(
+        Nr=8, Nt=16, quadrature_scheme="uniform", calculus_scheme="compact", M_max=4
+    )
+    spectral_grid = Grid(
+        Nr=8, Nt=16, quadrature_scheme="uniform", calculus_scheme="spectral", M_max=4
+    )
 
     assert compact_grid.calculus_scheme == "compact"
     assert spectral_grid.calculus_scheme == "spectral"
@@ -142,7 +146,9 @@ def test_equilibrium_plot_current_panel_keeps_native_radial_samples():
 
 def test_equilibrium_compare_profiles_keep_native_radial_samples(monkeypatch):
     reference, _ = _build_high_order_equilibrium()
-    other = reference.resample(Grid(Nr=12, Nt=16, quadrature_scheme="uniform", M_max=reference.grid.M_max))
+    other = reference.resample(
+        Grid(Nr=12, Nt=16, quadrature_scheme="uniform", M_max=reference.grid.M_max)
+    )
     plot_grid = Grid(Nr=32, Nt=32, quadrature_scheme="uniform", M_max=reference.grid.M_max)
 
     original_close = plt.close
@@ -335,7 +341,7 @@ def test_operator_case_defaults_nodes_to_uniform():
     assert probe.nodes == "uniform"
 
 
-def test_operator_case_accepts_zero_length_indicators_and_ndarray_profile_coeffs():
+def test_operator_case_accepts_length_indicators_and_ndarray_profile_coeffs():
     _, case = _build_operator_case(mode="PF", coordinate="rho", nodes="uniform")
     f_coeff = np.array([1.0, 0.25], dtype=np.float64)
 
@@ -344,7 +350,7 @@ def test_operator_case_accepts_zero_length_indicators_and_ndarray_profile_coeffs
         coordinate=case.coordinate,
         profile_coeffs={
             "psin": 3,
-            "h": 1,
+            "h": [0.0],
             "F": f_coeff,
         },
         boundary=case.boundary,
@@ -353,9 +359,9 @@ def test_operator_case_accepts_zero_length_indicators_and_ndarray_profile_coeffs
     )
     f_coeff[0] = 99.0
 
-    assert np.allclose(probe.profile_coeffs["psin"], [0.0, 0.0, 0.0])
-    assert np.allclose(probe.profile_coeffs["h"], [0.0])
-    assert np.allclose(probe.profile_coeffs["F"], [1.0, 0.25])
+    np.testing.assert_allclose(probe.profile_coeffs["psin"], [0.0, 0.0, 0.0])
+    np.testing.assert_allclose(probe.profile_coeffs["h"], [0.0])
+    np.testing.assert_allclose(probe.profile_coeffs["F"], [1.0, 0.25])
 
 
 def test_operator_case_autoscales_legacy_unscaled_current_input():

@@ -359,8 +359,8 @@ def _geometry_update(
             sin_tb_ij = np.sin(tb_ij)
 
             R_ij = R0 + a * (h_i + rho_i * cos_tb_ij)
-            if R_ij < 1e-15:
-                R_ij = 1e-15
+            if R_ij < 1e-6:
+                R_ij = 1e-6
 
             R_r_ij = a * (h_r_i + cos_tb_ij - rho_i * sin_tb_ij * tb_r_ij)
             R_t_ij = -a * rho_i * sin_tb_ij * tb_t_ij
@@ -382,8 +382,8 @@ def _geometry_update(
             Z_tt_ij = a * rho_i * k_i * sin_t
 
             J_ij = R_t_ij * Z_r_ij - R_r_ij * Z_t_ij
-            if J_ij < 1e-15:
-                J_ij = 1e-15
+            if J_ij < 1e-6:
+                J_ij = 1e-6
 
             J_r_ij = -(R_rr_ij * Z_t_ij - R_rt_ij * Z_r_ij + R_r_ij * Z_rt_ij - R_t_ij * Z_rr_ij)
             J_t_ij = -(R_rt_ij * Z_t_ij - R_tt_ij * Z_r_ij + R_r_ij * Z_tt_ij - R_t_ij * Z_rt_ij)

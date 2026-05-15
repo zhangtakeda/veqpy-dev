@@ -52,7 +52,6 @@ class Solver:
         self.config = SolverConfig() if config is None else config
         self.result: SolverResult | None = None
         self.history: list[SolverRecord] = []
-
         self.x0 = self.operator.encode_initial_state()
 
     def reset(self) -> None:
@@ -78,6 +77,8 @@ class Solver:
         max_residual: float | None = None,
         max_evaluations: int | None = None,
         enable_warmstart: bool | None = None,
+        initial_policy: str | None = "homothetic",
+        initial_homothetic_lambda: float | None = None,
         enable_fallback: bool | None = None,
         fallback_methods: tuple[str, ...] | list[str] | None = None,
         enable_verbose: bool | None = None,
@@ -94,6 +95,8 @@ class Solver:
             max_residual=max_residual,
             max_evaluations=max_evaluations,
             enable_warmstart=enable_warmstart,
+            initial_policy=initial_policy,
+            initial_homothetic_lambda=initial_homothetic_lambda,
             enable_fallback=enable_fallback,
             fallback_methods=fallback_methods,
             enable_verbose=enable_verbose,
@@ -107,9 +110,11 @@ class Solver:
 
         if x0 is not None:
             self.x0 = self.operator.coerce_x(x0).copy()
-        elif not solve_config.enable_warmstart:
-            self.reset()
-        if x0 is not None or not solve_config.enable_warmstart:
+        elif solve_config.initial_policy == "warm":
+            self.x0 = self.x0.copy()
+        else:
+            self.x0 = _build_initial_state(self.operator, solve_config).copy()
+        if x0 is not None or solve_config.initial_policy != "warm":
             self.operator.invalidate_source_state()
 
         x_guess = self.x0.copy()
@@ -209,6 +214,8 @@ class Solver:
         max_residual: float | None,
         max_evaluations: int | None,
         enable_warmstart: bool | None,
+        initial_policy: str | None,
+        initial_homothetic_lambda: float | None,
         enable_fallback: bool | None,
         fallback_methods: tuple[str, ...] | list[str] | None,
         enable_verbose: bool | None,
@@ -229,6 +236,10 @@ class Solver:
             overrides["max_evaluations"] = int(max_evaluations)
         if enable_warmstart is not None:
             overrides["enable_warmstart"] = bool(enable_warmstart)
+        if initial_policy is not None:
+            overrides["initial_policy"] = str(initial_policy)
+        if initial_homothetic_lambda is not None:
+            overrides["initial_homothetic_lambda"] = float(initial_homothetic_lambda)
         if enable_fallback is not None:
             overrides["enable_fallback"] = bool(enable_fallback)
         if fallback_methods is not None:
@@ -959,8 +970,7 @@ def _validate_stage_solve_config(solve_config: SolverConfig, *, residual_kind: s
     if root_fallbacks:
         unsupported = ", ".join(repr(method) for method in root_fallbacks)
         raise ValueError(
-            "Collocation needs least_squares ('trf' or 'lm'); "
-            f"bad fallback(s): {unsupported}."
+            f"Collocation needs least_squares ('trf' or 'lm'); bad fallback(s): {unsupported}."
         )
 
 
@@ -1023,6 +1033,66 @@ def _residual_array_norm(residual: np.ndarray) -> float:
 
 def _uses_least_squares_api(solve_config: SolverConfig) -> bool:
     return solve_config.method in LEAST_SQUARES_METHODS
+
+
+def _build_initial_state(operator: Operator, solve_config: SolverConfig) -> np.ndarray:
+    """Build the packed initial state requested by ``solve_config.initial_policy``."""
+
+    initial_policy = solve_config.initial_policy
+    if initial_policy is None:
+        return operator.encode_initial_state()
+    if initial_policy == "zeros":
+        return np.zeros(operator.x_size, dtype=np.float64)
+    if initial_policy == "homothetic":
+        return _build_boundary_homothetic_initial_state(
+            operator, boundary_slope_factor=solve_config.initial_homothetic_lambda
+        )
+    if initial_policy == "warm":
+        raise RuntimeError("_build_initial_state('warm') needs the current solver x0")
+    if initial_policy == "optimize":
+        raise NotImplementedError(
+            "initial_policy='optimize' is reserved for the line-search initializer"
+        )
+    raise ValueError(f"Unsupported initial_policy {initial_policy!r}")
+
+
+def _build_boundary_homothetic_initial_state(
+    operator: Operator, *, boundary_slope_factor: float = 1.0
+) -> np.ndarray:
+    """Return a cheap boundary-scaled x0 for nested, homothetic surfaces.
+
+    ``boundary_slope_factor`` sets the target boundary slope ratio
+    ``u_m'(1)=lambda*offset`` for each active c/s mode. The default ``1.0``
+    matches homothetic scaling; smaller values relax the boundary more
+    aggressively.
+    """
+
+    return _build_boundary_slope_initial_state(
+        operator, boundary_slope_factor=boundary_slope_factor
+    )
+
+
+def _build_boundary_slope_initial_state(
+    operator: Operator, *, boundary_slope_factor: float
+) -> np.ndarray:
+    """Set first c/s coefficients so ``u_m'(1)=lambda*offset``."""
+
+    x = np.zeros(operator.x_size, dtype=np.float64)
+    target_factor = float(boundary_slope_factor)
+    for profile_id, name in enumerate(operator.profile_names):
+        if not (name.startswith("c") or name.startswith("s")):
+            continue
+        slot = int(operator.active_slot_by_profile_id[int(profile_id)])
+        if slot < 0 or int(operator.active_lengths[slot]) <= 0:
+            continue
+        profile = operator.profiles_by_name[name]
+        power = int(profile.power)
+        offset = float(profile.offset)
+        if power <= 0 or abs(offset) <= 1.0e-14:
+            continue
+        coeff_index = int(operator.active_coeff_index_rows[slot, 0])
+        x[coeff_index] = 0.5 * (float(power) - target_factor) * offset
+    return x
 
 
 def _accepted_residual_norm(solve_config: SolverConfig) -> float:

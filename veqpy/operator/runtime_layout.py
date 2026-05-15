@@ -315,7 +315,7 @@ class SourceAuxState:
 class SourceRuntimeState:
     """绑定到 source materialization/remap 的 runtime ownership 容器."""
 
-    cache_key: tuple[str, str, int] | None
+    cache_key: tuple[str, str, int, str] | None
     const_state: SourceConstState
     work_state: SourceWorkState
     aux_state: SourceAuxState

@@ -363,7 +363,7 @@ class Equilibrium(Reactive, Serial):
     @property
     def F(self) -> np.ndarray:
         """极向电流函数 F (R*B_phi)."""
-        if np.any(self.F2 < 1e-15):
+        if np.any(self.F2 < 1e-6):
             raise ValueError("Negative F2 encountered, cannot compute F")
         return np.sqrt(self.F2)
 

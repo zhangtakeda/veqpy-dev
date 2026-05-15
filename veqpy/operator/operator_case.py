@@ -179,9 +179,7 @@ def _normalize_profile_coeff(name: str, coeff: ProfileCoeffInput) -> ProfileCoef
         return np.zeros(length, dtype=np.float64)
     if isinstance(coeff, (list, np.ndarray)):
         return _as_1d_array(coeff, name=f"{name} coeff").astype(np.float64, copy=True)
-    raise TypeError(
-        f"Invalid {name} coeff type {type(coeff).__name__}"
-    )
+    raise TypeError(f"Invalid {name} coeff type {type(coeff).__name__}")
 
 
 def _copy_coeffs(profile_coeffs: dict[str, ProfileCoeffInput]) -> dict[str, ProfileCoeff]:

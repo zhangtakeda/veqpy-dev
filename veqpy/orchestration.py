@@ -26,13 +26,17 @@ from veqpy.engine.numba_geometry import update_geometry_hot
 from veqpy.engine.numba_source import (
     COORDINATE_CODES,
     build_source_remap_cache,
-    build_uniform_not_a_knot_spline_coefficients,
     materialize_profile_owned_psin_source,
     materialize_projected_source_inputs,
     resolve_source_inputs,
     source_parameterization_for_route_key,
     update_fixed_point_psin_query,
     update_fourier_family_fields,
+)
+from veqpy.math.interpolate import (
+    build_uniform_source_interpolation_coefficients,
+    normalize_source_interpolation_kind,
+    source_interpolation_kind_is_barycentric,
 )
 
 if TYPE_CHECKING:
@@ -208,6 +212,7 @@ class SourcePlan:
     endpoint_policy: str
     heat_projection_degree: int
     current_projection_degree: int
+    interpolation_kind: str
 
     @property
     def is_grid_nodes(self) -> bool:
@@ -236,6 +241,13 @@ class SourcePlan:
     @property
     def endpoint_policy_code(self) -> int:
         return int(ENDPOINT_POLICY_CODES[self.endpoint_policy])
+
+    @property
+    def uses_barycentric_interpolation(self) -> bool:
+        return (
+            not self.is_grid_nodes
+            and source_interpolation_kind_is_barycentric(self.interpolation_kind)
+        )
 
 
 def _source_route_key(source_plan: SourcePlan) -> tuple[str, str, str]:
@@ -335,6 +347,7 @@ def build_source_plan(
     *,
     case: "OperatorCase",
     source_route_spec: object,
+    interpolation_kind: str = "cubic",
 ) -> SourcePlan:
     has_ip_constraint = bool(np.isfinite(case.Ip))
     has_beta_constraint = bool(np.isfinite(case.beta))
@@ -382,6 +395,11 @@ def build_source_plan(
         endpoint_policy=str(endpoint_policy).lower(),
         heat_projection_degree=heat_projection_degree,
         current_projection_degree=current_projection_degree,
+        interpolation_kind=(
+            ""
+            if str(case.nodes).lower() == "grid"
+            else normalize_source_interpolation_kind(interpolation_kind)
+        ),
     )
 
 
@@ -441,7 +459,12 @@ def refresh_source_runtime(
     source_const_state = source_runtime_state.const_state
     source_aux_state = source_runtime_state.aux_state
     source_work_state = source_runtime_state.work_state
-    case_key = (source_plan.coordinate, source_plan.nodes, source_plan.source_sample_count)
+    case_key = (
+        source_plan.coordinate,
+        source_plan.nodes,
+        source_plan.source_sample_count,
+        source_plan.interpolation_kind if not source_plan.is_grid_nodes else "",
+    )
     if source_runtime_state.cache_key != case_key:
         if source_plan.is_grid_nodes:
             source_const_state.barycentric_weights = np.empty(0, dtype=np.float64)
@@ -461,6 +484,7 @@ def refresh_source_runtime(
                 source_plan.coordinate,
                 source_plan.source_sample_count,
                 rho=grid_rho,
+                interpolation_kind=source_plan.interpolation_kind,
             )
             if not source_plan.has_projection_policy:
                 source_const_state.heat_projection_fit_matrix = np.empty((0, 0), dtype=np.float64)
@@ -506,11 +530,13 @@ def refresh_source_runtime(
         source_aux_state.heat_spline_coeff = np.empty((0, 4), dtype=np.float64)
         source_aux_state.current_spline_coeff = np.empty((0, 4), dtype=np.float64)
     else:
-        source_aux_state.heat_spline_coeff = build_uniform_not_a_knot_spline_coefficients(
-            source_plan.heat_input
+        source_aux_state.heat_spline_coeff = build_uniform_source_interpolation_coefficients(
+            source_plan.heat_input,
+            kind=source_plan.interpolation_kind,
         )
-        source_aux_state.current_spline_coeff = build_uniform_not_a_knot_spline_coefficients(
-            source_plan.current_input
+        source_aux_state.current_spline_coeff = build_uniform_source_interpolation_coefficients(
+            source_plan.current_input,
+            kind=source_plan.interpolation_kind,
         )
     if source_plan.is_grid_nodes or not source_plan.has_projection_policy:
         source_aux_state.heat_projection_coeff = np.empty(0, dtype=np.float64)
@@ -544,6 +570,7 @@ def refresh_source_runtime(
                 source_aux_state.heat_spline_coeff,
                 source_aux_state.current_spline_coeff,
                 psin,
+                source_plan.uses_barycentric_interpolation,
             )
     elif source_execution.requires_fixed_point_psin_materialization:
         source_work_state.psin_query.fill(-1.0)
@@ -585,6 +612,8 @@ def _build_source_stage_runner_shared(operator_core: Any) -> Callable:
             heat_input = source_plan.heat_input
             current_input = source_plan.current_input
             parameterization_code = source_plan.parameterization_code
+            static_layout = operator_core.static_layout
+            n_axis_fix = int(np.searchsorted(static_layout.rho, operator_core.fix_rho))
 
             def runner() -> tuple[float, float]:
                 if psin_profile_fields.size == 0:
@@ -603,6 +632,12 @@ def _build_source_stage_runner_shared(operator_core: Any) -> Callable:
                     source_aux_state.heat_spline_coeff,
                     source_aux_state.current_spline_coeff,
                     parameterization_code,
+                    static_layout.rho,
+                    static_layout.differentiator,
+                    static_layout.accumulator,
+                    n_axis_fix,
+                    source_runtime_state.const_state.barycentric_weights,
+                    source_plan.uses_barycentric_interpolation,
                 )
                 if source_plan.has_projection_policy:
                     materialize_projected_source_inputs(
@@ -679,6 +714,7 @@ def _build_source_stage_runner_shared(operator_core: Any) -> Callable:
                     source_aux_state.heat_spline_coeff,
                     source_aux_state.current_spline_coeff,
                     source_work_state.parameter_query,
+                    source_plan.uses_barycentric_interpolation,
                 )
             return source_eval_runner(
                 source_target_root_fields,
@@ -762,6 +798,7 @@ def _build_pj2_psin_uniform_source_stage_runner(
                 source_aux_state.heat_spline_coeff,
                 source_aux_state.current_spline_coeff,
                 source_work_state.parameter_query,
+                source_plan.uses_barycentric_interpolation,
             )
             alpha1, alpha2 = source_eval_runner(
                 target_root_fields,
@@ -868,6 +905,7 @@ def _build_pq_psin_uniform_source_stage_runner(
                 source_aux_state.heat_spline_coeff,
                 source_aux_state.current_spline_coeff,
                 source_work_state.parameter_query,
+                source_plan.uses_barycentric_interpolation,
             )
             alpha1, alpha2 = source_eval_runner(
                 target_root_fields,

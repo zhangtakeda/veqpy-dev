@@ -779,6 +779,8 @@ def _bind_profile_owned_psin_residual_runner_core(
             profile_owned_psin_binding.differentiator,
             profile_owned_psin_binding.accumulator,
             n_axis_fix,
+            profile_owned_psin_binding.barycentric_weights,
+            profile_owned_psin_binding.use_barycentric,
         )
         # PI psin-uniform is more accurate with the direct source-owned interpolation
         # than with the extra projected rematerialization used by other routes.
@@ -878,7 +880,7 @@ def _bind_pj2_psin_fixed_point_residual_runner_core(
                 fixed_point_psin_binding.source_psin_query,
                 fixed_point_psin_binding.psin_profile_u,
             )
-        if fixed_point_psin_binding.has_Ip:
+        if fixed_point_psin_binding.has_Ip and fixed_point_psin_binding.use_local_barycentric:
             alpha1, alpha2 = _run_fixed_point_barycentric_with_scratch_impl(
                 _update_pj2_from_psin_inputs_with_scratch,
                 16,
@@ -1109,7 +1111,7 @@ def _bind_pq_psin_fixed_point_residual_runner_core(
                 fixed_point_psin_binding.source_psin_query,
                 fixed_point_psin_binding.psin_profile_u,
             )
-        if fixed_point_psin_binding.has_Ip:
+        if fixed_point_psin_binding.has_Ip and fixed_point_psin_binding.use_local_barycentric:
             alpha1, alpha2 = _run_fixed_point_barycentric_with_scratch_impl(
                 _update_pq_from_psin_inputs_with_scratch,
                 16,
