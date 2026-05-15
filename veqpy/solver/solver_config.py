@@ -95,7 +95,7 @@ class SolverConfig:
     fallback_methods: tuple[str, ...] | list[str] | None = field(default=None)
     enable_verbose: bool = False
     enable_history: bool = True
-    residual_normalization: str | None = "balanced"
+    residual_normalization: str | None = None
     residual_normalization_floor: float = 1.0
     residual_normalization_max_ratio: float = 1.0e30
     residual_normalization_root_global_blocks: int = 16
