@@ -97,7 +97,7 @@ class SolverConfig:
     enable_history: bool = True
     residual_normalization: str | None = "legacy"
     residual_normalization_floor: float = 1.0
-    residual_normalization_max_ratio: float = 1.0e30
+    residual_normalization_max_ratio: float = 1.0e10
     residual_normalization_root_global_blocks: int = 16
 
     enable_collocation: bool = False

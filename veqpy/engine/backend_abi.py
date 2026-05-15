@@ -221,7 +221,7 @@ class FusedHotRuntimeABI:
 
 @dataclass(frozen=True, slots=True)
 class FusedResidualPackABI:
-    packed_residual: np.ndarray
+    residual_pack_scratch: np.ndarray
     residual_surface_workspace: np.ndarray
     active_residual_block_codes: np.ndarray
     active_residual_block_orders: np.ndarray
@@ -321,11 +321,13 @@ def build_fused_residual_pack_abi(
     runtime_layout = backend_state.runtime_layout
     residual_binding_layout = backend_state.residual_binding_layout
     return FusedResidualPackABI(
-        packed_residual=runtime_layout.packed_residual,
+        residual_pack_scratch=runtime_layout.residual_pack_scratch,
         residual_surface_workspace=runtime_layout.residual_surface_workspace,
         active_residual_block_codes=residual_binding_layout.active_residual_block_codes,
         active_residual_block_orders=residual_binding_layout.active_residual_block_orders,
-        active_residual_block_radial_powers=residual_binding_layout.active_residual_block_radial_powers,
+        active_residual_block_radial_powers=(
+            residual_binding_layout.active_residual_block_radial_powers
+        ),
         active_coeff_index_rows=runtime_layout.active_coeff_index_rows,
         active_lengths=runtime_layout.active_lengths,
         sin_mtheta=static_layout.sin_mtheta,

@@ -226,6 +226,8 @@ class RuntimeLayout:
     residual_surface_workspace: np.ndarray
     root_fields: np.ndarray
     packed_residual: np.ndarray
+    residual_pack_scratch: np.ndarray
+    collocation_sqrt_weights: np.ndarray
     active_u_fields: np.ndarray
     active_rp_fields: np.ndarray
     active_env_fields: np.ndarray
@@ -271,7 +273,8 @@ class ExecutionState:
     geometry_stage_runner: Callable
     source_eval_runner: Callable
     source_stage_runner: Callable
-    residual_pack_stage_runner: Callable
+    residual_full_stage_runner_into: Callable
+    fused_residual_runner_into: Callable
     residual_full_stage_runner: Callable
     fused_residual_runner: Callable
     fused_alpha_state: np.ndarray
@@ -387,6 +390,11 @@ def allocate_runtime_state(
     # solve-time residual workspace rows:
     # 0=G, 1=G*psin_R, 2=G*psin_Z, 3=G*psin_R*sin_tb
     residual_surface_workspace = np.empty((4, nr, nt), dtype=np.float64)
+    residual_pack_scratch = np.empty(nr, dtype=np.float64)
+    radial_weights = np.asarray(static_layout.weights, dtype=np.float64)
+    if radial_weights.ndim != 1 or radial_weights.size != nr:
+        raise ValueError(f"Invalid radial weights shape {radial_weights.shape}")
+    collocation_sqrt_weights = np.sqrt(radial_weights / max(nt, 1))
 
     profiles_by_name: dict[str, Profile] = {}
     for name in profile_names:
@@ -489,6 +497,8 @@ def allocate_runtime_state(
         residual_surface_workspace=residual_surface_workspace,
         root_fields=field_runtime_state.root_fields,
         packed_residual=field_runtime_state.packed_residual,
+        residual_pack_scratch=residual_pack_scratch,
+        collocation_sqrt_weights=collocation_sqrt_weights,
         active_u_fields=active_u_fields,
         active_rp_fields=active_rp_fields,
         active_env_fields=active_env_fields,

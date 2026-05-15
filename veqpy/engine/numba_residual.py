@@ -7,6 +7,7 @@ Role:
 
 Public API:
 - update_residual_compact
+- write_weighted_collocation_field_into
 
 Notes:
 - 保留的是 numba hot path 所需最小接口.
@@ -201,3 +202,19 @@ def _run_residual_blocks_packed_precomputed(
 
 
 run_residual_blocks_packed_precomputed = _run_residual_blocks_packed_precomputed
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def write_weighted_collocation_field_into(
+    out: np.ndarray,
+    field: np.ndarray,
+    sqrt_weights: np.ndarray,
+    offset: int,
+) -> None:
+    nr, nt = field.shape
+    cursor = offset
+    for i in range(nr):
+        weight_i = sqrt_weights[i]
+        for j in range(nt):
+            out[cursor] = weight_i * field[i, j]
+            cursor += 1

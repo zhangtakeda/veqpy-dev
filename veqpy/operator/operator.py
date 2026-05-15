@@ -121,6 +121,8 @@ class Operator:
     geometry_surface_workspace: np.ndarray = field(init=False, repr=False)
     geometry_radial_workspace: np.ndarray = field(init=False, repr=False)
     residual_surface_workspace: np.ndarray = field(init=False, repr=False)
+    residual_pack_scratch: np.ndarray = field(init=False, repr=False)
+    collocation_sqrt_weights: np.ndarray = field(init=False, repr=False)
     c_effective_order: int = field(init=False, repr=False)
     s_effective_order: int = field(init=False, repr=False)
     _source_route_spec: object = field(init=False, repr=False)
@@ -169,7 +171,10 @@ class Operator:
             geometry_stage_runner=lambda: None,
             source_eval_runner=lambda *args: (0.0, 0.0),
             source_stage_runner=lambda: (0.0, 0.0),
-            residual_pack_stage_runner=lambda: np.zeros(self.x_size, dtype=np.float64),
+            residual_full_stage_runner_into=lambda out: out.fill(0.0),
+            fused_residual_runner_into=(
+                lambda x_eval, out: self._evaluate_residual_into(x_eval, out)
+            ),
             residual_full_stage_runner=lambda: np.zeros(self.x_size, dtype=np.float64),
             fused_residual_runner=lambda x_eval: self._evaluate_residual(x_eval),
             fused_alpha_state=np.zeros(2, dtype=np.float64),
@@ -236,8 +241,23 @@ class Operator:
         x: np.ndarray,
     ) -> np.ndarray:
         """返回 variational/Galerkin residual 向量."""
+        out = np.empty(self.x_size, dtype=np.float64)
+        self.residual_var_into(x, out)
+        return out
+
+    def residual_var_into(self, x: np.ndarray, out: np.ndarray) -> None:
+        """把 variational/Galerkin residual 写入调用方提供的 ``out``."""
         x_eval = self.coerce_x(x)
-        return self.execution_state.fused_residual_runner(x_eval)
+        if not isinstance(out, np.ndarray):
+            raise TypeError("Expected out to be a numpy.ndarray")
+        out_eval = out
+        if out_eval.dtype != np.float64:
+            raise TypeError(f"Expected out dtype float64, got {out_eval.dtype}")
+        if out_eval.ndim != 1 or out_eval.shape[0] != self.x_size:
+            raise ValueError(f"Expected out to have shape ({self.x_size},), got {out_eval.shape}")
+        if not out_eval.flags.c_contiguous:
+            raise ValueError("Expected out to be C-contiguous")
+        self.execution_state.fused_residual_runner_into(x_eval, out_eval)
 
     def residual_collocation(self, x: np.ndarray) -> np.ndarray:
         """返回 DESC-style 点值 force-balance collocation residual.
@@ -250,12 +270,35 @@ class Operator:
         平方根权重用于离散 least-squares 标度.
         返回形状为 ``(2 * Nr * Nt,)`` 的向量.
         """
+        out = np.empty(2 * self.static_layout.Nr * self.static_layout.Nt, dtype=np.float64)
+        self.residual_collocation_into(x, out)
+        return out
+
+    def residual_collocation_into(self, x: np.ndarray, out: np.ndarray) -> None:
+        """把 DESC-style collocation residual 写入调用方提供的 ``out``."""
+        expected_size = 2 * self.static_layout.Nr * self.static_layout.Nt
+        if not isinstance(out, np.ndarray):
+            raise TypeError("Expected out to be a numpy.ndarray")
+        out_eval = out
+        if out_eval.dtype != np.float64:
+            raise TypeError(f"Expected out dtype float64, got {out_eval.dtype}")
+        if out_eval.ndim != 1 or out_eval.shape[0] != expected_size:
+            raise ValueError(f"Expected out to have shape ({expected_size},), got {out_eval.shape}")
+        if not out_eval.flags.c_contiguous:
+            raise ValueError("Expected out to be C-contiguous")
         self._evaluate_collocation_workspace(x)
-        return np.concatenate(
-            (
-                self._weighted_collocation_field(self.residual_surface_workspace[0]),
-                self._weighted_collocation_field(self.residual_surface_workspace[0]),
-            )
+        block_size = self.static_layout.Nr * self.static_layout.Nt
+        numba_residual.write_weighted_collocation_field_into(
+            out_eval,
+            self.residual_surface_workspace[0],
+            self.collocation_sqrt_weights,
+            0,
+        )
+        numba_residual.write_weighted_collocation_field_into(
+            out_eval,
+            self.residual_surface_workspace[0],
+            self.collocation_sqrt_weights,
+            block_size,
         )
 
     def _evaluate_collocation_workspace(self, x: np.ndarray) -> None:
@@ -265,23 +308,16 @@ class Operator:
         self.stage_c_source()
         self._update_residual_surface_workspace()
 
-    def _weighted_collocation_field(self, field: np.ndarray) -> np.ndarray:
-        if field.size == 0:
-            return np.empty(0, dtype=np.float64)
-        sqrt_weights = self._collocation_sqrt_weights()
-        return np.ravel(sqrt_weights * field).copy()
-
-    def _collocation_sqrt_weights(self) -> np.ndarray:
-        radial_weights = np.asarray(self.static_layout.weights, dtype=np.float64)
-        if radial_weights.ndim != 1 or radial_weights.size != int(self.static_layout.Nr):
-            raise ValueError(f"Invalid radial weights shape {radial_weights.shape}")
-        return np.sqrt(radial_weights[:, None] / max(int(self.static_layout.Nt), 1))
-
     def _evaluate_residual(self, x_eval: np.ndarray) -> np.ndarray:
+        out = np.empty(self.x_size, dtype=np.float64)
+        self._evaluate_residual_into(x_eval, out)
+        return out
+
+    def _evaluate_residual_into(self, x_eval: np.ndarray, out: np.ndarray) -> None:
         self.stage_a_profile(x_eval)
         self.stage_b_geometry()
         self.stage_c_source()
-        return self.stage_d_residual()
+        self.stage_d_residual_into(out)
 
     def build_coeffs(
         self, x: np.ndarray, *, include_none: bool = True
@@ -319,8 +355,22 @@ class Operator:
 
     def stage_d_residual(self) -> np.ndarray:
         """执行 residual 阶段并返回 packed 残差."""
-        packed = self.execution_state.residual_full_stage_runner()
-        return packed.copy()
+        out = np.empty(self.x_size, dtype=np.float64)
+        self.stage_d_residual_into(out)
+        return out
+
+    def stage_d_residual_into(self, out: np.ndarray) -> None:
+        """执行 residual 阶段并把 packed 残差写入 ``out``."""
+        if not isinstance(out, np.ndarray):
+            raise TypeError("Expected out to be a numpy.ndarray")
+        out_eval = out
+        if out_eval.dtype != np.float64:
+            raise TypeError(f"Expected out dtype float64, got {out_eval.dtype}")
+        if out_eval.ndim != 1 or out_eval.shape[0] != self.x_size:
+            raise ValueError(f"Expected out to have shape ({self.x_size},), got {out_eval.shape}")
+        if not out_eval.flags.c_contiguous:
+            raise ValueError("Expected out to be C-contiguous")
+        self.execution_state.residual_full_stage_runner_into(out_eval)
 
     def _update_residual_surface_workspace(self) -> None:
         numba_residual.update_residual_compact(
@@ -388,6 +438,8 @@ class Operator:
         runtime.source_runtime_state = self.source_runtime_state
         runtime.root_fields = self.root_fields
         runtime.packed_residual = self.packed_residual
+        runtime.residual_pack_scratch = self.residual_pack_scratch
+        runtime.collocation_sqrt_weights = self.collocation_sqrt_weights
         runtime.active_u_fields = self.active_u_fields
         runtime.active_rp_fields = self.active_rp_fields
         runtime.active_env_fields = self.active_env_fields
@@ -463,6 +515,8 @@ class Operator:
         self.geometry_surface_workspace = bundle.runtime_layout.geometry_surface_workspace
         self.geometry_radial_workspace = bundle.runtime_layout.geometry_radial_workspace
         self.residual_surface_workspace = bundle.runtime_layout.residual_surface_workspace
+        self.residual_pack_scratch = bundle.runtime_layout.residual_pack_scratch
+        self.collocation_sqrt_weights = bundle.runtime_layout.collocation_sqrt_weights
 
     def _refresh_runtime_state(self) -> None:
         self._refresh_operator_identity()
@@ -549,12 +603,13 @@ class Operator:
         self.execution_state.geometry_stage_runner = self._build_geometry_stage_runner()
         self.execution_state.source_eval_runner = self._build_source_eval_runner()
         self.execution_state.source_stage_runner = self._build_bound_source_stage_runner()
-        self.execution_state.residual_pack_stage_runner = (
-            self._build_bound_residual_pack_stage_runner()
+        self.execution_state.residual_full_stage_runner_into = (
+            self._build_bound_residual_full_stage_runner_into()
         )
         self.execution_state.residual_full_stage_runner = (
             self._build_bound_residual_full_stage_runner()
         )
+        self.execution_state.fused_residual_runner_into = self._build_fused_residual_runner_into()
         self.execution_state.fused_residual_runner = self._build_fused_residual_runner()
         fixed_profile_ids = np.flatnonzero(~self.active_profile_mask).astype(np.int64, copy=False)
         for p in fixed_profile_ids:
@@ -642,11 +697,12 @@ class Operator:
             fix_rho=self.fix_rho,
         )
 
-    def _build_bound_residual_pack_stage_runner(self) -> Callable:
+    def _build_bound_residual_full_stage_runner_into(self) -> Callable:
         alpha_state = self.execution_state.fused_alpha_state
         root_fields = self.root_fields
         surface_workspace = self.geometry_surface_workspace
         residual_workspace = self.residual_surface_workspace
+        residual_pack_scratch = self.residual_pack_scratch
         sin_mtheta = self.static_layout.sin_mtheta
         cos_mtheta = self.static_layout.cos_mtheta
         rho_powers = self.static_layout.rho_powers
@@ -657,7 +713,7 @@ class Operator:
         R0 = self.case.R0
         B0 = self.case.B0
 
-        def runner() -> np.ndarray:
+        def runner(out: np.ndarray) -> None:
             numba_residual.update_residual_compact(
                 residual_workspace,
                 float(alpha_state[0]),
@@ -665,11 +721,10 @@ class Operator:
                 root_fields,
                 surface_workspace,
             )
-            packed = np.zeros(self.x_size, dtype=np.float64)
-            scratch = np.empty(self.static_layout.Nr, dtype=np.float64)
+            out.fill(0.0)
             numba_residual.run_residual_blocks_packed_precomputed(
-                packed,
-                scratch,
+                out,
+                residual_pack_scratch,
                 self.residual_binding_layout.active_residual_block_codes,
                 self.residual_binding_layout.active_residual_block_orders,
                 self.residual_binding_layout.active_residual_block_radial_powers,
@@ -686,56 +741,16 @@ class Operator:
                 R0,
                 B0,
             )
-            return packed
 
         return runner
 
     def _build_bound_residual_full_stage_runner(self) -> Callable:
-        packed_residual = self.packed_residual
-        alpha_state = self.execution_state.fused_alpha_state
-        root_fields = self.root_fields
-        surface_workspace = self.geometry_surface_workspace
-        residual_workspace = self.residual_surface_workspace
-        sin_mtheta = self.static_layout.sin_mtheta
-        cos_mtheta = self.static_layout.cos_mtheta
-        rho_powers = self.static_layout.rho_powers
-        y = self.static_layout.y
-        T = self.static_layout.T
-        weights = self.static_layout.weights
-        a = self.case.a
-        R0 = self.case.R0
-        B0 = self.case.B0
+        runner_into = self._build_bound_residual_full_stage_runner_into()
 
         def runner() -> np.ndarray:
-            numba_residual.update_residual_compact(
-                residual_workspace,
-                float(alpha_state[0]),
-                float(alpha_state[1]),
-                root_fields,
-                surface_workspace,
-            )
-            packed_residual.fill(0.0)
-            scratch = np.empty(self.static_layout.Nr, dtype=np.float64)
-            numba_residual.run_residual_blocks_packed_precomputed(
-                packed_residual,
-                scratch,
-                self.residual_binding_layout.active_residual_block_codes,
-                self.residual_binding_layout.active_residual_block_orders,
-                self.residual_binding_layout.active_residual_block_radial_powers,
-                self.active_coeff_index_rows,
-                self.active_lengths,
-                residual_workspace,
-                sin_mtheta,
-                cos_mtheta,
-                rho_powers,
-                y,
-                T,
-                weights,
-                a,
-                R0,
-                B0,
-            )
-            return packed_residual
+            out = np.empty(self.x_size, dtype=np.float64)
+            runner_into(out)
+            return out
 
         return runner
 
@@ -754,13 +769,13 @@ class Operator:
         if tuple(self.source_execution.route_key) == ("PJ2", "psin", "uniform"):
             self.source_runtime_state.work_state.psin_query.fill(-1.0)
 
-    def _build_fused_residual_runner(self) -> Callable[[np.ndarray], np.ndarray]:
+    def _build_fused_residual_runner_into(self) -> Callable[[np.ndarray, np.ndarray], None]:
         if (
             self.source_execution.requires_optimized_psin_profile
             and self.psin_profile.u_fields is None
         ):
-            return self._evaluate_residual
-        return numba_operator.bind_fused_residual_runner(
+            return self._evaluate_residual_into
+        return numba_operator.bind_fused_residual_runner_into(
             source_plan=self.source_plan,
             source_execution=self.source_execution,
             backend_state=self.backend_state,
@@ -773,6 +788,16 @@ class Operator:
             B0=float(self.case.B0),
             fix_rho=self.fix_rho,
         )
+
+    def _build_fused_residual_runner(self) -> Callable[[np.ndarray], np.ndarray]:
+        runner_into = self._build_fused_residual_runner_into()
+
+        def runner(x_eval: np.ndarray) -> np.ndarray:
+            out = np.empty(self.x_size, dtype=np.float64)
+            runner_into(x_eval, out)
+            return out
+
+        return runner
 
     def _snapshot_equilibrium_from_runtime(self, x: np.ndarray) -> Equilibrium:
         return snapshot_equilibrium_from_runtime(

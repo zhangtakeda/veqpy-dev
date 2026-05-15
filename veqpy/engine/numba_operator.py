@@ -7,6 +7,7 @@ Role:
 
 Public API:
 - bind_fused_residual_runner
+- bind_fused_residual_runner_into
 
 Notes:
 - 这里只覆盖 common route.
@@ -153,21 +154,15 @@ def _refresh_hot_runtime(
     )
 
 
-def _pack_residual_output(
+def _pack_residual_output_into(
+    out: np.ndarray,
     *,
     residual_pack_binding: backend_abi.FusedResidualPackABI,
-    scratch_holder: list[np.ndarray | None],
-) -> np.ndarray:
-    packed_residual = residual_pack_binding.packed_residual
-    packed_residual.fill(0.0)
-    scratch = scratch_holder[0]
-    nr = residual_pack_binding.residual_surface_workspace.shape[1]
-    if scratch is None or scratch.shape[0] != nr:
-        scratch = np.empty(nr, dtype=np.float64)
-        scratch_holder[0] = scratch
+) -> None:
+    out.fill(0.0)
     run_residual_blocks_packed_precomputed(
-        packed_residual,
-        scratch,
+        out,
+        residual_pack_binding.residual_pack_scratch,
         residual_pack_binding.active_residual_block_codes,
         residual_pack_binding.active_residual_block_orders,
         residual_pack_binding.active_residual_block_radial_powers,
@@ -184,7 +179,6 @@ def _pack_residual_output(
         residual_pack_binding.R0,
         residual_pack_binding.B0,
     )
-    return packed_residual.copy()
 
 
 @njit(cache=True, nogil=True)
@@ -440,6 +434,42 @@ def bind_fused_residual_runner(
     B0: float,
     fix_rho: float,
 ) -> Callable[[np.ndarray], np.ndarray]:
+    runner_into = bind_fused_residual_runner_into(
+        source_plan=source_plan,
+        source_execution=source_execution,
+        backend_state=backend_state,
+        alpha_state=alpha_state,
+        c_active_order=c_active_order,
+        s_active_order=s_active_order,
+        a=a,
+        R0=R0,
+        Z0=Z0,
+        B0=B0,
+        fix_rho=fix_rho,
+    )
+    packed_residual = backend_state.runtime_layout.packed_residual
+
+    def runner(x: np.ndarray) -> np.ndarray:
+        runner_into(x, packed_residual)
+        return packed_residual.copy()
+
+    return runner
+
+
+def bind_fused_residual_runner_into(
+    *,
+    source_plan: SourcePlan,
+    source_execution: backend_abi.SourceExecutionABI,
+    backend_state: "BackendState",
+    alpha_state: np.ndarray,
+    c_active_order: int,
+    s_active_order: int,
+    a: float,
+    R0: float,
+    Z0: float,
+    B0: float,
+    fix_rho: float,
+) -> Callable[[np.ndarray, np.ndarray], None]:
     route_key = tuple(source_execution.route_key)
     if route_key != source_plan.route_key:
         raise ValueError(
@@ -512,7 +542,7 @@ def _bind_single_pass_residual_runner_core(
     residual_pack_binding: backend_abi.FusedResidualPackABI,
     alpha_state: np.ndarray,
     R0: float,
-) -> Callable[[np.ndarray], np.ndarray]:
+) -> Callable[[np.ndarray, np.ndarray], None]:
     runtime_layout = backend_state.runtime_layout
     surface_workspace = runtime_layout.geometry_surface_workspace
     residual_workspace = runtime_layout.residual_surface_workspace
@@ -520,11 +550,10 @@ def _bind_single_pass_residual_runner_core(
     source_work_state = backend_state.source_runtime_state.work_state
     materialized_heat_input = source_work_state.materialized_heat_input
     materialized_current_input = source_work_state.materialized_current_input
-    scratch_holder: list[np.ndarray | None] = [None]
     FFn_psin = root_fields[3]
     Pn_psin = root_fields[4]
 
-    def runner(x: np.ndarray) -> np.ndarray:
+    def runner(x: np.ndarray, out: np.ndarray) -> None:
         _refresh_hot_runtime(x, hot_runtime_binding=hot_runtime_binding)
         alpha1, alpha2 = source_eval_runner(
             root_fields,
@@ -543,9 +572,7 @@ def _bind_single_pass_residual_runner_core(
             root_fields,
             surface_workspace,
         )
-        return _pack_residual_output(
-            residual_pack_binding=residual_pack_binding, scratch_holder=scratch_holder
-        )
+        _pack_residual_output_into(out, residual_pack_binding=residual_pack_binding)
 
     return runner
 
@@ -561,7 +588,7 @@ def _bind_profile_owned_psin_residual_runner_core(
     alpha_state: np.ndarray,
     R0: float,
     fix_rho: float,
-) -> Callable[[np.ndarray], np.ndarray]:
+) -> Callable[[np.ndarray, np.ndarray], None]:
     runtime_layout = backend_state.runtime_layout
     surface_workspace = runtime_layout.geometry_surface_workspace
     residual_workspace = runtime_layout.residual_surface_workspace
@@ -572,14 +599,13 @@ def _bind_profile_owned_psin_residual_runner_core(
         source_execution=source_execution,
         backend_state=backend_state,
     )
-    scratch_holder: list[np.ndarray | None] = [None]
     psin = root_fields[0]
     psin_r = root_fields[1]
     psin_rr = root_fields[2]
     FFn_psin = root_fields[3]
     Pn_psin = root_fields[4]
 
-    def runner(x: np.ndarray) -> np.ndarray:
+    def runner(x: np.ndarray, out: np.ndarray) -> None:
         _refresh_hot_runtime(x, hot_runtime_binding=hot_runtime_binding)
         _materialize_profile_owned_psin_source_impl(
             psin,
@@ -636,9 +662,7 @@ def _bind_profile_owned_psin_residual_runner_core(
             root_fields,
             surface_workspace,
         )
-        return _pack_residual_output(
-            residual_pack_binding=residual_pack_binding, scratch_holder=scratch_holder
-        )
+        _pack_residual_output_into(out, residual_pack_binding=residual_pack_binding)
 
     return runner
 
@@ -653,7 +677,7 @@ def _bind_pj2_psin_uniform_residual_runner_core(
     R0: float,
     B0: float,
     fix_rho: float,
-) -> Callable[[np.ndarray], np.ndarray]:
+) -> Callable[[np.ndarray, np.ndarray], None]:
     static_layout = backend_state.static_layout
     runtime_layout = backend_state.runtime_layout
     source_runtime_state = backend_state.source_runtime_state
@@ -705,12 +729,11 @@ def _bind_pj2_psin_uniform_residual_runner_core(
         )
     )
 
-    scratch_holder: list[np.ndarray | None] = [None]
     psin = root_fields[0]
     FFn_psin = root_fields[3]
     Pn_psin = root_fields[4]
 
-    def runner(x: np.ndarray) -> np.ndarray:
+    def runner(x: np.ndarray, out: np.ndarray) -> None:
         _refresh_hot_runtime(x, hot_runtime_binding=hot_runtime_binding)
         if source_psin_query[0] < 0.0:
             _normalize_psin_query(source_psin_query, psin_profile_u)
@@ -811,9 +834,7 @@ def _bind_pj2_psin_uniform_residual_runner_core(
             root_fields,
             surface_workspace,
         )
-        return _pack_residual_output(
-            residual_pack_binding=residual_pack_binding, scratch_holder=scratch_holder
-        )
+        _pack_residual_output_into(out, residual_pack_binding=residual_pack_binding)
 
     return runner
 
