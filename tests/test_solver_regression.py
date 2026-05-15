@@ -173,6 +173,124 @@ def test_solver_config_uses_variational_root_default_with_single_least_squares_f
 
     assert config.method == DEFAULT_VARIATIONAL_METHOD
     assert config.fallback_methods == DEFAULT_VARIATIONAL_FALLBACK_METHODS
+    assert config.residual_normalization == "robust_balanced"
+    assert SolverConfig(residual_normalization=None).residual_normalization == "robust_balanced"
+    balanced_alias = SolverConfig(residual_normalization="balanced")
+    assert balanced_alias.residual_normalization == "robust_balanced"
+
+
+def test_solver_config_accepts_robust_residual_normalization_options():
+    config = SolverConfig(
+        residual_normalization="sensitivity_balanced",
+        residual_normalization_floor=2.0,
+        residual_normalization_max_ratio=1.0e5,
+        residual_normalization_huber_tau=2.5,
+        residual_normalization_probe_count=2,
+        residual_normalization_probe_step=1.0e-5,
+        residual_normalization_sensitivity_lambda=0.75,
+    )
+
+    assert config.residual_normalization == "sensitivity_balanced"
+    assert config.residual_normalization_floor == 2.0
+    assert config.residual_normalization_max_ratio == 1.0e5
+    assert config.residual_normalization_huber_tau == 2.5
+    assert config.residual_normalization_probe_count == 2
+    assert config.residual_normalization_probe_step == 1.0e-5
+    assert config.residual_normalization_sensitivity_lambda == 0.75
+
+
+def test_robust_balanced_residual_normalization_downweights_block_outlier():
+    operator = _DummyOperator(x_size=4)
+    operator.active_lengths = np.asarray([3, 1], dtype=np.int64)
+    solver = Solver(
+        operator=operator,
+        config=SolverConfig(residual_normalization="robust_balanced"),
+    )
+    wrapped, _ = solver._build_normalized_residual_wrapper(
+        np.zeros(4, dtype=np.float64),
+        solve_config=solver.config,
+        residual_kind="variational",
+    )
+
+    assert wrapped is not None
+    scaled = wrapped(np.asarray([1.0, 1.0, 100.0, 10.0], dtype=np.float64))
+
+    assert np.allclose(scaled[:3], [1.0, 1.0, 100.0])
+    assert np.allclose(scaled[3:], [10.0])
+
+
+def test_robust_balanced_residual_normalization_freezes_scale_inside_attempt():
+    operator = _DummyOperator(x_size=4)
+    operator.active_lengths = np.asarray([2, 2], dtype=np.int64)
+    solver = Solver(
+        operator=operator,
+        config=SolverConfig(residual_normalization="robust_balanced"),
+    )
+    wrapped, _ = solver._build_normalized_residual_wrapper(
+        np.asarray([1.0, 1.0, 10.0, 10.0], dtype=np.float64),
+        solve_config=solver.config,
+        residual_kind="variational",
+    )
+
+    assert wrapped is not None
+    first = wrapped(np.asarray([1.0, 1.0, 10.0, 10.0], dtype=np.float64))
+    second = wrapped(np.asarray([2.0, 2.0, 20.0, 20.0], dtype=np.float64))
+
+    assert np.allclose(first, [1.0, 1.0, 1.0, 1.0])
+    assert np.allclose(second, [2.0, 2.0, 2.0, 2.0])
+
+
+def test_variational_root_success_still_requires_raw_residual(monkeypatch):
+    solver = Solver(
+        operator=_DummyOperator(),
+        config=SolverConfig(residual_normalization="balanced"),
+    )
+    calls = []
+
+    def fake_registered_method(fun, x0, **kwargs):
+        calls.append(np.asarray(x0, dtype=np.float64).copy())
+        return SimpleNamespace(
+            x=np.ones_like(x0),
+            fun=np.ones_like(x0),
+            success=True,
+            message="root converged on scaled residual",
+            nfev=1,
+            njev=0,
+            nit=1,
+        )
+
+    monkeypatch.setitem(SUPPORTED_METHODS, "hybr", fake_registered_method)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        solver.solve(enable_history=False, enable_fallback=False)
+
+    assert len(calls) == 1
+    assert solver.result.success is False
+    assert "rejected by residual" in solver.result.message
+
+
+def test_sensitivity_balanced_residual_normalization_is_frozen_and_finite():
+    operator = _DummyOperator(x_size=4)
+    operator.active_lengths = np.asarray([2, 2], dtype=np.int64)
+    solver = Solver(
+        operator=operator,
+        config=SolverConfig(
+            residual_normalization="sensitivity_balanced",
+            residual_normalization_probe_count=2,
+        ),
+    )
+    wrapped, _ = solver._build_normalized_residual_wrapper(
+        np.asarray([1.0, 1.0, 10.0, 10.0], dtype=np.float64),
+        solve_config=solver.config,
+        residual_kind="variational",
+    )
+
+    assert wrapped is not None
+    scaled = wrapped(np.asarray([1.0, 1.0, 10.0, 10.0], dtype=np.float64))
+
+    assert np.all(np.isfinite(scaled))
+    assert operator.variational_calls <= 4
 
 
 def test_solver_initial_policy_rejects_case_seed():

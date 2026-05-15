@@ -59,16 +59,27 @@ DEFAULT_VARIATIONAL_METHOD = "hybr"
 DEFAULT_COLLOCATION_METHOD = "trf"
 DEFAULT_VARIATIONAL_FALLBACK_METHODS = ("lm",)
 SUPPORTED_INITIAL_POLICIES = frozenset(("zeros", "warm", "homothetic", "optimize"))
-SUPPORTED_RESIDUAL_NORMALIZATIONS = frozenset(("balanced", "legacy", "none"))
+SUPPORTED_RESIDUAL_NORMALIZATIONS = frozenset(
+    (
+        "robust_balanced",
+        "sensitivity_balanced",
+        "legacy",
+        "none",
+    )
+)
 
 _RESIDUAL_NORMALIZATION_ALIASES = {
-    "balanced": "balanced",
-    "new": "balanced",
-    "industrial": "balanced",
-    "on": "balanced",
-    "true": "balanced",
-    "yes": "balanced",
-    "1": "balanced",
+    "balanced": "robust_balanced",
+    "robust-balanced": "robust_balanced",
+    "robust": "robust_balanced",
+    "sensitivity-balanced": "sensitivity_balanced",
+    "sensitivity": "sensitivity_balanced",
+    "new": "robust_balanced",
+    "industrial": "robust_balanced",
+    "on": "robust_balanced",
+    "true": "robust_balanced",
+    "yes": "robust_balanced",
+    "1": "robust_balanced",
     "legacy": "legacy",
     "old": "legacy",
     "block-rms-asinh": "legacy",
@@ -89,16 +100,19 @@ class SolverConfig:
     max_residual: float = 1e-6
     max_evaluations: int = 1000
     enable_warmstart: bool = False
-    initial_policy: str | None = None
+    initial_policy: str | None = "homothetic"
     initial_homothetic_lambda: float = 1.0
     enable_fallback: bool = True
     fallback_methods: tuple[str, ...] | list[str] | None = field(default=None)
     enable_verbose: bool = False
     enable_history: bool = True
-    residual_normalization: str | None = "legacy"
+    residual_normalization: str | None = "robust_balanced"
     residual_normalization_floor: float = 1.0
-    residual_normalization_max_ratio: float = 1.0e10
-    residual_normalization_root_global_blocks: int = 16
+    residual_normalization_max_ratio: float = 1.0e6
+    residual_normalization_huber_tau: float = 3.0
+    residual_normalization_probe_count: int = 4
+    residual_normalization_probe_step: float = 1.0e-6
+    residual_normalization_sensitivity_lambda: float = 0.5
 
     enable_collocation: bool = False
     collocation_method: str = DEFAULT_COLLOCATION_METHOD
@@ -194,8 +208,11 @@ class SolverConfig:
         residual_normalization = _normalize_residual_normalization(self.residual_normalization)
         residual_normalization_floor = float(self.residual_normalization_floor)
         residual_normalization_max_ratio = float(self.residual_normalization_max_ratio)
-        residual_normalization_root_global_blocks = int(
-            self.residual_normalization_root_global_blocks
+        residual_normalization_huber_tau = float(self.residual_normalization_huber_tau)
+        residual_normalization_probe_count = int(self.residual_normalization_probe_count)
+        residual_normalization_probe_step = float(self.residual_normalization_probe_step)
+        residual_normalization_sensitivity_lambda = float(
+            self.residual_normalization_sensitivity_lambda
         )
         if not isfinite(residual_normalization_floor) or residual_normalization_floor <= 0.0:
             raise ValueError(
@@ -207,11 +224,30 @@ class SolverConfig:
                 "SolverConfig.residual_normalization_max_ratio must be finite and >= 1; "
                 f"got {self.residual_normalization_max_ratio!r}."
             )
-        if residual_normalization_root_global_blocks < 0:
+        if not isfinite(residual_normalization_huber_tau) or residual_normalization_huber_tau < 0.0:
             raise ValueError(
-                "SolverConfig.residual_normalization_root_global_blocks must be "
-                "non-negative; "
-                f"got {self.residual_normalization_root_global_blocks!r}."
+                "SolverConfig.residual_normalization_huber_tau must be finite and >= 0; "
+                f"got {self.residual_normalization_huber_tau!r}."
+            )
+        if residual_normalization_probe_count < 0:
+            raise ValueError(
+                "SolverConfig.residual_normalization_probe_count must be non-negative; "
+                f"got {self.residual_normalization_probe_count!r}."
+            )
+        if (
+            not isfinite(residual_normalization_probe_step)
+            or residual_normalization_probe_step <= 0.0
+        ):
+            raise ValueError(
+                "SolverConfig.residual_normalization_probe_step must be positive finite; "
+                f"got {self.residual_normalization_probe_step!r}."
+            )
+        if not isfinite(residual_normalization_sensitivity_lambda) or (
+            residual_normalization_sensitivity_lambda < 0.0
+        ):
+            raise ValueError(
+                "SolverConfig.residual_normalization_sensitivity_lambda must be finite and >= 0; "
+                f"got {self.residual_normalization_sensitivity_lambda!r}."
             )
         object.__setattr__(self, "method", method)
         object.__setattr__(self, "enable_collocation", bool(self.enable_collocation))
@@ -230,9 +266,18 @@ class SolverConfig:
             self, "residual_normalization_max_ratio", residual_normalization_max_ratio
         )
         object.__setattr__(
+            self, "residual_normalization_huber_tau", residual_normalization_huber_tau
+        )
+        object.__setattr__(
+            self, "residual_normalization_probe_count", residual_normalization_probe_count
+        )
+        object.__setattr__(
+            self, "residual_normalization_probe_step", residual_normalization_probe_step
+        )
+        object.__setattr__(
             self,
-            "residual_normalization_root_global_blocks",
-            residual_normalization_root_global_blocks,
+            "residual_normalization_sensitivity_lambda",
+            residual_normalization_sensitivity_lambda,
         )
 
     def __rich__(self):
@@ -263,9 +308,20 @@ class SolverConfig:
                 f"residual_normalization_max_ratio: {self.residual_normalization_max_ratio:.6g}"
             )
             tree.add(
-                "residual_normalization_root_global_blocks: "
-                f"{self.residual_normalization_root_global_blocks}"
+                f"residual_normalization_huber_tau: {self.residual_normalization_huber_tau:.6g}"
             )
+            if self.residual_normalization == "sensitivity_balanced":
+                tree.add(
+                    f"residual_normalization_probe_count: {self.residual_normalization_probe_count}"
+                )
+                tree.add(
+                    "residual_normalization_probe_step: "
+                    f"{self.residual_normalization_probe_step:.6g}"
+                )
+                tree.add(
+                    "residual_normalization_sensitivity_lambda: "
+                    f"{self.residual_normalization_sensitivity_lambda:.6g}"
+                )
         return tree
 
     def __str__(self) -> str:
@@ -282,7 +338,7 @@ class SolverConfig:
 
 def _normalize_residual_normalization(value: str | None) -> str:
     if value is None:
-        return "balanced"
+        return "robust_balanced"
     key = str(value).strip().lower().replace("_", "-")
     try:
         return _RESIDUAL_NORMALIZATION_ALIASES[key]

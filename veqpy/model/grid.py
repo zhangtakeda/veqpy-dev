@@ -49,7 +49,7 @@ class Grid(Reactive, Serial):
         Nt: int,
         L_max: int = 20,
         M_max: int = 20,
-        K_max: int | None = 2,
+        K_max: int | None = None,
         quadrature_scheme: str = "legendre",
         calculus_scheme: str = "spectral",
     ):

@@ -290,13 +290,13 @@ class Operator:
         block_size = self.static_layout.Nr * self.static_layout.Nt
         numba_residual.write_weighted_collocation_field_into(
             out_eval,
-            self.residual_surface_workspace[0],
+            self.residual_surface_workspace[1],
             self.collocation_sqrt_weights,
             0,
         )
         numba_residual.write_weighted_collocation_field_into(
             out_eval,
-            self.residual_surface_workspace[0],
+            self.residual_surface_workspace[2],
             self.collocation_sqrt_weights,
             block_size,
         )
