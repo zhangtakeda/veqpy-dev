@@ -51,7 +51,7 @@ REFERENCE_GRID = Grid(
 )
 
 TEST_GRID = Grid(
-    Nr=32,
+    Nr=16,
     Nt=16,
     quadrature_scheme="chebyshev",
 )

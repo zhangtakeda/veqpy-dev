@@ -49,7 +49,7 @@ class Grid(Reactive, Serial):
         Nt: int,
         L_max: int = 20,
         M_max: int = 20,
-        K_max: int | None = None,
+        K_max: int | None = 2,
         quadrature_scheme: str = "legendre",
         calculus_scheme: str = "spectral",
     ):
@@ -95,8 +95,8 @@ class Grid(Reactive, Serial):
 
             case "Nt":
                 value = int(value)
-                if value < 1:
-                    raise ValueError("Nt must be positive")
+                if value < 4:
+                    raise ValueError("Nt must be at least 4 for stable spectral methods")
                 return value
 
             case "L_max":
@@ -107,16 +107,16 @@ class Grid(Reactive, Serial):
 
             case "M_max":
                 value = int(value)
-                if value < 2:
-                    raise ValueError("M_max must be at least 2")
+                if value < 0:
+                    raise ValueError("M_max must be non-negative")
                 return value
 
             case "K_max":
                 if value is None:
                     return None
                 value = int(value)
-                if value < 2:
-                    raise ValueError("K_max must be at least 2")
+                if value < 0:
+                    raise ValueError("K_max must be non-negative")
                 return value
 
             case "quadrature_scheme" | "calculus_scheme":

@@ -77,7 +77,7 @@ class Solver:
         max_residual: float | None = None,
         max_evaluations: int | None = None,
         enable_warmstart: bool | None = None,
-        initial_policy: str | None = "homothetic",
+        initial_policy: str | None = None,
         initial_homothetic_lambda: float | None = None,
         enable_fallback: bool | None = None,
         fallback_methods: tuple[str, ...] | list[str] | None = None,
