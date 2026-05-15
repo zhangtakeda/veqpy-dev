@@ -421,7 +421,7 @@ def validate_source_plan_profile_support(
 
     has_active_psin = int(getattr(source_execution, "psin_active_length", 0)) > 0
     if (
-        bool(getattr(source_execution, "route_requires_optimized_psin_profile", False))
+        bool(getattr(source_execution, "requires_optimized_psin_profile", False))
         and not has_active_psin
     ):
         raise ValueError(f"{case.route} requires an active psin profile")
@@ -580,10 +580,7 @@ def refresh_source_runtime(
 
 
 def build_bound_source_stage_runner(operator_core: Any) -> Callable:
-    source_execution = operator_core.source_execution
-    route_key = tuple(source_execution.route_key)
-    if not bool(source_execution.supports_fused_residual):
-        raise ValueError(f"Unsupported source route key {route_key!r}")
+    route_key = tuple(operator_core.source_execution.route_key)
     if route_key == ("PJ2", "psin", "uniform"):
         return _build_pj2_psin_uniform_source_stage_runner(operator_core)
     return _build_source_stage_runner_shared(operator_core)

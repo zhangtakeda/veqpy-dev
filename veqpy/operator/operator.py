@@ -756,11 +756,9 @@ class Operator:
 
     def _build_fused_residual_runner(self) -> Callable[[np.ndarray], np.ndarray]:
         if (
-            self.source_execution.requires_psin_profile_fields
+            self.source_execution.requires_optimized_psin_profile
             and self.psin_profile.u_fields is None
         ):
-            return self._evaluate_residual
-        if not self.source_execution.supports_fused_residual:
             return self._evaluate_residual
         return numba_operator.bind_fused_residual_runner(
             source_plan=self.source_plan,

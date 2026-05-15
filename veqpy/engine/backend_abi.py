@@ -82,40 +82,28 @@ PSIN_SKIP_PROJECTION_FINALIZE_ROUTE_KEYS: frozenset[RouteKey] = frozenset(
 @dataclass(frozen=True, slots=True)
 class SourceExecutionABI:
     route_key: RouteKey
-    psin_active_slot: int
     psin_active_length: int
-    psin_coeff_start: int
-    F_active_slot: int
-    F_active_length: int
-    F_coeff_start: int
-    route_requires_optimized_psin_profile: bool
+    has_active_F_profile: bool
     requires_optimized_psin_profile: bool
-    requires_psin_profile_fields: bool
     requires_psin_query_workspace: bool
     requires_source_parameter_query: bool
     requires_target_root_fields: bool
-    supports_fused_residual: bool
     skip_projection_finalize: bool
 
-    @property
-    def uses_active_F_profile(self) -> bool:
-        return self.F_active_length > 0
 
-
-def _active_profile_abi_fields(
+def _active_profile_slot_and_length(
     name: str,
     *,
     profile_index: dict[str, int],
     profile_L: np.ndarray,
-    coeff_index: np.ndarray,
     active_profile_ids: np.ndarray,
-) -> tuple[int, int, int]:
+) -> tuple[int, int]:
     profile_id = int(profile_index.get(name, -1))
     if profile_id < 0:
-        return -1, 0, -1
+        return -1, 0
     length = int(profile_L[profile_id]) + 1
     if length <= 0:
-        return -1, 0, -1
+        return -1, 0
 
     active_slot = -1
     for slot, active_profile_id in enumerate(active_profile_ids):
@@ -123,12 +111,7 @@ def _active_profile_abi_fields(
             active_slot = int(slot)
             break
 
-    coeff_start = -1
-    if coeff_index.ndim == 2 and coeff_index.shape[1] > 0:
-        candidate = int(coeff_index[profile_id, 0])
-        if candidate >= 0:
-            coeff_start = candidate
-    return active_slot, length, coeff_start
+    return active_slot, length
 
 
 def build_source_execution_abi(
@@ -140,18 +123,17 @@ def build_source_execution_abi(
     active_profile_ids: np.ndarray,
 ) -> SourceExecutionABI:
     route_key = (source_plan.route, source_plan.coordinate, source_plan.nodes)
-    psin_active_slot, psin_active_length, psin_coeff_start = _active_profile_abi_fields(
+    del coeff_index  # preserved in the signature for call-site compatibility
+    psin_active_slot, psin_active_length = _active_profile_slot_and_length(
         "psin",
         profile_index=profile_index,
         profile_L=profile_L,
-        coeff_index=coeff_index,
         active_profile_ids=active_profile_ids,
     )
-    F_active_slot, F_active_length, F_coeff_start = _active_profile_abi_fields(
+    F_active_slot, F_active_length = _active_profile_slot_and_length(
         "F",
         profile_index=profile_index,
         profile_L=profile_L,
-        coeff_index=coeff_index,
         active_profile_ids=active_profile_ids,
     )
 
@@ -164,14 +146,14 @@ def build_source_execution_abi(
     if route_key[0] == "PQ" and F_active_length > 0:
         raise ValueError("PQ strict routes do not accept an active F profile")
 
-    route_requires_optimized_psin_profile = route_key in PROFILE_OWNED_PSIN_ROUTE_KEYS
-    if route_requires_optimized_psin_profile and psin_active_length <= 0:
+    requires_optimized_psin_profile = route_key in PROFILE_OWNED_PSIN_ROUTE_KEYS
+    if requires_optimized_psin_profile and psin_active_length <= 0:
         raise ValueError(
             f"{route_key[0]} {route_key[1]}/{route_key[2]} requires an active psin profile"
         )
     if (
         source_plan.coordinate == "psin"
-        and not route_requires_optimized_psin_profile
+        and not requires_optimized_psin_profile
         and psin_active_length > 0
     ):
         raise ValueError(
@@ -179,19 +161,12 @@ def build_source_execution_abi(
             "profile because psin is source-owned"
         )
 
-    requires_optimized_psin_profile = route_requires_optimized_psin_profile
     is_pj2_psin_uniform = route_key == ("PJ2", "psin", "uniform")
     return SourceExecutionABI(
         route_key=route_key,
-        psin_active_slot=psin_active_slot,
         psin_active_length=psin_active_length,
-        psin_coeff_start=psin_coeff_start,
-        F_active_slot=F_active_slot,
-        F_active_length=F_active_length,
-        F_coeff_start=F_coeff_start,
-        route_requires_optimized_psin_profile=route_requires_optimized_psin_profile,
+        has_active_F_profile=F_active_length > 0,
         requires_optimized_psin_profile=requires_optimized_psin_profile,
-        requires_psin_profile_fields=requires_optimized_psin_profile,
         requires_psin_query_workspace=(
             requires_optimized_psin_profile or is_pj2_psin_uniform
         ),
@@ -201,7 +176,6 @@ def build_source_execution_abi(
         requires_target_root_fields=(
             requires_optimized_psin_profile or is_pj2_psin_uniform
         ),
-        supports_fused_residual=route_key in SUPPORTED_FUSED_SOURCE_ROUTE_KEYS,
         skip_projection_finalize=route_key in PSIN_SKIP_PROJECTION_FINALIZE_ROUTE_KEYS,
     )
 
@@ -237,12 +211,7 @@ class FusedHotRuntimeABI:
     v_fields: np.ndarray
     k_fields: np.ndarray
     F_profile_fields: np.ndarray
-    psin_active_slot: int
-    psin_active_length: int
-    psin_coeff_start: int
-    F_active_slot: int
-    F_active_length: int
-    F_coeff_start: int
+    has_active_F_profile: bool
     c_active_order: int
     s_active_order: int
     a: float
@@ -332,12 +301,7 @@ def build_fused_hot_runtime_abi(
         v_fields=runtime_layout.v_fields,
         k_fields=runtime_layout.k_fields,
         F_profile_fields=runtime_layout.F_profile_fields,
-        psin_active_slot=int(source_execution.psin_active_slot),
-        psin_active_length=int(source_execution.psin_active_length),
-        psin_coeff_start=int(source_execution.psin_coeff_start),
-        F_active_slot=int(source_execution.F_active_slot),
-        F_active_length=int(source_execution.F_active_length),
-        F_coeff_start=int(source_execution.F_coeff_start),
+        has_active_F_profile=bool(source_execution.has_active_F_profile),
         c_active_order=c_active_order,
         s_active_order=s_active_order,
         a=a,
@@ -443,11 +407,5 @@ def build_profile_owned_psin_source_abi(
         endpoint_policy_code=int(source_plan.endpoint_policy_code),
         heat_input=source_plan.heat_input,
         current_input=source_plan.current_input,
-        psin_active_slot=int(source_execution.psin_active_slot),
-        psin_active_length=int(source_execution.psin_active_length),
-        psin_coeff_start=int(source_execution.psin_coeff_start),
-        F_active_slot=int(source_execution.F_active_slot),
-        F_active_length=int(source_execution.F_active_length),
-        F_coeff_start=int(source_execution.F_coeff_start),
         skip_projection_finalize=bool(source_execution.skip_projection_finalize),
     )

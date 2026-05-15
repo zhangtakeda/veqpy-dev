@@ -116,7 +116,7 @@ def _refresh_hot_runtime(
         hot_runtime_binding.active_coeff_index_rows,
         hot_runtime_binding.active_lengths,
     )
-    if hot_runtime_binding.F_active_length > 0:
+    if hot_runtime_binding.has_active_F_profile:
         _convert_f_squared_fields_to_f_impl(hot_runtime_binding.F_profile_fields)
     _update_fourier_family_fields_impl(
         hot_runtime_binding.c_family_fields,
@@ -447,75 +447,6 @@ def bind_fused_residual_runner(
             f"binding={route_key!r}"
         )
 
-    if route_key == ("PJ2", "psin", "uniform"):
-        return _bind_pj2_psin_uniform_residual_runner_core(
-            source_plan=source_plan,
-            source_execution=source_execution,
-            backend_state=backend_state,
-            alpha_state=alpha_state,
-            c_active_order=c_active_order,
-            s_active_order=s_active_order,
-            a=a,
-            R0=R0,
-            Z0=Z0,
-            B0=B0,
-            fix_rho=fix_rho,
-        )
-
-    if source_execution.requires_optimized_psin_profile:
-        return _bind_profile_owned_psin_residual_runner_core(
-            source_plan=source_plan,
-            source_execution=source_execution,
-            backend_state=backend_state,
-            alpha_state=alpha_state,
-            c_active_order=c_active_order,
-            s_active_order=s_active_order,
-            a=a,
-            R0=R0,
-            Z0=Z0,
-            B0=B0,
-            fix_rho=fix_rho,
-        )
-
-    if source_execution.supports_fused_residual:
-        return _bind_single_pass_residual_runner_core(
-            source_plan=source_plan,
-            source_execution=source_execution,
-            backend_state=backend_state,
-            alpha_state=alpha_state,
-            c_active_order=c_active_order,
-            s_active_order=s_active_order,
-            a=a,
-            R0=R0,
-            Z0=Z0,
-            B0=B0,
-            fix_rho=fix_rho,
-        )
-
-    raise ValueError(f"Unsupported source route key {route_key!r}")
-
-
-def _bind_single_pass_residual_runner_core(
-    *,
-    source_plan: SourcePlan,
-    source_execution: backend_abi.SourceExecutionABI,
-    backend_state: "BackendState",
-    alpha_state: np.ndarray,
-    c_active_order: int,
-    s_active_order: int,
-    a: float,
-    R0: float,
-    Z0: float,
-    B0: float,
-    fix_rho: float,
-) -> Callable[[np.ndarray], np.ndarray]:
-    runtime_layout = backend_state.runtime_layout
-    surface_workspace = runtime_layout.geometry_surface_workspace
-    residual_workspace = runtime_layout.residual_surface_workspace
-    root_fields = runtime_layout.root_fields
-    source_work_state = backend_state.source_runtime_state.work_state
-    materialized_heat_input = source_work_state.materialized_heat_input
-    materialized_current_input = source_work_state.materialized_current_input
     hot_runtime_binding = backend_abi.build_fused_hot_runtime_abi(
         backend_state=backend_state,
         source_execution=source_execution,
@@ -525,18 +456,70 @@ def _bind_single_pass_residual_runner_core(
         R0=R0,
         Z0=Z0,
     )
-    source_eval_runner = bind_source_eval_runner(
-        source_plan=source_plan,
-        backend_state=backend_state,
-        B0=B0,
-        fix_rho=fix_rho,
-    )
     residual_pack_binding = backend_abi.build_fused_residual_pack_abi(
         backend_state=backend_state,
         a=a,
         R0=R0,
         B0=B0,
     )
+
+    if route_key == ("PJ2", "psin", "uniform"):
+        return _bind_pj2_psin_uniform_residual_runner_core(
+            source_plan=source_plan,
+            backend_state=backend_state,
+            hot_runtime_binding=hot_runtime_binding,
+            residual_pack_binding=residual_pack_binding,
+            alpha_state=alpha_state,
+            R0=R0,
+            B0=B0,
+            fix_rho=fix_rho,
+        )
+
+    source_eval_runner = bind_source_eval_runner(
+        source_plan=source_plan,
+        backend_state=backend_state,
+        B0=B0,
+        fix_rho=fix_rho,
+    )
+    if source_execution.requires_optimized_psin_profile:
+        return _bind_profile_owned_psin_residual_runner_core(
+            source_plan=source_plan,
+            source_execution=source_execution,
+            backend_state=backend_state,
+            source_eval_runner=source_eval_runner,
+            hot_runtime_binding=hot_runtime_binding,
+            residual_pack_binding=residual_pack_binding,
+            alpha_state=alpha_state,
+            R0=R0,
+            fix_rho=fix_rho,
+        )
+
+    return _bind_single_pass_residual_runner_core(
+        backend_state=backend_state,
+        source_eval_runner=source_eval_runner,
+        hot_runtime_binding=hot_runtime_binding,
+        residual_pack_binding=residual_pack_binding,
+        alpha_state=alpha_state,
+        R0=R0,
+    )
+
+
+def _bind_single_pass_residual_runner_core(
+    *,
+    backend_state: "BackendState",
+    source_eval_runner: Callable,
+    hot_runtime_binding: backend_abi.FusedHotRuntimeABI,
+    residual_pack_binding: backend_abi.FusedResidualPackABI,
+    alpha_state: np.ndarray,
+    R0: float,
+) -> Callable[[np.ndarray], np.ndarray]:
+    runtime_layout = backend_state.runtime_layout
+    surface_workspace = runtime_layout.geometry_surface_workspace
+    residual_workspace = runtime_layout.residual_surface_workspace
+    root_fields = runtime_layout.root_fields
+    source_work_state = backend_state.source_runtime_state.work_state
+    materialized_heat_input = source_work_state.materialized_heat_input
+    materialized_current_input = source_work_state.materialized_current_input
     scratch_holder: list[np.ndarray | None] = [None]
     FFn_psin = root_fields[3]
     Pn_psin = root_fields[4]
@@ -572,13 +555,11 @@ def _bind_profile_owned_psin_residual_runner_core(
     source_plan: SourcePlan,
     source_execution: backend_abi.SourceExecutionABI,
     backend_state: "BackendState",
+    source_eval_runner: Callable,
+    hot_runtime_binding: backend_abi.FusedHotRuntimeABI,
+    residual_pack_binding: backend_abi.FusedResidualPackABI,
     alpha_state: np.ndarray,
-    c_active_order: int,
-    s_active_order: int,
-    a: float,
     R0: float,
-    Z0: float,
-    B0: float,
     fix_rho: float,
 ) -> Callable[[np.ndarray], np.ndarray]:
     runtime_layout = backend_state.runtime_layout
@@ -586,27 +567,6 @@ def _bind_profile_owned_psin_residual_runner_core(
     residual_workspace = runtime_layout.residual_surface_workspace
     n_axis_fix = int(np.searchsorted(backend_state.static_layout.rho, fix_rho))
     root_fields = runtime_layout.root_fields
-    hot_runtime_binding = backend_abi.build_fused_hot_runtime_abi(
-        backend_state=backend_state,
-        source_execution=source_execution,
-        c_active_order=c_active_order,
-        s_active_order=s_active_order,
-        a=a,
-        R0=R0,
-        Z0=Z0,
-    )
-    source_eval_runner = bind_source_eval_runner(
-        source_plan=source_plan,
-        backend_state=backend_state,
-        B0=B0,
-        fix_rho=fix_rho,
-    )
-    residual_pack_binding = backend_abi.build_fused_residual_pack_abi(
-        backend_state=backend_state,
-        a=a,
-        R0=R0,
-        B0=B0,
-    )
     profile_owned_psin_binding = backend_abi.build_profile_owned_psin_source_abi(
         source_plan=source_plan,
         source_execution=source_execution,
@@ -686,14 +646,11 @@ def _bind_profile_owned_psin_residual_runner_core(
 def _bind_pj2_psin_uniform_residual_runner_core(
     *,
     source_plan: SourcePlan,
-    source_execution: backend_abi.SourceExecutionABI,
     backend_state: "BackendState",
+    hot_runtime_binding: backend_abi.FusedHotRuntimeABI,
+    residual_pack_binding: backend_abi.FusedResidualPackABI,
     alpha_state: np.ndarray,
-    c_active_order: int,
-    s_active_order: int,
-    a: float,
     R0: float,
-    Z0: float,
     B0: float,
     fix_rho: float,
 ) -> Callable[[np.ndarray], np.ndarray]:
@@ -712,22 +669,6 @@ def _bind_pj2_psin_uniform_residual_runner_core(
     accumulator = static_layout.accumulator
     n_axis_fix = int(np.searchsorted(rho, fix_rho))
     root_fields = runtime_layout.root_fields
-
-    hot_runtime_binding = backend_abi.build_fused_hot_runtime_abi(
-        backend_state=backend_state,
-        source_execution=source_execution,
-        c_active_order=c_active_order,
-        s_active_order=s_active_order,
-        a=a,
-        R0=R0,
-        Z0=Z0,
-    )
-    residual_pack_binding = backend_abi.build_fused_residual_pack_abi(
-        backend_state=backend_state,
-        a=a,
-        R0=R0,
-        B0=B0,
-    )
 
     source_psin_query = source_work_state.psin_query
     materialized_heat_input = source_work_state.materialized_heat_input
