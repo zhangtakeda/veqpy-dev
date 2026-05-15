@@ -41,7 +41,7 @@ from veqpy.engine.numba_source import (
     _update_fixed_point_psin_query_and_projected_inputs_impl,
     _update_fixed_point_psin_query_and_spline_uniform_inputs_impl,
     _update_fourier_family_fields_impl,
-    _update_pj2_from_psin_inputs_with_scratch,
+    _update_pj2_from_psin_uniform_inputs_with_scratch,
     uniform_barycentric_weights,
 )
 from veqpy.math.interpolate import build_uniform_source_interpolation_coefficients
@@ -220,7 +220,7 @@ def _run_pj2_psin_uniform_spline_with_scratch_impl(
     alpha1 = np.nan
     alpha2 = np.nan
     for _ in range(PJ2_PSIN_UNIFORM_FIXED_POINT_MAX_ITER):
-        alpha1, alpha2 = _update_pj2_from_psin_inputs_with_scratch(
+        alpha1, alpha2 = _update_pj2_from_psin_uniform_inputs_with_scratch(
             root_fields,
             FFn_psin,
             Pn_psin,
@@ -296,7 +296,7 @@ def _run_pj2_psin_uniform_barycentric_with_scratch_impl(
     alpha1 = np.nan
     alpha2 = np.nan
     for _ in range(PJ2_PSIN_UNIFORM_FIXED_POINT_MAX_ITER):
-        alpha1, alpha2 = _update_pj2_from_psin_inputs_with_scratch(
+        alpha1, alpha2 = _update_pj2_from_psin_uniform_inputs_with_scratch(
             root_fields,
             FFn_psin,
             Pn_psin,
@@ -381,7 +381,7 @@ def _run_pj2_psin_uniform_projected_finalize_with_scratch_impl(
     alpha1 = np.nan
     alpha2 = np.nan
     for _ in range(PJ2_PSIN_UNIFORM_FIXED_POINT_FINALIZE_ITER):
-        alpha1, alpha2 = _update_pj2_from_psin_inputs_with_scratch(
+        alpha1, alpha2 = _update_pj2_from_psin_uniform_inputs_with_scratch(
             root_fields,
             FFn_psin,
             Pn_psin,

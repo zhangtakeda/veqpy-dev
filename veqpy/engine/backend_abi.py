@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 
-from veqpy.engine.numba_source import resolve_source_scratch_kernel
+from veqpy.engine.numba_source import SOURCE_ROUTE_KEYS, resolve_source_scratch_kernel
 
 if TYPE_CHECKING:
     from veqpy.operator.runtime_layout import BackendState
@@ -45,34 +45,7 @@ PROFILE_OWNED_PSIN_ROUTE_KEYS: frozenset[RouteKey] = frozenset(
 )
 
 
-SUPPORTED_FUSED_SOURCE_ROUTE_KEYS: frozenset[RouteKey] = frozenset(
-    {
-        ("PF", "rho", "uniform"),
-        ("PF", "rho", "grid"),
-        ("PF", "psin", "uniform"),
-        ("PF", "psin", "grid"),
-        ("PP", "rho", "uniform"),
-        ("PP", "rho", "grid"),
-        ("PP", "psin", "uniform"),
-        ("PP", "psin", "grid"),
-        ("PI", "rho", "uniform"),
-        ("PI", "rho", "grid"),
-        ("PI", "psin", "uniform"),
-        ("PI", "psin", "grid"),
-        ("PJ1", "rho", "uniform"),
-        ("PJ1", "rho", "grid"),
-        ("PJ1", "psin", "uniform"),
-        ("PJ1", "psin", "grid"),
-        ("PJ2", "rho", "uniform"),
-        ("PJ2", "rho", "grid"),
-        ("PJ2", "psin", "uniform"),
-        ("PJ2", "psin", "grid"),
-        ("PQ", "rho", "uniform"),
-        ("PQ", "rho", "grid"),
-        ("PQ", "psin", "uniform"),
-        ("PQ", "psin", "grid"),
-    }
-)
+SUPPORTED_FUSED_SOURCE_ROUTE_KEYS: frozenset[RouteKey] = frozenset(SOURCE_ROUTE_KEYS)
 
 PSIN_SKIP_PROJECTION_FINALIZE_ROUTE_KEYS: frozenset[RouteKey] = frozenset(
     {("PI", "psin", "uniform")}

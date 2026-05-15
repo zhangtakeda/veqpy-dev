@@ -6,7 +6,7 @@ Role:
 - 负责校验 route/coordinate/nodes 三字符串组合并执行 source kernels.
 
 Public API:
-- register_route
+- register_source_route
 - validate_route
 - build_source_remap_cache
 - resolve_source_inputs
@@ -104,6 +104,34 @@ _SLOT_PQ_MATRIX = 7
 
 RouteKey = tuple[str, str, str]
 
+SOURCE_ROUTE_KEYS: tuple[RouteKey, ...] = (
+    ("PF", "rho", "uniform"),
+    ("PF", "rho", "grid"),
+    ("PF", "psin", "uniform"),
+    ("PF", "psin", "grid"),
+    ("PP", "rho", "uniform"),
+    ("PP", "rho", "grid"),
+    ("PP", "psin", "uniform"),
+    ("PP", "psin", "grid"),
+    ("PI", "rho", "uniform"),
+    ("PI", "rho", "grid"),
+    ("PI", "psin", "uniform"),
+    ("PI", "psin", "grid"),
+    ("PJ1", "rho", "uniform"),
+    ("PJ1", "rho", "grid"),
+    ("PJ1", "psin", "uniform"),
+    ("PJ1", "psin", "grid"),
+    ("PJ2", "rho", "uniform"),
+    ("PJ2", "rho", "grid"),
+    ("PJ2", "psin", "uniform"),
+    ("PJ2", "psin", "grid"),
+    ("PQ", "rho", "uniform"),
+    ("PQ", "rho", "grid"),
+    ("PQ", "psin", "uniform"),
+    ("PQ", "psin", "grid"),
+)
+SOURCE_ROUTE_KEY_SET: frozenset[RouteKey] = frozenset(SOURCE_ROUTE_KEYS)
+
 
 @dataclass(frozen=True, slots=True)
 class _SourceRouteSpec:
@@ -149,33 +177,19 @@ def _normalize_nodes(value: str) -> str:
     return nodes
 
 
-def register_route(
-    *route_keys: RouteKey | str,
-    coordinate: str | None = None,
-    nodes: str | None = None,
-) -> Callable[[Callable], Callable]:
-    """Register one implementation for one or more concrete source routes.
+def register_source_route(*route_keys: RouteKey) -> Callable[[Callable], Callable]:
+    """Register one implementation for one or more canonical source route tuples.
 
-    Each public route key is a three-string tuple such as
-    ``("PJ1", "rho", "uniform")``.  Passing multiple tuple keys registers the
-    same function for each key through the shared base registry mechanism.  This
-    is intentionally used only where the execution route is truly identical,
-    e.g. ``rho/uniform`` and ``rho/grid`` after source input materialization.
+    Source route registration is intentionally tuple-only at the engine boundary:
+    each key must be a three-string tuple such as ``("PJ1", "rho", "uniform")``.
+    Friendly route-name compatibility belongs at the model/source-plan boundary, not
+    in this bind-time registry.
     """
 
     if not route_keys:
         raise ValueError("At least one source route key is required")
 
-    if coordinate is not None or nodes is not None:
-        if coordinate is None or nodes is None:
-            raise TypeError("coordinate and nodes must be supplied together")
-        if len(route_keys) != 1:
-            raise TypeError("coordinate/nodes form accepts exactly one route name")
-        normalized_keys = (_normalize_route_key((str(route_keys[0]), coordinate, nodes)),)
-    elif len(route_keys) == 3 and all(isinstance(item, str) for item in route_keys):
-        normalized_keys = (_normalize_route_key((route_keys[0], route_keys[1], route_keys[2])),)
-    else:
-        normalized_keys = tuple(_normalize_route_key(route_key) for route_key in route_keys)
+    normalized_keys = tuple(_normalize_route_key(route_key) for route_key in route_keys)
 
     if len(set(normalized_keys)) != len(normalized_keys):
         raise ValueError(f"Duplicate source route keys in registration: {normalized_keys!r}")
@@ -889,7 +903,7 @@ def resolve_source_inputs(
 # ---------------------------------------------------------------------------
 
 
-@register_route(
+@register_source_route(
     ("PF", "rho", "uniform"),
     ("PF", "rho", "grid"),
 )
@@ -971,7 +985,7 @@ def _update_pf_from_rho_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(("PF", "psin", "uniform"))
+@register_source_route(("PF", "psin", "uniform"))
 @njit(cache=True, nogil=True)
 def _update_pf_from_psin_uniform_inputs_with_scratch(
     out_root_fields: np.ndarray,
@@ -1053,7 +1067,7 @@ def _update_pf_from_psin_uniform_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(("PF", "psin", "grid"))
+@register_source_route(("PF", "psin", "grid"))
 @njit(cache=True, nogil=True)
 def _update_pf_from_psin_grid_inputs_with_scratch(
     out_root_fields: np.ndarray,
@@ -1135,7 +1149,7 @@ def _update_pf_from_psin_grid_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(
+@register_source_route(
     ("PP", "rho", "uniform"),
     ("PP", "rho", "grid"),
 )
@@ -1211,7 +1225,7 @@ def _update_pp_from_rho_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(("PP", "psin", "uniform"))
+@register_source_route(("PP", "psin", "uniform"))
 @njit(cache=True, nogil=True)
 def _update_pp_from_psin_uniform_inputs_with_scratch(
     out_root_fields: np.ndarray,
@@ -1284,7 +1298,7 @@ def _update_pp_from_psin_uniform_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(("PP", "psin", "grid"))
+@register_source_route(("PP", "psin", "grid"))
 @njit(cache=True, nogil=True)
 def _update_pp_from_psin_grid_inputs_with_scratch(
     out_root_fields: np.ndarray,
@@ -1357,7 +1371,7 @@ def _update_pp_from_psin_grid_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(
+@register_source_route(
     ("PI", "rho", "uniform"),
     ("PI", "rho", "grid"),
 )
@@ -1431,7 +1445,7 @@ def _update_pi_from_rho_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(("PI", "psin", "uniform"))
+@register_source_route(("PI", "psin", "uniform"))
 @njit(cache=True, nogil=True)
 def _update_pi_from_psin_uniform_inputs_with_scratch(
     out_root_fields: np.ndarray,
@@ -1502,7 +1516,7 @@ def _update_pi_from_psin_uniform_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(("PI", "psin", "grid"))
+@register_source_route(("PI", "psin", "grid"))
 @njit(cache=True, nogil=True)
 def _update_pi_from_psin_grid_inputs_with_scratch(
     out_root_fields: np.ndarray,
@@ -1573,7 +1587,7 @@ def _update_pi_from_psin_grid_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(
+@register_source_route(
     ("PJ1", "rho", "uniform"),
     ("PJ1", "rho", "grid"),
 )
@@ -1662,7 +1676,7 @@ def _update_pj1_from_rho_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(("PJ1", "psin", "uniform"))
+@register_source_route(("PJ1", "psin", "uniform"))
 @njit(cache=True, nogil=True)
 def _update_pj1_from_psin_uniform_inputs_with_scratch(
     out_root_fields: np.ndarray,
@@ -1748,7 +1762,7 @@ def _update_pj1_from_psin_uniform_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(("PJ1", "psin", "grid"))
+@register_source_route(("PJ1", "psin", "grid"))
 @njit(cache=True, nogil=True)
 def _update_pj1_from_psin_grid_inputs_with_scratch(
     out_root_fields: np.ndarray,
@@ -1834,7 +1848,7 @@ def _update_pj1_from_psin_grid_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(("PJ2", "psin", "uniform"))
+@register_source_route(("PJ2", "psin", "uniform"))
 @njit(cache=True, nogil=True)
 def _update_pj2_from_psin_uniform_inputs_with_scratch(
     out_root_fields: np.ndarray,
@@ -1912,7 +1926,7 @@ def _update_pj2_from_psin_uniform_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(("PJ2", "psin", "grid"))
+@register_source_route(("PJ2", "psin", "grid"))
 @njit(cache=True, nogil=True)
 def _update_pj2_from_psin_grid_inputs_with_scratch(
     out_root_fields: np.ndarray,
@@ -1990,7 +2004,7 @@ def _update_pj2_from_psin_grid_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(
+@register_source_route(
     ("PJ2", "rho", "uniform"),
     ("PJ2", "rho", "grid"),
 )
@@ -2067,12 +2081,9 @@ def _update_pj2_from_rho_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(
-    ("PQ", "psin", "uniform"),
-    ("PQ", "psin", "grid"),
-)
+@register_source_route(("PQ", "psin", "uniform"))
 @njit(cache=True, nogil=True)
-def _update_pq_from_psin_inputs_with_scratch(
+def _update_pq_from_psin_uniform_inputs_with_scratch(
     out_root_fields: np.ndarray,
     out_FFn_psin: np.ndarray,
     out_Pn_psin: np.ndarray,
@@ -2198,7 +2209,135 @@ def _update_pq_from_psin_inputs_with_scratch(
     return alpha1, alpha2
 
 
-@register_route(
+@register_source_route(("PQ", "psin", "grid"))
+@njit(cache=True, nogil=True)
+def _update_pq_from_psin_grid_inputs_with_scratch(
+    out_root_fields: np.ndarray,
+    out_FFn_psin: np.ndarray,
+    out_Pn_psin: np.ndarray,
+    heat_input: np.ndarray,
+    current_input: np.ndarray,
+    coordinate_code: int,
+    R0: float,
+    B0: float,
+    weights: np.ndarray,
+    differentiator: np.ndarray,
+    accumulator: np.ndarray,
+    rho: np.ndarray,
+    n_axis_fix: int,
+    radial_workspace: np.ndarray,
+    surface_workspace: np.ndarray,
+    F: np.ndarray,
+    Ip: float,
+    beta: float,
+    source_scratch_1d: np.ndarray,
+    source_scratch_2d: np.ndarray,
+) -> tuple[float, float]:
+    out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
+    V_r, Kn, _, Ln_r, _, _, _ = _source_geometry_workspace_views(
+        radial_workspace, surface_workspace
+    )
+    n = rho.shape[0]
+    edge_F = R0 * B0
+    if not np.isfinite(edge_F) or abs(edge_F) <= 1.0e-14:
+        raise ValueError("PQ/psin strict solve received invalid edge F")
+
+    W = source_scratch_1d[_SLOT_INTEGRAND]
+    q_prof = source_scratch_1d[_SLOT_AUX0]
+    coeff_d = source_scratch_1d[_SLOT_AUX1]
+    coeff_y = source_scratch_1d[_SLOT_AUX2]
+    rhs = source_scratch_1d[_SLOT_PNr]
+    F_solved = source_scratch_1d[_SLOT_Pr]
+    F_r = source_scratch_1d[_SLOT_Fr]
+    A = source_scratch_1d[_SLOT_PQ_MATRIX : _SLOT_PQ_MATRIX + n, :]
+
+    _fill_pq_q_profile(q_prof, current_input, Kn, Ln_r, edge_F, Ip)
+    _fill_pq_W_and_derivative(W, F_r, Kn, Ln_r, q_prof, differentiator)
+
+    pressure_factor = 1.0 / (4.0 * np.pi**2)
+    for i in range(n):
+        coeff_d[i] = W[i] + q_prof[i]
+        coeff_y[i] = F_r[i]
+        if not np.isfinite(coeff_d[i]) or not np.isfinite(coeff_y[i]):
+            raise ValueError("PQ/psin strict solve assembled non-finite matrix")
+
+    has_beta = not np.isnan(beta)
+    if has_beta:
+        # Solve A F0 = b_edge and A F1 = b_pressure, then determine alpha1 from
+        # the scalar beta constraint with F = F0 + alpha1 * F1.
+        for i in range(n):
+            rhs[i] = 0.0
+        _fill_pq_linear_matrix(A, rhs, differentiator, coeff_d, coeff_y, rhs, edge_F, n)
+        copy_into(F_solved, rhs)
+        _dense_solve_one_rhs_inplace(A, F_solved, n, 1.0e-12)
+
+        for i in range(n):
+            rhs[i] = -pressure_factor * V_r[i] * heat_input[i]
+            if not np.isfinite(rhs[i]):
+                raise ValueError("PQ/psin strict beta solve assembled non-finite pressure RHS")
+        _fill_pq_linear_matrix(A, rhs, differentiator, coeff_d, coeff_y, rhs, 0.0, n)
+        copy_into(W, rhs)
+        _dense_solve_one_rhs_inplace(A, W, n, 1.0e-12)
+
+        beta_target = 0.5 * beta * B0**2 * dot(V_r, weights)
+        alpha1 = _solve_pq_psin_beta_alpha1(
+            F_solved,
+            W,
+            q_prof,
+            Ln_r,
+            heat_input,
+            V_r,
+            weights,
+            accumulator,
+            out_psin_r,
+            coeff_d,
+            coeff_y,
+            beta_target,
+        )
+        for i in range(n):
+            F_solved[i] = F_solved[i] + alpha1 * W[i]
+        copy_into(out_Pn_psin, heat_input)
+    else:
+        for i in range(n):
+            rhs[i] = -pressure_factor * V_r[i] * heat_input[i]
+            if not np.isfinite(rhs[i]):
+                raise ValueError("PQ/psin strict solve assembled non-finite pressure RHS")
+        _fill_pq_linear_matrix(A, rhs, differentiator, coeff_d, coeff_y, rhs, edge_F, n)
+        copy_into(F_solved, rhs)
+        _dense_solve_one_rhs_inplace(A, F_solved, n, 1.0e-12)
+        alpha1 = 0.0
+
+    for i in range(n):
+        out_psin_r[i] = F_solved[i] * Ln_r[i] / q_prof[i]
+        if not np.isfinite(out_psin_r[i]) or out_psin_r[i] <= 0.0:
+            raise ValueError("PQ/psin strict solve produced invalid psi_r")
+
+    alpha2 = dot(out_psin_r, weights)
+    _validate_pq_source_scalar(alpha2, 0)
+    scale_into(out_psin_r, out_psin_r, 1.0 / alpha2)
+    _regularize_psin_r(out_psin_r, rho, n_axis_fix)
+    full_differentiation(out_psin_rr, out_psin_r, differentiator)
+    _update_psin_coordinate(out_psin, out_psin_r, accumulator)
+
+    if not has_beta:
+        alpha1 = -weighted_dot(heat_input, out_psin_r, weights)
+        for i in range(n):
+            out_Pn_psin[i] = heat_input[i] / alpha1
+    _validate_pq_source_scalar(alpha1, 1)
+
+    full_differentiation(F_r, F_solved, differentiator)
+
+    for i in range(n):
+        if abs(Ln_r[i]) <= 1.0e-14:
+            raise ValueError("PQ/psin strict solve received invalid Ln_r")
+        out_FFn_psin[i] = (q_prof[i] * F_r[i] / Ln_r[i]) / alpha1
+        if not np.isfinite(out_FFn_psin[i]) or not np.isfinite(out_Pn_psin[i]):
+            raise ValueError("PQ/psin strict solve produced non-finite normalized source")
+    _regularize_ffn_psin(out_FFn_psin, rho, n_axis_fix)
+    return alpha1, alpha2
+
+
+@register_source_route(
     ("PQ", "rho", "uniform"),
     ("PQ", "rho", "grid"),
 )
@@ -3079,23 +3218,22 @@ def _local_uniform_stencil_start(q: float, source_sample_count: int, stencil_siz
 
 
 def _assert_default_source_routes_registered() -> None:
-    expected = {
-        (route, coordinate, nodes)
-        for route in ("PF", "PP", "PI", "PJ1", "PJ2", "PQ")
-        for coordinate in ("rho", "psin")
-        for nodes in ("uniform", "grid")
-    }
-    missing = expected.difference(ROUTE_REGISTRY)
-    extra = set(ROUTE_REGISTRY).difference(expected)
-    if missing or extra:
+    expected = SOURCE_ROUTE_KEY_SET
+    actual = frozenset(ROUTE_REGISTRY)
+
+    missing = expected.difference(actual)
+    extra = actual.difference(expected)
+
+    implementation_count = len(
+        {id(route_spec.implementation) for route_spec in ROUTE_REGISTRY.values()}
+    )
+
+    if missing or extra or implementation_count != 18:
         raise RuntimeError(
-            f"Source route registry mismatch; missing={sorted(missing)!r}, extra={sorted(extra)!r}"
+            "Source route registry mismatch; "
+            f"missing={sorted(missing)!r}, "
+            f"extra={sorted(extra)!r}, "
+            f"implementation_count={implementation_count!r}"
         )
 
-
 _assert_default_source_routes_registered()
-
-# Compatibility names for callers that still refer to the pre-split psin kernels.
-_update_pj2_from_psin_inputs_with_scratch = _update_pj2_from_psin_uniform_inputs_with_scratch
-_update_pq_from_psin_uniform_inputs_with_scratch = _update_pq_from_psin_inputs_with_scratch
-_update_pq_from_psin_grid_inputs_with_scratch = _update_pq_from_psin_inputs_with_scratch

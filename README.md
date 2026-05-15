@@ -64,11 +64,6 @@ If you do not activate the environment, use `uv run ...` or `.\.venv\Scripts\pyt
 
 Core regressions are now organized by submodule instead of by temporary refactor phase:
 
-- [tests/test_model_core_regression.py](tests/test_model_core_regression.py)
-  - `Grid`, `Boundary.from_geqdsk`, `Equilibrium` snapshot/serialization/comparison semantics
-- [tests/test_solver_core_regression.py](tests/test_solver_core_regression.py)
-  - solve facade, fallback/reset behavior, and solver/operator state lifecycle semantics
-
 The main runtime path is:
 
 1. `Solver.solve(...)`
@@ -80,7 +75,7 @@ The main runtime path is:
 7. Stage-D `residual`
 
 The default solve uses the packed projected variational residual, mapping packed
-coefficients `N -> N`.  Set `SolverConfig(enable_collocation=True)` (or pass
+coefficients `N -> N`. Set `SolverConfig(enable_collocation=True)` (or pass
 `enable_collocation=True` to `solve`) to run a two-stage workflow:
 
 1. solve the normal variational problem;
@@ -88,7 +83,7 @@ coefficients `N -> N`.  Set `SolverConfig(enable_collocation=True)` (or pass
 
 The collocation polish residual is a quadrature-scaled pointwise force-balance
 vector containing `G*psin_R` and `G*psin_Z`, mapping packed coefficients
-`N -> 2*Nr*Nt`.  Because it is generally rectangular, the polish method must be
+`N -> 2*Nr*Nt`. Because it is generally rectangular, the polish method must be
 a least-squares method:
 
 ```python
@@ -96,7 +91,7 @@ solver = Solver(operator=operator, config=SolverConfig(enable_collocation=True))
 ```
 
 The variational default remains `method="hybr"`; the collocation polish default
-is `collocation_method="trf"`.  A collocation-enabled `SolverResult` stores one
+is `collocation_method="trf"`. A collocation-enabled `SolverResult` stores one
 record, reports the post-polish coefficients, and includes both stages in
 elapsed time and evaluation counts.
 

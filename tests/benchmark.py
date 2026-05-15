@@ -53,7 +53,7 @@ REFERENCE_GRID = Grid(
 TEST_GRID = Grid(
     Nr=16,
     Nt=16,
-    quadrature_scheme="chebyshev",
+    quadrature_scheme="legendre",
 )
 
 REFERENCE_SUMMARY_GRID = Grid(

@@ -398,16 +398,14 @@ class Solver:
             if self._attempt_succeeded(collocation_result, collocation_error)
             else "failed"
         )
+        collocation_failure = self._format_attempt_failure(
+            method="collocation-polish",
+            result=collocation_result,
+            error=collocation_error,
+        )
         message = (
             f"variational stage {variational_status}: {variational_result[2]}; "
-            f"collocation polish {collocation_status}: "
-            f"{
-                self._format_attempt_failure(
-                    method='collocation-polish',
-                    result=collocation_result,
-                    error=collocation_error,
-                )
-            }"
+            f"collocation polish {collocation_status}: {collocation_failure}"
         )
         return (
             collocation_result[0],
@@ -868,9 +866,7 @@ class Solver:
         elif scaled_fun is not None:
             root_fun = scaled_fun
         if scaled_fun is not None and solve_config.method == "hybr":
-            normalization_mode = getattr(
-                solve_config, "residual_normalization", "robust_balanced"
-            )
+            normalization_mode = getattr(solve_config, "residual_normalization", "robust_balanced")
             if normalization_mode in {"legacy", "robust_balanced", "sensitivity_balanced"}:
                 options = {**options, "factor": 1.0}
 
@@ -1506,8 +1502,7 @@ def _build_sensitivity_balanced_residual_scale(
         sensitivity_sq += probe_values * probe_values
     sensitivity_values = np.sqrt(sensitivity_sq / float(q))
     combined = np.sqrt(
-        amplitude_values * amplitude_values
-        + (float(sensitivity_lambda) * sensitivity_values) ** 2
+        amplitude_values * amplitude_values + (float(sensitivity_lambda) * sensitivity_values) ** 2
     )
     clipped_values = _clip_scale_by_anchor(combined, floor=floor, max_ratio=max_ratio)
 
