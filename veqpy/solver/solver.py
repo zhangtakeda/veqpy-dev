@@ -83,6 +83,7 @@ class Solver:
         fallback_methods: tuple[str, ...] | list[str] | None = None,
         enable_verbose: bool | None = None,
         enable_history: bool | None = None,
+        residual_normalization: str | None = None,
         enable_collocation: bool | None = None,
         collocation_method: str | None = None,
         collocation_max_residual: float | None = None,
@@ -101,6 +102,7 @@ class Solver:
             fallback_methods=fallback_methods,
             enable_verbose=enable_verbose,
             enable_history=enable_history,
+            residual_normalization=residual_normalization,
             enable_collocation=enable_collocation,
             collocation_method=collocation_method,
             collocation_max_residual=collocation_max_residual,
@@ -220,6 +222,7 @@ class Solver:
         fallback_methods: tuple[str, ...] | list[str] | None,
         enable_verbose: bool | None,
         enable_history: bool | None,
+        residual_normalization: str | None,
         enable_collocation: bool | None,
         collocation_method: str | None,
         collocation_max_residual: float | None,
@@ -250,6 +253,8 @@ class Solver:
             overrides["enable_verbose"] = bool(enable_verbose)
         if enable_history is not None:
             overrides["enable_history"] = bool(enable_history)
+        if residual_normalization is not None:
+            overrides["residual_normalization"] = residual_normalization
         if enable_collocation is not None:
             overrides["enable_collocation"] = bool(enable_collocation)
         if collocation_method is not None:
@@ -802,9 +807,22 @@ class Solver:
         root_fun = self.operator
         get_raw_residual: Callable[[np.ndarray], np.ndarray] | None = None
         options = _root_options_for(solve_config)
-        scaled_fun, get_raw_residual = self._build_residual_transform_wrapper(
+        balanced_scope = "block"
+        initial_residual: np.ndarray | None = None
+        if getattr(
+            solve_config, "residual_normalization", "balanced"
+        ) == "balanced" and _should_use_global_root_scope(
+            self.operator,
+            min_blocks=solve_config.residual_normalization_root_global_blocks,
+        ):
+            balanced_scope = "global"
+        scaled_fun, get_raw_residual = self._build_normalized_residual_wrapper(
             x_guess,
-            transform="linear",
+            solve_config=solve_config,
+            residual_kind="variational",
+            legacy_transform="linear",
+            balanced_scope=balanced_scope,
+            initial_residual=initial_residual if balanced_scope == "block" else None,
         )
         x_root_guess = x_guess
         decode_x: Callable[[np.ndarray], np.ndarray] | None = None
@@ -815,11 +833,16 @@ class Solver:
                 def root_fun(z_eval: np.ndarray) -> np.ndarray:
                     return scaled_fun(x_transform_fun(z_eval))
             else:
-                root_fun = x_transform_fun
+
+                def root_fun(z_eval: np.ndarray) -> np.ndarray:
+                    return self.operator(x_transform_fun(z_eval))
         elif scaled_fun is not None:
             root_fun = scaled_fun
-        if scaled_fun is not None:
-            if solve_config.method == "hybr":
+        if scaled_fun is not None and solve_config.method == "hybr":
+            normalization_mode = getattr(solve_config, "residual_normalization", "balanced")
+            if normalization_mode == "legacy" or (
+                normalization_mode == "balanced" and balanced_scope == "block"
+            ):
                 options = {**options, "factor": 1.0}
 
         return self._run_root_once(
@@ -832,7 +855,39 @@ class Solver:
             decode_x=decode_x,
         )
 
-    def _build_residual_transform_wrapper(
+    def _build_normalized_residual_wrapper(
+        self,
+        x_guess: np.ndarray,
+        *,
+        solve_config: SolverConfig,
+        residual_kind: str,
+        legacy_transform: str = "linear",
+        balanced_scope: str = "block",
+        initial_residual: np.ndarray | None = None,
+    ) -> tuple[
+        Callable[[np.ndarray], np.ndarray] | None, Callable[[np.ndarray], np.ndarray] | None
+    ]:
+        """构造 solver 层残差规范化 wrapper."""
+
+        mode = getattr(solve_config, "residual_normalization", "balanced")
+        if mode == "none":
+            return None, None
+        if mode == "legacy":
+            return self._build_legacy_residual_transform_wrapper(
+                x_guess, transform=legacy_transform
+            )
+        if mode != "balanced":
+            raise ValueError(f"Unsupported residual_normalization {mode!r}.")
+        return self._build_balanced_residual_transform_wrapper(
+            x_guess,
+            solve_config=solve_config,
+            residual_kind=residual_kind,
+            scope=balanced_scope,
+            initial_x=x_guess,
+            initial_residual=initial_residual,
+        )
+
+    def _build_legacy_residual_transform_wrapper(
         self,
         x_guess: np.ndarray,
         *,
@@ -840,7 +895,7 @@ class Solver:
     ) -> tuple[
         Callable[[np.ndarray], np.ndarray] | None, Callable[[np.ndarray], np.ndarray] | None
     ]:
-        """为 solver 层构造带 block scaling 的残差变换 wrapper."""
+        """旧版 block RMS 残差变换 wrapper; 仅保留为对比与兼容模式."""
 
         block_lengths = getattr(self.operator, "active_lengths", None)
         if block_lengths is None:
@@ -879,6 +934,87 @@ class Solver:
             ):
                 return last_raw_residual.copy()
             return np.asarray(self.operator(x_eval), dtype=np.float64)
+
+        return wrapped, get_raw_residual
+
+    def _build_balanced_residual_transform_wrapper(
+        self,
+        x_guess: np.ndarray,
+        *,
+        solve_config: SolverConfig,
+        residual_kind: str,
+        scope: str,
+        initial_x: np.ndarray | None = None,
+        initial_residual: np.ndarray | None = None,
+    ) -> tuple[
+        Callable[[np.ndarray], np.ndarray] | None, Callable[[np.ndarray], np.ndarray] | None
+    ]:
+        """一次 O(n) 建模的线性残差左预条件器."""
+
+        try:
+            self.operator.coerce_x(x_guess)
+        except Exception:
+            return None, None
+
+        residual_fun = self._residual_function_for(residual_kind)
+        if scope not in {"block", "global"}:
+            raise ValueError(f"Unsupported balanced residual scope {scope!r}.")
+        block_lengths = (
+            getattr(self.operator, "active_lengths", None)
+            if residual_kind == "variational" and scope == "block"
+            else None
+        )
+        block_lengths_eval = (
+            None if block_lengths is None else np.asarray(block_lengths, dtype=np.int64)
+        )
+        floor = float(solve_config.residual_normalization_floor)
+        max_ratio = float(solve_config.residual_normalization_max_ratio)
+        scale: np.ndarray | None = None
+        last_x: np.ndarray | None = None
+        last_raw_residual: np.ndarray | None = None
+        if initial_residual is not None:
+            initial_residual_eval = np.asarray(initial_residual, dtype=np.float64)
+            scale = _build_balanced_residual_scale(
+                initial_residual_eval,
+                block_lengths_eval,
+                floor=floor,
+                max_ratio=max_ratio,
+            )
+            if initial_x is not None:
+                last_x = self.operator.coerce_x(initial_x).copy()
+                last_raw_residual = initial_residual_eval.copy()
+
+        def wrapped(x: np.ndarray) -> np.ndarray:
+            nonlocal scale, last_x, last_raw_residual
+            x_eval = self.operator.coerce_x(x)
+            if (
+                last_x is not None
+                and last_raw_residual is not None
+                and np.array_equal(last_x, x_eval)
+            ):
+                raw_residual = last_raw_residual.copy()
+            else:
+                raw_residual = np.asarray(residual_fun(x_eval), dtype=np.float64)
+                last_x = x_eval.copy()
+                last_raw_residual = raw_residual.copy()
+            if scale is None:
+                scale = _build_balanced_residual_scale(
+                    raw_residual,
+                    block_lengths_eval,
+                    floor=floor,
+                    max_ratio=max_ratio,
+                )
+            return raw_residual / scale
+
+        def get_raw_residual(x: np.ndarray) -> np.ndarray:
+            x_eval = self.operator.coerce_x(x)
+            if (
+                last_x is not None
+                and last_raw_residual is not None
+                and np.array_equal(last_x, x_eval)
+            ):
+                return last_raw_residual.copy()
+            return np.asarray(residual_fun(x_eval), dtype=np.float64)
 
         return wrapped, get_raw_residual
 
@@ -931,15 +1067,27 @@ class Solver:
         least_squares_fun = self._residual_function_for(residual_kind)
         get_raw_residual: Callable[[np.ndarray], np.ndarray] | None = None
         kwargs = _least_squares_kwargs_for(solve_config)
-        if solve_config.method == "lm" and residual_kind == "variational":
-            least_squares_fun, get_raw_residual = self._build_residual_transform_wrapper(
-                x_guess, transform="asinh"
+        normalizer_applied = False
+
+        if residual_kind == "variational":
+            legacy_transform = "asinh" if solve_config.method == "lm" else "linear"
+            normalized_fun, get_raw_residual = self._build_normalized_residual_wrapper(
+                x_guess,
+                solve_config=solve_config,
+                residual_kind=residual_kind,
+                legacy_transform=legacy_transform,
             )
-            if least_squares_fun is not None:
-                kwargs["x_scale"] = 1.0
-            else:
-                least_squares_fun = self._residual_function_for(residual_kind)
-        elif solve_config.method == "trf" and residual_kind == "variational":
+            if normalized_fun is not None:
+                least_squares_fun = normalized_fun
+                normalizer_applied = True
+                if solve_config.method == "lm":
+                    kwargs["x_scale"] = 1.0
+
+        if (
+            not normalizer_applied
+            and solve_config.method == "trf"
+            and residual_kind == "variational"
+        ):
             residual0, _ = self._initial_residual_stats(x_guess, residual_kind=residual_kind)
             if _should_use_robust_trf_loss(
                 residual0,
@@ -1156,6 +1304,17 @@ def _block_rms_values(residual: np.ndarray, block_lengths: np.ndarray) -> np.nda
     return values
 
 
+def _should_use_global_root_scope(operator: Operator, *, min_blocks: int) -> bool:
+    block_lengths = getattr(operator, "active_lengths", None)
+    if block_lengths is None:
+        return False
+    lengths_eval = np.asarray(block_lengths, dtype=np.int64)
+    if lengths_eval.ndim != 1:
+        return False
+    threshold = int(min_blocks)
+    return bool(threshold > 0 and lengths_eval.size >= threshold)
+
+
 def _should_use_robust_trf_loss(
     residual: np.ndarray | None,
     block_lengths: np.ndarray | None,
@@ -1182,6 +1341,112 @@ def _build_block_rms_scale(residual: np.ndarray, block_lengths: np.ndarray) -> n
         scale[offset : offset + int(length)] = block_scale
         offset += int(length)
     return scale
+
+
+def _build_balanced_residual_scale(
+    residual: np.ndarray,
+    block_lengths: np.ndarray | None,
+    *,
+    floor: float,
+    max_ratio: float,
+) -> np.ndarray:
+    """Build a diagonal residual scale vector in one O(n) pass.
+
+    The scale is frozen after the first residual evaluation of a solver attempt.
+    This keeps the nonlinear problem smooth for SciPy while balancing residual
+    blocks whose physical units can differ by many orders of magnitude.
+    """
+
+    residual_eval = np.asarray(residual, dtype=np.float64)
+    if residual_eval.ndim != 1 or residual_eval.size == 0:
+        return np.ones_like(residual_eval, dtype=np.float64)
+
+    floor_eval = max(float(floor), np.finfo(np.float64).tiny)
+    max_ratio_eval = max(float(max_ratio), 1.0)
+    block_rms = _balanced_block_rms_values(residual_eval, block_lengths)
+    if block_rms is None:
+        global_scale = _balanced_residual_anchor(
+            np.asarray([_stable_rms(residual_eval)], dtype=np.float64),
+            floor=floor_eval,
+        )
+        return np.full_like(residual_eval, global_scale, dtype=np.float64)
+
+    anchor = _balanced_residual_anchor(block_rms, floor=floor_eval)
+    upper = _balanced_residual_upper_cap(anchor, floor=floor_eval, max_ratio=max_ratio_eval)
+    lengths_eval = np.asarray(block_lengths, dtype=np.int64)
+    scale = np.empty_like(residual_eval, dtype=np.float64)
+    offset = 0
+    for value, length in zip(block_rms, lengths_eval, strict=False):
+        block_size = int(length)
+        block_scale = max(float(value), floor_eval)
+        if not np.isfinite(block_scale):
+            block_scale = floor_eval
+        elif block_scale > upper:
+            block_scale = upper
+        scale[offset : offset + block_size] = block_scale
+        offset += block_size
+    return scale
+
+
+def _balanced_block_rms_values(
+    residual: np.ndarray, block_lengths: np.ndarray | None
+) -> np.ndarray | None:
+    residual_eval = np.asarray(residual, dtype=np.float64)
+    if block_lengths is None:
+        return None
+    lengths_eval = np.asarray(block_lengths, dtype=np.int64)
+    if (
+        residual_eval.ndim != 1
+        or lengths_eval.ndim != 1
+        or residual_eval.size == 0
+        or lengths_eval.size == 0
+        or int(np.sum(lengths_eval)) != int(residual_eval.size)
+    ):
+        return None
+
+    values = np.empty_like(lengths_eval, dtype=np.float64)
+    offset = 0
+    for idx, length in enumerate(lengths_eval):
+        block_size = int(length)
+        if block_size <= 0:
+            return None
+        values[idx] = _stable_rms(residual_eval[offset : offset + block_size])
+        offset += block_size
+    return values
+
+
+def _stable_rms(values: np.ndarray) -> float:
+    """Overflow-resistant RMS of finite entries, with nonfinite values ignored."""
+
+    arr = np.asarray(values, dtype=np.float64)
+    if arr.size == 0:
+        return 0.0
+    finite = np.abs(arr[np.isfinite(arr)])
+    if finite.size == 0:
+        return 0.0
+    max_abs = float(np.max(finite))
+    if max_abs == 0.0:
+        return 0.0
+    scaled = finite / max_abs
+    return float(max_abs * np.sqrt(np.mean(scaled * scaled)))
+
+
+def _balanced_residual_anchor(values: np.ndarray, *, floor: float) -> float:
+    finite_positive = np.asarray(values, dtype=np.float64)
+    finite_positive = finite_positive[np.isfinite(finite_positive) & (finite_positive > 0.0)]
+    if finite_positive.size == 0:
+        return float(floor)
+    anchor = float(np.median(finite_positive))
+    if not np.isfinite(anchor) or anchor < floor:
+        return float(floor)
+    return anchor
+
+
+def _balanced_residual_upper_cap(anchor: float, *, floor: float, max_ratio: float) -> float:
+    cap = float(anchor) * float(max_ratio)
+    if not np.isfinite(cap) or cap < floor:
+        return float(np.finfo(np.float64).max)
+    return max(float(floor), cap)
 
 
 def _x_scale_floor() -> float:

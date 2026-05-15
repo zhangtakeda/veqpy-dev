@@ -59,6 +59,26 @@ DEFAULT_VARIATIONAL_METHOD = "hybr"
 DEFAULT_COLLOCATION_METHOD = "trf"
 DEFAULT_VARIATIONAL_FALLBACK_METHODS = ("lm",)
 SUPPORTED_INITIAL_POLICIES = frozenset(("zeros", "warm", "homothetic", "optimize"))
+SUPPORTED_RESIDUAL_NORMALIZATIONS = frozenset(("balanced", "legacy", "none"))
+
+_RESIDUAL_NORMALIZATION_ALIASES = {
+    "balanced": "balanced",
+    "new": "balanced",
+    "industrial": "balanced",
+    "on": "balanced",
+    "true": "balanced",
+    "yes": "balanced",
+    "1": "balanced",
+    "legacy": "legacy",
+    "old": "legacy",
+    "block-rms-asinh": "legacy",
+    "none": "none",
+    "off": "none",
+    "disabled": "none",
+    "false": "none",
+    "no": "none",
+    "0": "none",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +95,10 @@ class SolverConfig:
     fallback_methods: tuple[str, ...] | list[str] | None = field(default=None)
     enable_verbose: bool = False
     enable_history: bool = True
+    residual_normalization: str | None = "balanced"
+    residual_normalization_floor: float = 1.0
+    residual_normalization_max_ratio: float = 1.0e30
+    residual_normalization_root_global_blocks: int = 16
 
     enable_collocation: bool = False
     collocation_method: str = DEFAULT_COLLOCATION_METHOD
@@ -167,6 +191,28 @@ class SolverConfig:
                 "collocation_max_evaluations must be non-negative; "
                 f"got {self.collocation_max_evaluations!r}."
             )
+        residual_normalization = _normalize_residual_normalization(self.residual_normalization)
+        residual_normalization_floor = float(self.residual_normalization_floor)
+        residual_normalization_max_ratio = float(self.residual_normalization_max_ratio)
+        residual_normalization_root_global_blocks = int(
+            self.residual_normalization_root_global_blocks
+        )
+        if not isfinite(residual_normalization_floor) or residual_normalization_floor <= 0.0:
+            raise ValueError(
+                "SolverConfig.residual_normalization_floor must be positive finite; "
+                f"got {self.residual_normalization_floor!r}."
+            )
+        if not isfinite(residual_normalization_max_ratio) or residual_normalization_max_ratio < 1.0:
+            raise ValueError(
+                "SolverConfig.residual_normalization_max_ratio must be finite and >= 1; "
+                f"got {self.residual_normalization_max_ratio!r}."
+            )
+        if residual_normalization_root_global_blocks < 0:
+            raise ValueError(
+                "SolverConfig.residual_normalization_root_global_blocks must be "
+                "non-negative; "
+                f"got {self.residual_normalization_root_global_blocks!r}."
+            )
         object.__setattr__(self, "method", method)
         object.__setattr__(self, "enable_collocation", bool(self.enable_collocation))
         object.__setattr__(self, "collocation_method", collocation_method)
@@ -178,6 +224,16 @@ class SolverConfig:
         object.__setattr__(self, "initial_homothetic_lambda", initial_homothetic_lambda)
         object.__setattr__(self, "enable_fallback", bool(self.enable_fallback))
         object.__setattr__(self, "fallback_methods", tuple(deduped_fallback_methods))
+        object.__setattr__(self, "residual_normalization", residual_normalization)
+        object.__setattr__(self, "residual_normalization_floor", residual_normalization_floor)
+        object.__setattr__(
+            self, "residual_normalization_max_ratio", residual_normalization_max_ratio
+        )
+        object.__setattr__(
+            self,
+            "residual_normalization_root_global_blocks",
+            residual_normalization_root_global_blocks,
+        )
 
     def __rich__(self):
         tree = Tree("[bold blue]SolverConfig[/]")
@@ -200,6 +256,16 @@ class SolverConfig:
             tree.add(f"fallback_methods: {list(self.fallback_methods)}")
         tree.add(f"enable_verbose: {self.enable_verbose}")
         tree.add(f"enable_history: {self.enable_history}")
+        tree.add(f"residual_normalization: {self.residual_normalization}")
+        if self.residual_normalization != "none":
+            tree.add(f"residual_normalization_floor: {self.residual_normalization_floor:.6g}")
+            tree.add(
+                f"residual_normalization_max_ratio: {self.residual_normalization_max_ratio:.6g}"
+            )
+            tree.add(
+                "residual_normalization_root_global_blocks: "
+                f"{self.residual_normalization_root_global_blocks}"
+            )
         return tree
 
     def __str__(self) -> str:
@@ -212,3 +278,16 @@ class SolverConfig:
 
     def __repr__(self) -> str:
         return str(self)
+
+
+def _normalize_residual_normalization(value: str | None) -> str:
+    if value is None:
+        return "balanced"
+    key = str(value).strip().lower().replace("_", "-")
+    try:
+        return _RESIDUAL_NORMALIZATION_ALIASES[key]
+    except KeyError as exc:
+        supported = ", ".join(sorted(SUPPORTED_RESIDUAL_NORMALIZATIONS))
+        raise ValueError(
+            f"Unsupported residual_normalization {value!r}; supported: {supported}."
+        ) from exc
