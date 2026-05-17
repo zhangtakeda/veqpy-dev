@@ -8,15 +8,12 @@ from veqpy.workspace.runtime import (
     ProfileWorkspace,
     ResidualWorkspace,
     RuntimeAllocationBundle,
-    RuntimeLayout,
-    RuntimeWorkspace,
     SourceAuxState,
     SourceConstState,
     SourceRuntimeState,
     SourceWorkspace,
     SourceWorkState,
     allocate_runtime_state,
-    build_runtime_layout_view,
 )
 
 __all__ = [
@@ -27,13 +24,10 @@ __all__ = [
     "ResidualWorkspace",
     "OperatorWorkspace",
     "RuntimeAllocationBundle",
-    "RuntimeLayout",
-    "RuntimeWorkspace",
     "SourceWorkspace",
     "SourceAuxState",
     "SourceConstState",
     "SourceRuntimeState",
     "SourceWorkState",
     "allocate_runtime_state",
-    "build_runtime_layout_view",
 ]

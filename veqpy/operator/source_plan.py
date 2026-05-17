@@ -2,7 +2,7 @@
 Module: operator.source_plan
 
 Role:
-- Own source route plans, projection policy, and source input validation.
+- Own source route plans and source input validation.
 - Keep user/model compatibility at bind-time, before runtime memory refresh and engine calls.
 
 Notes:
@@ -12,7 +12,6 @@ Notes:
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable
 
@@ -46,11 +45,6 @@ class SourcePlan:
     current_input: np.ndarray
     Ip: float
     beta: float
-    has_projection_policy: bool
-    projection_domain: str
-    endpoint_policy: str
-    heat_projection_degree: int
-    current_projection_degree: int
     interpolation_kind: str
 
     @property
@@ -74,14 +68,6 @@ class SourcePlan:
         return int(SOURCE_PARAMETERIZATION_CODES[self.parameterization])
 
     @property
-    def projection_domain_code(self) -> int:
-        return int(PROJECTION_DOMAIN_CODES[self.projection_domain])
-
-    @property
-    def endpoint_policy_code(self) -> int:
-        return int(ENDPOINT_POLICY_CODES[self.endpoint_policy])
-
-    @property
     def uses_barycentric_interpolation(self) -> bool:
         return (
             not self.is_grid_nodes
@@ -93,93 +79,10 @@ def _source_route_key(source_plan: SourcePlan) -> tuple[str, str, str]:
     return (source_plan.route, source_plan.coordinate, source_plan.nodes)
 
 
-@dataclass(frozen=True, slots=True)
-class SourceProjectionPolicy:
-    domain: str
-    heat_degree: int
-    current_degree: int
-    ip_current_degree: int | None = None
-    current_ip_endpoint_policy: str = "none"
-    current_other_endpoint_policy: str = "none"
-
-
-SOURCE_PROJECTION_POLICIES: dict[tuple[str, str, str], SourceProjectionPolicy] = {
-    ("PI", "psin", "uniform"): SourceProjectionPolicy(
-        domain="psin",
-        heat_degree=7,
-        current_degree=8,
-        current_ip_endpoint_policy="both",
-        current_other_endpoint_policy="none",
-    ),
-    ("PJ1", "psin", "uniform"): SourceProjectionPolicy(
-        domain="psin",
-        heat_degree=7,
-        current_degree=8,
-        current_ip_endpoint_policy="both",
-        current_other_endpoint_policy="none",
-    ),
-    ("PJ2", "psin", "uniform"): SourceProjectionPolicy(
-        domain="psin",
-        heat_degree=5,
-        current_degree=6,
-        current_ip_endpoint_policy="none",
-        current_other_endpoint_policy="none",
-    ),
-    ("PQ", "psin", "uniform"): SourceProjectionPolicy(
-        domain="sqrt_psin",
-        heat_degree=8,
-        current_degree=10,
-        ip_current_degree=12,
-        current_ip_endpoint_policy="affine_both",
-        current_other_endpoint_policy="none",
-    ),
-}
-
-
-PROJECTION_DOMAIN_CODES = {
-    "psin": 0,
-    "sqrt_psin": 1,
-}
-
-ENDPOINT_POLICY_CODES = {
-    "none": 0,
-    "right": 1,
-    "both": 2,
-    "affine_both": 3,
-}
-
 SOURCE_PARAMETERIZATION_CODES = {
     "identity": 0,
     "sqrt_psin": 1,
 }
-
-
-SOURCE_PROJECTION_DISABLE_ENV = "VEQPY_DISABLE_SOURCE_PROJECTION"
-_SOURCE_PROJECTION_DISABLE_VALUES = frozenset({"1", "true", "yes", "on"})
-
-
-def source_projection_enabled() -> bool:
-    """Return whether optional Chebyshev source projection is enabled.
-
-    The switch is intentionally evaluated while building the source plan, not
-    inside the numba hot kernels.  This makes it useful for benchmark A/B runs
-    without changing the steady-state residual call overhead.
-    """
-
-    value = os.environ.get(SOURCE_PROJECTION_DISABLE_ENV, "1")
-    return value.strip().lower() not in _SOURCE_PROJECTION_DISABLE_VALUES
-
-
-def _resolve_source_projection_policy(
-    route: str,
-    coordinate: str,
-    nodes: str,
-    has_ip_constraint: bool,
-    has_beta_constraint: bool,
-) -> SourceProjectionPolicy | None:
-    if not source_projection_enabled():
-        return None
-    return SOURCE_PROJECTION_POLICIES.get((route, coordinate, nodes))
 
 
 def build_source_plan(
@@ -188,34 +91,6 @@ def build_source_plan(
     source_route_spec: object,
     interpolation_kind: str = "cubic",
 ) -> SourcePlan:
-    has_ip_constraint = bool(np.isfinite(case.Ip))
-    has_beta_constraint = bool(np.isfinite(case.beta))
-    policy = _resolve_source_projection_policy(
-        route=str(case.route),
-        coordinate=str(case.coordinate),
-        nodes=str(case.nodes),
-        has_ip_constraint=has_ip_constraint,
-        has_beta_constraint=has_beta_constraint,
-    )
-    has_projection_policy = policy is not None
-    projection_domain = "psin"
-    heat_projection_degree = 0
-    current_projection_degree = 0
-    endpoint_policy = "none"
-
-    if policy is not None:
-        endpoint_policy = (
-            policy.current_ip_endpoint_policy
-            if has_ip_constraint
-            else policy.current_other_endpoint_policy
-        )
-        projection_domain = policy.domain
-        heat_projection_degree = int(policy.heat_degree)
-        current_projection_degree = int(
-            policy.ip_current_degree
-            if has_ip_constraint and policy.ip_current_degree is not None
-            else policy.current_degree
-        )
     return SourcePlan(
         route=str(case.route).upper(),
         kernel=source_route_spec.implementation,
@@ -229,11 +104,6 @@ def build_source_plan(
         current_input=case.current_input,
         Ip=float(case.Ip),
         beta=float(case.beta),
-        has_projection_policy=has_projection_policy,
-        projection_domain=str(projection_domain).lower(),
-        endpoint_policy=str(endpoint_policy).lower(),
-        heat_projection_degree=heat_projection_degree,
-        current_projection_degree=current_projection_degree,
         interpolation_kind=(
             ""
             if str(case.nodes).lower() == "grid"
@@ -287,9 +157,7 @@ def validate_source_inputs(case: "OperatorCase", nr: int) -> None:
 
 __all__ = [
     "SourcePlan",
-    "SourceProjectionPolicy",
     "build_source_plan",
-    "source_projection_enabled",
     "validate_source_inputs",
     "validate_source_plan_profile_support",
 ]

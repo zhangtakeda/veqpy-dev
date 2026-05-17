@@ -47,11 +47,6 @@ PROFILE_OWNED_PSIN_ROUTE_KEYS: frozenset[RouteKey] = frozenset(
 
 SUPPORTED_FUSED_SOURCE_ROUTE_KEYS: frozenset[RouteKey] = frozenset(SOURCE_ROUTE_KEYS)
 
-PSIN_SKIP_PROJECTION_FINALIZE_ROUTE_KEYS: frozenset[RouteKey] = frozenset(
-    {("PI", "psin", "uniform")}
-)
-
-
 @dataclass(frozen=True, slots=True)
 class SourceExecutionABI:
     route_key: RouteKey
@@ -61,7 +56,6 @@ class SourceExecutionABI:
     requires_psin_query_workspace: bool
     requires_source_parameter_query: bool
     requires_target_root_fields: bool
-    skip_projection_finalize: bool
 
 
 def _active_profile_slot_and_length(
@@ -149,7 +143,6 @@ def build_source_execution_abi(
         requires_target_root_fields=(
             requires_optimized_psin_profile or is_pj2_psin_uniform
         ),
-        skip_projection_finalize=route_key in PSIN_SKIP_PROJECTION_FINALIZE_ROUTE_KEYS,
     )
 
 
@@ -244,24 +237,26 @@ def build_fused_hot_runtime_abi(
 ) -> FusedHotRuntimeABI:
     static_layout = backend_state.static_layout
     workspace = backend_state.workspace
+    profile_workspace = workspace.profile
+    geometry_workspace = workspace.geometry
     return FusedHotRuntimeABI(
-        active_profile_slab=workspace.active_profile_slab,
+        active_profile_slab=profile_workspace.active_profile_slab,
         T=static_layout.T,
         T_r=static_layout.T_r,
         T_rr=static_layout.T_rr,
-        active_offsets=workspace.active_offsets,
-        active_scales=workspace.active_scales,
-        active_coeff_index_rows=workspace.active_coeff_index_rows,
-        active_lengths=workspace.active_lengths,
-        c_family_fields=workspace.c_family_fields,
-        s_family_fields=workspace.s_family_fields,
-        c_family_base_fields=workspace.c_family_base_fields,
-        s_family_base_fields=workspace.s_family_base_fields,
-        active_u_fields=workspace.active_u_fields,
-        c_family_source_slots=workspace.c_family_source_slots,
-        s_family_source_slots=workspace.s_family_source_slots,
-        geometry_surface_workspace=workspace.geometry_surface_workspace,
-        geometry_radial_workspace=workspace.geometry_radial_workspace,
+        active_offsets=profile_workspace.active_offsets,
+        active_scales=profile_workspace.active_scales,
+        active_coeff_index_rows=profile_workspace.active_coeff_index_rows,
+        active_lengths=profile_workspace.active_lengths,
+        c_family_fields=profile_workspace.c_family_fields,
+        s_family_fields=profile_workspace.s_family_fields,
+        c_family_base_fields=profile_workspace.c_family_base_fields,
+        s_family_base_fields=profile_workspace.s_family_base_fields,
+        active_u_fields=profile_workspace.active_u_fields,
+        c_family_source_slots=profile_workspace.c_family_source_slots,
+        s_family_source_slots=profile_workspace.s_family_source_slots,
+        geometry_surface_workspace=geometry_workspace.surface_workspace,
+        geometry_radial_workspace=geometry_workspace.radial_workspace,
         rho=static_layout.rho,
         theta=static_layout.theta,
         cos_mtheta=static_layout.cos_mtheta,
@@ -292,17 +287,19 @@ def build_fused_residual_pack_abi(
 ) -> FusedResidualPackABI:
     static_layout = backend_state.static_layout
     workspace = backend_state.workspace
+    profile_workspace = workspace.profile
+    residual_workspace = workspace.residual
     residual_binding_layout = backend_state.residual_binding_layout
     return FusedResidualPackABI(
-        residual_pack_scratch=workspace.residual_pack_scratch,
-        residual_surface_workspace=workspace.residual_surface_workspace,
+        residual_pack_scratch=residual_workspace.pack_scratch,
+        residual_surface_workspace=residual_workspace.surface_workspace,
         active_residual_block_codes=residual_binding_layout.active_residual_block_codes,
         active_residual_block_orders=residual_binding_layout.active_residual_block_orders,
         active_residual_block_radial_powers=(
             residual_binding_layout.active_residual_block_radial_powers
         ),
-        active_coeff_index_rows=workspace.active_coeff_index_rows,
-        active_lengths=workspace.active_lengths,
+        active_coeff_index_rows=profile_workspace.active_coeff_index_rows,
+        active_lengths=profile_workspace.active_lengths,
         sin_mtheta=static_layout.sin_mtheta,
         cos_mtheta=static_layout.cos_mtheta,
         rho_powers=static_layout.rho_powers,
@@ -325,6 +322,7 @@ def build_fused_source_eval_abi(
     source_kernel = source_plan.kernel
     static_layout = backend_state.static_layout
     workspace = backend_state.workspace
+    geometry_workspace = workspace.geometry
     source_work_state = backend_state.source_runtime_state.work_state
 
     n_axis_fix = int(np.searchsorted(static_layout.rho, fix_rho))
@@ -338,8 +336,8 @@ def build_fused_source_eval_abi(
         accumulator=static_layout.accumulator,
         rho=static_layout.rho,
         n_axis_fix=n_axis_fix,
-        radial_workspace=workspace.geometry_radial_workspace,
-        surface_workspace=workspace.geometry_surface_workspace,
+        radial_workspace=geometry_workspace.radial_workspace,
+        surface_workspace=geometry_workspace.surface_workspace,
         F_profile_u=workspace.F_profile_u,
         Ip=float(source_plan.Ip),
         beta=float(source_plan.beta),
@@ -366,8 +364,6 @@ def build_profile_owned_psin_source_abi(
         accumulator=backend_state.static_layout.accumulator,
         source_psin_query=source_work_state.psin_query,
         source_parameter_query=source_work_state.parameter_query,
-        heat_projection_coeff=source_aux_state.heat_projection_coeff,
-        current_projection_coeff=source_aux_state.current_projection_coeff,
         heat_spline_coeff=source_aux_state.heat_spline_coeff,
         current_spline_coeff=source_aux_state.current_spline_coeff,
         barycentric_weights=source_runtime_state.const_state.barycentric_weights,
@@ -377,10 +373,6 @@ def build_profile_owned_psin_source_abi(
         materialized_current_input=source_work_state.materialized_current_input,
         psin_profile_fields=workspace.psin_profile_fields,
         parameterization_code=int(source_plan.parameterization_code),
-        has_projection_policy=bool(source_plan.has_projection_policy),
-        projection_domain_code=int(source_plan.projection_domain_code),
-        endpoint_policy_code=int(source_plan.endpoint_policy_code),
         heat_input=source_plan.heat_input,
         current_input=source_plan.current_input,
-        skip_projection_finalize=bool(source_execution.skip_projection_finalize),
     )

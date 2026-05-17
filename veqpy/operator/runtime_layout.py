@@ -9,16 +9,12 @@ Role:
 Public API:
 - StaticLayout
 - ResidualBindingLayout
-- RuntimeWorkspace (compat re-export from veqpy.workspace)
-- RuntimeLayout (compat re-export from veqpy.workspace)
 - BackendState (compat re-export from veqpy.workspace)
 - FieldRuntimeState (compat re-export from veqpy.workspace)
 - SourceRuntimeState (compat re-export from veqpy.workspace)
 - SourceConstState (compat re-export from veqpy.workspace)
 - SourceWorkState (compat re-export from veqpy.workspace)
 - SourceAuxState (compat re-export from veqpy.workspace)
-- RuntimeAllocationBundle (compat re-export from veqpy.workspace)
-- allocate_runtime_state (compat re-export from veqpy.workspace)
 
 Notes:
 - 运行期内存 ownership 和分配逻辑在 ``veqpy.workspace``.
@@ -40,15 +36,12 @@ from veqpy.workspace.runtime import (
     ProfileWorkspace,
     ResidualWorkspace,
     RuntimeAllocationBundle,
-    RuntimeLayout,
-    RuntimeWorkspace,
     SourceAuxState,
     SourceConstState,
     SourceRuntimeState,
     SourceWorkspace,
     SourceWorkState,
     allocate_runtime_state,
-    build_runtime_layout_view,
 )
 
 if TYPE_CHECKING:
@@ -63,8 +56,6 @@ __all__ = [
     "ResidualWorkspace",
     "OperatorWorkspace",
     "RuntimeAllocationBundle",
-    "RuntimeLayout",
-    "RuntimeWorkspace",
     "SourceWorkspace",
     "SourceAuxState",
     "SourceConstState",
@@ -74,7 +65,6 @@ __all__ = [
     "_pack_poloidal_block",
     "_pack_radial_block",
     "allocate_runtime_state",
-    "build_runtime_layout_view",
 ]
 
 

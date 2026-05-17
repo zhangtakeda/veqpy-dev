@@ -50,11 +50,7 @@ from veqpy.operator.source_runtime import refresh_source_runtime
 from veqpy.workspace import (
     BackendState,
     FieldRuntimeState,
-    GeometryWorkspace,
     OperatorWorkspace,
-    ProfileWorkspace,
-    ResidualWorkspace,
-    SourceWorkspace,
     allocate_runtime_state,
 )
 
@@ -69,10 +65,6 @@ class Operator:
     source_interpolation_kind: str = "barycentric"
     plan: OperatorBuildPlan = field(init=False, repr=False)
     workspace: OperatorWorkspace = field(init=False, repr=False)
-    profile_workspace: ProfileWorkspace = field(init=False, repr=False)
-    geometry_workspace: GeometryWorkspace = field(init=False, repr=False)
-    source_workspace: SourceWorkspace = field(init=False, repr=False)
-    residual_workspace: ResidualWorkspace = field(init=False, repr=False)
     layout: OperatorLayout = field(init=False, repr=False)
     backend_state: BackendState = field(init=False, repr=False)
 
@@ -151,7 +143,7 @@ class Operator:
         This is a narrow solver-facing view; raw workspace indexing arrays remain
         owned by ``ProfileWorkspace``.
         """
-        return self.profile_workspace.active_lengths.copy()
+        return self.workspace.profile.active_lengths.copy()
 
     def active_profile_blocks(self) -> tuple[tuple[int, str, np.ndarray, float, float], ...]:
         """Return solver-scale metadata for active packed profile blocks.
@@ -161,7 +153,7 @@ class Operator:
         storage layout.
         """
 
-        profile_workspace = self.profile_workspace
+        profile_workspace = self.workspace.profile
         blocks: list[tuple[int, str, np.ndarray, float, float]] = []
         for slot, profile_id in enumerate(self.plan.active_profile_ids):
             length = int(profile_workspace.active_lengths[slot])
@@ -179,14 +171,16 @@ class Operator:
             )
         return tuple(blocks)
 
-    def build_boundary_slope_initial_state(self, *, boundary_slope_factor: float = 1.0) -> np.ndarray:
+    def build_boundary_slope_initial_state(
+        self, *, boundary_slope_factor: float = 1.0
+    ) -> np.ndarray:
         """Build a boundary-scaled packed x0 for active c/s Fourier profiles."""
 
         x = np.zeros(self.plan.x_size, dtype=np.float64)
         target_factor = float(boundary_slope_factor)
-        active_slot_by_profile_id = self.profile_workspace.active_slot_by_profile_id
-        active_lengths = self.profile_workspace.active_lengths
-        active_coeff_index_rows = self.profile_workspace.active_coeff_index_rows
+        active_slot_by_profile_id = self.workspace.profile.active_slot_by_profile_id
+        active_lengths = self.workspace.profile.active_lengths
+        active_coeff_index_rows = self.workspace.profile.active_coeff_index_rows
         for profile_id, name in enumerate(self.plan.profile_names):
             if not (name.startswith("c") or name.startswith("s")):
                 continue
@@ -292,7 +286,7 @@ class Operator:
             raise ValueError("Expected out to be C-contiguous")
         self._evaluate_collocation_workspace(x)
         block_size = self.plan.static_layout.Nr * self.plan.static_layout.Nt
-        residual_workspace = self.residual_workspace
+        residual_workspace = self.workspace.residual
         numba_residual.write_weighted_collocation_field_into(
             out_eval,
             residual_workspace.surface_workspace[1],
@@ -377,13 +371,13 @@ class Operator:
         self.layout.run_residual_into(out_eval)
 
     def _update_residual_surface_workspace(self) -> None:
-        residual_workspace = self.residual_workspace
+        residual_workspace = self.workspace.residual
         numba_residual.update_residual_compact(
             residual_workspace.surface_workspace,
             self.alpha1,
             self.alpha2,
             residual_workspace.root_fields,
-            self.geometry_workspace.surface_workspace,
+            self.workspace.geometry.surface_workspace,
         )
 
     def coerce_x(self, x: np.ndarray) -> np.ndarray:
@@ -428,10 +422,6 @@ class Operator:
             if hasattr(type(self), f"{name}_profile"):
                 setattr(self, f"{name}_profile", profile)
         self.workspace = bundle.workspace
-        self.profile_workspace = bundle.profile_workspace
-        self.geometry_workspace = bundle.geometry_workspace
-        self.source_workspace = bundle.source_workspace
-        self.residual_workspace = bundle.residual_workspace
         self.field_runtime_state = bundle.field_runtime_state
 
     def _refresh_runtime_state(self) -> None:
@@ -450,8 +440,8 @@ class Operator:
             grid_rho=self.plan.static_layout.rho,
             source_plan=self.plan.source_plan,
             source_execution=self.plan.source_execution,
-            source_runtime_state=self.source_workspace.runtime_state,
-            psin=self.residual_workspace.root_fields[0],
+            source_runtime_state=self.workspace.source.runtime_state,
+            psin=self.workspace.residual.root_fields[0],
         )
         self._refresh_stage_a_runtime()
         self._refresh_workspace_views()
@@ -472,8 +462,8 @@ class Operator:
                 M_max=self.plan.static_layout.M_max,
                 profile_index=self.plan.profile_index,
                 profiles_by_name=self.profiles_by_name,
-                c_family_base_fields=self.profile_workspace.c_family_base_fields,
-                s_family_base_fields=self.profile_workspace.s_family_base_fields,
+                c_family_base_fields=self.workspace.profile.c_family_base_fields,
+                s_family_base_fields=self.workspace.profile.s_family_base_fields,
             ),
         )
 
@@ -506,11 +496,11 @@ class Operator:
             residual_binding_layout=self.plan.residual_binding_layout,
             workspace=self.workspace,
             field_runtime_state=self.field_runtime_state,
-            source_runtime_state=self.source_workspace.runtime_state,
+            source_runtime_state=self.workspace.source.runtime_state,
         )
 
     def _refresh_stage_a_runtime(self) -> None:
-        profile_workspace = self.profile_workspace
+        profile_workspace = self.workspace.profile
         refresh_stage_a_runtime(
             active_profile_ids=self.plan.active_profile_ids,
             profile_names=self.plan.profile_names,
@@ -533,16 +523,16 @@ class Operator:
             profile_coeffs=self.case.profile_coeffs,
             c_offsets=self.case.c_offsets,
             s_offsets=self.case.s_offsets,
-            c_family_fields=self.profile_workspace.c_family_fields,
-            s_family_fields=self.profile_workspace.s_family_fields,
+            c_family_fields=self.workspace.profile.c_family_fields,
+            s_family_fields=self.workspace.profile.s_family_fields,
         )
 
     def invalidate_source_state(self) -> None:
         if tuple(self.plan.source_execution.route_key) == ("PJ2", "psin", "uniform"):
-            self.source_workspace.work_state.psin_query.fill(-1.0)
+            self.workspace.source.work_state.psin_query.fill(-1.0)
 
     def _snapshot_equilibrium_from_runtime(self, x: np.ndarray) -> Equilibrium:
-        root_fields = self.residual_workspace.root_fields
+        root_fields = self.workspace.residual.root_fields
         return snapshot_equilibrium_from_runtime(
             x,
             case=self.case,

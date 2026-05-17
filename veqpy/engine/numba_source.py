@@ -85,12 +85,6 @@ SOURCE_PARAMETERIZATION_IDENTITY = "identity"
 SOURCE_PARAMETERIZATION_SQRT_PSIN = "sqrt_psin"
 SOURCE_PARAMETERIZATION_CODE_IDENTITY = 0
 SOURCE_PARAMETERIZATION_CODE_SQRT_PSIN = 1
-PROJECTION_DOMAIN_PSIN = 0
-PROJECTION_DOMAIN_SQRT_PSIN = 1
-ENDPOINT_POLICY_NONE = 0
-ENDPOINT_POLICY_RIGHT = 1
-ENDPOINT_POLICY_BOTH = 2
-ENDPOINT_POLICY_AFFINE_BOTH = 3
 
 # Scratch slot indices into SourceWorkState.scratch_1d (7 + Nr rows × Nr)
 _SLOT_INTEGRAND = 0
@@ -2573,45 +2567,6 @@ def update_fourier_family_fields(
     return out_c_fields, out_s_fields
 
 
-def materialize_projected_source_inputs(
-    out_heat_input: np.ndarray,
-    out_current_input: np.ndarray,
-    heat_coeff: np.ndarray,
-    current_coeff: np.ndarray,
-    current_source_values: np.ndarray,
-    psin_query: np.ndarray,
-    projection_domain_code: int,
-    endpoint_policy_code: int,
-    blend: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    if (
-        out_heat_input.ndim != 1
-        or out_current_input.ndim != 1
-        or out_heat_input.shape != out_current_input.shape
-    ):
-        raise ValueError(
-            "Expected matching 1D output inputs, "
-            f"got {out_heat_input.shape} and {out_current_input.shape}"
-        )
-    if psin_query.ndim != 1 or psin_query.shape != out_heat_input.shape:
-        raise ValueError(f"psin_query shape mismatch: {psin_query.shape} vs {out_heat_input.shape}")
-    if blend.ndim != 1 or blend.shape != out_heat_input.shape:
-        raise ValueError(f"Expected blend to have shape {out_heat_input.shape}, got {blend.shape}")
-
-    _materialize_projected_source_inputs_impl(
-        out_heat_input,
-        out_current_input,
-        np.asarray(heat_coeff, dtype=np.float64),
-        np.asarray(current_coeff, dtype=np.float64),
-        np.asarray(current_source_values, dtype=np.float64),
-        np.asarray(psin_query, dtype=np.float64),
-        int(projection_domain_code),
-        int(endpoint_policy_code),
-        np.asarray(blend, dtype=np.float64),
-    )
-    return out_heat_input, out_current_input
-
-
 def update_fixed_point_psin_query(
     query: np.ndarray,
     psin: np.ndarray,
@@ -2627,64 +2582,6 @@ def update_fixed_point_psin_query(
         )
     )
 
-
-@njit(cache=True, fastmath=True, nogil=True)
-def _materialize_projected_source_inputs_impl(
-    out_heat_input: np.ndarray,
-    out_current_input: np.ndarray,
-    heat_coeff: np.ndarray,
-    current_coeff: np.ndarray,
-    current_source_values: np.ndarray,
-    psin_query: np.ndarray,
-    projection_domain_code: int,
-    endpoint_policy_code: int,
-    blend: np.ndarray,
-) -> None:
-    n = out_heat_input.shape[0]
-    if endpoint_policy_code == ENDPOINT_POLICY_AFFINE_BOTH:
-        _, left_current = _evaluate_chebyshev_pair(
-            heat_coeff,
-            current_coeff,
-            _project_psin_query_to_chebyshev_x(psin_query[0], projection_domain_code),
-        )
-        _, right_current = _evaluate_chebyshev_pair(
-            heat_coeff,
-            current_coeff,
-            _project_psin_query_to_chebyshev_x(psin_query[n - 1], projection_domain_code),
-        )
-        delta_left = current_source_values[0] - left_current
-        delta_right = current_source_values[-1] - right_current
-        for i in range(n):
-            heat_val, current_val = _evaluate_chebyshev_pair(
-                heat_coeff,
-                current_coeff,
-                _project_psin_query_to_chebyshev_x(psin_query[i], projection_domain_code),
-            )
-            out_heat_input[i] = heat_val
-            out_current_input[i] = (
-                current_val + (1.0 - blend[i]) * delta_left + blend[i] * delta_right
-            )
-        return
-
-    for i in range(n):
-        heat_val, current_val = _evaluate_chebyshev_pair(
-            heat_coeff,
-            current_coeff,
-            _project_psin_query_to_chebyshev_x(psin_query[i], projection_domain_code),
-        )
-        out_heat_input[i] = heat_val
-        out_current_input[i] = current_val
-
-    if endpoint_policy_code == ENDPOINT_POLICY_NONE:
-        return
-    if endpoint_policy_code == ENDPOINT_POLICY_RIGHT:
-        out_current_input[-1] = current_source_values[-1]
-        return
-    if endpoint_policy_code == ENDPOINT_POLICY_BOTH:
-        out_current_input[0] = current_source_values[0]
-        out_current_input[-1] = current_source_values[-1]
-        return
-    raise ValueError("Unsupported endpoint policy code")
 
 
 @njit(cache=True, fastmath=True, nogil=True)
@@ -2799,78 +2696,6 @@ def _update_fixed_point_psin_query_and_local_barycentric_inputs_impl(
     return max_abs_diff <= max_residual
 
 
-@njit(cache=True, fastmath=True, nogil=True)
-def _update_fixed_point_psin_query_and_projected_inputs_impl(
-    query: np.ndarray,
-    psin: np.ndarray,
-    max_residual: float,
-    out_heat_input: np.ndarray,
-    out_current_input: np.ndarray,
-    heat_coeff: np.ndarray,
-    current_coeff: np.ndarray,
-    current_source_values: np.ndarray,
-    projection_domain_code: int,
-    endpoint_policy_code: int,
-    blend: np.ndarray,
-) -> bool:
-    max_abs_diff = 0.0
-    n = out_heat_input.shape[0]
-    if endpoint_policy_code == ENDPOINT_POLICY_AFFINE_BOTH:
-        _, left_current = _evaluate_chebyshev_pair(
-            heat_coeff,
-            current_coeff,
-            _project_psin_query_to_chebyshev_x(psin[0], projection_domain_code),
-        )
-        _, right_current = _evaluate_chebyshev_pair(
-            heat_coeff,
-            current_coeff,
-            _project_psin_query_to_chebyshev_x(psin[n - 1], projection_domain_code),
-        )
-        delta_left = current_source_values[0] - left_current
-        delta_right = current_source_values[-1] - right_current
-        for i in range(n):
-            q = psin[i]
-            diff = abs(q - query[i])
-            if diff > max_abs_diff:
-                max_abs_diff = diff
-            query[i] = q
-            heat_val, current_val = _evaluate_chebyshev_pair(
-                heat_coeff,
-                current_coeff,
-                _project_psin_query_to_chebyshev_x(q, projection_domain_code),
-            )
-            out_heat_input[i] = heat_val
-            out_current_input[i] = (
-                current_val + (1.0 - blend[i]) * delta_left + blend[i] * delta_right
-            )
-        return max_abs_diff <= max_residual
-
-    for i in range(n):
-        q = psin[i]
-        diff = abs(q - query[i])
-        if diff > max_abs_diff:
-            max_abs_diff = diff
-        query[i] = q
-
-        heat_val, current_val = _evaluate_chebyshev_pair(
-            heat_coeff,
-            current_coeff,
-            _project_psin_query_to_chebyshev_x(q, projection_domain_code),
-        )
-        out_heat_input[i] = heat_val
-        out_current_input[i] = current_val
-
-    if endpoint_policy_code == ENDPOINT_POLICY_NONE:
-        return max_abs_diff <= max_residual
-    if endpoint_policy_code == ENDPOINT_POLICY_RIGHT:
-        out_current_input[-1] = current_source_values[-1]
-        return max_abs_diff <= max_residual
-    if endpoint_policy_code == ENDPOINT_POLICY_BOTH:
-        out_current_input[0] = current_source_values[0]
-        out_current_input[-1] = current_source_values[-1]
-        return max_abs_diff <= max_residual
-    raise ValueError("Unsupported endpoint policy code")
-
 
 @njit(cache=True, fastmath=True, nogil=True)
 def _materialize_profile_owned_psin_source_impl(
@@ -2981,67 +2806,6 @@ def _update_fourier_family_fields_impl(
                 for i in range(out_s_fields.shape[2]):
                     out_s_fields[order, d, i] = 0.0
 
-
-@njit(cache=True, fastmath=True, nogil=True)
-def _evaluate_chebyshev_scalar(coeff: np.ndarray, x: float) -> float:
-    if coeff.size == 0:
-        return 0.0
-    if coeff.size == 1:
-        return coeff[0]
-    b_kplus1 = 0.0
-    b_kplus2 = 0.0
-    for idx in range(coeff.size - 1, 0, -1):
-        b_k = 2.0 * x * b_kplus1 - b_kplus2 + coeff[idx]
-        b_kplus2 = b_kplus1
-        b_kplus1 = b_k
-    return x * b_kplus1 - b_kplus2 + coeff[0]
-
-
-@njit(cache=True, fastmath=True, nogil=True)
-def _project_psin_query_to_chebyshev_x(q: float, projection_domain_code: int) -> float:
-    if q < 0.0:
-        q = 0.0
-    elif q > 1.0:
-        q = 1.0
-    if projection_domain_code == PROJECTION_DOMAIN_SQRT_PSIN:
-        q = np.sqrt(q)
-    elif projection_domain_code != PROJECTION_DOMAIN_PSIN:
-        raise ValueError("Unsupported projection domain code")
-    return 2.0 * q - 1.0
-
-
-@njit(cache=True, fastmath=True, nogil=True)
-def _evaluate_chebyshev_pair(
-    coeff0: np.ndarray, coeff1: np.ndarray, x: float
-) -> tuple[float, float]:
-    size0 = coeff0.size
-    size1 = coeff1.size
-    max_size = size0 if size0 >= size1 else size1
-    if max_size == 0:
-        return 0.0, 0.0
-    if max_size == 1:
-        return (
-            coeff0[0] if size0 > 0 else 0.0,
-            coeff1[0] if size1 > 0 else 0.0,
-        )
-
-    b0_kplus1 = 0.0
-    b0_kplus2 = 0.0
-    b1_kplus1 = 0.0
-    b1_kplus2 = 0.0
-    for idx in range(max_size - 1, 0, -1):
-        c0 = coeff0[idx] if idx < size0 else 0.0
-        c1 = coeff1[idx] if idx < size1 else 0.0
-        b0_k = 2.0 * x * b0_kplus1 - b0_kplus2 + c0
-        b1_k = 2.0 * x * b1_kplus1 - b1_kplus2 + c1
-        b0_kplus2 = b0_kplus1
-        b0_kplus1 = b0_k
-        b1_kplus2 = b1_kplus1
-        b1_kplus1 = b1_k
-    return (
-        x * b0_kplus1 - b0_kplus2 + (coeff0[0] if size0 > 0 else 0.0),
-        x * b1_kplus1 - b1_kplus2 + (coeff1[0] if size1 > 0 else 0.0),
-    )
 
 
 @njit(cache=True, fastmath=True, nogil=True)

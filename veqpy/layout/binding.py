@@ -8,19 +8,18 @@ to bind hot-path callables against those already-refreshed objects.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import Callable
 
 import numpy as np
 
 from veqpy.engine import numba_operator, numba_profile, numba_residual
-from veqpy.operator.build_plan import OperatorBuildPlan
-from veqpy.operator.operator_case import OperatorCase
-from veqpy.operator.profile_runtime import build_profile_stage_runner
 from veqpy.layout.stage_binding import (
     build_bound_source_stage_runner,
     build_geometry_stage_runner,
 )
+from veqpy.operator.build_plan import OperatorBuildPlan
+from veqpy.operator.operator_case import OperatorCase
+from veqpy.operator.profile_runtime import build_profile_stage_runner
 from veqpy.workspace import BackendState, OperatorWorkspace
 
 from .runtime import OperatorLayout
@@ -181,13 +180,13 @@ def _build_bound_source_stage_runner(
     fix_rho: float,
     source_eval_runner: Callable,
 ) -> Callable[[], tuple[float, float]]:
-    source_core = SimpleNamespace(
+    return build_bound_source_stage_runner(
         plan=plan,
         case=case,
         workspace=workspace,
         fix_rho=fix_rho,
+        source_eval_runner=source_eval_runner,
     )
-    return build_bound_source_stage_runner(source_core, source_eval_runner=source_eval_runner)
 
 
 def _build_bound_residual_full_stage_runner_into(

@@ -12,17 +12,15 @@ Notes:
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Callable
 
 import numpy as np
 
 from veqpy.engine.numba_geometry import update_geometry_hot
 from veqpy.engine.numba_source import (
-    PJ2_PSIN_UNIFORM_FIXED_POINT_FINALIZE_ITER,
     PJ2_PSIN_UNIFORM_FIXED_POINT_MAX_ITER,
     PJ2_PSIN_UNIFORM_FIXED_POINT_MAX_RESIDUAL,
     materialize_profile_owned_psin_source,
-    materialize_projected_source_inputs,
     resolve_source_inputs,
     update_fixed_point_psin_query,
     update_fourier_family_fields,
@@ -30,24 +28,40 @@ from veqpy.engine.numba_source import (
 
 
 def build_bound_source_stage_runner(
-    operator_core: Any, *, source_eval_runner: Callable | None = None
+    *,
+    plan,
+    case,
+    workspace,
+    fix_rho: float,
+    source_eval_runner: Callable,
 ) -> Callable:
-    route_key = tuple(operator_core.plan.source_execution.route_key)
+    route_key = tuple(plan.source_execution.route_key)
     if route_key == ("PJ2", "psin", "uniform"):
         return _build_pj2_psin_uniform_source_stage_runner(
-            operator_core, source_eval_runner=source_eval_runner
+            plan=plan,
+            case=case,
+            workspace=workspace,
+            source_eval_runner=source_eval_runner,
         )
-    return _build_source_stage_runner_shared(operator_core, source_eval_runner=source_eval_runner)
+    return _build_source_stage_runner_shared(
+        plan=plan,
+        case=case,
+        workspace=workspace,
+        fix_rho=fix_rho,
+        source_eval_runner=source_eval_runner,
+    )
 
 
 def _build_source_stage_runner_shared(
-    operator_core: Any, *, source_eval_runner: Callable | None = None
+    *,
+    plan,
+    case,
+    workspace,
+    fix_rho: float,
+    source_eval_runner: Callable,
 ) -> Callable:
-    source_plan = operator_core.plan.source_plan
-    source_execution = operator_core.plan.source_execution
-    if source_eval_runner is None:
-        source_eval_runner = operator_core.layout.source.run_eval
-    workspace = operator_core.workspace
+    source_plan = plan.source_plan
+    source_execution = plan.source_execution
     source_runtime_state = workspace.source.runtime_state
     source_work_state = source_runtime_state.work_state
     source_aux_state = source_runtime_state.aux_state
@@ -60,7 +74,7 @@ def _build_source_stage_runner_shared(
     materialized_heat_input = source_work_state.materialized_heat_input
     materialized_current_input = source_work_state.materialized_current_input
     source_target_root_fields = source_aux_state.target_root_fields
-    case_R0 = float(operator_core.case.R0)
+    case_R0 = float(case.R0)
 
     if source_execution.requires_optimized_psin_profile:
         if source_plan.is_psin_coordinate and not source_plan.is_grid_nodes:
@@ -70,8 +84,8 @@ def _build_source_stage_runner_shared(
             heat_input = source_plan.heat_input
             current_input = source_plan.current_input
             parameterization_code = source_plan.parameterization_code
-            static_layout = operator_core.plan.static_layout
-            n_axis_fix = int(np.searchsorted(static_layout.rho, operator_core.fix_rho))
+            static_layout = plan.static_layout
+            n_axis_fix = int(np.searchsorted(static_layout.rho, fix_rho))
 
             def runner() -> tuple[float, float]:
                 if psin_profile_fields.size == 0:
@@ -97,18 +111,6 @@ def _build_source_stage_runner_shared(
                     source_runtime_state.const_state.barycentric_weights,
                     source_plan.uses_barycentric_interpolation,
                 )
-                if source_plan.has_projection_policy:
-                    materialize_projected_source_inputs(
-                        source_work_state.materialized_heat_input,
-                        source_work_state.materialized_current_input,
-                        source_aux_state.heat_projection_coeff,
-                        source_aux_state.current_projection_coeff,
-                        source_plan.current_input,
-                        source_psin_query,
-                        source_plan.projection_domain_code,
-                        source_plan.endpoint_policy_code,
-                        source_runtime_state.const_state.endpoint_blend,
-                    )
                 return source_eval_runner(
                     source_target_root_fields,
                     FFn_psin,
@@ -131,49 +133,34 @@ def _build_source_stage_runner_shared(
             np.copyto(psin_r, psin_profile_fields[1])
             np.copyto(psin_rr, psin_profile_fields[2])
             np.copyto(source_psin_query, psin)
-            if source_plan.has_projection_policy:
-                materialize_projected_source_inputs(
-                    source_work_state.materialized_heat_input,
-                    source_work_state.materialized_current_input,
-                    source_aux_state.heat_projection_coeff,
-                    source_aux_state.current_projection_coeff,
-                    source_plan.current_input,
-                    source_psin_query,
-                    source_plan.projection_domain_code,
-                    source_plan.endpoint_policy_code,
-                    source_runtime_state.const_state.endpoint_blend,
-                )
-            else:
-                if source_plan.parameterization == "identity":
-                    np.copyto(source_work_state.parameter_query, source_psin_query)
-                elif source_plan.parameterization == "sqrt_psin":
-                    np.copyto(source_work_state.parameter_query, source_psin_query)
-                    np.maximum(
-                        source_work_state.parameter_query,
-                        0.0,
-                        out=source_work_state.parameter_query,
-                    )
-                    np.sqrt(
-                        source_work_state.parameter_query, out=source_work_state.parameter_query
-                    )
-                else:
-                    raise ValueError(
-                        f"Unsupported source parameterization {source_plan.parameterization!r}"
-                    )
-                resolve_source_inputs(
-                    source_work_state.materialized_heat_input,
-                    source_work_state.materialized_current_input,
-                    source_plan.heat_input,
-                    source_plan.current_input,
-                    source_plan.coordinate_code,
-                    source_plan.source_sample_count,
-                    source_runtime_state.const_state.barycentric_weights,
-                    source_runtime_state.const_state.fixed_remap_matrix,
-                    source_aux_state.heat_spline_coeff,
-                    source_aux_state.current_spline_coeff,
+            if source_plan.parameterization == "identity":
+                np.copyto(source_work_state.parameter_query, source_psin_query)
+            elif source_plan.parameterization == "sqrt_psin":
+                np.copyto(source_work_state.parameter_query, source_psin_query)
+                np.maximum(
                     source_work_state.parameter_query,
-                    source_plan.uses_barycentric_interpolation,
+                    0.0,
+                    out=source_work_state.parameter_query,
                 )
+                np.sqrt(source_work_state.parameter_query, out=source_work_state.parameter_query)
+            else:
+                raise ValueError(
+                    f"Unsupported source parameterization {source_plan.parameterization!r}"
+                )
+            resolve_source_inputs(
+                source_work_state.materialized_heat_input,
+                source_work_state.materialized_current_input,
+                source_plan.heat_input,
+                source_plan.current_input,
+                source_plan.coordinate_code,
+                source_plan.source_sample_count,
+                source_runtime_state.const_state.barycentric_weights,
+                source_runtime_state.const_state.fixed_remap_matrix,
+                source_aux_state.heat_spline_coeff,
+                source_aux_state.current_spline_coeff,
+                source_work_state.parameter_query,
+                source_plan.uses_barycentric_interpolation,
+            )
             return source_eval_runner(
                 source_target_root_fields,
                 FFn_psin,
@@ -199,14 +186,13 @@ def _build_source_stage_runner_shared(
 
 
 def _build_pj2_psin_uniform_source_stage_runner(
-    operator_core: Any,
     *,
-    source_eval_runner: Callable | None = None,
+    plan,
+    case,
+    workspace,
+    source_eval_runner: Callable,
 ) -> Callable[[], tuple[float, float]]:
-    source_plan = operator_core.plan.source_plan
-    if source_eval_runner is None:
-        source_eval_runner = operator_core.layout.source.run_eval
-    workspace = operator_core.workspace
+    source_plan = plan.source_plan
     source_runtime_state = workspace.source.runtime_state
     source_work_state = source_runtime_state.work_state
     source_aux_state = source_runtime_state.aux_state
@@ -218,7 +204,7 @@ def _build_pj2_psin_uniform_source_stage_runner(
     psin_rr = root_fields[2]
     FFn_psin = root_fields[3]
     Pn_psin = root_fields[4]
-    case_R0 = float(operator_core.case.R0)
+    case_R0 = float(case.R0)
 
     def runner() -> tuple[float, float]:
         if source_work_state.psin_query[0] < 0.0:
@@ -282,33 +268,6 @@ def _build_pj2_psin_uniform_source_stage_runner(
             ):
                 break
         np.copyto(source_work_state.psin_query, target_root_fields[0])
-        if source_plan.has_projection_policy:
-            for _ in range(PJ2_PSIN_UNIFORM_FIXED_POINT_FINALIZE_ITER):
-                materialize_projected_source_inputs(
-                    source_work_state.materialized_heat_input,
-                    source_work_state.materialized_current_input,
-                    source_aux_state.heat_projection_coeff,
-                    source_aux_state.current_projection_coeff,
-                    source_plan.current_input,
-                    source_work_state.psin_query,
-                    source_plan.projection_domain_code,
-                    source_plan.endpoint_policy_code,
-                    source_runtime_state.const_state.endpoint_blend,
-                )
-                alpha1, alpha2 = source_eval_runner(
-                    target_root_fields,
-                    FFn_psin,
-                    Pn_psin,
-                    source_work_state.materialized_heat_input,
-                    source_work_state.materialized_current_input,
-                    case_R0,
-                )
-                if update_fixed_point_psin_query(
-                    source_work_state.psin_query,
-                    target_root_fields[0],
-                    PJ2_PSIN_UNIFORM_FIXED_POINT_MAX_RESIDUAL,
-                ):
-                    break
         np.copyto(psin, target_root_fields[0])
         np.copyto(psin_r, target_root_fields[1])
         np.copyto(psin_rr, target_root_fields[2])

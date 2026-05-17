@@ -8,7 +8,6 @@ Role:
 
 Notes:
 - ``OperatorWorkspace`` is the semantic/debug owner of runtime arrays.
-- ``RuntimeLayout`` remains only as an arrays-only compatibility view.
 - Hot kernels and bound runners must capture concrete arrays or ABI objects at bind time,
   not access workspace properties inside tight loops.
 """
@@ -146,30 +145,6 @@ class OperatorWorkspace:
     geometry: GeometryWorkspace
     source: SourceWorkspace
     residual: ResidualWorkspace
-    active_profile_slab: np.ndarray
-    family_field_slab: np.ndarray
-    source_runtime_state: SourceRuntimeState
-    geometry_surface_workspace: np.ndarray
-    geometry_radial_workspace: np.ndarray
-    residual_surface_workspace: np.ndarray
-    root_fields: np.ndarray
-    packed_residual: np.ndarray
-    residual_pack_scratch: np.ndarray
-    collocation_sqrt_weights: np.ndarray
-    active_u_fields: np.ndarray
-    active_rp_fields: np.ndarray
-    active_env_fields: np.ndarray
-    active_offsets: np.ndarray
-    active_scales: np.ndarray
-    active_lengths: np.ndarray
-    active_coeff_index_rows: np.ndarray
-    c_family_fields: np.ndarray
-    s_family_fields: np.ndarray
-    c_family_base_fields: np.ndarray
-    s_family_base_fields: np.ndarray
-    active_slot_by_profile_id: np.ndarray
-    c_family_source_slots: np.ndarray
-    s_family_source_slots: np.ndarray
     h_fields: np.ndarray
     v_fields: np.ndarray
     k_fields: np.ndarray
@@ -178,46 +153,6 @@ class OperatorWorkspace:
     psin_profile_u: np.ndarray
     psin_profile_fields: np.ndarray
 
-
-# Backward-compatible name while operator callers migrate to OperatorWorkspace.
-RuntimeWorkspace = OperatorWorkspace
-
-
-@dataclass(slots=True)
-class RuntimeLayout:
-    """绑定到 residual 热路径的 arrays-only runtime view."""
-
-    active_profile_slab: np.ndarray
-    family_field_slab: np.ndarray
-    source_runtime_state: SourceRuntimeState
-    geometry_surface_workspace: np.ndarray
-    geometry_radial_workspace: np.ndarray
-    residual_surface_workspace: np.ndarray
-    root_fields: np.ndarray
-    packed_residual: np.ndarray
-    residual_pack_scratch: np.ndarray
-    collocation_sqrt_weights: np.ndarray
-    active_u_fields: np.ndarray
-    active_rp_fields: np.ndarray
-    active_env_fields: np.ndarray
-    active_offsets: np.ndarray
-    active_scales: np.ndarray
-    active_lengths: np.ndarray
-    active_coeff_index_rows: np.ndarray
-    c_family_fields: np.ndarray
-    s_family_fields: np.ndarray
-    c_family_base_fields: np.ndarray
-    s_family_base_fields: np.ndarray
-    active_slot_by_profile_id: np.ndarray
-    c_family_source_slots: np.ndarray
-    s_family_source_slots: np.ndarray
-    h_fields: np.ndarray
-    v_fields: np.ndarray
-    k_fields: np.ndarray
-    F_profile_u: np.ndarray
-    F_profile_fields: np.ndarray
-    psin_profile_u: np.ndarray
-    psin_profile_fields: np.ndarray
 
 
 @dataclass(slots=True)
@@ -239,8 +174,6 @@ class SourceConstState:
 
     barycentric_weights: np.ndarray
     fixed_remap_matrix: np.ndarray
-    heat_projection_fit_matrix: np.ndarray
-    current_projection_fit_matrix: np.ndarray
     endpoint_blend: np.ndarray
 
 
@@ -260,8 +193,6 @@ class SourceWorkState:
 class SourceAuxState:
     """绑定到 source refresh/stage 的 aux outputs."""
 
-    heat_projection_coeff: np.ndarray
-    current_projection_coeff: np.ndarray
     heat_spline_coeff: np.ndarray
     current_spline_coeff: np.ndarray
     target_root_fields: np.ndarray
@@ -286,50 +217,6 @@ class BackendState:
     workspace: OperatorWorkspace
     field_runtime_state: FieldRuntimeState
     source_runtime_state: SourceRuntimeState
-
-    @property
-    def runtime_layout(self) -> RuntimeLayout:
-        """Compatibility arrays-only view; new binders should prefer ``workspace``."""
-
-        return build_runtime_layout_view(self.workspace)
-
-
-def build_runtime_layout_view(workspace: OperatorWorkspace) -> RuntimeLayout:
-    """Build the hot-path arrays-only layout view from workspace-owned arrays."""
-
-    return RuntimeLayout(
-        active_profile_slab=workspace.active_profile_slab,
-        family_field_slab=workspace.family_field_slab,
-        source_runtime_state=workspace.source_runtime_state,
-        geometry_surface_workspace=workspace.geometry_surface_workspace,
-        geometry_radial_workspace=workspace.geometry_radial_workspace,
-        residual_surface_workspace=workspace.residual_surface_workspace,
-        root_fields=workspace.root_fields,
-        packed_residual=workspace.packed_residual,
-        residual_pack_scratch=workspace.residual_pack_scratch,
-        collocation_sqrt_weights=workspace.collocation_sqrt_weights,
-        active_u_fields=workspace.active_u_fields,
-        active_rp_fields=workspace.active_rp_fields,
-        active_env_fields=workspace.active_env_fields,
-        active_offsets=workspace.active_offsets,
-        active_scales=workspace.active_scales,
-        active_lengths=workspace.active_lengths,
-        active_coeff_index_rows=workspace.active_coeff_index_rows,
-        c_family_fields=workspace.c_family_fields,
-        s_family_fields=workspace.s_family_fields,
-        c_family_base_fields=workspace.c_family_base_fields,
-        s_family_base_fields=workspace.s_family_base_fields,
-        active_slot_by_profile_id=workspace.active_slot_by_profile_id,
-        c_family_source_slots=workspace.c_family_source_slots,
-        s_family_source_slots=workspace.s_family_source_slots,
-        h_fields=workspace.h_fields,
-        v_fields=workspace.v_fields,
-        k_fields=workspace.k_fields,
-        F_profile_u=workspace.F_profile_u,
-        F_profile_fields=workspace.F_profile_fields,
-        psin_profile_u=workspace.psin_profile_u,
-        psin_profile_fields=workspace.psin_profile_fields,
-    )
 
 
 @dataclass(slots=True)
@@ -413,8 +300,6 @@ def allocate_runtime_state(
     source_const_state = SourceConstState(
         barycentric_weights=np.empty(0, dtype=np.float64),
         fixed_remap_matrix=np.empty((0, 0), dtype=np.float64),
-        heat_projection_fit_matrix=np.empty((0, 0), dtype=np.float64),
-        current_projection_fit_matrix=np.empty((0, 0), dtype=np.float64),
         endpoint_blend=np.linspace(0.0, 1.0, nr, dtype=np.float64),
     )
     source_work_state = SourceWorkState(
@@ -426,8 +311,6 @@ def allocate_runtime_state(
         scratch_2d=np.empty((1, nr, nt), dtype=np.float64),
     )
     source_aux_state = SourceAuxState(
-        heat_projection_coeff=np.empty(0, dtype=np.float64),
-        current_projection_coeff=np.empty(0, dtype=np.float64),
         heat_spline_coeff=np.empty((0, 4), dtype=np.float64),
         current_spline_coeff=np.empty((0, 4), dtype=np.float64),
         target_root_fields=target_root_fields,
@@ -508,30 +391,6 @@ def allocate_runtime_state(
         geometry=geometry_workspace,
         source=source_workspace,
         residual=residual_workspace,
-        active_profile_slab=active_profile_slab,
-        family_field_slab=family_field_slab,
-        source_runtime_state=source_runtime_state,
-        geometry_surface_workspace=geometry_surface_workspace,
-        geometry_radial_workspace=geometry_radial_workspace,
-        residual_surface_workspace=residual_surface_workspace,
-        root_fields=field_runtime_state.root_fields,
-        packed_residual=field_runtime_state.packed_residual,
-        residual_pack_scratch=residual_pack_scratch,
-        collocation_sqrt_weights=collocation_sqrt_weights,
-        active_u_fields=active_u_fields,
-        active_rp_fields=active_rp_fields,
-        active_env_fields=active_env_fields,
-        active_offsets=active_offsets,
-        active_scales=active_scales,
-        active_lengths=active_lengths,
-        active_coeff_index_rows=active_coeff_index_rows,
-        c_family_fields=c_family_fields,
-        s_family_fields=s_family_fields,
-        c_family_base_fields=c_family_base_fields,
-        s_family_base_fields=s_family_base_fields,
-        active_slot_by_profile_id=active_slot_by_profile_id,
-        c_family_source_slots=c_family_source_slots,
-        s_family_source_slots=s_family_source_slots,
         h_fields=np.empty((0, nr), dtype=np.float64),
         v_fields=np.empty((0, nr), dtype=np.float64),
         k_fields=np.empty((0, nr), dtype=np.float64),
