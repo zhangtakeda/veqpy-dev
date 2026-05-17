@@ -923,7 +923,7 @@ class Solver:
     ]:
         """旧版 block RMS 残差变换 wrapper; 仅保留为对比与兼容模式."""
 
-        block_lengths = getattr(self.operator, "active_lengths", None)
+        block_lengths = self.operator.residual_block_lengths()
         if block_lengths is None:
             return None, None
 
@@ -987,7 +987,7 @@ class Solver:
         if scope not in {"block", "global"}:
             raise ValueError(f"Unsupported balanced residual scope {scope!r}.")
         block_lengths = (
-            getattr(self.operator, "active_lengths", None)
+            self.operator.residual_block_lengths()
             if residual_kind == "variational" and scope == "block"
             else None
         )
@@ -1176,7 +1176,7 @@ class Solver:
             residual0, _ = self._initial_residual_stats(x_guess, residual_kind=residual_kind)
             if _should_use_robust_trf_loss(
                 residual0,
-                getattr(self.operator, "active_lengths", None),
+                self.operator.residual_block_lengths(),
             ):
                 kwargs["loss"] = "cauchy"
                 kwargs["f_scale"] = max(_residual_rms(residual0), 1.0)
@@ -1310,22 +1310,9 @@ def _build_boundary_slope_initial_state(
 ) -> np.ndarray:
     """Set first c/s coefficients so ``u_m'(1)=lambda*offset``."""
 
-    x = np.zeros(operator.x_size, dtype=np.float64)
-    target_factor = float(boundary_slope_factor)
-    for profile_id, name in enumerate(operator.profile_names):
-        if not (name.startswith("c") or name.startswith("s")):
-            continue
-        slot = int(operator.active_slot_by_profile_id[int(profile_id)])
-        if slot < 0 or int(operator.active_lengths[slot]) <= 0:
-            continue
-        profile = operator.profiles_by_name[name]
-        power = int(profile.power)
-        offset = float(profile.offset)
-        if power <= 0 or abs(offset) <= 1.0e-14:
-            continue
-        coeff_index = int(operator.active_coeff_index_rows[slot, 0])
-        x[coeff_index] = 0.5 * (float(power) - target_factor) * offset
-    return x
+    return operator.build_boundary_slope_initial_state(
+        boundary_slope_factor=boundary_slope_factor
+    )
 
 
 def _accepted_residual_norm(solve_config: SolverConfig) -> float:
@@ -1649,47 +1636,22 @@ def _use_offset_for_x_scale(name: str) -> bool:
 
 def _build_x_block_scale_vector(operator, x_guess: np.ndarray) -> np.ndarray | None:
     x_eval = np.asarray(x_guess, dtype=np.float64)
-    active_lengths = getattr(operator, "active_lengths", None)
-    active_offsets = getattr(operator, "active_offsets", None)
-    active_scales = getattr(operator, "active_scales", None)
-    active_coeff_index_rows = getattr(operator, "active_coeff_index_rows", None)
-    if (
-        active_lengths is None
-        or active_offsets is None
-        or active_scales is None
-        or active_coeff_index_rows is None
-    ):
-        return None
-
-    lengths_eval = np.asarray(active_lengths, dtype=np.int64)
-    offsets_eval = np.asarray(active_offsets, dtype=np.float64)
-    scales_eval = np.asarray(active_scales, dtype=np.float64)
-    coeff_rows_eval = np.asarray(active_coeff_index_rows, dtype=np.int64)
-    if (
-        lengths_eval.ndim != 1
-        or offsets_eval.shape != lengths_eval.shape
-        or scales_eval.shape != lengths_eval.shape
-    ):
+    if not hasattr(operator, "active_profile_blocks"):
         return None
 
     scale = np.ones_like(x_eval)
     floor = _x_scale_floor()
-    for slot, (p, block_len) in enumerate(
-        zip(operator.active_profile_ids, lengths_eval, strict=False)
-    ):
-        length = int(block_len)
+    for _, profile_name, coeff_indices, offset, profile_scale in operator.active_profile_blocks():
+        coeff_indices = np.asarray(coeff_indices, dtype=np.int64)
+        length = int(coeff_indices.size)
         if length <= 0:
             continue
-        coeff_indices = coeff_rows_eval[slot, :length]
         if np.any(coeff_indices < 0) or np.any(coeff_indices >= x_eval.size):
             return None
         block_guess = x_eval[coeff_indices]
         guess_rms = float(np.linalg.norm(block_guess) / np.sqrt(length))
-        profile_name = operator.profile_names[int(p)]
-        offset_scale = (
-            abs(float(offsets_eval[slot])) if _use_offset_for_x_scale(profile_name) else 0.0
-        )
-        profile_scale = abs(float(scales_eval[slot]))
+        offset_scale = abs(float(offset)) if _use_offset_for_x_scale(profile_name) else 0.0
+        profile_scale = abs(float(profile_scale))
         profile_prior = _x_scale_profile_prior(profile_name)
         if abs(profile_scale - 1.0) <= 1.0e-12:
             profile_scale = profile_prior

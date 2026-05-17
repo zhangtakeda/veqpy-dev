@@ -47,8 +47,8 @@ from veqpy.engine.numba_source import (
 from veqpy.math.interpolate import build_uniform_source_interpolation_coefficients
 
 if TYPE_CHECKING:
-    from veqpy.operator.runtime_layout import BackendState
     from veqpy.operator.source_plan import SourcePlan
+    from veqpy.workspace import BackendState
 
 
 def bind_source_eval_runner(
@@ -447,7 +447,7 @@ def bind_fused_residual_runner(
         B0=B0,
         fix_rho=fix_rho,
     )
-    packed_residual = backend_state.runtime_layout.packed_residual
+    packed_residual = backend_state.workspace.packed_residual
 
     def runner(x: np.ndarray) -> np.ndarray:
         runner_into(x, packed_residual)
@@ -543,10 +543,10 @@ def _bind_single_pass_residual_runner_core(
     alpha_state: np.ndarray,
     R0: float,
 ) -> Callable[[np.ndarray, np.ndarray], None]:
-    runtime_layout = backend_state.runtime_layout
-    surface_workspace = runtime_layout.geometry_surface_workspace
-    residual_workspace = runtime_layout.residual_surface_workspace
-    root_fields = runtime_layout.root_fields
+    workspace = backend_state.workspace
+    surface_workspace = workspace.geometry_surface_workspace
+    residual_workspace = workspace.residual_surface_workspace
+    root_fields = workspace.root_fields
     source_work_state = backend_state.source_runtime_state.work_state
     materialized_heat_input = source_work_state.materialized_heat_input
     materialized_current_input = source_work_state.materialized_current_input
@@ -589,11 +589,11 @@ def _bind_profile_owned_psin_residual_runner_core(
     R0: float,
     fix_rho: float,
 ) -> Callable[[np.ndarray, np.ndarray], None]:
-    runtime_layout = backend_state.runtime_layout
-    surface_workspace = runtime_layout.geometry_surface_workspace
-    residual_workspace = runtime_layout.residual_surface_workspace
+    workspace = backend_state.workspace
+    surface_workspace = workspace.geometry_surface_workspace
+    residual_workspace = workspace.residual_surface_workspace
     n_axis_fix = int(np.searchsorted(backend_state.static_layout.rho, fix_rho))
-    root_fields = runtime_layout.root_fields
+    root_fields = workspace.root_fields
     profile_owned_psin_binding = backend_abi.build_profile_owned_psin_source_abi(
         source_plan=source_plan,
         source_execution=source_execution,
@@ -679,20 +679,20 @@ def _bind_pj2_psin_uniform_residual_runner_core(
     fix_rho: float,
 ) -> Callable[[np.ndarray, np.ndarray], None]:
     static_layout = backend_state.static_layout
-    runtime_layout = backend_state.runtime_layout
+    workspace = backend_state.workspace
     source_runtime_state = backend_state.source_runtime_state
     source_work_state = source_runtime_state.work_state
     source_aux_state = source_runtime_state.aux_state
 
-    surface_workspace = runtime_layout.geometry_surface_workspace
-    radial_workspace = runtime_layout.geometry_radial_workspace
-    residual_workspace = runtime_layout.residual_surface_workspace
+    surface_workspace = workspace.geometry_surface_workspace
+    radial_workspace = workspace.geometry_radial_workspace
+    residual_workspace = workspace.residual_surface_workspace
     rho = static_layout.rho
     weights = static_layout.weights
     differentiator = static_layout.differentiator
     accumulator = static_layout.accumulator
     n_axis_fix = int(np.searchsorted(rho, fix_rho))
-    root_fields = runtime_layout.root_fields
+    root_fields = workspace.root_fields
 
     source_psin_query = source_work_state.psin_query
     materialized_heat_input = source_work_state.materialized_heat_input
@@ -702,8 +702,8 @@ def _bind_pj2_psin_uniform_residual_runner_core(
     heat_projection_coeff = source_aux_state.heat_projection_coeff
     current_projection_coeff = source_aux_state.current_projection_coeff
     endpoint_blend = source_runtime_state.const_state.endpoint_blend
-    F_profile_u = runtime_layout.F_profile_u
-    psin_profile_u = runtime_layout.psin_profile_u
+    F_profile_u = workspace.F_profile_u
+    psin_profile_u = workspace.psin_profile_u
     heat_input = source_plan.heat_input
     current_input = source_plan.current_input
     heat_spline_coeff = build_uniform_source_interpolation_coefficients(

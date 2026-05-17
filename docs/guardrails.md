@@ -53,8 +53,12 @@ Current operator-layer implementation boundaries:
 
 - [`veqpy/operator/packed_layout.py`](../veqpy/operator/packed_layout.py)
   owns packed layout and packed state codec helpers.
-- [`veqpy/operator/runtime_layout.py`](../veqpy/operator/runtime_layout.py)
-  owns runtime containers and one-time runtime allocation.
+- [`veqpy/operator/build_plan.py`](../veqpy/operator/build_plan.py)
+  owns operator topology/configuration lowering from Grid + case.
+- [`veqpy/workspace/`](../veqpy/workspace)
+  owns runtime memory allocation and hot-path array workspaces.
+- [`veqpy/layout/`](../veqpy/layout)
+  owns executable stage layouts and bound callables.
 - [`veqpy/operator/profile_runtime.py`](../veqpy/operator/profile_runtime.py)
   owns profile setup/refresh rules and Stage-A runtime binding.
 - [`veqpy/operator/operator.py`](../veqpy/operator/operator.py)

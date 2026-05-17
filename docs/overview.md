@@ -131,8 +131,12 @@ residual. The most relevant implementation files are:
     `build_equilibrium(...)` snapshot materialization.
 - [`veqpy/operator/operator_case.py`](../veqpy/operator/operator_case.py)
   - Normalized case inputs, boundary offsets, and source/profile metadata.
-- [`veqpy/operator/runtime_layout.py`](../veqpy/operator/runtime_layout.py)
-  - Static/runtime/backend state containers and one-time runtime allocation.
+- [`veqpy/operator/build_plan.py`](../veqpy/operator/build_plan.py)
+  - Operator topology/configuration lowering from Grid + case.
+- [`veqpy/workspace/`](../veqpy/workspace)
+  - Runtime memory allocation and hot-path stage workspaces.
+- [`veqpy/layout/`](../veqpy/layout)
+  - Executable stage layouts and bound callables.
 - [`veqpy/operator/profile_runtime.py`](../veqpy/operator/profile_runtime.py)
   - Profile construction, profile runtime refresh, Stage-A binding, and Fourier
     family metadata refresh.
@@ -179,8 +183,9 @@ For most runtime changes, the fastest useful reading order is:
 1. [`docs/guardrails.md`](./guardrails.md)
 2. [`veqpy/operator/operator.py`](../veqpy/operator/operator.py)
 3. [`veqpy/operator/packed_layout.py`](../veqpy/operator/packed_layout.py)
-4. [`veqpy/operator/runtime_layout.py`](../veqpy/operator/runtime_layout.py)
-5. [`veqpy/operator/profile_runtime.py`](../veqpy/operator/profile_runtime.py)
-6. [`veqpy/orchestration.py`](../veqpy/orchestration.py)
-7. The relevant numba kernel or binding file under [`veqpy/engine/`](../veqpy/engine)
-8. The matching regression or script entry under [`tests/`](../tests)
+4. [`veqpy/operator/build_plan.py`](../veqpy/operator/build_plan.py)
+5. [`veqpy/workspace/`](../veqpy/workspace) and [`veqpy/layout/`](../veqpy/layout)
+6. [`veqpy/operator/profile_runtime.py`](../veqpy/operator/profile_runtime.py)
+7. [`veqpy/orchestration.py`](../veqpy/orchestration.py)
+8. The relevant numba kernel or binding file under [`veqpy/engine/`](../veqpy/engine)
+9. The matching regression or script entry under [`tests/`](../tests)

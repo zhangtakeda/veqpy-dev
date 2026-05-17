@@ -16,34 +16,25 @@ Notes:
 from __future__ import annotations
 
 from dataclasses import InitVar, dataclass, field
-from typing import Callable
 
 import numpy as np
 
-import veqpy.engine.backend_abi as backend_abi
-from veqpy.engine import numba_operator, numba_profile, numba_residual, validate_route
+from veqpy.engine import numba_residual
+from veqpy.layout import OperatorLayout, build_operator_layout
 from veqpy.model.equilibrium import Equilibrium
 from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile
+from veqpy.operator.build_plan import (
+    OperatorBuildPlan,
+    build_operator_plan,
+    refresh_operator_plan_for_case,
+)
 from veqpy.operator.operator_case import OperatorCase
 from veqpy.operator.packed_layout import (
-    PROFILE_OFFSET_SPECS,
-    PROFILE_STATIC_KWARGS,
-    build_active_profile_metadata,
-    build_fourier_profile_names,
-    build_profile_index,
-    build_profile_layout,
-    build_profile_names,
-    build_residual_block_metadata,
-    build_residual_block_radial_powers,
-    build_shape_profile_names,
     decode_packed_blocks,
     encode_packed_state,
-    get_prefix_profile_names,
-    packed_size,
 )
 from veqpy.operator.profile_runtime import (
-    build_profile_stage_runner,
     make_profile,
     refresh_fourier_family_base_fields,
     refresh_fourier_family_metadata,
@@ -51,28 +42,20 @@ from veqpy.operator.profile_runtime import (
     refresh_stage_a_runtime,
     validate_case_compatibility,
 )
-from veqpy.operator.runtime_layout import (
-    BackendState,
-    ExecutionState,
-    FieldRuntimeState,
-    ResidualBindingLayout,
-    RuntimeLayout,
-    SourceRuntimeState,
-    StaticLayout,
-    _pack_poloidal_block,
-    _pack_radial_block,
-    allocate_runtime_state,
-)
 from veqpy.operator.source_plan import (
-    SourcePlan,
-    build_source_plan,
     validate_source_inputs,
     validate_source_plan_profile_support,
 )
 from veqpy.operator.source_runtime import refresh_source_runtime
-from veqpy.operator.stage_binding import (
-    build_bound_source_stage_runner,
-    build_geometry_stage_runner,
+from veqpy.workspace import (
+    BackendState,
+    FieldRuntimeState,
+    GeometryWorkspace,
+    OperatorWorkspace,
+    ProfileWorkspace,
+    ResidualWorkspace,
+    SourceWorkspace,
+    allocate_runtime_state,
 )
 
 
@@ -84,9 +67,13 @@ class Operator:
     case: OperatorCase = field(repr=False)
     fix_rho: float = 0.05
     source_interpolation_kind: str = "barycentric"
-    static_layout: StaticLayout = field(init=False, repr=False)
-    residual_binding_layout: ResidualBindingLayout = field(init=False, repr=False)
-    runtime_layout: RuntimeLayout = field(init=False, repr=False)
+    plan: OperatorBuildPlan = field(init=False, repr=False)
+    workspace: OperatorWorkspace = field(init=False, repr=False)
+    profile_workspace: ProfileWorkspace = field(init=False, repr=False)
+    geometry_workspace: GeometryWorkspace = field(init=False, repr=False)
+    source_workspace: SourceWorkspace = field(init=False, repr=False)
+    residual_workspace: ResidualWorkspace = field(init=False, repr=False)
+    layout: OperatorLayout = field(init=False, repr=False)
     backend_state: BackendState = field(init=False, repr=False)
 
     h_profile: Profile = field(init=False)
@@ -96,105 +83,33 @@ class Operator:
     F_profile: Profile = field(init=False)
     profiles_by_name: dict[str, Profile] = field(init=False, repr=False)
 
-    psin: np.ndarray = field(init=False)
-    psin_r: np.ndarray = field(init=False)
-    psin_rr: np.ndarray = field(init=False)
-    FFn_psin: np.ndarray = field(init=False)
-    Pn_psin: np.ndarray = field(init=False)
-    root_fields: np.ndarray = field(init=False, repr=False)
 
-    prefix_profile_names: tuple[str, ...] = field(init=False, repr=False)
-    shape_profile_names: tuple[str, ...] = field(init=False, repr=False)
-    profile_names: tuple[str, ...] = field(init=False, repr=False)
-    profile_index: dict[str, int] = field(init=False, repr=False)
-    c_profile_names: tuple[str, ...] = field(init=False, repr=False)
-    s_profile_names: tuple[str, ...] = field(init=False, repr=False)
-
-    profile_L: np.ndarray = field(init=False, repr=False)
-    coeff_index: np.ndarray = field(init=False, repr=False)
-    order_offsets: np.ndarray = field(init=False, repr=False)
-    active_profile_mask: np.ndarray = field(init=False, repr=False)
-    active_profile_ids: np.ndarray = field(init=False, repr=False)
-    x_size: int = field(init=False, repr=False)
-    active_u_fields: np.ndarray = field(init=False, repr=False)
-    active_rp_fields: np.ndarray = field(init=False, repr=False)
-    active_env_fields: np.ndarray = field(init=False, repr=False)
-    active_profile_slab: np.ndarray = field(init=False, repr=False)
-    active_offsets: np.ndarray = field(init=False, repr=False)
-    active_scales: np.ndarray = field(init=False, repr=False)
-    active_lengths: np.ndarray = field(init=False, repr=False)
-    active_coeff_index_rows: np.ndarray = field(init=False, repr=False)
-    c_family_fields: np.ndarray = field(init=False, repr=False)
-    s_family_fields: np.ndarray = field(init=False, repr=False)
-    c_family_base_fields: np.ndarray = field(init=False, repr=False)
-    s_family_base_fields: np.ndarray = field(init=False, repr=False)
-    family_field_slab: np.ndarray = field(init=False, repr=False)
-    active_slot_by_profile_id: np.ndarray = field(init=False, repr=False)
-    c_family_source_slots: np.ndarray = field(init=False, repr=False)
-    s_family_source_slots: np.ndarray = field(init=False, repr=False)
-    geometry_surface_workspace: np.ndarray = field(init=False, repr=False)
-    geometry_radial_workspace: np.ndarray = field(init=False, repr=False)
-    residual_surface_workspace: np.ndarray = field(init=False, repr=False)
-    residual_pack_scratch: np.ndarray = field(init=False, repr=False)
-    collocation_sqrt_weights: np.ndarray = field(init=False, repr=False)
     c_effective_order: int = field(init=False, repr=False)
     s_effective_order: int = field(init=False, repr=False)
-    _source_route_spec: object = field(init=False, repr=False)
-    source_plan: SourcePlan = field(init=False, repr=False)
-    source_execution: backend_abi.SourceExecutionABI = field(init=False, repr=False)
     field_runtime_state: FieldRuntimeState = field(init=False, repr=False)
-    execution_state: ExecutionState = field(init=False, repr=False)
-    source_runtime_state: SourceRuntimeState = field(init=False, repr=False)
-    packed_residual: np.ndarray = field(init=False, repr=False)
-    profile_static_kwargs_by_name: dict[str, dict[str, int]] = field(init=False, repr=False)
-    profile_offset_specs: dict[str, float | str] = field(init=False, repr=False)
 
     def __post_init__(self, grid: Grid) -> None:
         """完成 layout 构造, 运行时缓冲区分配和 case 绑定.
 
         grid 在构造时被降低为 StaticLayout 快照，之后 Operator 不再读取实时 Grid.
         """
-        self.static_layout = self._build_static_layout(grid)
-        self._refresh_operator_identity()
-        self.prefix_profile_names = get_prefix_profile_names()
-        self.shape_profile_names = build_shape_profile_names(self.static_layout.M_max)
-        self.profile_names = build_profile_names(self.static_layout.M_max)
-        self.profile_index = build_profile_index(self.profile_names)
-        fourier_profile_names = build_fourier_profile_names(self.static_layout.M_max)
-        self.c_profile_names = tuple(name for name in fourier_profile_names if name.startswith("c"))
-        self.s_profile_names = tuple(name for name in fourier_profile_names if name.startswith("s"))
-
-        self.profile_L, self.coeff_index, self.order_offsets = build_profile_layout(
-            self.case.profile_coeffs,
-            profile_names=self.profile_names,
-            prefix_profile_names=self.prefix_profile_names,
+        self._apply_plan(
+            build_operator_plan(
+                grid=grid,
+                case=self.case,
+                source_interpolation_kind=self.source_interpolation_kind,
+            )
         )
-        self.active_profile_mask, self.active_profile_ids = build_active_profile_metadata(
-            self.profile_L,
-            profile_names=self.profile_names,
-        )
-        self.x_size = packed_size(self.coeff_index)
-        self._refresh_source_execution_binding()
-        self._refresh_profile_config()
-        self.residual_binding_layout = self._build_residual_binding_layout()
         self._validate_runtime_profile_support()
 
-        self.execution_state = ExecutionState(
-            profile_stage_runner=lambda x: None,
-            profile_postprocess_runner=lambda: None,
-            geometry_stage_runner=lambda: None,
-            source_eval_runner=lambda *args: (0.0, 0.0),
-            source_stage_runner=lambda: (0.0, 0.0),
-            residual_full_stage_runner_into=lambda out: out.fill(0.0),
-            fused_residual_runner_into=(
-                lambda x_eval, out: self._evaluate_residual_into(x_eval, out)
-            ),
-            residual_full_stage_runner=lambda: np.zeros(self.x_size, dtype=np.float64),
-            fused_residual_runner=lambda x_eval: self._evaluate_residual(x_eval),
-            fused_alpha_state=np.zeros(2, dtype=np.float64),
-        )
+        self.layout = OperatorLayout.empty(self.plan.x_size)
         self._setup_runtime_state()
         self._refresh_runtime_state()
+
+    def _apply_plan(self, plan: OperatorBuildPlan) -> None:
+        """Install the operator topology/configuration plan."""
+
+        self.plan = plan
 
     def __call__(self, x: np.ndarray, *args, **kwargs) -> np.ndarray:
         """调用 variational residual 求值主入口."""
@@ -202,25 +117,96 @@ class Operator:
 
     @property
     def alpha1(self) -> float:
-        return float(self.execution_state.fused_alpha_state[0])
+        return float(self.layout.alpha_state[0])
 
     @alpha1.setter
     def alpha1(self, value: float) -> None:
-        self.execution_state.fused_alpha_state[0] = float(value)
+        self.layout.alpha_state[0] = float(value)
 
     @property
     def alpha2(self) -> float:
-        return float(self.execution_state.fused_alpha_state[1])
+        return float(self.layout.alpha_state[1])
 
     @alpha2.setter
     def alpha2(self, value: float) -> None:
-        self.execution_state.fused_alpha_state[1] = float(value)
+        self.layout.alpha_state[1] = float(value)
+
+    # Solver-facing plan accessors kept as the public facade; Operator does not
+    # mirror these fields as mutable state.
+    @property
+    def x_size(self) -> int:
+        return self.plan.x_size
+
+    @property
+    def profile_names(self) -> tuple[str, ...]:
+        return self.plan.profile_names
+
+    @property
+    def active_profile_ids(self) -> np.ndarray:
+        return self.plan.active_profile_ids
+
+    def residual_block_lengths(self) -> np.ndarray:
+        """Return packed residual block lengths for solver normalization.
+
+        This is a narrow solver-facing view; raw workspace indexing arrays remain
+        owned by ``ProfileWorkspace``.
+        """
+        return self.profile_workspace.active_lengths.copy()
+
+    def active_profile_blocks(self) -> tuple[tuple[int, str, np.ndarray, float, float], ...]:
+        """Return solver-scale metadata for active packed profile blocks.
+
+        Each item is ``(profile_id, profile_name, coeff_indices, offset, scale)``.
+        Coefficient index arrays are copies so callers do not depend on workspace
+        storage layout.
+        """
+
+        profile_workspace = self.profile_workspace
+        blocks: list[tuple[int, str, np.ndarray, float, float]] = []
+        for slot, profile_id in enumerate(self.plan.active_profile_ids):
+            length = int(profile_workspace.active_lengths[slot])
+            if length <= 0:
+                continue
+            p = int(profile_id)
+            blocks.append(
+                (
+                    p,
+                    self.plan.profile_names[p],
+                    profile_workspace.active_coeff_index_rows[slot, :length].copy(),
+                    float(profile_workspace.active_offsets[slot]),
+                    float(profile_workspace.active_scales[slot]),
+                )
+            )
+        return tuple(blocks)
+
+    def build_boundary_slope_initial_state(self, *, boundary_slope_factor: float = 1.0) -> np.ndarray:
+        """Build a boundary-scaled packed x0 for active c/s Fourier profiles."""
+
+        x = np.zeros(self.plan.x_size, dtype=np.float64)
+        target_factor = float(boundary_slope_factor)
+        active_slot_by_profile_id = self.profile_workspace.active_slot_by_profile_id
+        active_lengths = self.profile_workspace.active_lengths
+        active_coeff_index_rows = self.profile_workspace.active_coeff_index_rows
+        for profile_id, name in enumerate(self.plan.profile_names):
+            if not (name.startswith("c") or name.startswith("s")):
+                continue
+            slot = int(active_slot_by_profile_id[int(profile_id)])
+            if slot < 0 or int(active_lengths[slot]) <= 0:
+                continue
+            profile = self.profiles_by_name[name]
+            power = int(profile.power)
+            offset = float(profile.offset)
+            if power <= 0 or abs(offset) <= 1.0e-14:
+                continue
+            coeff_index = int(active_coeff_index_rows[slot, 0])
+            x[coeff_index] = 0.5 * (float(power) - target_factor) * offset
+        return x
 
     def _validate_runtime_profile_support(self) -> None:
         """校验当前 source route 对 psin profile ownership 的要求."""
         validate_source_plan_profile_support(
-            source_plan=self.source_plan,
-            source_execution=self.source_execution,
+            source_plan=self.plan.source_plan,
+            source_execution=self.plan.source_execution,
             case=self.case,
         )
         return None
@@ -229,13 +215,13 @@ class Operator:
         """在不改变 packed layout 的前提下替换当前 case."""
         validate_case_compatibility(
             case,
-            profile_names=self.profile_names,
-            prefix_profile_names=self.prefix_profile_names,
-            profile_L=self.profile_L,
-            coeff_index=self.coeff_index,
-            order_offsets=self.order_offsets,
+            profile_names=self.plan.profile_names,
+            prefix_profile_names=self.plan.prefix_profile_names,
+            profile_L=self.plan.profile_L,
+            coeff_index=self.plan.coeff_index,
+            order_offsets=self.plan.order_offsets,
             validate_source_inputs=lambda next_case: validate_source_inputs(
-                next_case, self.static_layout.Nr
+                next_case, self.plan.static_layout.Nr
             ),
         )
         self.case = case
@@ -245,9 +231,9 @@ class Operator:
         """把当前 case 中的 profile 系数编码成 packed 初值."""
         return encode_packed_state(
             self.case.profile_coeffs,
-            self.profile_L,
-            self.coeff_index,
-            profile_names=self.profile_names,
+            self.plan.profile_L,
+            self.plan.coeff_index,
+            profile_names=self.plan.profile_names,
         )
 
     def residual_var(
@@ -255,7 +241,7 @@ class Operator:
         x: np.ndarray,
     ) -> np.ndarray:
         """返回 variational/Galerkin residual 向量."""
-        out = np.empty(self.x_size, dtype=np.float64)
+        out = np.empty(self.plan.x_size, dtype=np.float64)
         self.residual_var_into(x, out)
         return out
 
@@ -267,11 +253,13 @@ class Operator:
         out_eval = out
         if out_eval.dtype != np.float64:
             raise TypeError(f"Expected out dtype float64, got {out_eval.dtype}")
-        if out_eval.ndim != 1 or out_eval.shape[0] != self.x_size:
-            raise ValueError(f"Expected out to have shape ({self.x_size},), got {out_eval.shape}")
+        if out_eval.ndim != 1 or out_eval.shape[0] != self.plan.x_size:
+            raise ValueError(
+                f"Expected out to have shape ({self.plan.x_size},), got {out_eval.shape}"
+            )
         if not out_eval.flags.c_contiguous:
             raise ValueError("Expected out to be C-contiguous")
-        self.execution_state.fused_residual_runner_into(x_eval, out_eval)
+        self.layout.run_fused_residual_into(x_eval, out_eval)
 
     def residual_collocation(self, x: np.ndarray) -> np.ndarray:
         """返回 DESC-style 点值 force-balance collocation residual.
@@ -284,13 +272,15 @@ class Operator:
         平方根权重用于离散 least-squares 标度.
         返回形状为 ``(2 * Nr * Nt,)`` 的向量.
         """
-        out = np.empty(2 * self.static_layout.Nr * self.static_layout.Nt, dtype=np.float64)
+        out = np.empty(
+            2 * self.plan.static_layout.Nr * self.plan.static_layout.Nt, dtype=np.float64
+        )
         self.residual_collocation_into(x, out)
         return out
 
     def residual_collocation_into(self, x: np.ndarray, out: np.ndarray) -> None:
         """把 DESC-style collocation residual 写入调用方提供的 ``out``."""
-        expected_size = 2 * self.static_layout.Nr * self.static_layout.Nt
+        expected_size = 2 * self.plan.static_layout.Nr * self.plan.static_layout.Nt
         if not isinstance(out, np.ndarray):
             raise TypeError("Expected out to be a numpy.ndarray")
         out_eval = out
@@ -301,17 +291,18 @@ class Operator:
         if not out_eval.flags.c_contiguous:
             raise ValueError("Expected out to be C-contiguous")
         self._evaluate_collocation_workspace(x)
-        block_size = self.static_layout.Nr * self.static_layout.Nt
+        block_size = self.plan.static_layout.Nr * self.plan.static_layout.Nt
+        residual_workspace = self.residual_workspace
         numba_residual.write_weighted_collocation_field_into(
             out_eval,
-            self.residual_surface_workspace[1],
-            self.collocation_sqrt_weights,
+            residual_workspace.surface_workspace[1],
+            residual_workspace.collocation_sqrt_weights,
             0,
         )
         numba_residual.write_weighted_collocation_field_into(
             out_eval,
-            self.residual_surface_workspace[2],
-            self.collocation_sqrt_weights,
+            residual_workspace.surface_workspace[2],
+            residual_workspace.collocation_sqrt_weights,
             block_size,
         )
 
@@ -323,7 +314,7 @@ class Operator:
         self._update_residual_surface_workspace()
 
     def _evaluate_residual(self, x_eval: np.ndarray) -> np.ndarray:
-        out = np.empty(self.x_size, dtype=np.float64)
+        out = np.empty(self.plan.x_size, dtype=np.float64)
         self._evaluate_residual_into(x_eval, out)
         return out
 
@@ -338,10 +329,10 @@ class Operator:
     ) -> dict[str, list[float] | None]:
         """把 packed 状态向量还原成 profile 系数字典."""
         blocks = decode_packed_blocks(
-            x, self.profile_L, self.coeff_index, profile_names=self.profile_names
+            x, self.plan.profile_L, self.plan.coeff_index, profile_names=self.plan.profile_names
         )
         coeffs: dict[str, list[float] | None] = {}
-        for name, block in zip(self.profile_names, blocks, strict=True):
+        for name, block in zip(self.plan.profile_names, blocks, strict=True):
             if include_none or block is not None:
                 coeffs[name] = None if block is None else block.tolist()
         return coeffs
@@ -354,22 +345,19 @@ class Operator:
 
     def stage_a_profile(self, x: np.ndarray) -> None:
         """执行 profile 阶段并刷新 active profile fields."""
-        self.execution_state.profile_stage_runner(x)
-        self.execution_state.profile_postprocess_runner()
+        self.layout.run_profile(x)
 
     def stage_b_geometry(self) -> None:
         """执行 geometry 阶段并刷新 geometry fields."""
-        self.execution_state.geometry_stage_runner()
+        self.layout.run_geometry()
 
     def stage_c_source(self) -> None:
         """执行 source 阶段并刷新 root fields 与缩放系数."""
-        alpha1, alpha2 = self.execution_state.source_stage_runner()
-        self.alpha1 = float(alpha1)
-        self.alpha2 = float(alpha2)
+        self.layout.run_source()
 
     def stage_d_residual(self) -> np.ndarray:
         """执行 residual 阶段并返回 packed 残差."""
-        out = np.empty(self.x_size, dtype=np.float64)
+        out = np.empty(self.plan.x_size, dtype=np.float64)
         self.stage_d_residual_into(out)
         return out
 
@@ -380,455 +368,196 @@ class Operator:
         out_eval = out
         if out_eval.dtype != np.float64:
             raise TypeError(f"Expected out dtype float64, got {out_eval.dtype}")
-        if out_eval.ndim != 1 or out_eval.shape[0] != self.x_size:
-            raise ValueError(f"Expected out to have shape ({self.x_size},), got {out_eval.shape}")
+        if out_eval.ndim != 1 or out_eval.shape[0] != self.plan.x_size:
+            raise ValueError(
+                f"Expected out to have shape ({self.plan.x_size},), got {out_eval.shape}"
+            )
         if not out_eval.flags.c_contiguous:
             raise ValueError("Expected out to be C-contiguous")
-        self.execution_state.residual_full_stage_runner_into(out_eval)
+        self.layout.run_residual_into(out_eval)
 
     def _update_residual_surface_workspace(self) -> None:
+        residual_workspace = self.residual_workspace
         numba_residual.update_residual_compact(
-            self.residual_surface_workspace,
+            residual_workspace.surface_workspace,
             self.alpha1,
             self.alpha2,
-            self.root_fields,
-            self.geometry_surface_workspace,
+            residual_workspace.root_fields,
+            self.geometry_workspace.surface_workspace,
         )
 
     def coerce_x(self, x: np.ndarray) -> np.ndarray:
         """校验完整 packed 状态向量形状."""
         arr = np.asarray(x, dtype=np.float64)
-        if arr.ndim != 1 or arr.shape[0] != self.x_size:
-            raise ValueError(f"Expected x to have shape ({self.x_size},), got {arr.shape}")
+        if arr.ndim != 1 or arr.shape[0] != self.plan.x_size:
+            raise ValueError(f"Expected x to have shape ({self.plan.x_size},), got {arr.shape}")
         return arr
 
-    def _build_static_layout(self, grid: Grid) -> StaticLayout:
-        return StaticLayout(
-            Nr=int(grid.Nr),
-            Nt=int(grid.Nt),
-            M_max=int(grid.M_max),
-            L_max=int(grid.L_max),
-            K_max=grid.K_max or grid.M_max,
-            quadrature_scheme=grid.quadrature_scheme,
-            calculus_scheme=grid.calculus_scheme,
-            K_values=grid.K_values.copy(),
-            weights=grid.weights.copy(),
-            differentiator=grid.differentiator.copy(),
-            accumulator=grid.accumulator.copy(),
-            radial_block=_pack_radial_block(
-                grid.rho, grid.x, grid.y, grid.rho_powers, grid.T, grid.T_r, grid.T_rr
-            ),
-            poloidal_block=_pack_poloidal_block(
-                grid.theta,
-                grid.cos_mtheta,
-                grid.sin_mtheta,
-                grid.m_cos_mtheta,
-                grid.m_sin_mtheta,
-                grid.m2_cos_mtheta,
-                grid.m2_sin_mtheta,
-            ),
-        )
-
-    def _build_residual_binding_layout(self) -> ResidualBindingLayout:
-        active_profile_names = tuple(self.profile_names[int(p)] for p in self.active_profile_ids)
-        active_residual_block_codes, active_residual_block_orders = build_residual_block_metadata(
-            active_profile_names
-        )
-        active_residual_block_radial_powers = build_residual_block_radial_powers(
-            active_profile_names,
-            K_values=self.static_layout.K_values,
-        )
-        return ResidualBindingLayout(
-            active_profile_names=active_profile_names,
-            active_residual_block_codes=active_residual_block_codes,
-            active_residual_block_orders=active_residual_block_orders,
-            active_residual_block_radial_powers=active_residual_block_radial_powers,
-        )
-
-    def _refresh_runtime_layout_views(self) -> None:
-        runtime = self.runtime_layout
-        runtime.active_profile_slab = self.active_profile_slab
-        runtime.family_field_slab = self.family_field_slab
-        runtime.source_runtime_state = self.source_runtime_state
-        runtime.root_fields = self.root_fields
-        runtime.packed_residual = self.packed_residual
-        runtime.residual_pack_scratch = self.residual_pack_scratch
-        runtime.collocation_sqrt_weights = self.collocation_sqrt_weights
-        runtime.active_u_fields = self.active_u_fields
-        runtime.active_rp_fields = self.active_rp_fields
-        runtime.active_env_fields = self.active_env_fields
-        runtime.active_offsets = self.active_offsets
-        runtime.active_scales = self.active_scales
-        runtime.active_lengths = self.active_lengths
-        runtime.active_coeff_index_rows = self.active_coeff_index_rows
-        runtime.c_family_fields = self.c_family_fields
-        runtime.s_family_fields = self.s_family_fields
-        runtime.c_family_base_fields = self.c_family_base_fields
-        runtime.s_family_base_fields = self.s_family_base_fields
-        runtime.active_slot_by_profile_id = self.active_slot_by_profile_id
-        runtime.c_family_source_slots = self.c_family_source_slots
-        runtime.s_family_source_slots = self.s_family_source_slots
-        runtime.h_fields = self.h_profile.u_fields
-        runtime.v_fields = self.v_profile.u_fields
-        runtime.k_fields = self.k_profile.u_fields
-        runtime.F_profile_u = self.F_profile.u
-        runtime.F_profile_fields = self.F_profile.u_fields
-        runtime.psin_profile_u = self.psin_profile.u
-        runtime.psin_profile_fields = self.psin_profile.u_fields
+    def _refresh_workspace_views(self) -> None:
+        workspace = self.workspace
+        workspace.h_fields = self.h_profile.u_fields
+        workspace.v_fields = self.v_profile.u_fields
+        workspace.k_fields = self.k_profile.u_fields
+        workspace.F_profile_u = self.F_profile.u
+        workspace.F_profile_fields = self.F_profile.u_fields
+        workspace.psin_profile_u = self.psin_profile.u
+        workspace.psin_profile_fields = self.psin_profile.u_fields
 
     def _setup_runtime_state(self) -> None:
         bundle = allocate_runtime_state(
-            static_layout=self.static_layout,
-            source_execution=self.source_execution,
-            profile_names=self.profile_names,
-            profile_index=self.profile_index,
-            active_profile_ids=self.active_profile_ids,
-            profile_L=self.profile_L,
-            x_size=self.x_size,
+            static_layout=self.plan.static_layout,
+            source_execution=self.plan.source_execution,
+            profile_names=self.plan.profile_names,
+            profile_index=self.plan.profile_index,
+            active_profile_ids=self.plan.active_profile_ids,
+            profile_L=self.plan.profile_L,
+            x_size=self.plan.x_size,
             make_profile=lambda name: make_profile(
                 case=self.case,
-                operator_grid=self.static_layout,
+                operator_grid=self.plan.static_layout,
                 name=name,
-                profile_L=self.profile_L,
-                profile_names=self.profile_names,
-                profile_index=self.profile_index,
-                profile_static_kwargs_by_name=self.profile_static_kwargs_by_name,
-                profile_offset_specs=self.profile_offset_specs,
+                profile_L=self.plan.profile_L,
+                profile_names=self.plan.profile_names,
+                profile_index=self.plan.profile_index,
+                profile_static_kwargs_by_name=self.plan.profile_static_kwargs_by_name,
+                profile_offset_specs=self.plan.profile_offset_specs,
             ),
         )
         self.profiles_by_name = bundle.profiles_by_name
         for name, profile in self.profiles_by_name.items():
             if hasattr(type(self), f"{name}_profile"):
                 setattr(self, f"{name}_profile", profile)
+        self.workspace = bundle.workspace
+        self.profile_workspace = bundle.profile_workspace
+        self.geometry_workspace = bundle.geometry_workspace
+        self.source_workspace = bundle.source_workspace
+        self.residual_workspace = bundle.residual_workspace
         self.field_runtime_state = bundle.field_runtime_state
-        self.root_fields = bundle.field_runtime_state.root_fields
-        self.packed_residual = bundle.field_runtime_state.packed_residual
-        self.psin = bundle.field_runtime_state.psin
-        self.psin_r = bundle.field_runtime_state.psin_r
-        self.psin_rr = bundle.field_runtime_state.psin_rr
-        self.FFn_psin = bundle.field_runtime_state.FFn_psin
-        self.Pn_psin = bundle.field_runtime_state.Pn_psin
-        self.source_runtime_state = bundle.source_runtime_state
-        self.active_profile_slab = bundle.active_profile_slab
-        self.active_u_fields = bundle.active_u_fields
-        self.active_rp_fields = bundle.active_rp_fields
-        self.active_env_fields = bundle.active_env_fields
-        self.active_offsets = bundle.active_offsets
-        self.active_scales = bundle.active_scales
-        self.active_lengths = bundle.active_lengths
-        self.active_coeff_index_rows = bundle.active_coeff_index_rows
-        self.family_field_slab = bundle.family_field_slab
-        self.c_family_fields = bundle.c_family_fields
-        self.s_family_fields = bundle.s_family_fields
-        self.c_family_base_fields = bundle.c_family_base_fields
-        self.s_family_base_fields = bundle.s_family_base_fields
-        self.active_slot_by_profile_id = bundle.active_slot_by_profile_id
-        self.c_family_source_slots = bundle.c_family_source_slots
-        self.s_family_source_slots = bundle.s_family_source_slots
-        self.runtime_layout = bundle.runtime_layout
-        self.geometry_surface_workspace = bundle.runtime_layout.geometry_surface_workspace
-        self.geometry_radial_workspace = bundle.runtime_layout.geometry_radial_workspace
-        self.residual_surface_workspace = bundle.runtime_layout.residual_surface_workspace
-        self.residual_pack_scratch = bundle.runtime_layout.residual_pack_scratch
-        self.collocation_sqrt_weights = bundle.runtime_layout.collocation_sqrt_weights
 
     def _refresh_runtime_state(self) -> None:
-        self._refresh_operator_identity()
-        self._refresh_source_execution_binding()
-        self._refresh_profile_config()
-        self.residual_binding_layout = self._build_residual_binding_layout()
+        self._apply_plan(
+            refresh_operator_plan_for_case(
+                self.plan,
+                case=self.case,
+                source_interpolation_kind=self.source_interpolation_kind,
+            )
+        )
         self._validate_runtime_profile_support()
         self._refresh_profile_runtime()
         self._refresh_fourier_family_metadata()
         refresh_source_runtime(
             case=self.case,
-            grid_rho=self.static_layout.rho,
-            source_plan=self.source_plan,
-            source_execution=self.source_execution,
-            source_runtime_state=self.source_runtime_state,
-            psin=self.psin,
+            grid_rho=self.plan.static_layout.rho,
+            source_plan=self.plan.source_plan,
+            source_execution=self.plan.source_execution,
+            source_runtime_state=self.source_workspace.runtime_state,
+            psin=self.residual_workspace.root_fields[0],
         )
         self._refresh_stage_a_runtime()
-        self._refresh_runtime_layout_views()
+        self._refresh_workspace_views()
         self._refresh_backend_state()
         self._refresh_runtime_bindings()
-
-    def _refresh_operator_identity(self) -> None:
-        spec = validate_route(self.case.route, self.case.coordinate, self.case.nodes)
-        self._source_route_spec = spec
-        self.source_plan = build_source_plan(
-            case=self.case,
-            source_route_spec=self._source_route_spec,
-            interpolation_kind=self.source_interpolation_kind,
-        )
-
-    def _refresh_source_execution_binding(self) -> None:
-        self.source_execution = backend_abi.build_source_execution_abi(
-            source_plan=self.source_plan,
-            profile_index=self.profile_index,
-            profile_L=self.profile_L,
-            coeff_index=self.coeff_index,
-            active_profile_ids=self.active_profile_ids,
-        )
-
-    def _refresh_profile_config(self) -> None:
-        self.profile_static_kwargs_by_name = {
-            name: dict(kwargs) for name, kwargs in PROFILE_STATIC_KWARGS.items()
-        }
-        for name in self.c_profile_names + self.s_profile_names:
-            order = int(name[1:])
-            self.profile_static_kwargs_by_name[name] = (
-                {} if order == 0 else {"power": int(self.static_layout.K_values[order])}
-            )
-        self.profile_offset_specs = dict(PROFILE_OFFSET_SPECS)
-
-    def _build_profile_postprocess_runner(self) -> Callable[[], None]:
-        eps = 1.0e-10
-
-        def runner() -> None:
-            numba_operator.convert_f_squared_fields_to_f(
-                self.runtime_layout.F_profile_fields, eps=eps
-            )
-
-        return runner
 
     def _refresh_profile_runtime(self) -> None:
         refresh_profile_runtime(
             case=self.case,
-            operator_grid=self.static_layout,
-            profile_names=self.profile_names,
-            profile_index=self.profile_index,
-            profile_L=self.profile_L,
+            operator_grid=self.plan.static_layout,
+            profile_names=self.plan.profile_names,
+            profile_index=self.plan.profile_index,
+            profile_L=self.plan.profile_L,
             profiles_by_name=self.profiles_by_name,
-            profile_static_kwargs_by_name=self.profile_static_kwargs_by_name,
-            profile_offset_specs=self.profile_offset_specs,
+            profile_static_kwargs_by_name=self.plan.profile_static_kwargs_by_name,
+            profile_offset_specs=self.plan.profile_offset_specs,
             refresh_fourier_family_base_fields=lambda: refresh_fourier_family_base_fields(
-                M_max=self.static_layout.M_max,
-                profile_index=self.profile_index,
+                M_max=self.plan.static_layout.M_max,
+                profile_index=self.plan.profile_index,
                 profiles_by_name=self.profiles_by_name,
-                c_family_base_fields=self.c_family_base_fields,
-                s_family_base_fields=self.s_family_base_fields,
+                c_family_base_fields=self.profile_workspace.c_family_base_fields,
+                s_family_base_fields=self.profile_workspace.s_family_base_fields,
             ),
         )
 
     def _refresh_runtime_bindings(self) -> None:
-        self.execution_state.profile_stage_runner = self._build_profile_stage_runner()
-        self.execution_state.profile_postprocess_runner = self._build_profile_postprocess_runner()
-        self.execution_state.geometry_stage_runner = self._build_geometry_stage_runner()
-        self.execution_state.source_eval_runner = self._build_source_eval_runner()
-        self.execution_state.source_stage_runner = self._build_bound_source_stage_runner()
-        self.execution_state.residual_full_stage_runner_into = (
-            self._build_bound_residual_full_stage_runner_into()
+        alpha_state = self.layout.alpha_state
+        self.layout = build_operator_layout(
+            plan=self.plan,
+            case=self.case,
+            workspace=self.workspace,
+            backend_state=self.backend_state,
+            alpha_state=alpha_state,
+            c_effective_order=self.c_effective_order,
+            s_effective_order=self.s_effective_order,
+            fix_rho=self.fix_rho,
+            psin_profile_fields_available=self.psin_profile.u_fields is not None,
+            fallback_residual_runner_into=self._evaluate_residual_into,
         )
-        self.execution_state.residual_full_stage_runner = (
-            self._build_bound_residual_full_stage_runner()
+        fixed_profile_ids = np.flatnonzero(~self.plan.active_profile_mask).astype(
+            np.int64, copy=False
         )
-        self.execution_state.fused_residual_runner_into = self._build_fused_residual_runner_into()
-        self.execution_state.fused_residual_runner = self._build_fused_residual_runner()
-        fixed_profile_ids = np.flatnonzero(~self.active_profile_mask).astype(np.int64, copy=False)
         for p in fixed_profile_ids:
-            self.profiles_by_name[self.profile_names[int(p)]].update()
-        f_profile_id = self.profile_index.get("F", -1)
-        if f_profile_id >= 0 and not bool(self.active_profile_mask[f_profile_id]):
-            self.execution_state.profile_postprocess_runner()
+            self.profiles_by_name[self.plan.profile_names[int(p)]].update()
+        f_profile_id = self.plan.profile_index.get("F", -1)
+        if f_profile_id >= 0 and not bool(self.plan.active_profile_mask[f_profile_id]):
+            self.layout.profile.run_postprocess()
 
     def _refresh_backend_state(self) -> None:
         self.backend_state = BackendState(
-            static_layout=self.static_layout,
-            residual_binding_layout=self.residual_binding_layout,
-            runtime_layout=self.runtime_layout,
+            static_layout=self.plan.static_layout,
+            residual_binding_layout=self.plan.residual_binding_layout,
+            workspace=self.workspace,
             field_runtime_state=self.field_runtime_state,
-            source_runtime_state=self.source_runtime_state,
+            source_runtime_state=self.source_workspace.runtime_state,
         )
 
     def _refresh_stage_a_runtime(self) -> None:
+        profile_workspace = self.profile_workspace
         refresh_stage_a_runtime(
-            active_profile_ids=self.active_profile_ids,
-            profile_names=self.profile_names,
+            active_profile_ids=self.plan.active_profile_ids,
+            profile_names=self.plan.profile_names,
             profiles_by_name=self.profiles_by_name,
-            profile_L=self.profile_L,
-            coeff_index=self.coeff_index,
-            active_u_fields=self.active_u_fields,
-            active_rp_fields=self.active_rp_fields,
-            active_env_fields=self.active_env_fields,
-            active_offsets=self.active_offsets,
-            active_scales=self.active_scales,
-            active_lengths=self.active_lengths,
-            active_coeff_index_rows=self.active_coeff_index_rows,
+            profile_L=self.plan.profile_L,
+            coeff_index=self.plan.coeff_index,
+            active_u_fields=profile_workspace.active_u_fields,
+            active_rp_fields=profile_workspace.active_rp_fields,
+            active_env_fields=profile_workspace.active_env_fields,
+            active_offsets=profile_workspace.active_offsets,
+            active_scales=profile_workspace.active_scales,
+            active_lengths=profile_workspace.active_lengths,
+            active_coeff_index_rows=profile_workspace.active_coeff_index_rows,
         )
-
-    def _build_profile_stage_runner(self) -> Callable:
-        return build_profile_stage_runner(
-            active_profile_ids=self.active_profile_ids,
-            active_profile_slab=self.active_profile_slab,
-            T=self.static_layout.T,
-            T_r=self.static_layout.T_r,
-            T_rr=self.static_layout.T_rr,
-            active_offsets=self.active_offsets,
-            active_scales=self.active_scales,
-            active_coeff_index_rows=self.active_coeff_index_rows,
-            active_lengths=self.active_lengths,
-            update_profiles_packed_bulk=numba_profile.update_profiles_packed_bulk,
-        )
-
-    def _build_geometry_stage_runner(self) -> Callable:
-        return build_geometry_stage_runner(
-            c_family_fields=self.c_family_fields,
-            s_family_fields=self.s_family_fields,
-            c_family_base_fields=self.c_family_base_fields,
-            s_family_base_fields=self.s_family_base_fields,
-            active_u_fields=self.active_u_fields,
-            c_family_source_slots=self.c_family_source_slots,
-            s_family_source_slots=self.s_family_source_slots,
-            c_effective_order=self.c_effective_order,
-            s_effective_order=self.s_effective_order,
-            h_fields=self.runtime_layout.h_fields,
-            v_fields=self.runtime_layout.v_fields,
-            k_fields=self.runtime_layout.k_fields,
-            a=self.case.a,
-            R0=self.case.R0,
-            Z0=self.case.Z0,
-            surface_workspace=self.geometry_surface_workspace,
-            radial_workspace=self.geometry_radial_workspace,
-            rho=self.static_layout.rho,
-            theta=self.static_layout.theta,
-            cos_mtheta=self.static_layout.cos_mtheta,
-            sin_mtheta=self.static_layout.sin_mtheta,
-            m_cos_mtheta=self.static_layout.m_cos_mtheta,
-            m_sin_mtheta=self.static_layout.m_sin_mtheta,
-            m2_cos_mtheta=self.static_layout.m2_cos_mtheta,
-            m2_sin_mtheta=self.static_layout.m2_sin_mtheta,
-        )
-
-    def _build_bound_source_stage_runner(self) -> Callable:
-        return build_bound_source_stage_runner(self)
-
-    def _build_source_eval_runner(self) -> Callable:
-        return numba_operator.bind_source_eval_runner(
-            source_plan=self.source_plan,
-            backend_state=self.backend_state,
-            B0=self.case.B0,
-            fix_rho=self.fix_rho,
-        )
-
-    def _build_bound_residual_full_stage_runner_into(self) -> Callable:
-        alpha_state = self.execution_state.fused_alpha_state
-        root_fields = self.root_fields
-        surface_workspace = self.geometry_surface_workspace
-        residual_workspace = self.residual_surface_workspace
-        residual_pack_scratch = self.residual_pack_scratch
-        sin_mtheta = self.static_layout.sin_mtheta
-        cos_mtheta = self.static_layout.cos_mtheta
-        rho_powers = self.static_layout.rho_powers
-        y = self.static_layout.y
-        T = self.static_layout.T
-        weights = self.static_layout.weights
-        a = self.case.a
-        R0 = self.case.R0
-        B0 = self.case.B0
-
-        def runner(out: np.ndarray) -> None:
-            numba_residual.update_residual_compact(
-                residual_workspace,
-                float(alpha_state[0]),
-                float(alpha_state[1]),
-                root_fields,
-                surface_workspace,
-            )
-            out.fill(0.0)
-            numba_residual.run_residual_blocks_packed_precomputed(
-                out,
-                residual_pack_scratch,
-                self.residual_binding_layout.active_residual_block_codes,
-                self.residual_binding_layout.active_residual_block_orders,
-                self.residual_binding_layout.active_residual_block_radial_powers,
-                self.active_coeff_index_rows,
-                self.active_lengths,
-                residual_workspace,
-                sin_mtheta,
-                cos_mtheta,
-                rho_powers,
-                y,
-                T,
-                weights,
-                a,
-                R0,
-                B0,
-            )
-
-        return runner
-
-    def _build_bound_residual_full_stage_runner(self) -> Callable:
-        runner_into = self._build_bound_residual_full_stage_runner_into()
-
-        def runner() -> np.ndarray:
-            out = np.empty(self.x_size, dtype=np.float64)
-            runner_into(out)
-            return out
-
-        return runner
 
     def _refresh_fourier_family_metadata(self) -> None:
         self.c_effective_order, self.s_effective_order = refresh_fourier_family_metadata(
-            c_profile_names=self.c_profile_names,
-            s_profile_names=self.s_profile_names,
+            c_profile_names=self.plan.c_profile_names,
+            s_profile_names=self.plan.s_profile_names,
             profile_coeffs=self.case.profile_coeffs,
             c_offsets=self.case.c_offsets,
             s_offsets=self.case.s_offsets,
-            c_family_fields=self.c_family_fields,
-            s_family_fields=self.s_family_fields,
+            c_family_fields=self.profile_workspace.c_family_fields,
+            s_family_fields=self.profile_workspace.s_family_fields,
         )
 
     def invalidate_source_state(self) -> None:
-        if tuple(self.source_execution.route_key) == ("PJ2", "psin", "uniform"):
-            self.source_runtime_state.work_state.psin_query.fill(-1.0)
-
-    def _build_fused_residual_runner_into(self) -> Callable[[np.ndarray, np.ndarray], None]:
-        if (
-            self.source_execution.requires_optimized_psin_profile
-            and self.psin_profile.u_fields is None
-        ):
-            return self._evaluate_residual_into
-        return numba_operator.bind_fused_residual_runner_into(
-            source_plan=self.source_plan,
-            source_execution=self.source_execution,
-            backend_state=self.backend_state,
-            alpha_state=self.execution_state.fused_alpha_state,
-            c_active_order=int(self.c_effective_order),
-            s_active_order=int(self.s_effective_order),
-            a=float(self.case.a),
-            R0=float(self.case.R0),
-            Z0=float(self.case.Z0),
-            B0=float(self.case.B0),
-            fix_rho=self.fix_rho,
-        )
-
-    def _build_fused_residual_runner(self) -> Callable[[np.ndarray], np.ndarray]:
-        runner_into = self._build_fused_residual_runner_into()
-
-        def runner(x_eval: np.ndarray) -> np.ndarray:
-            out = np.empty(self.x_size, dtype=np.float64)
-            runner_into(x_eval, out)
-            return out
-
-        return runner
+        if tuple(self.plan.source_execution.route_key) == ("PJ2", "psin", "uniform"):
+            self.source_workspace.work_state.psin_query.fill(-1.0)
 
     def _snapshot_equilibrium_from_runtime(self, x: np.ndarray) -> Equilibrium:
+        root_fields = self.residual_workspace.root_fields
         return snapshot_equilibrium_from_runtime(
             x,
             case=self.case,
-            grid=self.static_layout.to_grid(),
-            profile_L=self.profile_L,
-            coeff_index=self.coeff_index,
-            profile_names=self.profile_names,
-            shape_profile_names=self.shape_profile_names,
-            profile_index=self.profile_index,
+            grid=self.plan.static_layout.to_grid(),
+            profile_L=self.plan.profile_L,
+            coeff_index=self.plan.coeff_index,
+            profile_names=self.plan.profile_names,
+            shape_profile_names=self.plan.shape_profile_names,
+            profile_index=self.plan.profile_index,
             profiles_by_name=self.profiles_by_name,
-            psin=self.psin,
-            FFn_psin=self.FFn_psin,
-            Pn_psin=self.Pn_psin,
-            psin_r=self.psin_r,
-            psin_rr=self.psin_rr,
+            psin=root_fields[0],
+            FFn_psin=root_fields[3],
+            Pn_psin=root_fields[4],
+            psin_r=root_fields[1],
+            psin_rr=root_fields[2],
             alpha1=self.alpha1,
             alpha2=self.alpha2,
         )

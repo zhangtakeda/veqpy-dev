@@ -15,6 +15,11 @@ Notes:
 
 from __future__ import annotations
 
+from veqpy.layout.stage_binding import (  # noqa: E402
+    build_bound_source_stage_runner,
+    build_geometry_stage_runner,
+)
+
 # Compatibility re-exports for legacy ``veqpy.orchestration`` imports.
 from veqpy.operator.packed_layout import (  # noqa: E402
     ALL_PROFILE_FAMILIES,
@@ -40,10 +45,6 @@ from veqpy.operator.source_plan import (  # noqa: E402
     validate_source_plan_profile_support,
 )
 from veqpy.operator.source_runtime import refresh_source_runtime  # noqa: E402
-from veqpy.operator.stage_binding import (  # noqa: E402
-    build_bound_source_stage_runner,
-    build_geometry_stage_runner,
-)
 
 __all__ = [
     "ALL_PROFILE_FAMILIES",

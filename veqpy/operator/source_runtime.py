@@ -26,7 +26,7 @@ from veqpy.operator.source_plan import SourcePlan, validate_source_inputs
 
 if TYPE_CHECKING:
     from veqpy.operator.operator_case import OperatorCase
-    from veqpy.operator.runtime_layout import SourceRuntimeState
+    from veqpy.workspace import SourceRuntimeState
 
 
 def refresh_source_runtime(
