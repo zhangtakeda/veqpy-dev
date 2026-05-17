@@ -2,8 +2,8 @@
 Module: operator.profile_runtime
 
 Role:
-- 收敛 profile/case setup 与 profile-stage 装配的共享 Python 规则.
-- 避免 operator.py 混入过多 profile 参数解析, stage A 绑定与 Fourier family 细节.
+- Consolidate shared Python rules for profile/case setup and profile-stage assembly.
+- Keep profile parameter parsing, Stage-A binding, and Fourier-family details out of operator.py.
 """
 
 from __future__ import annotations
@@ -16,13 +16,13 @@ from veqpy.engine.numba_source import validate_route
 from veqpy.model.profile import Profile
 from veqpy.operator.operator_case import OperatorCase
 from veqpy.operator.packed_layout import build_profile_layout, coeff_array_from_list
-from veqpy.operator.runtime_layout import StaticLayout
+from veqpy.workspace import GridWorkspace
 
 
 def make_profile(
     *,
     case: OperatorCase,
-    operator_grid: StaticLayout | None = None,
+    operator_grid: GridWorkspace | None = None,
     name: str,
     profile_L: np.ndarray,
     profile_names: tuple[str, ...],
@@ -34,9 +34,7 @@ def make_profile(
     static_kwargs = profile_static_kwargs_by_name.get(name)
     if static_kwargs is None and name.startswith(("c", "s")) and name[1:].isdigit():
         order = int(name[1:])
-        static_kwargs = (
-            {} if order == 0 else {"power": int(operator_grid.K_values[order])}
-        )
+        static_kwargs = {} if order == 0 else {"power": int(operator_grid.K_values[order])}
     if static_kwargs is not None:
         kwargs.update(static_kwargs)
 
@@ -71,7 +69,7 @@ def make_profile(
 def refresh_profile_runtime(
     *,
     case: OperatorCase,
-    operator_grid: StaticLayout,
+    operator_grid: GridWorkspace,
     profile_names: tuple[str, ...],
     profile_index: dict[str, int],
     profile_L: np.ndarray,
@@ -85,9 +83,7 @@ def refresh_profile_runtime(
         static_kwargs = profile_static_kwargs_by_name.get(name)
         if static_kwargs is None and name.startswith(("c", "s")) and name[1:].isdigit():
             order = int(name[1:])
-            static_kwargs = (
-                {} if order == 0 else {"power": int(operator_grid.K_values[order])}
-            )
+            static_kwargs = {} if order == 0 else {"power": int(operator_grid.K_values[order])}
         elif static_kwargs is None:
             static_kwargs = {}
         profile.power = int(static_kwargs.get("power", 0))

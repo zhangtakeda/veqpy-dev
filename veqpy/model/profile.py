@@ -2,18 +2,21 @@
 Module: model.profile
 
 Role:
-- 负责持有单个 profile 的根参数与 runtime fields.
-- 负责把 coeff 在当前 Grid 上物化成 `u_fields`.
+- Hold root parameters and runtime fields for one profile.
+- Materialize coefficients on the current Grid into `u_fields`.
 
 Public API:
 - Profile
 
 Notes:
-- `Profile` 属于 model 层 runtime 容器.
-- 不负责 packed state ownership, source scaling, 或 solver orchestration.
+- `Profile` is a model-layer runtime container.
+- Does not own packed state, source scaling, or solver orchestration.
 """
 
+from __future__ import annotations
+
 from dataclasses import InitVar, dataclass, field
+from typing import Self
 
 import numpy as np
 
@@ -24,7 +27,7 @@ from veqpy.model.grid import Grid
 
 @dataclass(slots=True)
 class Profile(Serial):
-    """单个一维 profile 的 runtime 容器."""
+    """Runtime container for one one-dimensional profile."""
 
     grid: InitVar[Grid | None] = None
     scale: float = 1.0
@@ -41,7 +44,7 @@ class Profile(Serial):
 
     @classmethod
     def serial_attributes(cls) -> dict[str, type]:
-        """声明可序列化的根属性."""
+        """Declare serializable root attributes."""
         return {
             "scale": float,
             "power": int,
@@ -73,7 +76,7 @@ class Profile(Serial):
         return _field_slice(self.u_fields, 2)
 
     def check(self) -> None:
-        """校验根参数与可序列化字段."""
+        """Validate root parameters and serializable fields."""
         for key, expected in type(self).serial_attributes().items():
             value = getattr(self, key)
             if value is None:
@@ -85,8 +88,8 @@ class Profile(Serial):
             if isinstance(value, np.ndarray) and value.ndim != 1:
                 raise ValueError(f"Attribute '{key}' must be 1D, got {value.shape}")
 
-    def copy(self) -> "Profile":
-        """复制根参数与已存在的 runtime buffer."""
+    def copy(self) -> Self:
+        """Copy root parameters and existing runtime buffers."""
         out = Profile(
             scale=self.scale,
             power=self.power,
@@ -103,7 +106,7 @@ class Profile(Serial):
         return out
 
     def update(self, grid: Grid | None = None) -> None:
-        """刷新当前 Grid 上的 profile fields."""
+        """Refresh profile fields on the current Grid."""
         if grid is not None:
             self._prepare_runtime_cache(grid)
         if self.T is None:
@@ -125,7 +128,7 @@ class Profile(Serial):
         )
 
     def _prepare_runtime_cache(self, grid) -> None:
-        """绑定 grid 快照 (Grid 或 StaticLayout) 并准备 runtime 缓存."""
+        """Bind a grid snapshot (Grid or GridWorkspace) and prepare runtime caches."""
         self.T = grid.T
         self.T_r = grid.T_r
         self.T_rr = grid.T_rr
@@ -166,10 +169,8 @@ def _fill_profile_outputs(
     coeff: np.ndarray | None,
     scale: float,
 ) -> None:
-    """根据 coeff 刷新单个 profile fields."""
-    update_profile(
-        u_fields, T, T_r, T_rr, rp_fields, env_fields, offset, coeff
-    )
+    """Refresh one profile field set from coefficients."""
+    update_profile(u_fields, T, T_r, T_rr, rp_fields, env_fields, offset, coeff)
     if scale != 1.0:
         np.multiply(u_fields, scale, out=u_fields)
 

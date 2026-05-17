@@ -1,33 +1,24 @@
-"""Runtime workspace memory ownership and hot-path array views."""
+"""Public workspace interfaces used outside ``veqpy.workspace``.
 
-from veqpy.workspace.runtime import (
+Private block packers and stage-local workspace internals stay in their owning
+modules. The package root exposes only the construction entrypoint and aggregate
+contracts consumed by operator/layout/engine wiring.
+"""
+
+from __future__ import annotations
+
+from veqpy.workspace.allocation import allocate_runtime_state
+from veqpy.workspace.grid_workspace import GridWorkspace
+from veqpy.workspace.operator_workspace import (
     BackendState,
-    FieldRuntimeState,
-    GeometryWorkspace,
     OperatorWorkspace,
-    ProfileWorkspace,
-    ResidualWorkspace,
     RuntimeAllocationBundle,
-    SourceAuxState,
-    SourceConstState,
-    SourceRuntimeState,
-    SourceWorkspace,
-    SourceWorkState,
-    allocate_runtime_state,
 )
 
 __all__ = [
     "BackendState",
-    "FieldRuntimeState",
-    "GeometryWorkspace",
-    "ProfileWorkspace",
-    "ResidualWorkspace",
+    "GridWorkspace",
     "OperatorWorkspace",
     "RuntimeAllocationBundle",
-    "SourceWorkspace",
-    "SourceAuxState",
-    "SourceConstState",
-    "SourceRuntimeState",
-    "SourceWorkState",
     "allocate_runtime_state",
 ]

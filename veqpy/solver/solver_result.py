@@ -2,15 +2,17 @@
 Module: solver.solver_result
 
 Role:
-- 负责持有一次求解的结果快照与统计量.
+- Hold the result snapshot and statistics for one solve.
 
 Public API:
 - SolverResult
 
 Notes:
-- `SolverResult` 与调用方输入数组解耦.
-- 不负责 history 管理, case 替换, 或 equilibrium 重建.
+- `SolverResult` is decoupled from caller input arrays.
+- Does not own history management, case replacement, or equilibrium reconstruction.
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 
@@ -22,7 +24,7 @@ from rich.tree import Tree
 
 @dataclass(frozen=True, slots=True)
 class SolverResult:
-    """描述一次 solve 调用的最终结果快照."""
+    """Describe the final result snapshot for one solve call."""
 
     x0: np.ndarray
     x: np.ndarray
@@ -35,7 +37,7 @@ class SolverResult:
     elapsed: float
 
     def __post_init__(self) -> None:
-        """复制 packed 状态数组, 避免与调用方共享可变内存."""
+        """Copy packed state arrays to avoid sharing mutable memory with callers."""
 
         object.__setattr__(self, "x0", _as_1d_array(self.x0, name="x0"))
         object.__setattr__(self, "x", _as_1d_array(self.x, name="x"))
@@ -72,7 +74,7 @@ class SolverResult:
 
 
 def _as_1d_array(value: np.ndarray, *, name: str) -> np.ndarray:
-    """把输入规整为独立的一维 float64 数组副本."""
+    """Normalize input into an independent one-dimensional float64 array copy."""
     arr = np.asarray(value, dtype=np.float64)
     if arr.ndim != 1:
         raise ValueError(f"{name} must be 1D, got {arr.shape}")

@@ -2,14 +2,14 @@
 Module: operator.operator_case
 
 Role:
-- 负责把算例输入规范化为稳定的 case 配置对象.
+- Normalize case inputs into a stable case configuration object.
 
 Public API:
 - OperatorCase
 
 Notes:
-- `OperatorCase` 只保存 case 输入.
-- 不负责 layout 构造, residual 计算, 或 solver 策略管理.
+- `OperatorCase` only stores case inputs.
+- Does not build layouts, compute residuals, or manage solver policy.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass
 from numbers import Integral
+from typing import Self
 
 import numpy as np
 from rich.console import Console
@@ -30,7 +31,7 @@ ProfileCoeff = np.ndarray | None
 
 @dataclass(slots=True)
 class OperatorCase:
-    """描述一次 operator 求值所需的静态 case 输入."""
+    """Describe the static case inputs required for one operator evaluation."""
 
     route: str
     coordinate: str
@@ -42,7 +43,7 @@ class OperatorCase:
     Ip: float | None = None
     beta: float | None = None
     def __post_init__(self) -> None:
-        """在构造后把各字段规整为稳定运行时表示."""
+        """Normalize fields into stable runtime representations after construction."""
         object.__setattr__(self, "route", _normalize_case_value("route", self.route))
         object.__setattr__(self, "coordinate", _normalize_case_value("coordinate", self.coordinate))
         object.__setattr__(self, "nodes", _normalize_case_value("nodes", self.nodes))
@@ -110,8 +111,8 @@ class OperatorCase:
     def __repr__(self) -> str:
         return str(self)
 
-    def copy(self) -> OperatorCase:
-        """创建一个与当前 case 独立的副本."""
+    def copy(self) -> Self:
+        """Create a copy independent from the current case."""
         return OperatorCase(
             route=self.route,
             profile_coeffs=_copy_coeffs(self.profile_coeffs),

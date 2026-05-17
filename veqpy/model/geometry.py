@@ -2,16 +2,18 @@
 Module: model.geometry
 
 Role:
-- 负责持有单个 Grid 上物化后的 geometry fields 与积分量.
-- 负责把 shape profiles 映射成 geometry runtime fields.
+- Hold materialized geometry fields and integrals on one Grid.
+- Map shape profiles into geometry runtime fields.
 
 Public API:
 - Geometry
 
 Notes:
-- `Geometry` 属于 model 层 runtime 容器.
-- 不负责 packed state ownership, source route, residual 组装, 或 solver policy.
+- `Geometry` is a model-layer runtime container.
+- Does not own packed state, source routes, residual assembly, or solver policy.
 """
+
+from __future__ import annotations
 
 from dataclasses import InitVar, dataclass, field
 
@@ -23,7 +25,7 @@ from veqpy.model.grid import Grid
 
 @dataclass(frozen=True, slots=True)
 class Geometry:
-    """单个 Grid 上的 geometry runtime 容器."""
+    """Geometry runtime container on one Grid."""
 
     grid: InitVar[Grid]
 
@@ -68,7 +70,7 @@ class Geometry:
         c_active_order: int | None = None,
         s_active_order: int | None = None,
     ):
-        """用当前 Grid 和 profile fields 刷新 geometry."""
+        """Refresh geometry from the current Grid and profile fields."""
         if self.R_fields.shape[1:] != (grid.Nr, grid.Nt):
             raise ValueError(
                 f"Expected geometry shape {(self.R_fields.shape[1], self.R_fields.shape[2])}, "
@@ -284,7 +286,7 @@ def _geometry_update(
     c_active_order: int,
     s_active_order: int,
 ):
-    """原地更新 geometry fields 与 geometry integrals."""
+    """Update geometry fields and geometry integrals in place."""
     nr = rho.shape[0]
     nt = theta.shape[0]
     theta_scale = 2.0 * np.pi / nt

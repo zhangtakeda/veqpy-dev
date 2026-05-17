@@ -2,16 +2,18 @@
 Module: engine.numba_geometry
 
 Role:
-- 负责物化 geometry fields.
-- 负责同步更新 geometry integrals.
+- Materialize geometry fields.
+- Update geometry integrals at the same time.
 
 Public API:
 - update_geometry
 
 Notes:
-- 输入和输出都采用 packed fields 语义.
-- operator staging 不在这里处理.
+- Inputs and outputs use packed-field semantics.
+- Operator staging is not handled here.
 """
+
+from __future__ import annotations
 
 import numpy as np
 from numba import njit
@@ -19,8 +21,8 @@ from numba import njit
 
 @njit(cache=True, fastmath=True, nogil=True)
 def update_geometry_hot(
-    surface_workspace: np.ndarray,
-    radial_workspace: np.ndarray,
+    surface_fields: np.ndarray,
+    radial_fields: np.ndarray,
     a: float,
     R0: float,
     Z0: float,
@@ -40,21 +42,21 @@ def update_geometry_hot(
     c_active_order: int,
     s_active_order: int,
 ):
-    """只物化 fused solve 热路径需要的 geometry fields 与积分量."""
-    sin_tb = surface_workspace[0]
-    R_surface = surface_workspace[1]
-    R_t_surface = surface_workspace[2]
-    Z_t_surface = surface_workspace[3]
-    J_surface = surface_workspace[4]
-    JdivR_surface = surface_workspace[5]
-    grtdivJR_t_surface = surface_workspace[6]
-    gttdivJR_surface = surface_workspace[7]
-    gttdivJR_r_surface = surface_workspace[8]
-    S_r = radial_workspace[0]
-    V_r = radial_workspace[1]
-    Kn = radial_workspace[2]
-    Kn_r = radial_workspace[3]
-    Ln_r = radial_workspace[4]
+    """Materialize only the geometry fields and integrals required by the fused solve hot path."""
+    sin_tb = surface_fields[0]
+    R_surface = surface_fields[1]
+    R_t_surface = surface_fields[2]
+    Z_t_surface = surface_fields[3]
+    J_surface = surface_fields[4]
+    JdivR_surface = surface_fields[5]
+    grtdivJR_t_surface = surface_fields[6]
+    gttdivJR_surface = surface_fields[7]
+    gttdivJR_r_surface = surface_fields[8]
+    S_r = radial_fields[0]
+    V_r = radial_fields[1]
+    Kn = radial_fields[2]
+    Kn_r = radial_fields[3]
+    Ln_r = radial_fields[4]
     nr = rho.shape[0]
     nt = theta.shape[0]
     theta_scale = 2.0 * np.pi / nt

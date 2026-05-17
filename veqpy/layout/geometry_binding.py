@@ -37,8 +37,8 @@ def build_geometry_stage_runner(
     a: float,
     R0: float,
     Z0: float,
-    surface_workspace: np.ndarray,
-    radial_workspace: np.ndarray,
+    surface_fields: np.ndarray,
+    radial_fields: np.ndarray,
     rho: np.ndarray,
     theta: np.ndarray,
     cos_mtheta: np.ndarray,
@@ -67,8 +67,8 @@ def build_geometry_stage_runner(
             s_effective_order,
         )
         update_geometry_hot(
-            surface_workspace,
-            radial_workspace,
+            surface_fields,
+            radial_fields,
             a,
             R0,
             Z0,

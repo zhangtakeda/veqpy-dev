@@ -15,6 +15,8 @@ Notes:
 - Dataclasses can infer serializable field types by default.
 """
 
+from __future__ import annotations
+
 import inspect
 import os
 import pickle

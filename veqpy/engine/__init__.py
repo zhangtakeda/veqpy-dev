@@ -7,8 +7,10 @@ Role:
 Notes:
 - Numba is the only supported execution backend.
 - Backend ABI builders and residual runner wiring are submodule implementation details.
-- High-level Python orchestration lives in :mod:`veqpy.orchestration`.
+- High-level Python orchestration lives in layout and operator binding modules.
 """
+
+from __future__ import annotations
 
 from veqpy.engine.numba_source import (
     COORDINATE_NAMES,

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
+from typing import Self
 
 import numpy as np
 from rich.console import Console
@@ -77,7 +78,7 @@ class Boundary:
         Z0: float | None = None,
         a: float | None = None,
         ka: float | None = None,
-    ) -> Boundary:
+    ) -> Self:
         if not isinstance(geqdsk, Geqdsk):
             raise TypeError(f"geqdsk must be Geqdsk, got {type(geqdsk).__name__}")
         params = _fit_boundary_params(geqdsk, M=M, N=N, maxtol=maxtol, R0=R0, Z0=Z0, a=a, ka=ka)

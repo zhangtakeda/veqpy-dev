@@ -17,6 +17,8 @@ Notes:
 - Matrices use source nodes as columns and evaluation nodes as rows.
 """
 
+from __future__ import annotations
+
 import os
 from collections.abc import Callable
 

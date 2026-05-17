@@ -2,17 +2,19 @@
 Module: engine.numba_residual
 
 Role:
-- 负责更新 residual surface workspace.
-- 负责把预计算 residual 场组装成 packed residual.
+- Update residual surface workspace.
+- Assemble precomputed residual fields into a packed residual.
 
 Public API:
 - update_residual_compact
 - write_weighted_collocation_field_into
 
 Notes:
-- 保留的是 numba hot path 所需最小接口.
-- 旧 staged/binder residual API 已移除.
+- Keep only the minimal interface required by the numba hot path.
+- The old staged/binder residual API has been removed.
 """
+
+from __future__ import annotations
 
 import numpy as np
 from numba import njit
@@ -30,22 +32,22 @@ def update_residual_compact(
     alpha1: float,
     alpha2: float,
     root_fields: np.ndarray,
-    geometry_surface_workspace: np.ndarray,
+    geometry_surface_fields: np.ndarray,
 ) -> None:
-    """使用 compact geometry fields 原地更新 residual 相关二维 fields."""
+    """Update residual-related 2D fields in place from compact geometry fields."""
     out_G = out_workspace[0]
     out_Gpsin_R = out_workspace[1]
     out_Gpsin_Z = out_workspace[2]
     out_Gpsin_R_sin_tb = out_workspace[3]
-    sin_tb_surface = geometry_surface_workspace[0]
-    R_surface = geometry_surface_workspace[1]
-    R_t_surface = geometry_surface_workspace[2]
-    Z_t_surface = geometry_surface_workspace[3]
-    J_surface = geometry_surface_workspace[4]
-    JdivR_surface = geometry_surface_workspace[5]
-    grtdivJR_t_surface = geometry_surface_workspace[6]
-    gttdivJR_surface = geometry_surface_workspace[7]
-    gttdivJR_r_surface = geometry_surface_workspace[8]
+    sin_tb_surface = geometry_surface_fields[0]
+    R_surface = geometry_surface_fields[1]
+    R_t_surface = geometry_surface_fields[2]
+    Z_t_surface = geometry_surface_fields[3]
+    J_surface = geometry_surface_fields[4]
+    JdivR_surface = geometry_surface_fields[5]
+    grtdivJR_t_surface = geometry_surface_fields[6]
+    gttdivJR_surface = geometry_surface_fields[7]
+    gttdivJR_r_surface = geometry_surface_fields[8]
 
     psin_r = root_fields[1]
     psin_rr = root_fields[2]

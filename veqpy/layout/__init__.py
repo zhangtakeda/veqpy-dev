@@ -1,26 +1,9 @@
-"""Executable layout objects for operator stages."""
+"""Layout package.
 
-from veqpy.layout.runtime import (
-    GeometryLayout,
-    OperatorLayout,
-    ProfileLayout,
-    ResidualLayout,
-    SourceLayout,
-)
+Import executable layout types from ``veqpy.layout.runtime`` and binders from
+``veqpy.layout.binding``. The package root intentionally has no broad re-export surface.
+"""
 
-__all__ = [
-    "build_operator_layout",
-    "GeometryLayout",
-    "OperatorLayout",
-    "ProfileLayout",
-    "ResidualLayout",
-    "SourceLayout",
-]
+from __future__ import annotations
 
-
-def __getattr__(name: str):
-    if name == "build_operator_layout":
-        from veqpy.layout.binding import build_operator_layout
-
-        return build_operator_layout
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+__all__: list[str] = []

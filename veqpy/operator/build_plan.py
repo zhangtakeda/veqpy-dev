@@ -35,20 +35,16 @@ from veqpy.operator.packed_layout import (
     get_prefix_profile_names,
     packed_size,
 )
-from veqpy.operator.runtime_layout import (
-    ResidualBindingLayout,
-    StaticLayout,
-    _pack_poloidal_block,
-    _pack_radial_block,
-)
+from veqpy.operator.residual_binding import ResidualBindingLayout
 from veqpy.operator.source_plan import SourcePlan, build_source_plan
+from veqpy.workspace import GridWorkspace
 
 
 @dataclass(frozen=True, slots=True)
 class OperatorBuildPlan:
     """Static topology and case-derived runtime binding plan for Operator."""
 
-    static_layout: StaticLayout
+    static_layout: GridWorkspace
     prefix_profile_names: tuple[str, ...]
     shape_profile_names: tuple[str, ...]
     profile_names: tuple[str, ...]
@@ -172,34 +168,10 @@ def refresh_operator_plan_for_case(
     )
 
 
-def build_static_layout(grid: Grid) -> StaticLayout:
+def build_static_layout(grid: Grid) -> GridWorkspace:
     """Lower Grid into the static arrays consumed by runtime binding."""
 
-    return StaticLayout(
-        Nr=int(grid.Nr),
-        Nt=int(grid.Nt),
-        M_max=int(grid.M_max),
-        L_max=int(grid.L_max),
-        K_max=grid.K_max or grid.M_max,
-        quadrature_scheme=grid.quadrature_scheme,
-        calculus_scheme=grid.calculus_scheme,
-        K_values=grid.K_values.copy(),
-        weights=grid.weights.copy(),
-        differentiator=grid.differentiator.copy(),
-        accumulator=grid.accumulator.copy(),
-        radial_block=_pack_radial_block(
-            grid.rho, grid.x, grid.y, grid.rho_powers, grid.T, grid.T_r, grid.T_rr
-        ),
-        poloidal_block=_pack_poloidal_block(
-            grid.theta,
-            grid.cos_mtheta,
-            grid.sin_mtheta,
-            grid.m_cos_mtheta,
-            grid.m_sin_mtheta,
-            grid.m2_cos_mtheta,
-            grid.m2_sin_mtheta,
-        ),
-    )
+    return GridWorkspace.from_grid(grid)
 
 
 def build_residual_binding_layout(
@@ -228,7 +200,7 @@ def build_residual_binding_layout(
 
 def build_profile_config(
     *,
-    static_layout: StaticLayout,
+    static_layout: GridWorkspace,
     c_profile_names: tuple[str, ...],
     s_profile_names: tuple[str, ...],
 ) -> tuple[dict[str, dict[str, int]], dict[str, float | str]]:

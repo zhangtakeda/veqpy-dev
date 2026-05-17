@@ -2,17 +2,19 @@
 Module: engine.numba_profile
 
 Role:
-- 负责计算 profile fields.
-- 输入使用 basis tables 与 profile coefficients.
+- Compute profile fields.
+- Inputs use basis tables and profile coefficients.
 
 Public API:
 - update_profile
 - update_profiles_packed_bulk
 
 Notes:
-- update_profile 用于单个 explicit-coeff profile.
-- update_profiles_packed_bulk 用于 Stage-A 的 packed runtime 更新.
+- update_profile is used for one explicit-coefficient profile.
+- update_profiles_packed_bulk is used for packed runtime updates in Stage A.
 """
+
+from __future__ import annotations
 
 import numpy as np
 from numba import njit
@@ -29,7 +31,7 @@ def update_profile(
     offset: float,
     coeff: np.ndarray | None,
 ) -> None:
-    """原地更新单个 profile 的 fields."""
+    """Update one profile field set in place."""
     nr = out_fields.shape[1]
 
     if coeff is None:
@@ -78,7 +80,7 @@ def update_profiles_packed_bulk(
     coeff_index_rows: np.ndarray,
     lengths: np.ndarray,
 ) -> None:
-    """批量从 packed x 刷新所有 active profile fields."""
+    """Refresh all active profile fields from packed x in bulk."""
     out_fields_all = active_profile_slab[0]
     rp_fields_all = active_profile_slab[1]
     env_fields_all = active_profile_slab[2]

@@ -2,15 +2,15 @@
 Module: operator.operator
 
 Role:
-- 负责连接 case, grid, model runtime, engine kernels 与 packed layout.
-- 负责暴露稳定的 residual 求值接口.
+- Connect case, grid, model runtime, engine kernels, and packed layout.
+- Expose stable residual evaluation interfaces.
 
 Public API:
 - Operator
 
 Notes:
-- `Operator` 是默认 fused 算子.
-- 不负责 solver 迭代策略, backend 选择, 或 benchmark 编排.
+- `Operator` is the default fused operator.
+- Does not own solver iteration policy, backend selection, or benchmark orchestration.
 """
 
 from __future__ import annotations
@@ -19,8 +19,8 @@ from dataclasses import InitVar, dataclass, field
 
 import numpy as np
 
-from veqpy.engine import numba_residual
-from veqpy.layout import OperatorLayout, build_operator_layout
+from veqpy.layout.binding import build_operator_layout
+from veqpy.layout.runtime import OperatorLayout
 from veqpy.model.equilibrium import Equilibrium
 from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile
@@ -47,17 +47,12 @@ from veqpy.operator.source_plan import (
     validate_source_plan_profile_support,
 )
 from veqpy.operator.source_runtime import refresh_source_runtime
-from veqpy.workspace import (
-    BackendState,
-    FieldRuntimeState,
-    OperatorWorkspace,
-    allocate_runtime_state,
-)
+from veqpy.workspace import BackendState, OperatorWorkspace, allocate_runtime_state
 
 
 @dataclass(slots=True)
 class Operator:
-    """封装固定 case, grid 与 runtime 的 residual 求值器."""
+    """Encapsulate the residual evaluator for a fixed case, grid, and runtime."""
 
     grid: InitVar[Grid]
     case: OperatorCase = field(repr=False)
@@ -75,15 +70,14 @@ class Operator:
     F_profile: Profile = field(init=False)
     profiles_by_name: dict[str, Profile] = field(init=False, repr=False)
 
-
     c_effective_order: int = field(init=False, repr=False)
     s_effective_order: int = field(init=False, repr=False)
-    field_runtime_state: FieldRuntimeState = field(init=False, repr=False)
 
     def __post_init__(self, grid: Grid) -> None:
-        """完成 layout 构造, 运行时缓冲区分配和 case 绑定.
+        """Build layouts, allocate runtime buffers, and bind the case.
 
-        grid 在构造时被降低为 StaticLayout 快照，之后 Operator 不再读取实时 Grid.
+        The input grid is lowered to a GridWorkspace snapshot at construction time;
+        Operator does not read live Grid state afterwards.
         """
         self._apply_plan(
             build_operator_plan(
@@ -104,24 +98,24 @@ class Operator:
         self.plan = plan
 
     def __call__(self, x: np.ndarray, *args, **kwargs) -> np.ndarray:
-        """调用 variational residual 求值主入口."""
+        """Call the main variational residual evaluation entrypoint."""
         return self.residual_var(x, *args, **kwargs)
 
     @property
     def alpha1(self) -> float:
-        return float(self.layout.alpha_state[0])
+        return float(self.workspace.source.alpha_state[0])
 
     @alpha1.setter
     def alpha1(self, value: float) -> None:
-        self.layout.alpha_state[0] = float(value)
+        self.workspace.source.alpha_state[0] = float(value)
 
     @property
     def alpha2(self) -> float:
-        return float(self.layout.alpha_state[1])
+        return float(self.workspace.source.alpha_state[1])
 
     @alpha2.setter
     def alpha2(self, value: float) -> None:
-        self.layout.alpha_state[1] = float(value)
+        self.workspace.source.alpha_state[1] = float(value)
 
     # Solver-facing plan accessors kept as the public facade; Operator does not
     # mirror these fields as mutable state.
@@ -143,61 +137,34 @@ class Operator:
         This is a narrow solver-facing view; raw workspace indexing arrays remain
         owned by ``ProfileWorkspace``.
         """
-        return self.workspace.profile.active_lengths.copy()
+        return self.workspace.profile.residual_block_lengths()
 
     def active_profile_blocks(self) -> tuple[tuple[int, str, np.ndarray, float, float], ...]:
         """Return solver-scale metadata for active packed profile blocks.
 
-        Each item is ``(profile_id, profile_name, coeff_indices, offset, scale)``.
         Coefficient index arrays are copies so callers do not depend on workspace
         storage layout.
         """
 
-        profile_workspace = self.workspace.profile
-        blocks: list[tuple[int, str, np.ndarray, float, float]] = []
-        for slot, profile_id in enumerate(self.plan.active_profile_ids):
-            length = int(profile_workspace.active_lengths[slot])
-            if length <= 0:
-                continue
-            p = int(profile_id)
-            blocks.append(
-                (
-                    p,
-                    self.plan.profile_names[p],
-                    profile_workspace.active_coeff_index_rows[slot, :length].copy(),
-                    float(profile_workspace.active_offsets[slot]),
-                    float(profile_workspace.active_scales[slot]),
-                )
-            )
-        return tuple(blocks)
+        return self.workspace.profile.active_profile_blocks(
+            active_profile_ids=self.plan.active_profile_ids,
+            profile_names=self.plan.profile_names,
+        )
 
     def build_boundary_slope_initial_state(
         self, *, boundary_slope_factor: float = 1.0
     ) -> np.ndarray:
         """Build a boundary-scaled packed x0 for active c/s Fourier profiles."""
 
-        x = np.zeros(self.plan.x_size, dtype=np.float64)
-        target_factor = float(boundary_slope_factor)
-        active_slot_by_profile_id = self.workspace.profile.active_slot_by_profile_id
-        active_lengths = self.workspace.profile.active_lengths
-        active_coeff_index_rows = self.workspace.profile.active_coeff_index_rows
-        for profile_id, name in enumerate(self.plan.profile_names):
-            if not (name.startswith("c") or name.startswith("s")):
-                continue
-            slot = int(active_slot_by_profile_id[int(profile_id)])
-            if slot < 0 or int(active_lengths[slot]) <= 0:
-                continue
-            profile = self.profiles_by_name[name]
-            power = int(profile.power)
-            offset = float(profile.offset)
-            if power <= 0 or abs(offset) <= 1.0e-14:
-                continue
-            coeff_index = int(active_coeff_index_rows[slot, 0])
-            x[coeff_index] = 0.5 * (float(power) - target_factor) * offset
-        return x
+        return self.workspace.profile.build_boundary_slope_initial_state(
+            x_size=self.plan.x_size,
+            profile_names=self.plan.profile_names,
+            profiles_by_name=self.profiles_by_name,
+            boundary_slope_factor=boundary_slope_factor,
+        )
 
     def _validate_runtime_profile_support(self) -> None:
-        """校验当前 source route 对 psin profile ownership 的要求."""
+        """Validate psin profile ownership requirements for the current source route."""
         validate_source_plan_profile_support(
             source_plan=self.plan.source_plan,
             source_execution=self.plan.source_execution,
@@ -206,7 +173,7 @@ class Operator:
         return None
 
     def replace_case(self, case: OperatorCase) -> None:
-        """在不改变 packed layout 的前提下替换当前 case."""
+        """Replace the current case without changing the packed layout."""
         validate_case_compatibility(
             case,
             profile_names=self.plan.profile_names,
@@ -222,7 +189,7 @@ class Operator:
         self._refresh_runtime_state()
 
     def encode_initial_state(self) -> np.ndarray:
-        """把当前 case 中的 profile 系数编码成 packed 初值."""
+        """Encode profile coefficients from the current case into the packed initial state."""
         return encode_packed_state(
             self.case.profile_coeffs,
             self.plan.profile_L,
@@ -234,13 +201,13 @@ class Operator:
         self,
         x: np.ndarray,
     ) -> np.ndarray:
-        """返回 variational/Galerkin residual 向量."""
+        """Return the variational/Galerkin residual vector."""
         out = np.empty(self.plan.x_size, dtype=np.float64)
         self.residual_var_into(x, out)
         return out
 
     def residual_var_into(self, x: np.ndarray, out: np.ndarray) -> None:
-        """把 variational/Galerkin residual 写入调用方提供的 ``out``."""
+        """Write the variational/Galerkin residual into caller-provided ``out``."""
         x_eval = self.coerce_x(x)
         if not isinstance(out, np.ndarray):
             raise TypeError("Expected out to be a numpy.ndarray")
@@ -256,15 +223,16 @@ class Operator:
         self.layout.run_fused_residual_into(x_eval, out_eval)
 
     def residual_collocation(self, x: np.ndarray) -> np.ndarray:
-        """返回 DESC-style 点值 force-balance collocation residual.
+        """Return the DESC-style pointwise force-balance collocation residual.
 
-        该 residual 不是把 Galerkin/弱形式残差追加到外部目标, 而是在每个
-        collocation node 上直接约束与 Grad-Shafranov residual `G` 对应的
-        force-balance components ``G*psin_R`` 和 ``G*psin_Z``.
-        这里 `G = J/R * GS_residual`; 这两个分量对应体积化后的
-        pointwise force-balance residual, radial/poloidal quadrature 的
-        平方根权重用于离散 least-squares 标度.
-        返回形状为 ``(2 * Nr * Nt,)`` 的向量.
+        This residual does not append a Galerkin/weak-form residual to an external
+        objective. Instead, it directly constrains the force-balance components
+        ``G*psin_R`` and ``G*psin_Z`` associated with the Grad-Shafranov residual
+        ``G`` at every collocation node. Here ``G = J/R * GS_residual``; the two
+        components correspond to the volume-weighted pointwise force-balance
+        residual. Square-root radial/poloidal quadrature weights provide the
+        discrete least-squares scaling. The returned vector has shape
+        ``(2 * Nr * Nt,)``.
         """
         out = np.empty(
             2 * self.plan.static_layout.Nr * self.plan.static_layout.Nt, dtype=np.float64
@@ -273,7 +241,7 @@ class Operator:
         return out
 
     def residual_collocation_into(self, x: np.ndarray, out: np.ndarray) -> None:
-        """把 DESC-style collocation residual 写入调用方提供的 ``out``."""
+        """Write the DESC-style collocation residual into caller-provided ``out``."""
         expected_size = 2 * self.plan.static_layout.Nr * self.plan.static_layout.Nt
         if not isinstance(out, np.ndarray):
             raise TypeError("Expected out to be a numpy.ndarray")
@@ -284,44 +252,13 @@ class Operator:
             raise ValueError(f"Expected out to have shape ({expected_size},), got {out_eval.shape}")
         if not out_eval.flags.c_contiguous:
             raise ValueError("Expected out to be C-contiguous")
-        self._evaluate_collocation_workspace(x)
-        block_size = self.plan.static_layout.Nr * self.plan.static_layout.Nt
-        residual_workspace = self.workspace.residual
-        numba_residual.write_weighted_collocation_field_into(
-            out_eval,
-            residual_workspace.surface_workspace[1],
-            residual_workspace.collocation_sqrt_weights,
-            0,
-        )
-        numba_residual.write_weighted_collocation_field_into(
-            out_eval,
-            residual_workspace.surface_workspace[2],
-            residual_workspace.collocation_sqrt_weights,
-            block_size,
-        )
-
-    def _evaluate_collocation_workspace(self, x: np.ndarray) -> None:
         x_eval = self.coerce_x(x)
-        self.stage_a_profile(x_eval)
-        self.stage_b_geometry()
-        self.stage_c_source()
-        self._update_residual_surface_workspace()
-
-    def _evaluate_residual(self, x_eval: np.ndarray) -> np.ndarray:
-        out = np.empty(self.plan.x_size, dtype=np.float64)
-        self._evaluate_residual_into(x_eval, out)
-        return out
-
-    def _evaluate_residual_into(self, x_eval: np.ndarray, out: np.ndarray) -> None:
-        self.stage_a_profile(x_eval)
-        self.stage_b_geometry()
-        self.stage_c_source()
-        self.stage_d_residual_into(out)
+        self.layout.run_collocation_into(x_eval, out_eval)
 
     def build_coeffs(
         self, x: np.ndarray, *, include_none: bool = True
     ) -> dict[str, list[float] | None]:
-        """把 packed 状态向量还原成 profile 系数字典."""
+        """Decode a packed state vector into a profile-coefficient dictionary."""
         blocks = decode_packed_blocks(
             x, self.plan.profile_L, self.plan.coeff_index, profile_names=self.plan.profile_names
         )
@@ -332,31 +269,31 @@ class Operator:
         return coeffs
 
     def build_equilibrium(self, x: np.ndarray) -> Equilibrium:
-        """从 packed 状态向量构造完整 Equilibrium 快照."""
+        """Build a complete Equilibrium snapshot from a packed state vector."""
         x_eval = self.coerce_x(x)
         self.residual_var(x_eval)
         return self._snapshot_equilibrium_from_runtime(x_eval)
 
     def stage_a_profile(self, x: np.ndarray) -> None:
-        """执行 profile 阶段并刷新 active profile fields."""
+        """Run the profile stage and refresh active profile fields."""
         self.layout.run_profile(x)
 
     def stage_b_geometry(self) -> None:
-        """执行 geometry 阶段并刷新 geometry fields."""
+        """Run the geometry stage and refresh geometry fields."""
         self.layout.run_geometry()
 
     def stage_c_source(self) -> None:
-        """执行 source 阶段并刷新 root fields 与缩放系数."""
+        """Run the source stage and refresh root fields and scale factors."""
         self.layout.run_source()
 
     def stage_d_residual(self) -> np.ndarray:
-        """执行 residual 阶段并返回 packed 残差."""
+        """Run the residual stage and return the packed residual."""
         out = np.empty(self.plan.x_size, dtype=np.float64)
         self.stage_d_residual_into(out)
         return out
 
     def stage_d_residual_into(self, out: np.ndarray) -> None:
-        """执行 residual 阶段并把 packed 残差写入 ``out``."""
+        """Run the residual stage and write the packed residual into ``out``."""
         if not isinstance(out, np.ndarray):
             raise TypeError("Expected out to be a numpy.ndarray")
         out_eval = out
@@ -370,32 +307,21 @@ class Operator:
             raise ValueError("Expected out to be C-contiguous")
         self.layout.run_residual_into(out_eval)
 
-    def _update_residual_surface_workspace(self) -> None:
-        residual_workspace = self.workspace.residual
-        numba_residual.update_residual_compact(
-            residual_workspace.surface_workspace,
-            self.alpha1,
-            self.alpha2,
-            residual_workspace.root_fields,
-            self.workspace.geometry.surface_workspace,
-        )
-
     def coerce_x(self, x: np.ndarray) -> np.ndarray:
-        """校验完整 packed 状态向量形状."""
+        """Validate the full packed state vector shape."""
         arr = np.asarray(x, dtype=np.float64)
         if arr.ndim != 1 or arr.shape[0] != self.plan.x_size:
             raise ValueError(f"Expected x to have shape ({self.plan.x_size},), got {arr.shape}")
         return arr
 
     def _refresh_workspace_views(self) -> None:
-        workspace = self.workspace
-        workspace.h_fields = self.h_profile.u_fields
-        workspace.v_fields = self.v_profile.u_fields
-        workspace.k_fields = self.k_profile.u_fields
-        workspace.F_profile_u = self.F_profile.u
-        workspace.F_profile_fields = self.F_profile.u_fields
-        workspace.psin_profile_u = self.psin_profile.u
-        workspace.psin_profile_fields = self.psin_profile.u_fields
+        self.workspace.bind_profile_views(
+            h_profile=self.h_profile,
+            v_profile=self.v_profile,
+            k_profile=self.k_profile,
+            F_profile=self.F_profile,
+            psin_profile=self.psin_profile,
+        )
 
     def _setup_runtime_state(self) -> None:
         bundle = allocate_runtime_state(
@@ -422,7 +348,6 @@ class Operator:
             if hasattr(type(self), f"{name}_profile"):
                 setattr(self, f"{name}_profile", profile)
         self.workspace = bundle.workspace
-        self.field_runtime_state = bundle.field_runtime_state
 
     def _refresh_runtime_state(self) -> None:
         self._apply_plan(
@@ -440,7 +365,7 @@ class Operator:
             grid_rho=self.plan.static_layout.rho,
             source_plan=self.plan.source_plan,
             source_execution=self.plan.source_execution,
-            source_runtime_state=self.workspace.source.runtime_state,
+            source_workspace=self.workspace.source,
             psin=self.workspace.residual.root_fields[0],
         )
         self._refresh_stage_a_runtime()
@@ -468,18 +393,15 @@ class Operator:
         )
 
     def _refresh_runtime_bindings(self) -> None:
-        alpha_state = self.layout.alpha_state
         self.layout = build_operator_layout(
             plan=self.plan,
             case=self.case,
             workspace=self.workspace,
             backend_state=self.backend_state,
-            alpha_state=alpha_state,
             c_effective_order=self.c_effective_order,
             s_effective_order=self.s_effective_order,
             fix_rho=self.fix_rho,
             psin_profile_fields_available=self.psin_profile.u_fields is not None,
-            fallback_residual_runner_into=self._evaluate_residual_into,
         )
         fixed_profile_ids = np.flatnonzero(~self.plan.active_profile_mask).astype(
             np.int64, copy=False
@@ -495,8 +417,6 @@ class Operator:
             static_layout=self.plan.static_layout,
             residual_binding_layout=self.plan.residual_binding_layout,
             workspace=self.workspace,
-            field_runtime_state=self.field_runtime_state,
-            source_runtime_state=self.workspace.source.runtime_state,
         )
 
     def _refresh_stage_a_runtime(self) -> None:
@@ -529,7 +449,7 @@ class Operator:
 
     def invalidate_source_state(self) -> None:
         if tuple(self.plan.source_execution.route_key) == ("PJ2", "psin", "uniform"):
-            self.workspace.source.work_state.psin_query.fill(-1.0)
+            self.workspace.source.psin_query.fill(-1.0)
 
     def _snapshot_equilibrium_from_runtime(self, x: np.ndarray) -> Equilibrium:
         root_fields = self.workspace.residual.root_fields

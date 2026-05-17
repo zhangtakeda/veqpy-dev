@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import InitVar, dataclass, field
+from typing import Self
 
 import numpy as np
 
@@ -149,7 +150,7 @@ class Geqdsk(Serial):
             raise ValueError(f"psi must have shape {expected_psi}, got {self.psi.shape}")
 
     @read_serializer("txt", "geqdsk", "gfile")
-    def read_geqdsk(self, file: str) -> Geqdsk:
+    def read_geqdsk(self, file: str) -> Self:
         with open(file, "r", encoding="utf-8") as handle:
             self._read_header(handle)
             self._read_geometry(handle)

@@ -2,21 +2,22 @@
 Module: model.equilibrium
 
 Role:
-- 负责持有单网格上的平衡快照.
-- 负责从 root fields 重新派生 geometry 与 diagnostics.
-- 负责提供 plotting, comparison, resample 等 inspection 能力.
+- Hold an equilibrium snapshot on one grid.
+- Re-derive geometry and diagnostics from root fields.
+- Provide plotting, comparison, resampling, and other inspection capabilities.
 
 Public API:
 - Equilibrium
 
 Notes:
-- `Equilibrium` 表示 snapshot, 不是 solver runtime 容器.
-- 不负责 packed state ownership, 或 residual hot path.
+- `Equilibrium` is a snapshot, not a solver runtime container.
+- Does not own packed state or the residual hot path.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Self
 
 import matplotlib
 
@@ -138,7 +139,7 @@ def _regularize_axis_linear_surface(
 
 
 class Equilibrium(Reactive, Serial):
-    """单网格上的平衡快照对象."""
+    """Equilibrium snapshot object on one grid."""
 
     root_properties = {
         "R0",
@@ -172,7 +173,7 @@ class Equilibrium(Reactive, Serial):
         alpha1: float = 1.0,
         alpha2: float = 1.0,
     ):
-        """初始化平衡快照对象."""
+        """Initialize the equilibrium snapshot object."""
         super().__init__()
 
         self.R0 = R0
@@ -227,7 +228,7 @@ class Equilibrium(Reactive, Serial):
 
     @classmethod
     def serial_attributes(cls) -> dict[str, type]:
-        """声明可序列化的构造根状态."""
+        """Declare serializable construction root state."""
         attrs: dict[str, type] = {
             "R0": float,
             "Z0": float,
@@ -271,7 +272,7 @@ class Equilibrium(Reactive, Serial):
 
     @property
     def geometry(self) -> Geometry:
-        """从当前快照 root fields 重新物化 Geometry."""
+        """Re-materialize Geometry from current snapshot root fields."""
         geometry = Geometry(grid=self.grid)
         c_fields = np.zeros((self.grid.M_max + 1, 3, self.grid.Nr), dtype=np.float64)
         s_fields = np.zeros((self.grid.M_max + 1, 3, self.grid.Nr), dtype=np.float64)
@@ -305,49 +306,49 @@ class Equilibrium(Reactive, Serial):
 
     @property
     def S(self) -> np.ndarray:
-        """磁面面积 S = -int R*Z_t dtheta."""
+        """Flux-surface area S = -int R*Z_t dtheta."""
         R, Z_t = self.geometry.R, self.geometry.Z_t
         return -self.grid.integrate(R * Z_t, axis=1)
 
     @property
     def S_r(self) -> np.ndarray:
-        """磁面面积微分 S_r = int J dtheta."""
+        """Flux-surface area derivative S_r = int J dtheta."""
         J = self.geometry.J
         return self.grid.integrate(J, axis=1)
 
     @property
     def V(self) -> np.ndarray:
-        """磁面体积 V = -pi*int R**2*Z_t dtheta."""
+        """Flux-surface volume V = -pi*int R**2*Z_t dtheta."""
         R, Z_t = self.geometry.R, self.geometry.Z_t
         return -np.pi * self.grid.integrate(R**2 * Z_t, axis=1)
 
     @property
     def V_r(self) -> np.ndarray:
-        """磁面体积微分 V_r = 2pi * int J*R dtheta."""
+        """Flux-surface volume derivative V_r = 2pi * int J*R dtheta."""
         R, J = self.geometry.R, self.geometry.J
         return (2 * np.pi) * self.grid.integrate(J * R, axis=1)
 
     @property
     def Kn(self) -> np.ndarray:
-        """归一化几何因子 Kn = int gttdivJR dtheta/(2pi)."""
+        """Normalized geometry factor Kn = int gttdivJR dtheta/(2pi)."""
         gttdivJR = self.geometry.gttdivJR
         return self.grid.integrate(gttdivJR, axis=1) / (2 * np.pi)
 
     @property
     def Kn_r(self) -> np.ndarray:
-        """Kn 的径向导数."""
+        """Radial derivative of Kn."""
         gttdivJR_r = self.geometry.gttdivJR_r
         return self.grid.integrate(gttdivJR_r, axis=1) / (2 * np.pi)
 
     @property
     def Ln_r(self) -> np.ndarray:
-        """归一化几何因子 Ln_r = int JdivR dtheta/(2pi)."""
+        """Normalized geometry factor Ln_r = int JdivR dtheta/(2pi)."""
         JdivR = self.geometry.JdivR
         return self.grid.integrate(JdivR, axis=1) / (2 * np.pi)
 
     @property
     def FF_r(self) -> np.ndarray:
-        """物理 F*F' 剖面, model-side diagnostic."""
+        """Physical F*F' profile, model-side diagnostic."""
         return self.alpha1 * self.alpha2 * self.FFn_r
 
     @property
@@ -356,20 +357,20 @@ class Equilibrium(Reactive, Serial):
 
     @property
     def F2(self) -> np.ndarray:
-        """物理 F^2 剖面."""
+        """Physical F^2 profile."""
         FF_int = self.grid.accumulate(self.FF_r)
         return (self.R0 * self.B0) ** 2 + 2.0 * (FF_int - FF_int[-1])
 
     @property
     def F(self) -> np.ndarray:
-        """极向电流函数 F (R*B_phi)."""
+        """Poloidal current function F (R*B_phi)."""
         if np.any(self.F2 < 1e-6):
             raise ValueError("Negative F2 encountered, cannot compute F")
         return np.sqrt(self.F2)
 
     @property
     def P_r(self) -> np.ndarray:
-        """物理压强梯度 P', model-side diagnostic."""
+        """Physical pressure gradient P', model-side diagnostic."""
         return self.alpha1 * self.alpha2 * self.Pn_r / MU0
 
     @property
@@ -378,25 +379,25 @@ class Equilibrium(Reactive, Serial):
 
     @property
     def P(self) -> np.ndarray:
-        """物理压强剖面 P."""
+        """Physical pressure profile P."""
         P_int = self.grid.accumulate(self.P_r)
         return P_int - P_int[-1]
 
     @property
     def beta_t(self) -> np.ndarray:
-        """环向比压 beta_t = 2*mu0*<P> / B0^2."""
+        """Toroidal beta beta_t = 2*mu0*<P> / B0^2."""
         P_avg = float(self.grid.integrate(self.P * self.V_r) / self.grid.integrate(self.V_r))
         return float(2.0 * MU0 * P_avg / self.B0**2)
 
     @property
     def Gn1(self) -> np.ndarray:
-        """GS 算子源项分量 alpha1 前的归一化项."""
+        """Normalized source term before alpha1 in the GS operator."""
         R, JdivR = self.geometry.R, self.geometry.JdivR
         return JdivR * (self.FFn_psin[:, None] + R**2 * self.Pn_psin[:, None])
 
     @property
     def Gn2(self) -> np.ndarray:
-        """GS 算子几何分量 alpha2 前的归一化项."""
+        """Normalized geometry term before alpha2 in the GS operator."""
         geometry = self.geometry
         return (
             geometry.gttdivJR * self.psin_rr[:, None]
@@ -405,35 +406,35 @@ class Equilibrium(Reactive, Serial):
 
     @property
     def G(self) -> np.ndarray:
-        """GS 算子残差场 G = alpha1 * Gn1 + alpha2 * Gn2."""
+        """GS operator residual field G = alpha1 * Gn1 + alpha2 * Gn2."""
         return self.alpha1 * self.Gn1 + self.alpha2 * self.Gn2
 
     @property
     def Ip(self) -> np.ndarray:
-        """总等离子体电流 Ip (Amps)."""
+        """Total plasma current Ip (Amps)."""
         return -self.alpha1 * self.grid.integrate(self.Gn1) / MU0
 
     @property
     def q(self) -> np.ndarray:
-        """安全因子 q, model-side diagnostic."""
+        """Safety factor q, model-side diagnostic."""
         with np.errstate(divide="ignore", invalid="ignore"):
             q = self.F * self.Ln_r / (self.alpha2 * self.psin_r)
         return _regularize_axis_linear_profile(q, self.rho)
 
     @property
     def s(self) -> np.ndarray:
-        """磁剪切 s, model-side diagnostic."""
+        """Magnetic shear s, model-side diagnostic."""
         q_r = self.grid.differentiate(self.q)
         return self.rho * q_r / self.q
 
     @property
     def Itor(self) -> np.ndarray:
-        """环向电流分布 I_tor(rho), model-side diagnostic."""
+        """Toroidal current distribution I_tor(rho), model-side diagnostic."""
         return 2.0 * np.pi * self.Kn * self.alpha2 * self.psin_r / MU0
 
     @property
     def jtor(self) -> np.ndarray:
-        """环向电流密度 j_phi, model-side diagnostic."""
+        """Toroidal current density j_phi, model-side diagnostic."""
         with np.errstate(divide="ignore", invalid="ignore"):
             jtor = (
                 -self.alpha1
@@ -447,7 +448,7 @@ class Equilibrium(Reactive, Serial):
 
     @property
     def jpara(self) -> np.ndarray:
-        """平行电流密度 <j.B>/B0, model-side diagnostic."""
+        """Parallel current density <j.B>/B0, model-side diagnostic."""
         F_r = self.grid.differentiate(self.F)
         term_r = (
             self.Kn_r * self.psin_r / self.F
@@ -461,7 +462,7 @@ class Equilibrium(Reactive, Serial):
 
     @property
     def jphi(self) -> np.ndarray:
-        """局部环向电流密度 j_phi(R, Z)."""
+        """Local toroidal current density j_phi(R, Z)."""
         R = self.geometry.R
         with np.errstate(divide="ignore", invalid="ignore"):
             jphi = (
@@ -471,12 +472,12 @@ class Equilibrium(Reactive, Serial):
 
     @property
     def Psi(self) -> np.ndarray:
-        """物理极向磁通 Psi."""
+        """Physical poloidal flux Psi."""
         return 2.0 * np.pi * self.alpha2 * self.psin
 
     @property
     def Phi(self) -> np.ndarray:
-        """环向磁通 Phi."""
+        """Toroidal flux Phi."""
         return 2.0 * np.pi * self.grid.accumulate(self.F * self.Ln_r)
 
     def plot(
@@ -499,7 +500,7 @@ class Equilibrium(Reactive, Serial):
 
     def compare(
         self,
-        other: "Equilibrium",
+        other: Self,
         outpath: str | Path | None = None,
         *,
         show: bool = False,
@@ -522,8 +523,8 @@ class Equilibrium(Reactive, Serial):
     def resample(
         self,
         grid: Grid,
-    ) -> "Equilibrium":
-        """将当前平衡快照插值到目标网格."""
+    ) -> Self:
+        """Interpolate the current equilibrium snapshot to a target grid."""
         return _build_resampled_equilibrium(
             self,
             grid=grid,
@@ -541,7 +542,7 @@ class Equilibrium(Reactive, Serial):
         psi_axis: float = 0.0,
         psi_outside: float | None = None,
     ) -> Geqdsk:
-        """导出一个按物理 psi 写出的 Geqdsk 快照."""
+        """Export a GEQDSK snapshot written in physical psi."""
         geometry = self.geometry
         R_nodes, Z_nodes, Rmin, Rmax, Zmin, Zmax = _build_geqdsk_rectilinear_grid(
             geometry,
@@ -685,7 +686,7 @@ def _plot_equilibrium(
 
 def _compare_equilibrium(
     reference: Equilibrium,
-    other: Equilibrium,
+    other: Self,
     outpath: str | Path | None = None,
     *,
     show: bool = False,
@@ -1564,7 +1565,7 @@ def _render_panel_b_shapes(ax: plt.Axes, data: dict):
             label=meta["label"],
         )
 
-    ax.set(xlabel=r"$\rho$", ylabel="Profile")
+    ax.set(xlabel=r"$\rho$", ylabel=Profile)
     if shape["values"]:
         if len(shape["values"]) < 5:
             ax.legend(loc="center left")
@@ -1587,7 +1588,7 @@ def _render_panel_c_sources(ax: plt.Axes, data: dict):
         ax.plot(rho, data["FF_psi"], "-", color=RED, label=r"$FF_\psi$")
         ax.plot(rho, data["mu0_P_psi"], "-", color=PURPLE, label=r"$\mu_0 P_\psi$")
 
-    ax.set(xlabel=r"$\rho$", ylabel="Profile")
+    ax.set(xlabel=r"$\rho$", ylabel=Profile)
     _add_top_headroom(ax, ratio=0.35)
     ax.legend(loc="upper left")
     ax.grid(True)
@@ -1670,6 +1671,6 @@ def _render_panel_f_safety(ax: plt.Axes, data: dict):
     else:
         ax.plot(data["rho"], data["q"], "-", color=BLUE, label=r"$q$")
         ax.plot(data["rho"], data["s"], "--", color=ORANGE, label=r"$s$")
-    ax.set(xlabel=r"$\rho$", ylabel="Profile")
+    ax.set(xlabel=r"$\rho$", ylabel=Profile)
     ax.legend(loc="upper left")
     ax.grid(True)

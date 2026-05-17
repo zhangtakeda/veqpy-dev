@@ -2,9 +2,9 @@
 Module: operator.packed_layout
 
 Role:
-- 负责构造 packed layout 与 profile 元数据.
-- 负责在 operator 边界编码和解码 packed 状态向量.
-- 负责提供 packed state 形状校验工具.
+- Build packed layout and profile metadata.
+- Encode and decode packed state vectors at the operator boundary.
+- Provide packed-state shape validation helpers.
 
 Public API:
 - PACKED_PROFILE_FAMILY_ORDER
@@ -24,10 +24,12 @@ Public API:
 
 Notes:
 - Profile family ordering and residual block metadata are declared here.
-- 这里定义的是 packed layout 规则.
-- 这里也处理同一 packed layout 下的 state codec.
-- 不负责数值核计算, residual 组装, 或 solver 迭代控制.
+- This module defines packed layout rules.
+- It also handles state codecs for the same packed layout.
+- Does not own numerical kernels, residual assembly, or solver iteration control.
 """
+
+from __future__ import annotations
 
 from numbers import Integral
 
@@ -200,7 +202,7 @@ def build_profile_layout(
     profile_names: tuple[str, ...],
     prefix_profile_names: tuple[str, ...] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """根据 profile 系数字典构造 packed 状态布局."""
+    """Build the packed state layout from a profile-coefficient dictionary."""
     profile_names = tuple(profile_names)
     if prefix_profile_names is None:
         prefix_profile_names = get_prefix_profile_names()
@@ -258,7 +260,7 @@ def build_active_profile_metadata(
     *,
     profile_names: tuple[str, ...],
 ) -> tuple[np.ndarray, np.ndarray]:
-    """从 profile 阶数向量提取 active profile 元数据."""
+    """Extract active profile metadata from the profile-degree vector."""
     profile_L = np.asarray(profile_L, dtype=np.int64)
     expected_size = len(tuple(profile_names))
     if profile_L.ndim != 1 or profile_L.shape[0] != expected_size:
@@ -272,14 +274,14 @@ def build_active_profile_metadata(
 
 
 def packed_size(coeff_index: np.ndarray) -> int:
-    """统计 packed 向量的有效长度."""
+    """Return the effective packed-vector length."""
     if coeff_index.size == 0:
         return 0
     return int(np.count_nonzero(coeff_index >= 0))
 
 
 def validate_packed_state(x: np.ndarray, coeff_index: np.ndarray) -> np.ndarray:
-    """校验 packed 状态向量形状并返回 float64 视图."""
+    """Validate packed state vector shape and return a float64 view."""
     x = np.asarray(x, dtype=np.float64)
     if x.ndim != 1:
         raise ValueError(f"Expected x to be 1D, got {x.shape}")
@@ -297,7 +299,7 @@ def encode_packed_state(
     *,
     profile_names: tuple[str, ...],
 ) -> np.ndarray:
-    """按 layout 把 profile 系数字典编码成 packed 状态向量."""
+    """Encode a profile-coefficient dictionary into a packed state vector."""
     x = np.empty(packed_size(coeff_index), dtype=np.float64)
 
     for p, name in enumerate(profile_names):
@@ -328,7 +330,7 @@ def decode_packed_blocks(
     *,
     profile_names: tuple[str, ...],
 ) -> tuple[np.ndarray | None, ...]:
-    """把 packed 状态向量解码成按 profile 分块的系数副本."""
+    """Decode a packed state vector into per-profile coefficient copies."""
     x = validate_packed_state(x, coeff_index)
 
     blocks: list[np.ndarray | None] = []
@@ -345,7 +347,7 @@ def decode_packed_blocks(
 
 
 def coeff_array_from_list(name: str, coeff: ProfileCoeffValue) -> np.ndarray:
-    """把 profile 系数输入转成受约束的一维数组."""
+    """Convert profile coefficient input into a constrained one-dimensional array."""
     if isinstance(coeff, bool):
         raise TypeError(f"{name} coeff length indicator must be an integer, got bool")
     if isinstance(coeff, Integral):

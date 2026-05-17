@@ -13,6 +13,8 @@ Notes:
   the decorated function in a mapping table and returns the function unchanged.
 """
 
+from __future__ import annotations
+
 from collections.abc import Callable, Hashable, Iterator, Mapping
 from types import MappingProxyType
 from typing import Generic, TypeVar

@@ -15,6 +15,8 @@ Notes:
 - Engine selection, solver driving, and demo orchestration live outside this package.
 """
 
+from __future__ import annotations
+
 from veqpy.operator.operator import Operator
 from veqpy.operator.operator_case import OperatorCase
 from veqpy.operator.packed_layout import (
@@ -33,7 +35,7 @@ from veqpy.operator.packed_layout import (
 
 __all__ = [
     "Operator",
-    "OperatorCase",
+    OperatorCase,
     "build_active_profile_metadata",
     "build_fourier_profile_names",
     "build_profile_index",

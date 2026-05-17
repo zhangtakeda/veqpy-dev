@@ -10,6 +10,8 @@ Notes:
 - Runtime Numba kernels stay outside this pure-Python construction module.
 """
 
+from __future__ import annotations
+
 from collections.abc import Callable
 
 import numpy as np

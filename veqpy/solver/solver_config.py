@@ -2,8 +2,8 @@
 Module: solver.solver_config
 
 Role:
-- 负责描述一次 nonlinear solve 的配置.
-- 负责注册 solver method 名称到 SciPy optimize callable 的映射.
+- Describe the configuration for one nonlinear solve.
+- Register mappings from solver method names to SciPy optimize callables.
 
 Public API:
 - SolverConfig
@@ -12,9 +12,11 @@ Public API:
 - SUPPORTED_METHODS
 
 Notes:
-- `SolverConfig` 类只保存配置, 不执行求解.
-- 不负责 history 存储, 或 residual 评估.
+- `SolverConfig` only stores configuration and does not execute solves.
+- Does not own history storage or residual evaluation.
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from math import isfinite
@@ -94,7 +96,7 @@ _RESIDUAL_NORMALIZATION_ALIASES = {
 
 @dataclass(frozen=True, slots=True)
 class SolverConfig:
-    """描述 Solver 的默认配置与单次求解覆盖项."""
+    """Describe Solver defaults and per-solve overrides."""
 
     method: str | None = None
     max_residual: float = 1e-6
@@ -120,7 +122,7 @@ class SolverConfig:
     collocation_max_evaluations: int | None = None
 
     def __post_init__(self) -> None:
-        """校验方法名与 fallback 相关参数是否合法."""
+        """Validate method names and fallback-related parameters."""
 
         method = DEFAULT_VARIATIONAL_METHOD if self.method is None else str(self.method)
         fallback_methods = (

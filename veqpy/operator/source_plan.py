@@ -33,7 +33,7 @@ RouteKey = tuple[str, str, str]
 
 @dataclass(frozen=True, slots=True)
 class SourcePlan:
-    """描述 source 语义与 runner 绑定所需的只读计划."""
+    """Describe the read-only source semantics and runner binding plan."""
 
     route: str
     kernel: Callable
@@ -87,7 +87,7 @@ SOURCE_PARAMETERIZATION_CODES = {
 
 def build_source_plan(
     *,
-    case: "OperatorCase",
+    case: OperatorCase,
     source_route_spec: object,
     interpolation_kind: str = "cubic",
 ) -> SourcePlan:
@@ -116,7 +116,7 @@ def validate_source_plan_profile_support(
     *,
     source_plan: SourcePlan,
     source_execution: object,
-    case: "OperatorCase",
+    case: OperatorCase,
 ) -> None:
     route_key = _source_route_key(source_plan)
     if route_key != tuple(getattr(source_execution, "route_key")):
@@ -141,7 +141,7 @@ def validate_source_plan_profile_support(
         )
 
 
-def validate_source_inputs(case: "OperatorCase", nr: int) -> None:
+def validate_source_inputs(case: OperatorCase, nr: int) -> None:
     if case.heat_input.shape != case.current_input.shape:
         raise ValueError(
             "Expected heat_input/current_input to share a shape, "
@@ -156,7 +156,7 @@ def validate_source_inputs(case: "OperatorCase", nr: int) -> None:
 
 
 __all__ = [
-    "SourcePlan",
+    SourcePlan,
     "build_source_plan",
     "validate_source_inputs",
     "validate_source_plan_profile_support",

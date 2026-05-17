@@ -2,17 +2,19 @@
 Module: model.grid
 
 Role:
-- 负责持有径向-极角网格配置及其派生 tables.
-- 负责装配节点, 权重, 谱矩阵与 basis fields.
+- Hold radial-poloidal grid configuration and derived tables.
+- Assemble nodes, weights, spectral matrices, and basis fields.
 
 Public API:
 - Grid
 
 Notes:
-- `Grid` 是不可变的 model 层配置对象.
-- 纯数学矩阵构造委托给 `veqpy.math`.
-- 不负责 source route, residual 组装, 或 solver runtime 状态.
+- `Grid` is an immutable model-layer configuration object.
+- Pure mathematical matrix construction is delegated to `veqpy.math`.
+- Does not own source routes, residual assembly, or solver runtime state.
 """
+
+from __future__ import annotations
 
 import numpy as np
 from rich.console import Console
@@ -31,7 +33,7 @@ from veqpy.math.quadrature import make_quadrature
 
 
 class Grid(Reactive, Serial):
-    """径向-极角离散化的网格配置."""
+    """Radial-poloidal discretization grid configuration."""
 
     root_properties = {
         "Nr",
@@ -126,7 +128,7 @@ class Grid(Reactive, Serial):
 
     @classmethod
     def serial_attributes(cls) -> dict[str, type]:
-        """声明可序列化的根属性."""
+        """Declare serializable root attributes."""
 
         return {
             "Nr": int,
@@ -175,7 +177,7 @@ class Grid(Reactive, Serial):
         *,
         out: np.ndarray | None = None,
     ) -> np.ndarray:
-        """在当前 Grid 上对 1D 场做谱微分."""
+        """Apply spectral differentiation to a 1D field on this Grid."""
         if out is None:
             out = np.empty_like(f_1D)
         return full_differentiation(out, f_1D, self.differentiator)
@@ -186,7 +188,7 @@ class Grid(Reactive, Serial):
         *,
         out: np.ndarray | None = None,
     ) -> np.ndarray:
-        """在当前 Grid 上对 1D 场做前缀积分。"""
+        """Apply prefix integration to a 1D field on this Grid."""
         if out is None:
             out = np.empty_like(f_1D)
         return full_integration(out, f_1D, self.accumulator)
@@ -198,7 +200,7 @@ class Grid(Reactive, Serial):
         axis: int | None = None,
         out: np.ndarray | None = None,
     ) -> float | np.ndarray:
-        """在当前 Grid 上执行求积."""
+        """Apply quadrature on this Grid."""
         if out is None:
             if axis is None:
                 if f.ndim == 1:

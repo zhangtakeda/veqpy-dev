@@ -5,6 +5,8 @@ Role:
 - Host pure mathematical construction utilities shared by model and engine layers.
 """
 
+from __future__ import annotations
+
 from veqpy.math.calculus import make_calculus
 from veqpy.math.interpolate import (
     barycentric_log_weights,

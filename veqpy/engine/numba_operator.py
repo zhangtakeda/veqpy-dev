@@ -2,16 +2,16 @@
 Module: engine.numba_operator
 
 Role:
-- 提供 fused x -> residual hot runner.
-- 把常见 route 的 stage A/B/C/D 串成单个 engine 绑定入口.
+- Provide the fused x -> residual hot runner.
+- Chain Stage A/B/C/D for common routes into a single engine binding entrypoint.
 
 Public API:
 - bind_fused_residual_runner
 - bind_fused_residual_runner_into
 
 Notes:
-- 这里只覆盖 common route.
-- PJ2-psin-uniform fixed-point psin 在对应 route 内局部执行.
+- Only common routes are covered here.
+- PJ2-psin-uniform fixed-point psin is handled locally inside that route.
 """
 
 from __future__ import annotations
@@ -50,8 +50,8 @@ if TYPE_CHECKING:
 
 def bind_source_eval_runner(
     *,
-    source_plan: "SourcePlan",
-    backend_state: "BackendState",
+    source_plan: SourcePlan,
+    backend_state: BackendState,
     B0: float,
     fix_rho: float,
 ) -> Callable:
@@ -114,8 +114,8 @@ def _refresh_hot_runtime(
         hot_runtime_binding.active_coeff_index_rows,
         hot_runtime_binding.active_lengths,
     )
-    if hot_runtime_binding.has_active_F_profile:
-        _convert_f_squared_fields_to_f_impl(hot_runtime_binding.F_profile_fields)
+    if hot_runtime_binding.has_active_f_profile:
+        _convert_f_squared_fields_to_f_impl(hot_runtime_binding.f_profile_fields)
     _update_fourier_family_fields_impl(
         hot_runtime_binding.c_family_fields,
         hot_runtime_binding.s_family_fields,
@@ -128,8 +128,8 @@ def _refresh_hot_runtime(
         hot_runtime_binding.s_active_order,
     )
     update_geometry_hot(
-        hot_runtime_binding.geometry_surface_workspace,
-        hot_runtime_binding.geometry_radial_workspace,
+        hot_runtime_binding.geometry_surface_fields,
+        hot_runtime_binding.geometry_radial_fields,
         hot_runtime_binding.a,
         hot_runtime_binding.R0,
         hot_runtime_binding.Z0,
@@ -165,7 +165,7 @@ def _pack_residual_output_into(
         residual_pack_binding.active_residual_block_radial_powers,
         residual_pack_binding.active_coeff_index_rows,
         residual_pack_binding.active_lengths,
-        residual_pack_binding.residual_surface_workspace,
+        residual_pack_binding.residual_surface_fields,
         residual_pack_binding.sin_mtheta,
         residual_pack_binding.cos_mtheta,
         residual_pack_binding.rho_powers,
@@ -199,9 +199,9 @@ def _run_pj2_psin_uniform_spline_with_scratch_impl(
     accumulator: np.ndarray,
     rho: np.ndarray,
     n_axis_fix: int,
-    radial_workspace: np.ndarray,
-    surface_workspace: np.ndarray,
-    F_profile_u: np.ndarray,
+    radial_fields: np.ndarray,
+    surface_fields: np.ndarray,
+    f_profile_u: np.ndarray,
     Ip: float,
     beta: float,
     source_scratch_1d: np.ndarray,
@@ -231,9 +231,9 @@ def _run_pj2_psin_uniform_spline_with_scratch_impl(
             accumulator,
             rho,
             n_axis_fix,
-            radial_workspace,
-            surface_workspace,
-            F_profile_u,
+            radial_fields,
+            surface_fields,
+            f_profile_u,
             Ip,
             beta,
             source_scratch_1d,
@@ -274,9 +274,9 @@ def _run_pj2_psin_uniform_barycentric_with_scratch_impl(
     accumulator: np.ndarray,
     rho: np.ndarray,
     n_axis_fix: int,
-    radial_workspace: np.ndarray,
-    surface_workspace: np.ndarray,
-    F_profile_u: np.ndarray,
+    radial_fields: np.ndarray,
+    surface_fields: np.ndarray,
+    f_profile_u: np.ndarray,
     Ip: float,
     beta: float,
     source_scratch_1d: np.ndarray,
@@ -307,9 +307,9 @@ def _run_pj2_psin_uniform_barycentric_with_scratch_impl(
             accumulator,
             rho,
             n_axis_fix,
-            radial_workspace,
-            surface_workspace,
-            F_profile_u,
+            radial_fields,
+            surface_fields,
+            f_profile_u,
             Ip,
             beta,
             source_scratch_1d,
@@ -333,7 +333,7 @@ def bind_fused_residual_runner(
     *,
     source_plan: SourcePlan,
     source_execution: backend_abi.SourceExecutionABI,
-    backend_state: "BackendState",
+    backend_state: BackendState,
     alpha_state: np.ndarray,
     c_active_order: int,
     s_active_order: int,
@@ -369,7 +369,7 @@ def bind_fused_residual_runner_into(
     *,
     source_plan: SourcePlan,
     source_execution: backend_abi.SourceExecutionABI,
-    backend_state: "BackendState",
+    backend_state: BackendState,
     alpha_state: np.ndarray,
     c_active_order: int,
     s_active_order: int,
@@ -445,7 +445,7 @@ def bind_fused_residual_runner_into(
 
 def _bind_single_pass_residual_runner_core(
     *,
-    backend_state: "BackendState",
+    backend_state: BackendState,
     source_eval_runner: Callable,
     hot_runtime_binding: backend_abi.FusedHotRuntimeABI,
     residual_pack_binding: backend_abi.FusedResidualPackABI,
@@ -453,12 +453,12 @@ def _bind_single_pass_residual_runner_core(
     R0: float,
 ) -> Callable[[np.ndarray, np.ndarray], None]:
     workspace = backend_state.workspace
-    surface_workspace = workspace.geometry.surface_workspace
-    residual_workspace = workspace.residual.surface_workspace
+    surface_fields = workspace.geometry.surface_fields
+    residual_surface_fields = workspace.residual.surface_fields
     root_fields = workspace.residual.root_fields
-    source_work_state = backend_state.source_runtime_state.work_state
-    materialized_heat_input = source_work_state.materialized_heat_input
-    materialized_current_input = source_work_state.materialized_current_input
+    source_workspace = backend_state.workspace.source
+    materialized_heat_input = source_workspace.materialized_heat_input
+    materialized_current_input = source_workspace.materialized_current_input
     FFn_psin = root_fields[3]
     Pn_psin = root_fields[4]
 
@@ -475,11 +475,11 @@ def _bind_single_pass_residual_runner_core(
         alpha_state[0] = alpha1
         alpha_state[1] = alpha2
         update_residual_compact(
-            residual_workspace,
+            residual_surface_fields,
             alpha1,
             alpha2,
             root_fields,
-            surface_workspace,
+            surface_fields,
         )
         _pack_residual_output_into(out, residual_pack_binding=residual_pack_binding)
 
@@ -490,7 +490,7 @@ def _bind_profile_owned_psin_residual_runner_core(
     *,
     source_plan: SourcePlan,
     source_execution: backend_abi.SourceExecutionABI,
-    backend_state: "BackendState",
+    backend_state: BackendState,
     source_eval_runner: Callable,
     hot_runtime_binding: backend_abi.FusedHotRuntimeABI,
     residual_pack_binding: backend_abi.FusedResidualPackABI,
@@ -499,8 +499,8 @@ def _bind_profile_owned_psin_residual_runner_core(
     fix_rho: float,
 ) -> Callable[[np.ndarray, np.ndarray], None]:
     workspace = backend_state.workspace
-    surface_workspace = workspace.geometry.surface_workspace
-    residual_workspace = workspace.residual.surface_workspace
+    surface_fields = workspace.geometry.surface_fields
+    residual_surface_fields = workspace.residual.surface_fields
     n_axis_fix = int(np.searchsorted(backend_state.static_layout.rho, fix_rho))
     root_fields = workspace.residual.root_fields
     profile_owned_psin_binding = backend_abi.build_profile_owned_psin_source_abi(
@@ -548,11 +548,11 @@ def _bind_profile_owned_psin_residual_runner_core(
         alpha_state[0] = alpha1
         alpha_state[1] = alpha2
         update_residual_compact(
-            residual_workspace,
+            residual_surface_fields,
             alpha1,
             alpha2,
             root_fields,
-            surface_workspace,
+            surface_fields,
         )
         _pack_residual_output_into(out, residual_pack_binding=residual_pack_binding)
 
@@ -562,7 +562,7 @@ def _bind_profile_owned_psin_residual_runner_core(
 def _bind_pj2_psin_uniform_residual_runner_core(
     *,
     source_plan: SourcePlan,
-    backend_state: "BackendState",
+    backend_state: BackendState,
     hot_runtime_binding: backend_abi.FusedHotRuntimeABI,
     residual_pack_binding: backend_abi.FusedResidualPackABI,
     alpha_state: np.ndarray,
@@ -572,11 +572,10 @@ def _bind_pj2_psin_uniform_residual_runner_core(
 ) -> Callable[[np.ndarray, np.ndarray], None]:
     static_layout = backend_state.static_layout
     workspace = backend_state.workspace
-    source_runtime_state = backend_state.source_runtime_state
-    source_work_state = source_runtime_state.work_state
-    surface_workspace = workspace.geometry.surface_workspace
-    radial_workspace = workspace.geometry.radial_workspace
-    residual_workspace = workspace.residual.surface_workspace
+    source_workspace = backend_state.workspace.source
+    surface_fields = workspace.geometry.surface_fields
+    radial_fields = workspace.geometry.radial_fields
+    residual_surface_fields = workspace.residual.surface_fields
     rho = static_layout.rho
     weights = static_layout.weights
     differentiator = static_layout.differentiator
@@ -584,13 +583,13 @@ def _bind_pj2_psin_uniform_residual_runner_core(
     n_axis_fix = int(np.searchsorted(rho, fix_rho))
     root_fields = workspace.residual.root_fields
 
-    source_psin_query = source_work_state.psin_query
-    materialized_heat_input = source_work_state.materialized_heat_input
-    materialized_current_input = source_work_state.materialized_current_input
-    source_scratch_1d = source_work_state.scratch_1d
-    source_scratch_2d = source_work_state.scratch_2d
-    F_profile_u = workspace.F_profile_u
-    psin_profile_u = workspace.psin_profile_u
+    source_psin_query = source_workspace.psin_query
+    materialized_heat_input = source_workspace.materialized_heat_input
+    materialized_current_input = source_workspace.materialized_current_input
+    source_scratch_1d = source_workspace.scratch_1d
+    source_scratch_2d = source_workspace.scratch_2d
+    f_profile_u = workspace.source.f_u
+    psin_profile_u = workspace.source.psin_u
     heat_input = source_plan.heat_input
     current_input = source_plan.current_input
     heat_spline_coeff = build_uniform_source_interpolation_coefficients(
@@ -641,9 +640,9 @@ def _bind_pj2_psin_uniform_residual_runner_core(
                 accumulator,
                 rho,
                 n_axis_fix,
-                radial_workspace,
-                surface_workspace,
-                F_profile_u,
+                radial_fields,
+                surface_fields,
+                f_profile_u,
                 Ip,
                 beta,
                 source_scratch_1d,
@@ -670,9 +669,9 @@ def _bind_pj2_psin_uniform_residual_runner_core(
                 accumulator,
                 rho,
                 n_axis_fix,
-                radial_workspace,
-                surface_workspace,
-                F_profile_u,
+                radial_fields,
+                surface_fields,
+                f_profile_u,
                 Ip,
                 beta,
                 source_scratch_1d,
@@ -681,11 +680,11 @@ def _bind_pj2_psin_uniform_residual_runner_core(
         alpha_state[0] = alpha1
         alpha_state[1] = alpha2
         update_residual_compact(
-            residual_workspace,
+            residual_surface_fields,
             alpha1,
             alpha2,
             root_fields,
-            surface_workspace,
+            surface_fields,
         )
         _pack_residual_output_into(out, residual_pack_binding=residual_pack_binding)
 
@@ -719,9 +718,9 @@ def _bind_source_eval_runner_for_fused_backend(
                 source_eval_binding.accumulator,
                 source_eval_binding.rho,
                 source_eval_binding.n_axis_fix,
-                source_eval_binding.radial_workspace,
-                source_eval_binding.surface_workspace,
-                source_eval_binding.F_profile_u,
+                source_eval_binding.radial_fields,
+                source_eval_binding.surface_fields,
+                source_eval_binding.f_profile_u,
                 source_eval_binding.Ip,
                 source_eval_binding.beta,
             )
@@ -739,9 +738,9 @@ def _bind_source_eval_runner_for_fused_backend(
             source_eval_binding.accumulator,
             source_eval_binding.rho,
             source_eval_binding.n_axis_fix,
-            source_eval_binding.radial_workspace,
-            source_eval_binding.surface_workspace,
-            source_eval_binding.F_profile_u,
+            source_eval_binding.radial_fields,
+            source_eval_binding.surface_fields,
+            source_eval_binding.f_profile_u,
             source_eval_binding.Ip,
             source_eval_binding.beta,
             source_eval_binding.source_scratch_1d,

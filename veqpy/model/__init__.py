@@ -2,7 +2,7 @@
 Module: model.__init__
 
 Role:
-- 负责导出 model 层的公开类型与包级入口.
+- Export public model-layer types and package-level entrypoints.
 
 Public API:
 - Boundary
@@ -14,9 +14,11 @@ Public API:
 - Serial
 
 Notes:
-- 这里只做包级导出.
-- 不负责 packed runtime ownership, solver policy, 或 backend 选择.
+- This module only provides package-level exports.
+- Does not own packed runtime state, solver policy, or backend selection.
 """
+
+from __future__ import annotations
 
 from veqpy.base import Reactive, Serial
 from veqpy.model.boundary import Boundary
@@ -27,12 +29,12 @@ from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile
 
 __all__ = [
-    "Equilibrium",
+    Equilibrium,
     "Geometry",
-    "Grid",
+    Grid,
     "Geqdsk",
     "Boundary",
-    "Profile",
+    Profile,
     "Reactive",
     "Serial",
 ]

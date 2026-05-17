@@ -2,15 +2,17 @@
 Module: solver.solver_record
 
 Role:
-- 负责持有一次求解对应的 history 快照.
+- Hold the history snapshot associated with one solve.
 
 Public API:
 - SolverRecord
 
 Notes:
-- `SolverRecord` 只打包 case, config 和 result 快照.
-- 不负责求解执行, packed codec, 或数值核更新.
+- `SolverRecord` only packages case, config, and result snapshots.
+- Does not execute solves, packed codecs, or numerical kernel updates.
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 
@@ -24,7 +26,7 @@ from veqpy.solver.solver_result import SolverResult
 
 @dataclass(frozen=True, slots=True)
 class SolverRecord:
-    """描述一次求解完成后的不可变 history 快照."""
+    """Describe the immutable history snapshot after one completed solve."""
 
     case_snapshot: OperatorCase
     config_snapshot: SolverConfig

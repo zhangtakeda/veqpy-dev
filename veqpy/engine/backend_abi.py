@@ -2,8 +2,8 @@
 Module: engine.backend_abi
 
 Role:
-- 定义 numba fused backend 使用的显式 ABI binding 规范.
-- 把 bind-time 数据选择从 numba 实现中剥离到 engine 层 ABI 模块.
+- Define explicit ABI binding contracts used by the numba fused backend.
+- Move bind-time data selection out of numba implementation into the engine ABI module.
 
 Public API:
 - SourceExecutionABI
@@ -51,7 +51,7 @@ SUPPORTED_FUSED_SOURCE_ROUTE_KEYS: frozenset[RouteKey] = frozenset(SOURCE_ROUTE_
 class SourceExecutionABI:
     route_key: RouteKey
     psin_active_length: int
-    has_active_F_profile: bool
+    has_active_f_profile: bool
     requires_optimized_psin_profile: bool
     requires_psin_query_workspace: bool
     requires_source_parameter_query: bool
@@ -83,7 +83,7 @@ def _active_profile_slot_and_length(
 
 def build_source_execution_abi(
     *,
-    source_plan: "SourcePlan",
+    source_plan: SourcePlan,
     profile_index: dict[str, int],
     profile_L: np.ndarray,
     coeff_index: np.ndarray,
@@ -132,7 +132,7 @@ def build_source_execution_abi(
     return SourceExecutionABI(
         route_key=route_key,
         psin_active_length=psin_active_length,
-        has_active_F_profile=F_active_length > 0,
+        has_active_f_profile=F_active_length > 0,
         requires_optimized_psin_profile=requires_optimized_psin_profile,
         requires_psin_query_workspace=(
             requires_optimized_psin_profile or is_pj2_psin_uniform
@@ -163,8 +163,8 @@ class FusedHotRuntimeABI:
     active_u_fields: np.ndarray
     c_family_source_slots: np.ndarray
     s_family_source_slots: np.ndarray
-    geometry_surface_workspace: np.ndarray
-    geometry_radial_workspace: np.ndarray
+    geometry_surface_fields: np.ndarray
+    geometry_radial_fields: np.ndarray
     rho: np.ndarray
     theta: np.ndarray
     cos_mtheta: np.ndarray
@@ -176,8 +176,8 @@ class FusedHotRuntimeABI:
     h_fields: np.ndarray
     v_fields: np.ndarray
     k_fields: np.ndarray
-    F_profile_fields: np.ndarray
-    has_active_F_profile: bool
+    f_profile_fields: np.ndarray
+    has_active_f_profile: bool
     c_active_order: int
     s_active_order: int
     a: float
@@ -188,7 +188,7 @@ class FusedHotRuntimeABI:
 @dataclass(frozen=True, slots=True)
 class FusedResidualPackABI:
     residual_pack_scratch: np.ndarray
-    residual_surface_workspace: np.ndarray
+    residual_surface_fields: np.ndarray
     active_residual_block_codes: np.ndarray
     active_residual_block_orders: np.ndarray
     active_residual_block_radial_powers: np.ndarray
@@ -215,9 +215,9 @@ class FusedSourceEvalABI:
     accumulator: np.ndarray
     rho: np.ndarray
     n_axis_fix: int
-    radial_workspace: np.ndarray
-    surface_workspace: np.ndarray
-    F_profile_u: np.ndarray
+    radial_fields: np.ndarray
+    surface_fields: np.ndarray
+    f_profile_u: np.ndarray
     Ip: float
     beta: float
     source_scratch_1d: np.ndarray
@@ -227,7 +227,7 @@ class FusedSourceEvalABI:
 
 def build_fused_hot_runtime_abi(
     *,
-    backend_state: "BackendState",
+    backend_state: BackendState,
     source_execution: SourceExecutionABI,
     c_active_order: int,
     s_active_order: int,
@@ -255,8 +255,8 @@ def build_fused_hot_runtime_abi(
         active_u_fields=profile_workspace.active_u_fields,
         c_family_source_slots=profile_workspace.c_family_source_slots,
         s_family_source_slots=profile_workspace.s_family_source_slots,
-        geometry_surface_workspace=geometry_workspace.surface_workspace,
-        geometry_radial_workspace=geometry_workspace.radial_workspace,
+        geometry_surface_fields=geometry_workspace.surface_fields,
+        geometry_radial_fields=geometry_workspace.radial_fields,
         rho=static_layout.rho,
         theta=static_layout.theta,
         cos_mtheta=static_layout.cos_mtheta,
@@ -265,11 +265,11 @@ def build_fused_hot_runtime_abi(
         m_sin_mtheta=static_layout.m_sin_mtheta,
         m2_cos_mtheta=static_layout.m2_cos_mtheta,
         m2_sin_mtheta=static_layout.m2_sin_mtheta,
-        h_fields=workspace.h_fields,
-        v_fields=workspace.v_fields,
-        k_fields=workspace.k_fields,
-        F_profile_fields=workspace.F_profile_fields,
-        has_active_F_profile=bool(source_execution.has_active_F_profile),
+        h_fields=workspace.geometry.h_fields,
+        v_fields=workspace.geometry.v_fields,
+        k_fields=workspace.geometry.k_fields,
+        f_profile_fields=workspace.source.f_fields,
+        has_active_f_profile=bool(source_execution.has_active_f_profile),
         c_active_order=c_active_order,
         s_active_order=s_active_order,
         a=a,
@@ -280,7 +280,7 @@ def build_fused_hot_runtime_abi(
 
 def build_fused_residual_pack_abi(
     *,
-    backend_state: "BackendState",
+    backend_state: BackendState,
     a: float,
     R0: float,
     B0: float,
@@ -292,7 +292,7 @@ def build_fused_residual_pack_abi(
     residual_binding_layout = backend_state.residual_binding_layout
     return FusedResidualPackABI(
         residual_pack_scratch=residual_workspace.pack_scratch,
-        residual_surface_workspace=residual_workspace.surface_workspace,
+        residual_surface_fields=residual_workspace.surface_fields,
         active_residual_block_codes=residual_binding_layout.active_residual_block_codes,
         active_residual_block_orders=residual_binding_layout.active_residual_block_orders,
         active_residual_block_radial_powers=(
@@ -314,8 +314,8 @@ def build_fused_residual_pack_abi(
 
 def build_fused_source_eval_abi(
     *,
-    source_plan: "SourcePlan",
-    backend_state: "BackendState",
+    source_plan: SourcePlan,
+    backend_state: BackendState,
     B0: float,
     fix_rho: float,
 ) -> FusedSourceEvalABI:
@@ -323,7 +323,7 @@ def build_fused_source_eval_abi(
     static_layout = backend_state.static_layout
     workspace = backend_state.workspace
     geometry_workspace = workspace.geometry
-    source_work_state = backend_state.source_runtime_state.work_state
+    source_workspace = backend_state.workspace.source
 
     n_axis_fix = int(np.searchsorted(static_layout.rho, fix_rho))
 
@@ -336,42 +336,40 @@ def build_fused_source_eval_abi(
         accumulator=static_layout.accumulator,
         rho=static_layout.rho,
         n_axis_fix=n_axis_fix,
-        radial_workspace=geometry_workspace.radial_workspace,
-        surface_workspace=geometry_workspace.surface_workspace,
-        F_profile_u=workspace.F_profile_u,
+        radial_fields=geometry_workspace.radial_fields,
+        surface_fields=geometry_workspace.surface_fields,
+        f_profile_u=workspace.source.f_u,
         Ip=float(source_plan.Ip),
         beta=float(source_plan.beta),
-        source_scratch_1d=source_work_state.scratch_1d,
-        source_scratch_2d=source_work_state.scratch_2d,
+        source_scratch_1d=source_workspace.scratch_1d,
+        source_scratch_2d=source_workspace.scratch_2d,
         B0=B0,
     )
 
 
 def build_profile_owned_psin_source_abi(
     *,
-    source_plan: "SourcePlan",
+    source_plan: SourcePlan,
     source_execution: SourceExecutionABI,
-    backend_state: "BackendState",
+    backend_state: BackendState,
 ):
     workspace = backend_state.workspace
-    source_runtime_state = backend_state.source_runtime_state
-    source_work_state = source_runtime_state.work_state
-    source_aux_state = source_runtime_state.aux_state
+    source_workspace = backend_state.workspace.source
     return SimpleNamespace(
-        source_target_root_fields=source_aux_state.target_root_fields,
+        source_target_root_fields=source_workspace.target_root_fields,
         rho=backend_state.static_layout.rho,
         differentiator=backend_state.static_layout.differentiator,
         accumulator=backend_state.static_layout.accumulator,
-        source_psin_query=source_work_state.psin_query,
-        source_parameter_query=source_work_state.parameter_query,
-        heat_spline_coeff=source_aux_state.heat_spline_coeff,
-        current_spline_coeff=source_aux_state.current_spline_coeff,
-        barycentric_weights=source_runtime_state.const_state.barycentric_weights,
+        source_psin_query=source_workspace.psin_query,
+        source_parameter_query=source_workspace.parameter_query,
+        heat_spline_coeff=source_workspace.heat_spline_coeff,
+        current_spline_coeff=source_workspace.current_spline_coeff,
+        barycentric_weights=source_workspace.barycentric_weights,
         use_barycentric=bool(source_plan.uses_barycentric_interpolation),
-        endpoint_blend=source_runtime_state.const_state.endpoint_blend,
-        materialized_heat_input=source_work_state.materialized_heat_input,
-        materialized_current_input=source_work_state.materialized_current_input,
-        psin_profile_fields=workspace.psin_profile_fields,
+        endpoint_blend=source_workspace.endpoint_blend,
+        materialized_heat_input=source_workspace.materialized_heat_input,
+        materialized_current_input=source_workspace.materialized_current_input,
+        psin_profile_fields=workspace.source.psin_fields,
         parameterization_code=int(source_plan.parameterization_code),
         heat_input=source_plan.heat_input,
         current_input=source_plan.current_input,

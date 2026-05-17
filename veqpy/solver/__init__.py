@@ -2,7 +2,7 @@
 Module: solver.__init__
 
 Role:
-- 负责导出 solver 层的公开类型与包级入口.
+- Export public solver-layer types and package-level entrypoints.
 
 Public API:
 - Solver
@@ -11,9 +11,11 @@ Public API:
 - SolverResult
 
 Notes:
-- 这里只做包级导出.
-- 不负责 packed layout 定义, engine backend 选择, 或 benchmark 组织.
+- This module only provides package-level exports.
+- Does not own packed layout definitions, engine backend selection, or benchmark organization.
 """
+
+from __future__ import annotations
 
 from veqpy.solver.solver import Solver
 from veqpy.solver.solver_config import SolverConfig

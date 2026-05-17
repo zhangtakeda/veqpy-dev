@@ -9,7 +9,7 @@ workspace arrays captured by their callables.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Self
 
 import numpy as np
 
@@ -77,10 +77,10 @@ class OperatorLayout:
     geometry: GeometryLayout
     source: SourceLayout
     residual: ResidualLayout
-    alpha_state: np.ndarray
+    run_collocation_runner_into: Callable[[np.ndarray, np.ndarray], None]
 
     @classmethod
-    def empty(cls, x_size: int) -> "OperatorLayout":
+    def empty(cls, x_size: int) -> Self:
         """Create a no-op layout placeholder before runtime arrays are bound."""
 
         def residual_full() -> np.ndarray:
@@ -100,7 +100,7 @@ class OperatorLayout:
             residual_full_stage_runner=residual_full,
             fused_residual_runner_into=lambda x_eval, out: out.fill(0.0),
             fused_residual_runner=fused_residual,
-            alpha_state=np.zeros(2, dtype=np.float64),
+            collocation_runner_into=lambda x_eval, out: out.fill(0.0),
         )
 
     @classmethod
@@ -116,8 +116,8 @@ class OperatorLayout:
         residual_full_stage_runner: Callable[[], np.ndarray],
         fused_residual_runner_into: Callable[[np.ndarray, np.ndarray], None],
         fused_residual_runner: Callable[[np.ndarray], np.ndarray],
-        alpha_state: np.ndarray,
-    ) -> "OperatorLayout":
+        collocation_runner_into: Callable[[np.ndarray, np.ndarray], None],
+    ) -> Self:
         return cls(
             profile=ProfileLayout(
                 run_stage=profile_stage_runner,
@@ -134,7 +134,7 @@ class OperatorLayout:
                 run_fused_into=fused_residual_runner_into,
                 run_fused=fused_residual_runner,
             ),
-            alpha_state=alpha_state,
+            run_collocation_runner_into=collocation_runner_into,
         )
 
     def run_profile(self, x: np.ndarray) -> None:
@@ -145,8 +145,6 @@ class OperatorLayout:
 
     def run_source(self) -> tuple[float, float]:
         alpha1, alpha2 = self.source.run()
-        self.alpha_state[0] = float(alpha1)
-        self.alpha_state[1] = float(alpha2)
         return float(alpha1), float(alpha2)
 
     def run_residual_into(self, out: np.ndarray) -> None:
@@ -154,3 +152,6 @@ class OperatorLayout:
 
     def run_fused_residual_into(self, x: np.ndarray, out: np.ndarray) -> None:
         self.residual.run_fused_residual_into(x, out)
+
+    def run_collocation_into(self, x: np.ndarray, out: np.ndarray) -> None:
+        self.run_collocation_runner_into(x, out)

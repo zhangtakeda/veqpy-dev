@@ -2,15 +2,15 @@
 Module: solver.solver
 
 Role:
-- 负责执行 nonlinear solve 生命周期.
-- 负责管理 x0, history 与 SolverResult 封装.
+- Execute the nonlinear solve lifecycle.
+- Manage x0, history, and SolverResult packaging.
 
 Public API:
 - Solver
 
 Notes:
-- `Solver` 是 solver 层 facade.
-- 不负责 packed layout/codec, backend 选择, 或 Stage A/B/C/D 数值核实现.
+- `Solver` is the solver-layer facade.
+- Does not own packed layout/codecs, backend selection, or Stage A/B/C/D numerical kernels.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ from veqpy.solver.solver_result import SolverResult
 
 
 class Solver:
-    """固定 packed layout 的求解 facade."""
+    """Solve facade for a fixed packed layout."""
 
     def __init__(
         self,
@@ -46,7 +46,7 @@ class Solver:
         operator: Operator,
         config: SolverConfig | None = None,
     ) -> None:
-        """绑定一个 Operator 和一份默认求解配置."""
+        """Bind an Operator and one default solve configuration."""
 
         self.operator = operator
         self.config = SolverConfig() if config is None else config
@@ -55,17 +55,17 @@ class Solver:
         self.x0 = self.operator.encode_initial_state()
 
     def reset(self) -> None:
-        """将 solver 持有的 x0 原地清零."""
+        """Zero the solver-owned x0 in place."""
 
         self.x0.fill(0.0)
 
     def clear(self) -> None:
-        """清空 solve history, 不改当前 x0."""
+        """Clear solve history without changing the current x0."""
 
         self.history.clear()
 
     def replace_case(self, case: OperatorCase) -> None:
-        """替换兼容工况."""
+        """Replace the case with a compatible one."""
 
         self.operator.replace_case(case)
 
@@ -95,7 +95,7 @@ class Solver:
         collocation_max_residual: float | None = None,
         collocation_max_evaluations: int | None = None,
     ) -> np.ndarray:
-        """执行一次求解并返回收敛后的 packed x."""
+        """Execute one solve and return the converged packed x."""
 
         solve_config = self._resolve_solve_config(
             method=method,
@@ -212,12 +212,12 @@ class Solver:
         *,
         include_none: bool = True,
     ) -> dict[str, list[float] | None]:
-        """从当前 solver 持有的 x0 重建 profile 系数字典."""
+        """Rebuild a profile-coefficient dictionary from the current solver-owned x0."""
 
         return self.operator.build_coeffs(self.x0, include_none=include_none)
 
     def build_equilibrium(self) -> Equilibrium:
-        """从当前 solver 持有的 x0 物化一个 Equilibrium snapshot."""
+        """Materialize an Equilibrium snapshot from the current solver-owned x0."""
 
         return self.operator.build_equilibrium(self.x0)
 
@@ -246,7 +246,7 @@ class Solver:
         collocation_max_residual: float | None,
         collocation_max_evaluations: int | None,
     ) -> SolverConfig:
-        """基于默认配置生成一次 solve 的临时配置快照."""
+        """Build a temporary per-solve configuration snapshot from defaults."""
 
         overrides: dict[str, object] = {}
         if method is not None:
@@ -310,7 +310,7 @@ class Solver:
         solve_config: SolverConfig,
         x0_was_provided: bool,
     ) -> tuple[np.ndarray, bool, str, int, int, int, float]:
-        """先做 variational solve, 再从该结果热启动 collocation polish."""
+        """Run a variational solve first, then warm-start collocation polish from that result."""
 
         variational_config = self._variational_stage_config(solve_config)
         collocation_config = self._collocation_stage_config(solve_config)
@@ -342,12 +342,12 @@ class Solver:
         )
 
     def _variational_stage_config(self, solve_config: SolverConfig) -> SolverConfig:
-        """返回两阶段 workflow 的 variational stage 配置."""
+        """Return the variational-stage configuration for the two-stage workflow."""
 
         return replace(solve_config, enable_collocation=False)
 
     def _collocation_stage_config(self, solve_config: SolverConfig) -> SolverConfig:
-        """返回两阶段 workflow 的 collocation polish 配置."""
+        """Return the collocation-polish configuration for the two-stage workflow."""
 
         max_residual = (
             solve_config.max_residual
@@ -370,14 +370,14 @@ class Solver:
         )
 
     def _final_residual_config(self, solve_config: SolverConfig) -> SolverConfig:
-        """返回 SolverResult 最终 x 应使用的 residual 评估配置."""
+        """Return the residual evaluation configuration used for the final SolverResult x."""
 
         if solve_config.enable_collocation:
             return self._collocation_stage_config(solve_config)
         return solve_config
 
     def _final_residual_kind(self, solve_config: SolverConfig) -> str:
-        """返回 SolverResult 最终 x 应使用的 residual kind."""
+        """Return the residual kind used for the final SolverResult x."""
 
         if solve_config.enable_collocation:
             return "collocation"
@@ -390,7 +390,7 @@ class Solver:
         collocation_result: tuple[np.ndarray, bool, str, int, int, int, float],
         collocation_error: Exception | None,
     ) -> tuple[np.ndarray, bool, str, int, int, int, float]:
-        """合并两阶段计数, 但成功状态与最终 x 以 collocation stage 为准."""
+        """Merge two-stage counters with collocation owning success and final x."""
 
         variational_status = "succeeded" if bool(variational_result[1]) else "failed"
         collocation_status = (
@@ -425,7 +425,7 @@ class Solver:
         residual_kind: str,
         x0_was_provided: bool,
     ) -> tuple[np.ndarray, bool, str, int, int, int, float]:
-        """按主方法求解, 必要时按配置顺序回退到备用 solver 方法."""
+        """Solve with the primary method and fall back to configured backup methods if needed."""
 
         attempts: list[
             tuple[str, tuple[np.ndarray, bool, str, int, int, int, float] | None, Exception | None]
@@ -533,7 +533,7 @@ class Solver:
         solve_config: SolverConfig,
         residual_kind: str,
     ) -> tuple[tuple[np.ndarray, bool, str, int, int, int, float] | None, Exception | None]:
-        """包装一次 solve stage, 让 fallback 流程也能处理数值异常."""
+        """Wrap one solve stage so the fallback flow can also handle numerical exceptions."""
 
         x_guess_eval = self.operator.coerce_x(x_guess).copy()
         try:
@@ -723,7 +723,7 @@ class Solver:
         solve_config: SolverConfig,
         residual_kind: str,
     ) -> tuple[np.ndarray, bool, str, int, int, int, float]:
-        """执行一次完整 nonlinear solve."""
+        """Execute one complete nonlinear solve."""
 
         opt = self._run_solve_full(x_guess, solve_config=solve_config, residual_kind=residual_kind)
         x_opt = self.operator.coerce_x(opt.x)
@@ -836,7 +836,7 @@ class Solver:
         solve_config: SolverConfig,
         optimize_method: OptimizeMethod,
     ):
-        """在完整 packed x 上调用一次 `scipy.optimize.root`."""
+        """Call `scipy.optimize.root` once on the full packed x."""
 
         root_fun = self.operator
         get_raw_residual: Callable[[np.ndarray], np.ndarray] | None = None
@@ -892,7 +892,7 @@ class Solver:
     ) -> tuple[
         Callable[[np.ndarray], np.ndarray] | None, Callable[[np.ndarray], np.ndarray] | None
     ]:
-        """构造 solver 层残差规范化 wrapper."""
+        """Build the solver-layer residual normalization wrapper."""
 
         mode = getattr(solve_config, "residual_normalization", "robust_balanced")
         if mode == "none":
@@ -921,7 +921,7 @@ class Solver:
     ) -> tuple[
         Callable[[np.ndarray], np.ndarray] | None, Callable[[np.ndarray], np.ndarray] | None
     ]:
-        """旧版 block RMS 残差变换 wrapper; 仅保留为对比与兼容模式."""
+        """Legacy block-RMS residual transform wrapper for comparison mode."""
 
         block_lengths = self.operator.residual_block_lengths()
         if block_lengths is None:
@@ -976,7 +976,7 @@ class Solver:
     ) -> tuple[
         Callable[[np.ndarray], np.ndarray] | None, Callable[[np.ndarray], np.ndarray] | None
     ]:
-        """一次 O(n) 建模的线性残差左预条件器."""
+        """O(n)-modeled linear left preconditioner for residuals."""
 
         try:
             self.operator.coerce_x(x_guess)
@@ -1147,7 +1147,7 @@ class Solver:
         optimize_method: OptimizeMethod,
         residual_kind: str,
     ):
-        """在完整 packed x 上调用一次 `scipy.optimize.least_squares`."""
+        """Call `scipy.optimize.least_squares` once on the full packed x."""
 
         least_squares_fun = self._residual_function_for(residual_kind)
         get_raw_residual: Callable[[np.ndarray], np.ndarray] | None = None
@@ -1222,7 +1222,7 @@ def _registered_method_for(solve_config: SolverConfig) -> OptimizeMethod:
 
 
 def _root_options_for(solve_config: SolverConfig) -> dict[str, object]:
-    """将 `SolverConfig` 映射到 `scipy.optimize.root(..., options=...)`."""
+    """Map `SolverConfig` to `scipy.optimize.root(..., options=...)`."""
 
     options: dict[str, object] = {}
     method = solve_config.method
@@ -1236,7 +1236,7 @@ def _root_options_for(solve_config: SolverConfig) -> dict[str, object]:
 
 
 def _least_squares_kwargs_for(solve_config: SolverConfig) -> dict[str, object]:
-    """将 `SolverConfig` 映射到 `scipy.optimize.least_squares(...)`."""
+    """Map `SolverConfig` to `scipy.optimize.least_squares(...)`."""
 
     kwargs: dict[str, object] = {
         "ftol": float(solve_config.max_residual),
@@ -1256,7 +1256,7 @@ def _count_opt_attr(opt, name: str) -> int:
 
 
 def _residual_array_norm(residual: np.ndarray) -> float:
-    """返回 residual 数组的 Euclidean norm, 标量 residual 视作长度 1 向量."""
+    """Return the Euclidean norm; scalar residuals count as length-1 vectors."""
 
     residual_eval = np.asarray(residual, dtype=np.float64)
     if residual_eval.ndim == 0:
