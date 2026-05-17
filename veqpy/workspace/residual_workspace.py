@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 
 
-@dataclass(slots=True)
+@dataclass(init=False, slots=True)
 class ResidualWorkspace:
     """Residual/root stage memory owner.
 
@@ -16,6 +16,11 @@ class ResidualWorkspace:
 
     ``surface_fields`` shape: ``(4, Nr, Nt)`` with rows G, G*psin_R,
     G*psin_Z, and G*psin_R*sin_tb.
+
+    ``pack_scratch`` is a reusable one-dimensional temporary buffer allocated
+    with the workspace, then reused by residual basis-packing kernels. It has no
+    persistent value after a pack call and may be overwritten by each residual
+    block.
     """
 
     root_fields: np.ndarray
@@ -23,3 +28,15 @@ class ResidualWorkspace:
     surface_fields: np.ndarray
     pack_scratch: np.ndarray
     collocation_sqrt_weights: np.ndarray
+
+    def __init__(self, *, nr: int, nt: int, x_size: int, radial_weights: np.ndarray) -> None:
+        """Allocate residual/root-stage runtime memory."""
+
+        if radial_weights.ndim != 1 or radial_weights.size != nr:
+            raise ValueError(f"Invalid radial weights shape {radial_weights.shape}")
+
+        self.root_fields = np.empty((5, nr), dtype=np.float64)
+        self.packed_residual = np.empty(x_size, dtype=np.float64)
+        self.surface_fields = np.empty((4, nr, nt), dtype=np.float64)
+        self.pack_scratch = np.empty(nr, dtype=np.float64)
+        self.collocation_sqrt_weights = np.sqrt(radial_weights / max(nt, 1))

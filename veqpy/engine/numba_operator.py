@@ -104,7 +104,9 @@ def _refresh_hot_runtime(
     hot_runtime_binding: backend_abi.FusedHotRuntimeABI,
 ) -> None:
     update_profiles_packed_bulk(
-        hot_runtime_binding.active_profile_slab,
+        hot_runtime_binding.active_u_fields,
+        hot_runtime_binding.active_rp_fields,
+        hot_runtime_binding.active_env_fields,
         hot_runtime_binding.T,
         hot_runtime_binding.T_r,
         hot_runtime_binding.T_rr,
@@ -356,7 +358,7 @@ def bind_fused_residual_runner(
         B0=B0,
         fix_rho=fix_rho,
     )
-    packed_residual = backend_state.workspace.residual.packed_residual
+    packed_residual = backend_state.residual_workspace.packed_residual
 
     def runner(x: np.ndarray) -> np.ndarray:
         runner_into(x, packed_residual)
@@ -452,11 +454,12 @@ def _bind_single_pass_residual_runner_core(
     alpha_state: np.ndarray,
     R0: float,
 ) -> Callable[[np.ndarray, np.ndarray], None]:
-    workspace = backend_state.workspace
-    surface_fields = workspace.geometry.surface_fields
-    residual_surface_fields = workspace.residual.surface_fields
-    root_fields = workspace.residual.root_fields
-    source_workspace = backend_state.workspace.source
+    geometry_workspace = backend_state.geometry_workspace
+    residual_workspace = backend_state.residual_workspace
+    source_workspace = backend_state.source_workspace
+    surface_fields = geometry_workspace.surface_fields
+    residual_surface_fields = residual_workspace.surface_fields
+    root_fields = residual_workspace.root_fields
     materialized_heat_input = source_workspace.materialized_heat_input
     materialized_current_input = source_workspace.materialized_current_input
     FFn_psin = root_fields[3]
@@ -498,11 +501,12 @@ def _bind_profile_owned_psin_residual_runner_core(
     R0: float,
     fix_rho: float,
 ) -> Callable[[np.ndarray, np.ndarray], None]:
-    workspace = backend_state.workspace
-    surface_fields = workspace.geometry.surface_fields
-    residual_surface_fields = workspace.residual.surface_fields
+    geometry_workspace = backend_state.geometry_workspace
+    residual_workspace = backend_state.residual_workspace
+    surface_fields = geometry_workspace.surface_fields
+    residual_surface_fields = residual_workspace.surface_fields
     n_axis_fix = int(np.searchsorted(backend_state.static_layout.rho, fix_rho))
-    root_fields = workspace.residual.root_fields
+    root_fields = residual_workspace.root_fields
     profile_owned_psin_binding = backend_abi.build_profile_owned_psin_source_abi(
         source_plan=source_plan,
         source_execution=source_execution,
@@ -571,25 +575,26 @@ def _bind_pj2_psin_uniform_residual_runner_core(
     fix_rho: float,
 ) -> Callable[[np.ndarray, np.ndarray], None]:
     static_layout = backend_state.static_layout
-    workspace = backend_state.workspace
-    source_workspace = backend_state.workspace.source
-    surface_fields = workspace.geometry.surface_fields
-    radial_fields = workspace.geometry.radial_fields
-    residual_surface_fields = workspace.residual.surface_fields
+    geometry_workspace = backend_state.geometry_workspace
+    residual_workspace = backend_state.residual_workspace
+    source_workspace = backend_state.source_workspace
+    surface_fields = geometry_workspace.surface_fields
+    radial_fields = geometry_workspace.radial_fields
+    residual_surface_fields = residual_workspace.surface_fields
     rho = static_layout.rho
     weights = static_layout.weights
     differentiator = static_layout.differentiator
     accumulator = static_layout.accumulator
     n_axis_fix = int(np.searchsorted(rho, fix_rho))
-    root_fields = workspace.residual.root_fields
+    root_fields = residual_workspace.root_fields
 
     source_psin_query = source_workspace.psin_query
     materialized_heat_input = source_workspace.materialized_heat_input
     materialized_current_input = source_workspace.materialized_current_input
     source_scratch_1d = source_workspace.scratch_1d
     source_scratch_2d = source_workspace.scratch_2d
-    f_profile_u = workspace.source.f_u
-    psin_profile_u = workspace.source.psin_u
+    f_profile_u = source_workspace.f_u
+    psin_profile_u = source_workspace.psin_u
     heat_input = source_plan.heat_input
     current_input = source_plan.current_input
     heat_spline_coeff = build_uniform_source_interpolation_coefficients(

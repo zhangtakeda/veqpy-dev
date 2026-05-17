@@ -15,11 +15,15 @@ import numpy as np
 from veqpy.engine import numba_operator, numba_profile, numba_residual
 from veqpy.layout.geometry_binding import build_geometry_stage_runner
 from veqpy.layout.source_binding import build_bound_source_stage_runner
-from veqpy.workspace import BackendState, OperatorWorkspace
+from veqpy.workspace import BackendState
 
 if TYPE_CHECKING:
     from veqpy.operator.build_plan import OperatorBuildPlan
     from veqpy.operator.operator_case import OperatorCase
+    from veqpy.workspace.geometry_workspace import GeometryWorkspace
+    from veqpy.workspace.profile_workspace import ProfileWorkspace
+    from veqpy.workspace.residual_workspace import ResidualWorkspace
+    from veqpy.workspace.source_workspace import SourceWorkspace
 
 from .runtime import OperatorLayout
 
@@ -28,7 +32,10 @@ def build_operator_layout(
     *,
     plan: OperatorBuildPlan,
     case: OperatorCase,
-    workspace: OperatorWorkspace,
+    profile_workspace: ProfileWorkspace,
+    geometry_workspace: GeometryWorkspace,
+    source_workspace: SourceWorkspace,
+    residual_workspace: ResidualWorkspace,
     backend_state: BackendState,
     c_effective_order: int,
     s_effective_order: int,
@@ -37,13 +44,18 @@ def build_operator_layout(
 ) -> OperatorLayout:
     """Bind a full executable ``OperatorLayout`` from refreshed runtime state."""
 
-    alpha_state = workspace.source.alpha_state
-    profile_stage_runner = _build_profile_stage_runner(plan=plan, workspace=workspace)
-    profile_postprocess_runner = _build_profile_postprocess_runner(workspace=workspace)
+    alpha_state = source_workspace.alpha_state
+    profile_stage_runner = _build_profile_stage_runner(
+        plan=plan, profile_workspace=profile_workspace
+    )
+    profile_postprocess_runner = _build_profile_postprocess_runner(
+        source_workspace=source_workspace
+    )
     geometry_stage_runner = _build_geometry_stage_runner(
         plan=plan,
         case=case,
-        workspace=workspace,
+        profile_workspace=profile_workspace,
+        geometry_workspace=geometry_workspace,
         c_effective_order=c_effective_order,
         s_effective_order=s_effective_order,
     )
@@ -56,7 +68,8 @@ def build_operator_layout(
     raw_source_stage_runner = _build_bound_source_stage_runner(
         plan=plan,
         case=case,
-        workspace=workspace,
+        source_workspace=source_workspace,
+        residual_workspace=residual_workspace,
         fix_rho=fix_rho,
         source_eval_runner=source_eval_runner,
     )
@@ -66,7 +79,9 @@ def build_operator_layout(
     residual_full_stage_runner_into = _build_bound_residual_full_stage_runner_into(
         plan=plan,
         case=case,
-        workspace=workspace,
+        profile_workspace=profile_workspace,
+        geometry_workspace=geometry_workspace,
+        residual_workspace=residual_workspace,
         alpha_state=alpha_state,
     )
     residual_full_stage_runner = _build_bound_residual_full_stage_runner(
@@ -93,7 +108,8 @@ def build_operator_layout(
     )
     collocation_runner_into = _build_collocation_runner_into(
         plan=plan,
-        workspace=workspace,
+        geometry_workspace=geometry_workspace,
+        residual_workspace=residual_workspace,
         profile_stage_runner=profile_stage_runner,
         geometry_stage_runner=geometry_stage_runner,
         source_stage_runner=source_stage_runner,
@@ -116,14 +132,15 @@ def build_operator_layout(
 def _build_profile_stage_runner(
     *,
     plan: OperatorBuildPlan,
-    workspace: OperatorWorkspace,
+    profile_workspace: ProfileWorkspace,
 ) -> Callable[[np.ndarray], None]:
     from veqpy.operator.profile_runtime import build_profile_stage_runner
 
-    profile_workspace = workspace.profile
     return build_profile_stage_runner(
         active_profile_ids=plan.active_profile_ids,
-        active_profile_slab=profile_workspace.active_profile_slab,
+        active_u_fields=profile_workspace.active_u_fields,
+        active_rp_fields=profile_workspace.active_rp_fields,
+        active_env_fields=profile_workspace.active_env_fields,
         T=plan.static_layout.T,
         T_r=plan.static_layout.T_r,
         T_rr=plan.static_layout.T_rr,
@@ -137,11 +154,11 @@ def _build_profile_stage_runner(
 
 def _build_profile_postprocess_runner(
     *,
-    workspace: OperatorWorkspace,
+    source_workspace: SourceWorkspace,
 ) -> Callable[[], None]:
     eps = 1.0e-10
 
-    f_fields = workspace.source.f_fields
+    f_fields = source_workspace.f_fields
 
     def runner() -> None:
         numba_operator.convert_f_squared_fields_to_f(f_fields, eps=eps)
@@ -153,12 +170,11 @@ def _build_geometry_stage_runner(
     *,
     plan: OperatorBuildPlan,
     case: OperatorCase,
-    workspace: OperatorWorkspace,
+    profile_workspace: ProfileWorkspace,
+    geometry_workspace: GeometryWorkspace,
     c_effective_order: int,
     s_effective_order: int,
 ) -> Callable[[], None]:
-    profile_workspace = workspace.profile
-    geometry_workspace = workspace.geometry
     return build_geometry_stage_runner(
         c_family_fields=profile_workspace.c_family_fields,
         s_family_fields=profile_workspace.s_family_fields,
@@ -169,9 +185,9 @@ def _build_geometry_stage_runner(
         s_family_source_slots=profile_workspace.s_family_source_slots,
         c_effective_order=c_effective_order,
         s_effective_order=s_effective_order,
-        h_fields=workspace.geometry.h_fields,
-        v_fields=workspace.geometry.v_fields,
-        k_fields=workspace.geometry.k_fields,
+        h_fields=geometry_workspace.h_fields,
+        v_fields=geometry_workspace.v_fields,
+        k_fields=geometry_workspace.k_fields,
         a=case.a,
         R0=case.R0,
         Z0=case.Z0,
@@ -192,14 +208,16 @@ def _build_bound_source_stage_runner(
     *,
     plan: OperatorBuildPlan,
     case: OperatorCase,
-    workspace: OperatorWorkspace,
+    source_workspace: SourceWorkspace,
+    residual_workspace: ResidualWorkspace,
     fix_rho: float,
     source_eval_runner: Callable,
 ) -> Callable[[], tuple[float, float]]:
     return build_bound_source_stage_runner(
         plan=plan,
         case=case,
-        workspace=workspace,
+        source_workspace=source_workspace,
+        residual_workspace=residual_workspace,
         fix_rho=fix_rho,
         source_eval_runner=source_eval_runner,
     )
@@ -223,14 +241,15 @@ def _build_bound_residual_full_stage_runner_into(
     *,
     plan: OperatorBuildPlan,
     case: OperatorCase,
-    workspace: OperatorWorkspace,
+    profile_workspace: ProfileWorkspace,
+    geometry_workspace: GeometryWorkspace,
+    residual_workspace: ResidualWorkspace,
     alpha_state: np.ndarray,
 ) -> Callable[[np.ndarray], None]:
-    root_fields = workspace.residual.root_fields
-    surface_fields = workspace.geometry.surface_fields
-    residual_surface_fields = workspace.residual.surface_fields
-    residual_pack_scratch = workspace.residual.pack_scratch
-    profile_workspace = workspace.profile
+    root_fields = residual_workspace.root_fields
+    surface_fields = geometry_workspace.surface_fields
+    residual_surface_fields = residual_workspace.surface_fields
+    residual_pack_scratch = residual_workspace.pack_scratch
     sin_mtheta = plan.static_layout.sin_mtheta
     cos_mtheta = plan.static_layout.cos_mtheta
     rho_powers = plan.static_layout.rho_powers
@@ -289,14 +308,14 @@ def _build_bound_residual_full_stage_runner(
 def _build_collocation_runner_into(
     *,
     plan: OperatorBuildPlan,
-    workspace: OperatorWorkspace,
+    geometry_workspace: GeometryWorkspace,
+    residual_workspace: ResidualWorkspace,
     profile_stage_runner: Callable[[np.ndarray], None],
     geometry_stage_runner: Callable[[], None],
     source_stage_runner: Callable[[], tuple[float, float]],
     alpha_state: np.ndarray,
 ) -> Callable[[np.ndarray, np.ndarray], None]:
-    residual_workspace = workspace.residual
-    geometry_surface_fields = workspace.geometry.surface_fields
+    geometry_surface_fields = geometry_workspace.surface_fields
     block_size = plan.static_layout.Nr * plan.static_layout.Nt
 
     def runner(x_eval: np.ndarray, out: np.ndarray) -> None:

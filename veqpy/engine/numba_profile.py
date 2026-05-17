@@ -70,7 +70,9 @@ def update_profile(
 
 @njit(cache=True, fastmath=True, nogil=True)
 def update_profiles_packed_bulk(
-    active_profile_slab: np.ndarray,
+    active_u_fields: np.ndarray,
+    active_rp_fields: np.ndarray,
+    active_env_fields: np.ndarray,
     T: np.ndarray,
     T_r: np.ndarray,
     T_rr: np.ndarray,
@@ -81,11 +83,8 @@ def update_profiles_packed_bulk(
     lengths: np.ndarray,
 ) -> None:
     """Refresh all active profile fields from packed x in bulk."""
-    out_fields_all = active_profile_slab[0]
-    rp_fields_all = active_profile_slab[1]
-    env_fields_all = active_profile_slab[2]
-    n_active = out_fields_all.shape[0]
-    nr = out_fields_all.shape[2]
+    n_active = active_u_fields.shape[0]
+    nr = active_u_fields.shape[2]
 
     for p in range(n_active):
         coeff_size = lengths[p]
@@ -103,17 +102,17 @@ def update_profiles_packed_bulk(
                 series_r += c * T_r[k, i]
                 series_rr += c * T_rr[k, i]
 
-            env = env_fields_all[p, 0, i]
-            env_r = env_fields_all[p, 1, i]
-            env_rr = env_fields_all[p, 2, i]
+            env = active_env_fields[p, 0, i]
+            env_r = active_env_fields[p, 1, i]
+            env_rr = active_env_fields[p, 2, i]
             base = env * series
             base_r = env_r * series + env * series_r
             base_rr = env_rr * series + 2.0 * env_r * series_r + env * series_rr
             amp = offset + base
 
-            rp = rp_fields_all[p, 0, i]
-            rp_r = rp_fields_all[p, 1, i]
-            rp_rr = rp_fields_all[p, 2, i]
-            out_fields_all[p, 0, i] = scale * (rp * amp)
-            out_fields_all[p, 1, i] = scale * (rp_r * amp + rp * base_r)
-            out_fields_all[p, 2, i] = scale * (rp_rr * amp + 2.0 * rp_r * base_r + rp * base_rr)
+            rp = active_rp_fields[p, 0, i]
+            rp_r = active_rp_fields[p, 1, i]
+            rp_rr = active_rp_fields[p, 2, i]
+            active_u_fields[p, 0, i] = scale * (rp * amp)
+            active_u_fields[p, 1, i] = scale * (rp_r * amp + rp * base_r)
+            active_u_fields[p, 2, i] = scale * (rp_rr * amp + 2.0 * rp_r * base_r + rp * base_rr)

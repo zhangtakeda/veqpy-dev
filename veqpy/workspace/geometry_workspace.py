@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from veqpy.model.profile import Profile
 
 
-@dataclass(slots=True)
+@dataclass(init=False, slots=True)
 class GeometryWorkspace:
     """Geometry stage memory owner.
 
@@ -31,6 +31,15 @@ class GeometryWorkspace:
     h_fields: np.ndarray
     v_fields: np.ndarray
     k_fields: np.ndarray
+
+    def __init__(self, *, nr: int, nt: int) -> None:
+        """Allocate geometry-stage runtime memory."""
+
+        self.surface_fields = np.empty((9, nr, nt), dtype=np.float64)
+        self.radial_fields = np.empty((5, nr), dtype=np.float64)
+        self.h_fields = np.empty((0, nr), dtype=np.float64)
+        self.v_fields = np.empty((0, nr), dtype=np.float64)
+        self.k_fields = np.empty((0, nr), dtype=np.float64)
 
     def bind_shape_profile_views(
         self, *, h_profile: Profile, v_profile: Profile, k_profile: Profile

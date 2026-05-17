@@ -148,7 +148,9 @@ def build_source_execution_abi(
 
 @dataclass(frozen=True, slots=True)
 class FusedHotRuntimeABI:
-    active_profile_slab: np.ndarray
+    active_u_fields: np.ndarray
+    active_rp_fields: np.ndarray
+    active_env_fields: np.ndarray
     T: np.ndarray
     T_r: np.ndarray
     T_rr: np.ndarray
@@ -160,7 +162,6 @@ class FusedHotRuntimeABI:
     s_family_fields: np.ndarray
     c_family_base_fields: np.ndarray
     s_family_base_fields: np.ndarray
-    active_u_fields: np.ndarray
     c_family_source_slots: np.ndarray
     s_family_source_slots: np.ndarray
     geometry_surface_fields: np.ndarray
@@ -236,11 +237,12 @@ def build_fused_hot_runtime_abi(
     Z0: float,
 ) -> FusedHotRuntimeABI:
     static_layout = backend_state.static_layout
-    workspace = backend_state.workspace
-    profile_workspace = workspace.profile
-    geometry_workspace = workspace.geometry
+    profile_workspace = backend_state.profile_workspace
+    geometry_workspace = backend_state.geometry_workspace
     return FusedHotRuntimeABI(
-        active_profile_slab=profile_workspace.active_profile_slab,
+        active_u_fields=profile_workspace.active_u_fields,
+        active_rp_fields=profile_workspace.active_rp_fields,
+        active_env_fields=profile_workspace.active_env_fields,
         T=static_layout.T,
         T_r=static_layout.T_r,
         T_rr=static_layout.T_rr,
@@ -252,7 +254,6 @@ def build_fused_hot_runtime_abi(
         s_family_fields=profile_workspace.s_family_fields,
         c_family_base_fields=profile_workspace.c_family_base_fields,
         s_family_base_fields=profile_workspace.s_family_base_fields,
-        active_u_fields=profile_workspace.active_u_fields,
         c_family_source_slots=profile_workspace.c_family_source_slots,
         s_family_source_slots=profile_workspace.s_family_source_slots,
         geometry_surface_fields=geometry_workspace.surface_fields,
@@ -265,10 +266,10 @@ def build_fused_hot_runtime_abi(
         m_sin_mtheta=static_layout.m_sin_mtheta,
         m2_cos_mtheta=static_layout.m2_cos_mtheta,
         m2_sin_mtheta=static_layout.m2_sin_mtheta,
-        h_fields=workspace.geometry.h_fields,
-        v_fields=workspace.geometry.v_fields,
-        k_fields=workspace.geometry.k_fields,
-        f_profile_fields=workspace.source.f_fields,
+        h_fields=geometry_workspace.h_fields,
+        v_fields=geometry_workspace.v_fields,
+        k_fields=geometry_workspace.k_fields,
+        f_profile_fields=backend_state.source_workspace.f_fields,
         has_active_f_profile=bool(source_execution.has_active_f_profile),
         c_active_order=c_active_order,
         s_active_order=s_active_order,
@@ -286,9 +287,8 @@ def build_fused_residual_pack_abi(
     B0: float,
 ) -> FusedResidualPackABI:
     static_layout = backend_state.static_layout
-    workspace = backend_state.workspace
-    profile_workspace = workspace.profile
-    residual_workspace = workspace.residual
+    profile_workspace = backend_state.profile_workspace
+    residual_workspace = backend_state.residual_workspace
     residual_binding_layout = backend_state.residual_binding_layout
     return FusedResidualPackABI(
         residual_pack_scratch=residual_workspace.pack_scratch,
@@ -321,9 +321,8 @@ def build_fused_source_eval_abi(
 ) -> FusedSourceEvalABI:
     source_kernel = source_plan.kernel
     static_layout = backend_state.static_layout
-    workspace = backend_state.workspace
-    geometry_workspace = workspace.geometry
-    source_workspace = backend_state.workspace.source
+    geometry_workspace = backend_state.geometry_workspace
+    source_workspace = backend_state.source_workspace
 
     n_axis_fix = int(np.searchsorted(static_layout.rho, fix_rho))
 
@@ -338,7 +337,7 @@ def build_fused_source_eval_abi(
         n_axis_fix=n_axis_fix,
         radial_fields=geometry_workspace.radial_fields,
         surface_fields=geometry_workspace.surface_fields,
-        f_profile_u=workspace.source.f_u,
+        f_profile_u=source_workspace.f_u,
         Ip=float(source_plan.Ip),
         beta=float(source_plan.beta),
         source_scratch_1d=source_workspace.scratch_1d,
@@ -353,8 +352,7 @@ def build_profile_owned_psin_source_abi(
     source_execution: SourceExecutionABI,
     backend_state: BackendState,
 ):
-    workspace = backend_state.workspace
-    source_workspace = backend_state.workspace.source
+    source_workspace = backend_state.source_workspace
     return SimpleNamespace(
         source_target_root_fields=source_workspace.target_root_fields,
         rho=backend_state.static_layout.rho,
@@ -369,7 +367,7 @@ def build_profile_owned_psin_source_abi(
         endpoint_blend=source_workspace.endpoint_blend,
         materialized_heat_input=source_workspace.materialized_heat_input,
         materialized_current_input=source_workspace.materialized_current_input,
-        psin_profile_fields=workspace.source.psin_fields,
+        psin_profile_fields=source_workspace.psin_fields,
         parameterization_code=int(source_plan.parameterization_code),
         heat_input=source_plan.heat_input,
         current_input=source_plan.current_input,

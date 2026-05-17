@@ -8,15 +8,22 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
+    from veqpy.engine.backend_abi import SourceExecutionABI
     from veqpy.model.profile import Profile
 
 
-@dataclass(slots=True)
+@dataclass(init=False, slots=True)
 class SourceWorkspace:
     """Source stage memory owner.
 
     The source stage owns route/interpolation cache arrays, materialization scratch,
     source-produced outputs, source scale factors, and borrowed F/psin profile inputs.
+
+    ``scratch_1d`` and ``scratch_2d`` are reusable temporary work arrays
+    allocated with the workspace, then reused by source kernels on the hot path.
+    Scratch arrays do not carry persistent physical meaning across kernel calls;
+    their slot meanings are owned by the consuming kernel and may be overwritten
+    during one source-stage evaluation.
     """
 
     cache_key: tuple[str, str, int, str] | None
@@ -41,6 +48,43 @@ class SourceWorkspace:
     f_fields: np.ndarray
     psin_u: np.ndarray
     psin_fields: np.ndarray
+
+    def __init__(self, *, nr: int, nt: int, source_execution: SourceExecutionABI) -> None:
+        """Allocate source-stage runtime memory."""
+
+        needs_psin_query = bool(source_execution.requires_psin_query_workspace)
+        self.cache_key = None
+
+        self.barycentric_weights = np.empty(0, dtype=np.float64)
+        self.fixed_remap_matrix = np.empty((0, 0), dtype=np.float64)
+        self.endpoint_blend = np.linspace(0.0, 1.0, nr, dtype=np.float64)
+        self.heat_spline_coeff = np.empty((0, 4), dtype=np.float64)
+        self.current_spline_coeff = np.empty((0, 4), dtype=np.float64)
+
+        self.psin_query = (
+            np.empty(nr, dtype=np.float64) if needs_psin_query else np.empty(0, dtype=np.float64)
+        )
+        self.parameter_query = (
+            np.empty(nr, dtype=np.float64)
+            if source_execution.requires_source_parameter_query
+            else self.psin_query
+        )
+        self.materialized_heat_input = np.empty(nr, dtype=np.float64)
+        self.materialized_current_input = np.empty(nr, dtype=np.float64)
+        self.scratch_1d = np.empty((7 + nr, nr), dtype=np.float64)
+        self.scratch_2d = np.empty((1, nr, nt), dtype=np.float64)
+
+        self.target_root_fields = (
+            np.empty((3, nr), dtype=np.float64)
+            if source_execution.requires_target_root_fields
+            else np.empty((3, 0), dtype=np.float64)
+        )
+        self.alpha_state = np.zeros(2, dtype=np.float64)
+
+        self.f_u = np.empty(0, dtype=np.float64)
+        self.f_fields = np.empty((0, nr), dtype=np.float64)
+        self.psin_u = np.empty(0, dtype=np.float64)
+        self.psin_fields = np.empty((0, nr), dtype=np.float64)
 
     def bind_profile_views(self, *, F_profile: Profile, psin_profile: Profile) -> None:
         """Bind borrowed profile arrays used by source evaluation."""

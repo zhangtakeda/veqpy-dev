@@ -11,27 +11,18 @@ if TYPE_CHECKING:
     from veqpy.model.profile import Profile
 
 
-@dataclass(slots=True)
+@dataclass(init=False, slots=True)
 class ProfileWorkspace:
     """Profile stage memory owner.
 
-    ``active_profile_slab`` shape: ``(3, n_active, 3, Nr)``.
-    Rows are active profile fields, radial-prefactor fields, and envelope fields.
+    Active profile field arrays have shape ``(n_active, 3, Nr)``.
     Derivative axis ``0/1/2`` means value, radial first derivative, radial second derivative.
-    The slab is the owning allocation; ``active_u_fields``, ``active_rp_fields``,
-    and ``active_env_fields`` are semantic views into its first axis.
 
-    ``family_field_slab`` shape: ``(4, M_max + 1, 3, Nr)``.
-    Rows are c family fields, s family fields, c base fields, and s base fields.
-    The named ``*_fields`` attributes are semantic views into this slab.
-
-    A slab semantic view is a named slice into one owning array. The slab
-    preserves one physical allocation for hot-path locality, while each view
-    documents the row meaning expected by stage kernels and call sites.
+    Fourier family field arrays have shape ``(M_max + 1, 3, Nr)``.
+    Each named ``*_fields`` array is directly owned by this workspace; there is
+    no hidden packing axis or first-axis row contract.
     """
 
-    active_profile_slab: np.ndarray
-    family_field_slab: np.ndarray
     active_u_fields: np.ndarray
     active_rp_fields: np.ndarray
     active_env_fields: np.ndarray
@@ -46,6 +37,56 @@ class ProfileWorkspace:
     active_slot_by_profile_id: np.ndarray
     c_family_source_slots: np.ndarray
     s_family_source_slots: np.ndarray
+
+    def __init__(
+        self,
+        *,
+        nr: int,
+        m_max: int,
+        profile_names: tuple[str, ...],
+        profile_index: dict[str, int],
+        active_profile_ids: np.ndarray,
+        profile_L: np.ndarray,
+    ) -> None:
+        """Allocate profile-stage runtime memory and profile-slot metadata."""
+
+        n_active = int(active_profile_ids.size)
+        max_active_len = 0
+        if n_active > 0:
+            max_active_len = max(int(profile_L[int(p)]) + 1 for p in active_profile_ids)
+
+        self.active_u_fields = np.empty((n_active, 3, nr), dtype=np.float64)
+        self.active_rp_fields = np.empty((n_active, 3, nr), dtype=np.float64)
+        self.active_env_fields = np.empty((n_active, 3, nr), dtype=np.float64)
+        self.active_offsets = np.empty(n_active, dtype=np.float64)
+        self.active_scales = np.empty(n_active, dtype=np.float64)
+        self.active_lengths = np.empty(n_active, dtype=np.int64)
+        self.active_coeff_index_rows = np.full((n_active, max_active_len), -1, dtype=np.int64)
+
+        self.c_family_fields = np.empty((m_max + 1, 3, nr), dtype=np.float64)
+        self.s_family_fields = np.zeros((m_max + 1, 3, nr), dtype=np.float64)
+        self.c_family_base_fields = np.zeros((m_max + 1, 3, nr), dtype=np.float64)
+        self.s_family_base_fields = np.zeros((m_max + 1, 3, nr), dtype=np.float64)
+
+        self.active_slot_by_profile_id = np.full(len(profile_names), -1, dtype=np.int64)
+        for slot, profile_id in enumerate(active_profile_ids):
+            self.active_slot_by_profile_id[int(profile_id)] = int(slot)
+
+        self.c_family_source_slots = np.full(m_max + 1, -1, dtype=np.int64)
+        self.s_family_source_slots = np.full(m_max + 1, -1, dtype=np.int64)
+        for order in range(m_max + 1):
+            c_name = f"c{order}"
+            if c_name in profile_index:
+                self.c_family_source_slots[order] = self.active_slot_by_profile_id[
+                    profile_index[c_name]
+                ]
+            if order == 0:
+                continue
+            s_name = f"s{order}"
+            if s_name in profile_index:
+                self.s_family_source_slots[order] = self.active_slot_by_profile_id[
+                    profile_index[s_name]
+                ]
 
     def residual_block_lengths(self) -> np.ndarray:
         """Return a copy of active residual block lengths for solver normalization."""
