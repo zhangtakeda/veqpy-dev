@@ -29,7 +29,7 @@ from veqpy.engine.numba_source import SOURCE_ROUTE_KEYS, resolve_source_scratch_
 
 if TYPE_CHECKING:
     from veqpy.operator.runtime_layout import BackendState
-    from veqpy.orchestration import SourcePlan
+    from veqpy.operator.source_plan import SourcePlan
 
 
 RouteKey = tuple[str, str, str]

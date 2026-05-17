@@ -21,18 +21,21 @@ from typing import Callable
 import numpy as np
 
 import veqpy.engine.backend_abi as backend_abi
-from veqpy import orchestration
 from veqpy.engine import numba_operator, numba_profile, numba_residual, validate_route
 from veqpy.model.equilibrium import Equilibrium
 from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile
 from veqpy.operator.operator_case import OperatorCase
 from veqpy.operator.packed_layout import (
+    PROFILE_OFFSET_SPECS,
+    PROFILE_STATIC_KWARGS,
     build_active_profile_metadata,
     build_fourier_profile_names,
     build_profile_index,
     build_profile_layout,
     build_profile_names,
+    build_residual_block_metadata,
+    build_residual_block_radial_powers,
     build_shape_profile_names,
     decode_packed_blocks,
     encode_packed_state,
@@ -59,6 +62,17 @@ from veqpy.operator.runtime_layout import (
     _pack_poloidal_block,
     _pack_radial_block,
     allocate_runtime_state,
+)
+from veqpy.operator.source_plan import (
+    SourcePlan,
+    build_source_plan,
+    validate_source_inputs,
+    validate_source_plan_profile_support,
+)
+from veqpy.operator.source_runtime import refresh_source_runtime
+from veqpy.operator.stage_binding import (
+    build_bound_source_stage_runner,
+    build_geometry_stage_runner,
 )
 
 
@@ -126,7 +140,7 @@ class Operator:
     c_effective_order: int = field(init=False, repr=False)
     s_effective_order: int = field(init=False, repr=False)
     _source_route_spec: object = field(init=False, repr=False)
-    source_plan: orchestration.SourcePlan = field(init=False, repr=False)
+    source_plan: SourcePlan = field(init=False, repr=False)
     source_execution: backend_abi.SourceExecutionABI = field(init=False, repr=False)
     field_runtime_state: FieldRuntimeState = field(init=False, repr=False)
     execution_state: ExecutionState = field(init=False, repr=False)
@@ -204,7 +218,7 @@ class Operator:
 
     def _validate_runtime_profile_support(self) -> None:
         """校验当前 source route 对 psin profile ownership 的要求."""
-        orchestration.validate_source_plan_profile_support(
+        validate_source_plan_profile_support(
             source_plan=self.source_plan,
             source_execution=self.source_execution,
             case=self.case,
@@ -220,7 +234,7 @@ class Operator:
             profile_L=self.profile_L,
             coeff_index=self.coeff_index,
             order_offsets=self.order_offsets,
-            validate_source_inputs=lambda next_case: orchestration.validate_source_inputs(
+            validate_source_inputs=lambda next_case: validate_source_inputs(
                 next_case, self.static_layout.Nr
             ),
         )
@@ -417,10 +431,10 @@ class Operator:
 
     def _build_residual_binding_layout(self) -> ResidualBindingLayout:
         active_profile_names = tuple(self.profile_names[int(p)] for p in self.active_profile_ids)
-        active_residual_block_codes, active_residual_block_orders = (
-            orchestration.build_residual_block_metadata(active_profile_names)
+        active_residual_block_codes, active_residual_block_orders = build_residual_block_metadata(
+            active_profile_names
         )
-        active_residual_block_radial_powers = orchestration.build_residual_block_radial_powers(
+        active_residual_block_radial_powers = build_residual_block_radial_powers(
             active_profile_names,
             K_values=self.static_layout.K_values,
         )
@@ -526,7 +540,7 @@ class Operator:
         self._validate_runtime_profile_support()
         self._refresh_profile_runtime()
         self._refresh_fourier_family_metadata()
-        orchestration.refresh_source_runtime(
+        refresh_source_runtime(
             case=self.case,
             grid_rho=self.static_layout.rho,
             source_plan=self.source_plan,
@@ -542,7 +556,7 @@ class Operator:
     def _refresh_operator_identity(self) -> None:
         spec = validate_route(self.case.route, self.case.coordinate, self.case.nodes)
         self._source_route_spec = spec
-        self.source_plan = orchestration.build_source_plan(
+        self.source_plan = build_source_plan(
             case=self.case,
             source_route_spec=self._source_route_spec,
             interpolation_kind=self.source_interpolation_kind,
@@ -559,14 +573,14 @@ class Operator:
 
     def _refresh_profile_config(self) -> None:
         self.profile_static_kwargs_by_name = {
-            name: dict(kwargs) for name, kwargs in orchestration.PROFILE_STATIC_KWARGS.items()
+            name: dict(kwargs) for name, kwargs in PROFILE_STATIC_KWARGS.items()
         }
         for name in self.c_profile_names + self.s_profile_names:
             order = int(name[1:])
             self.profile_static_kwargs_by_name[name] = (
                 {} if order == 0 else {"power": int(self.static_layout.K_values[order])}
             )
-        self.profile_offset_specs = dict(orchestration.PROFILE_OFFSET_SPECS)
+        self.profile_offset_specs = dict(PROFILE_OFFSET_SPECS)
 
     def _build_profile_postprocess_runner(self) -> Callable[[], None]:
         eps = 1.0e-10
@@ -658,7 +672,7 @@ class Operator:
         )
 
     def _build_geometry_stage_runner(self) -> Callable:
-        return orchestration.build_geometry_stage_runner(
+        return build_geometry_stage_runner(
             c_family_fields=self.c_family_fields,
             s_family_fields=self.s_family_fields,
             c_family_base_fields=self.c_family_base_fields,
@@ -687,7 +701,7 @@ class Operator:
         )
 
     def _build_bound_source_stage_runner(self) -> Callable:
-        return orchestration.build_bound_source_stage_runner(self)
+        return build_bound_source_stage_runner(self)
 
     def _build_source_eval_runner(self) -> Callable:
         return numba_operator.bind_source_eval_runner(

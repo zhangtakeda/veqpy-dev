@@ -44,4 +44,5 @@ uv.lock
 /**.md
 /**.py
 /**.patch
+!AGENTS.md
 !README.md

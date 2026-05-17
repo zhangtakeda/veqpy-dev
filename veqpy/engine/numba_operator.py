@@ -48,7 +48,7 @@ from veqpy.math.interpolate import build_uniform_source_interpolation_coefficien
 
 if TYPE_CHECKING:
     from veqpy.operator.runtime_layout import BackendState
-    from veqpy.orchestration import SourcePlan
+    from veqpy.operator.source_plan import SourcePlan
 
 
 def bind_source_eval_runner(

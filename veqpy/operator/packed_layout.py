@@ -23,8 +23,7 @@ Public API:
 - coeff_array_from_list
 
 Notes:
-- Profile family ordering is declared in ``veqpy.orchestration``; this module keeps
-  compatibility aliases and packed-index construction.
+- Profile family ordering and residual block metadata are declared here.
 - 这里定义的是 packed layout 规则.
 - 这里也处理同一 packed layout 下的 state codec.
 - 不负责数值核计算, residual 组装, 或 solver 迭代控制.
@@ -34,36 +33,161 @@ from numbers import Integral
 
 import numpy as np
 
-from veqpy import orchestration
-
 ProfileCoeffValue = list[float] | np.ndarray | int
 
-PACKED_PROFILE_FAMILY_ORDER = orchestration.PACKED_PROFILE_FAMILY_ORDER
+RESIDUAL_BLOCK_CODE_BY_NAME = {
+    "h": 0,
+    "v": 1,
+    "k": 2,
+    "c0": 3,
+    "c_family": 4,
+    "s_family": 5,
+    "psin": 6,
+    "F": 7,
+}
+
+PACKED_PROFILE_FAMILY_ORDER = ("h", "v", "k", "c0", "c", "s", "psin", "F")
+PREFIX_PROFILE_FAMILIES = ("psin", "F")
+SHAPE_PROFILE_FAMILIES = ("h", "v", "k", "c0", "c", "s")
+ALL_PROFILE_FAMILIES = SHAPE_PROFILE_FAMILIES + PREFIX_PROFILE_FAMILIES
+
+PROFILE_STATIC_KWARGS: dict[str, dict[str, int]] = {
+    "psin": {"power": 2},
+    "F": {"envelope_power": 2},
+}
+PROFILE_OFFSET_SPECS: dict[str, float | str] = {
+    "h": 0.0,
+    "v": 0.0,
+    "k": "ka",
+    "psin": 1.0,
+    "F": 1.0,
+}
+
+
+def validate_profile_family_order(
+    family_order: tuple[str, ...] = PACKED_PROFILE_FAMILY_ORDER,
+) -> tuple[str, ...]:
+    family_order = tuple(family_order)
+    if len(family_order) != len(ALL_PROFILE_FAMILIES) or set(family_order) != set(
+        ALL_PROFILE_FAMILIES
+    ):
+        raise ValueError(f"Invalid PACKED_PROFILE_FAMILY_ORDER {family_order!r}")
+    return family_order
+
+
+def get_prefix_profile_names(
+    family_order: tuple[str, ...] = PACKED_PROFILE_FAMILY_ORDER,
+) -> tuple[str, ...]:
+    return tuple(
+        family
+        for family in validate_profile_family_order(family_order)
+        if family in PREFIX_PROFILE_FAMILIES
+    )
+
+
+def expand_profile_family(family: str, M_max: int) -> tuple[str, ...]:
+    if family == "psin":
+        return ("psin",)
+    if family == "F":
+        return ("F",)
+    if family == "h":
+        return ("h",)
+    if family == "v":
+        return ("v",)
+    if family == "k":
+        return ("k",)
+    if family == "c0":
+        return ("c0",)
+    if family == "c":
+        return tuple(f"c{k}" for k in range(1, M_max + 1))
+    if family == "s":
+        return tuple(f"s{k}" for k in range(1, M_max + 1))
+    raise KeyError(f"Unknown profile family {family!r}")
+
+
+def build_fourier_profile_names(
+    M_max: int,
+    family_order: tuple[str, ...] = PACKED_PROFILE_FAMILY_ORDER,
+) -> tuple[str, ...]:
+    M_max = int(M_max)
+    if M_max < 0:
+        raise ValueError(f"M_max must be non-negative, got {M_max}")
+
+    fourier_names: list[str] = []
+    for family in validate_profile_family_order(family_order):
+        if family not in ("c0", "c", "s"):
+            continue
+        fourier_names.extend(expand_profile_family(family, M_max))
+    return tuple(fourier_names)
+
+
+def build_shape_profile_names(
+    M_max: int,
+    family_order: tuple[str, ...] = PACKED_PROFILE_FAMILY_ORDER,
+) -> tuple[str, ...]:
+    shape_profile_names: list[str] = []
+    for family in validate_profile_family_order(family_order):
+        if family in PREFIX_PROFILE_FAMILIES:
+            continue
+        shape_profile_names.extend(expand_profile_family(family, int(M_max)))
+    return tuple(shape_profile_names)
+
+
+def build_profile_names(
+    M_max: int,
+    family_order: tuple[str, ...] = PACKED_PROFILE_FAMILY_ORDER,
+) -> tuple[str, ...]:
+    M_max = int(M_max)
+    profile_names: list[str] = []
+    for family in validate_profile_family_order(family_order):
+        profile_names.extend(expand_profile_family(family, M_max))
+    return tuple(profile_names)
+
+
+def _decode_residual_block_code(name: str) -> tuple[int, int]:
+    if name.startswith("c") and name[1:].isdigit():
+        order = int(name[1:])
+        if order == 0:
+            return (RESIDUAL_BLOCK_CODE_BY_NAME["c0"], 0)
+        return (RESIDUAL_BLOCK_CODE_BY_NAME["c_family"], order)
+    if name.startswith("s") and name[1:].isdigit():
+        order = int(name[1:])
+        if order == 0:
+            raise KeyError("s0 is not a valid residual block")
+        return (RESIDUAL_BLOCK_CODE_BY_NAME["s_family"], order)
+    try:
+        return (RESIDUAL_BLOCK_CODE_BY_NAME[name], 0)
+    except KeyError as exc:
+        supported = ", ".join(RESIDUAL_BLOCK_CODE_BY_NAME)
+        raise KeyError(f"Unknown residual block {name!r}. Supported blocks: {supported}") from exc
+
+
+def build_residual_block_metadata(profile_names: tuple[str, ...]) -> tuple[np.ndarray, np.ndarray]:
+    block_codes = np.empty(len(profile_names), dtype=np.int64)
+    block_orders = np.zeros(len(profile_names), dtype=np.int64)
+    for i, name in enumerate(profile_names):
+        block_codes[i], block_orders[i] = _decode_residual_block_code(name)
+    return block_codes, block_orders
+
+
+def build_residual_block_radial_powers(
+    profile_names: tuple[str, ...],
+    *,
+    K_values: np.ndarray,
+) -> np.ndarray:
+    radial_powers = np.zeros(len(profile_names), dtype=np.int64)
+    for i, name in enumerate(profile_names):
+        if name.startswith(("c", "s")) and name[1:].isdigit():
+            order = int(name[1:])
+            if order < K_values.size:
+                radial_powers[i] = int(K_values[order])
+    return radial_powers
+
 INTERLEAVE_SHAPE_COEFFS_BY_ORDER = True
 
 
 def _validated_profile_family_order() -> tuple[str, ...]:
-    return orchestration.validate_profile_family_order(PACKED_PROFILE_FAMILY_ORDER)
-
-
-def get_prefix_profile_names() -> tuple[str, ...]:
-    return orchestration.get_prefix_profile_names(PACKED_PROFILE_FAMILY_ORDER)
-
-
-def _expand_profile_family(family: str, M_max: int) -> tuple[str, ...]:
-    return orchestration.expand_profile_family(family, M_max)
-
-
-def build_fourier_profile_names(M_max: int) -> tuple[str, ...]:
-    return orchestration.build_fourier_profile_names(M_max, PACKED_PROFILE_FAMILY_ORDER)
-
-
-def build_shape_profile_names(M_max: int) -> tuple[str, ...]:
-    return orchestration.build_shape_profile_names(M_max, PACKED_PROFILE_FAMILY_ORDER)
-
-
-def build_profile_names(M_max: int) -> tuple[str, ...]:
-    return orchestration.build_profile_names(M_max, PACKED_PROFILE_FAMILY_ORDER)
+    return validate_profile_family_order(PACKED_PROFILE_FAMILY_ORDER)
 
 
 def build_profile_index(profile_names: tuple[str, ...]) -> dict[str, int]:
