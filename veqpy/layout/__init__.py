@@ -1,6 +1,5 @@
 """Executable layout objects for operator stages."""
 
-from veqpy.layout.binding import build_operator_layout
 from veqpy.layout.runtime import (
     GeometryLayout,
     OperatorLayout,
@@ -17,3 +16,11 @@ __all__ = [
     "ResidualLayout",
     "SourceLayout",
 ]
+
+
+def __getattr__(name: str):
+    if name == "build_operator_layout":
+        from veqpy.layout.binding import build_operator_layout
+
+        return build_operator_layout
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

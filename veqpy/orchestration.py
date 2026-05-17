@@ -15,10 +15,8 @@ Notes:
 
 from __future__ import annotations
 
-from veqpy.layout.stage_binding import (  # noqa: E402
-    build_bound_source_stage_runner,
-    build_geometry_stage_runner,
-)
+from veqpy.layout.geometry_binding import build_geometry_stage_runner  # noqa: E402
+from veqpy.layout.source_binding import build_bound_source_stage_runner  # noqa: E402
 
 # Compatibility re-exports for legacy ``veqpy.orchestration`` imports.
 from veqpy.operator.packed_layout import (  # noqa: E402

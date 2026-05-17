@@ -8,27 +8,26 @@ to bind hot-path callables against those already-refreshed objects.
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 
 from veqpy.engine import numba_operator, numba_profile, numba_residual
-from veqpy.layout.stage_binding import (
-    build_bound_source_stage_runner,
-    build_geometry_stage_runner,
-)
-from veqpy.operator.build_plan import OperatorBuildPlan
-from veqpy.operator.operator_case import OperatorCase
-from veqpy.operator.profile_runtime import build_profile_stage_runner
+from veqpy.layout.geometry_binding import build_geometry_stage_runner
+from veqpy.layout.source_binding import build_bound_source_stage_runner
 from veqpy.workspace import BackendState, OperatorWorkspace
+
+if TYPE_CHECKING:
+    from veqpy.operator.build_plan import OperatorBuildPlan
+    from veqpy.operator.operator_case import OperatorCase
 
 from .runtime import OperatorLayout
 
 
 def build_operator_layout(
     *,
-    plan: OperatorBuildPlan,
-    case: OperatorCase,
+    plan: "OperatorBuildPlan",
+    case: "OperatorCase",
     workspace: OperatorWorkspace,
     backend_state: BackendState,
     alpha_state: np.ndarray,
@@ -103,9 +102,11 @@ def build_operator_layout(
 
 def _build_profile_stage_runner(
     *,
-    plan: OperatorBuildPlan,
+    plan: "OperatorBuildPlan",
     workspace: OperatorWorkspace,
 ) -> Callable[[np.ndarray], None]:
+    from veqpy.operator.profile_runtime import build_profile_stage_runner
+
     profile_workspace = workspace.profile
     return build_profile_stage_runner(
         active_profile_ids=plan.active_profile_ids,
@@ -135,8 +136,8 @@ def _build_profile_postprocess_runner(
 
 def _build_geometry_stage_runner(
     *,
-    plan: OperatorBuildPlan,
-    case: OperatorCase,
+    plan: "OperatorBuildPlan",
+    case: "OperatorCase",
     workspace: OperatorWorkspace,
     c_effective_order: int,
     s_effective_order: int,
@@ -174,8 +175,8 @@ def _build_geometry_stage_runner(
 
 def _build_bound_source_stage_runner(
     *,
-    plan: OperatorBuildPlan,
-    case: OperatorCase,
+    plan: "OperatorBuildPlan",
+    case: "OperatorCase",
     workspace: OperatorWorkspace,
     fix_rho: float,
     source_eval_runner: Callable,
@@ -191,8 +192,8 @@ def _build_bound_source_stage_runner(
 
 def _build_bound_residual_full_stage_runner_into(
     *,
-    plan: OperatorBuildPlan,
-    case: OperatorCase,
+    plan: "OperatorBuildPlan",
+    case: "OperatorCase",
     workspace: OperatorWorkspace,
     alpha_state: np.ndarray,
 ) -> Callable[[np.ndarray], None]:
@@ -245,7 +246,7 @@ def _build_bound_residual_full_stage_runner_into(
 
 def _build_bound_residual_full_stage_runner(
     *,
-    plan: OperatorBuildPlan,
+    plan: "OperatorBuildPlan",
     runner_into: Callable[[np.ndarray], None],
 ) -> Callable[[], np.ndarray]:
     def runner() -> np.ndarray:
@@ -258,8 +259,8 @@ def _build_bound_residual_full_stage_runner(
 
 def _build_fused_residual_runner_into(
     *,
-    plan: OperatorBuildPlan,
-    case: OperatorCase,
+    plan: "OperatorBuildPlan",
+    case: "OperatorCase",
     backend_state: BackendState,
     alpha_state: np.ndarray,
     c_effective_order: int,
@@ -287,7 +288,7 @@ def _build_fused_residual_runner_into(
 
 def _build_fused_residual_runner(
     *,
-    plan: OperatorBuildPlan,
+    plan: "OperatorBuildPlan",
     runner_into: Callable[[np.ndarray, np.ndarray], None],
 ) -> Callable[[np.ndarray], np.ndarray]:
     def runner(x_eval: np.ndarray) -> np.ndarray:
