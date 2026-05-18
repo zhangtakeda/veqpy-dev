@@ -63,6 +63,8 @@ DEFAULT_VARIATIONAL_METHOD = "hybr"
 DEFAULT_COLLOCATION_METHOD = "trf"
 DEFAULT_VARIATIONAL_FALLBACK_METHODS = ("lm",)
 SUPPORTED_INITIAL_POLICIES = frozenset(("zeros", "warm", "homothetic", "optimize"))
+
+
 @dataclass(frozen=True, slots=True)
 class SolverConfig:
     """Describe Solver defaults and per-solve overrides."""
@@ -289,8 +291,7 @@ class SolverConfig:
                 f"residual_normalization_probe_count: {self.residual_normalization_probe_count}"
             )
             tree.add(
-                "residual_normalization_probe_step: "
-                f"{self.residual_normalization_probe_step:.6g}"
+                f"residual_normalization_probe_step: {self.residual_normalization_probe_step:.6g}"
             )
             tree.add(
                 "residual_normalization_sensitivity_lambda: "
@@ -308,5 +309,3 @@ class SolverConfig:
 
     def __repr__(self) -> str:
         return str(self)
-
-

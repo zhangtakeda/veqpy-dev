@@ -490,7 +490,6 @@ class Solver:
         x0_was_provided: bool,
     ) -> list[tuple[str, np.ndarray, SolverConfig]]:
         x_initial = self.operator.coerce_x(x_guess).copy()
-        x_cold = np.zeros_like(x_initial)
         attempt_plans = [
             (
                 self._display_attempt_label(
@@ -504,15 +503,6 @@ class Solver:
             )
         ]
 
-        if self._should_retry_from_reset(x_initial, x0_was_provided=x0_was_provided):
-            attempt_plans.append(
-                (
-                    self._display_attempt_label(solve_config, start_kind="reset"),
-                    x_cold.copy(),
-                    solve_config,
-                )
-            )
-
         seen_methods = {solve_config.method}
         for fallback_method in self._ordered_fallback_methods(solve_config):
             if fallback_method in seen_methods:
@@ -521,8 +511,8 @@ class Solver:
             fallback_config = replace(solve_config, method=fallback_method)
             attempt_plans.append(
                 (
-                    self._display_attempt_label(fallback_config, start_kind="cold-fallback"),
-                    x_cold.copy(),
+                    self._display_attempt_label(fallback_config, start_kind="warm-fallback"),
+                    x_initial.copy(),
                     fallback_config,
                 )
             )
@@ -641,11 +631,6 @@ class Solver:
 
     def _is_warm_initial_guess(self, x_guess: np.ndarray, x0_was_provided: bool) -> bool:
         return bool(x0_was_provided or not self._is_zero_guess(x_guess))
-
-    def _should_retry_from_reset(self, x_guess: np.ndarray, *, x0_was_provided: bool) -> bool:
-        if not self._is_warm_initial_guess(x_guess, x0_was_provided):
-            return False
-        return not self._is_zero_guess(x_guess)
 
     def _is_zero_guess(self, x_guess: np.ndarray) -> bool:
         x_eval = self.operator.coerce_x(x_guess)
