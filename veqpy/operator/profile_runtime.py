@@ -159,42 +159,6 @@ def refresh_stage_a_runtime(
             active_coeff_index_rows[slot, : coeff_indices.size] = coeff_indices
 
 
-def build_profile_stage_runner(
-    *,
-    active_profile_ids: np.ndarray,
-    active_u_fields: np.ndarray,
-    active_rp_fields: np.ndarray,
-    active_env_fields: np.ndarray,
-    T: np.ndarray,
-    T_r: np.ndarray,
-    T_rr: np.ndarray,
-    active_offsets: np.ndarray,
-    active_scales: np.ndarray,
-    active_coeff_index_rows: np.ndarray,
-    active_lengths: np.ndarray,
-    update_profiles_packed_bulk: Callable,
-) -> Callable[[np.ndarray], None]:
-    if active_profile_ids.size == 0:
-        return lambda x: None
-
-    def runner(x: np.ndarray) -> None:
-        update_profiles_packed_bulk(
-            active_u_fields,
-            active_rp_fields,
-            active_env_fields,
-            T,
-            T_r,
-            T_rr,
-            active_offsets,
-            active_scales,
-            x,
-            active_coeff_index_rows,
-            active_lengths,
-        )
-
-    return runner
-
-
 def refresh_fourier_family_base_fields(
     *,
     M_max: int,

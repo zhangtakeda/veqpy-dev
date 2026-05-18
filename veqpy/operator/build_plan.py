@@ -35,16 +35,25 @@ from veqpy.operator.packed_layout import (
     get_prefix_profile_names,
     packed_size,
 )
-from veqpy.operator.residual_binding import ResidualBindingLayout
 from veqpy.operator.source_plan import SourcePlan, build_source_plan
 from veqpy.workspace import GridWorkspace
+
+
+@dataclass(frozen=True, slots=True)
+class ResidualBindingLayout:
+    """Read-only metadata bound to residual packing runners."""
+
+    active_profile_names: tuple[str, ...]
+    active_residual_block_codes: np.ndarray
+    active_residual_block_orders: np.ndarray
+    active_residual_block_radial_powers: np.ndarray
 
 
 @dataclass(frozen=True, slots=True)
 class OperatorBuildPlan:
     """Static topology and case-derived runtime binding plan for Operator."""
 
-    static_layout: GridWorkspace
+    grid_workspace: GridWorkspace
     prefix_profile_names: tuple[str, ...]
     shape_profile_names: tuple[str, ...]
     profile_names: tuple[str, ...]
@@ -73,12 +82,12 @@ def build_operator_plan(
 ) -> OperatorBuildPlan:
     """Build full Operator topology from an initial Grid + case."""
 
-    static_layout = build_static_layout(grid)
+    grid_workspace = build_grid_workspace(grid)
     prefix_profile_names = get_prefix_profile_names()
-    shape_profile_names = build_shape_profile_names(static_layout.M_max)
-    profile_names = build_profile_names(static_layout.M_max)
+    shape_profile_names = build_shape_profile_names(grid_workspace.M_max)
+    profile_names = build_profile_names(grid_workspace.M_max)
     profile_index = build_profile_index(profile_names)
-    fourier_profile_names = build_fourier_profile_names(static_layout.M_max)
+    fourier_profile_names = build_fourier_profile_names(grid_workspace.M_max)
     c_profile_names = tuple(name for name in fourier_profile_names if name.startswith("c"))
     s_profile_names = tuple(name for name in fourier_profile_names if name.startswith("s"))
 
@@ -95,10 +104,10 @@ def build_operator_plan(
     residual_binding_layout = build_residual_binding_layout(
         profile_names=profile_names,
         active_profile_ids=active_profile_ids,
-        K_values=static_layout.K_values,
+        K_values=grid_workspace.K_values,
     )
     profile_static_kwargs_by_name, profile_offset_specs = build_profile_config(
-        static_layout=static_layout,
+        grid_workspace=grid_workspace,
         c_profile_names=c_profile_names,
         s_profile_names=s_profile_names,
     )
@@ -117,7 +126,7 @@ def build_operator_plan(
     )
 
     return OperatorBuildPlan(
-        static_layout=static_layout,
+        grid_workspace=grid_workspace,
         prefix_profile_names=prefix_profile_names,
         shape_profile_names=shape_profile_names,
         profile_names=profile_names,
@@ -168,7 +177,7 @@ def refresh_operator_plan_for_case(
     )
 
 
-def build_static_layout(grid: Grid) -> GridWorkspace:
+def build_grid_workspace(grid: Grid) -> GridWorkspace:
     """Lower Grid into the static arrays consumed by runtime binding."""
 
     return GridWorkspace.from_grid(grid)
@@ -200,7 +209,7 @@ def build_residual_binding_layout(
 
 def build_profile_config(
     *,
-    static_layout: GridWorkspace,
+    grid_workspace: GridWorkspace,
     c_profile_names: tuple[str, ...],
     s_profile_names: tuple[str, ...],
 ) -> tuple[dict[str, dict[str, int]], dict[str, float | str]]:
@@ -212,6 +221,6 @@ def build_profile_config(
     for name in c_profile_names + s_profile_names:
         order = int(name[1:])
         profile_static_kwargs_by_name[name] = (
-            {} if order == 0 else {"power": int(static_layout.K_values[order])}
+            {} if order == 0 else {"power": int(grid_workspace.K_values[order])}
         )
     return profile_static_kwargs_by_name, dict(PROFILE_OFFSET_SPECS)

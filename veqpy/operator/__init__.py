@@ -35,7 +35,7 @@ from veqpy.operator.packed_layout import (
 
 __all__ = [
     "Operator",
-    OperatorCase,
+    "OperatorCase",
     "build_active_profile_metadata",
     "build_fourier_profile_names",
     "build_profile_index",

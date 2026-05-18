@@ -18,6 +18,8 @@ class SourceWorkspace:
 
     The source stage owns route/interpolation cache arrays, materialization scratch,
     source-produced outputs, source scale factors, and borrowed F/psin profile inputs.
+    Borrowed profile arrays start as empty sentinels, then are rebound to real
+    profile arrays before executable layouts are built.
 
     ``scratch_1d`` and ``scratch_2d`` are reusable temporary work arrays
     allocated with the workspace, then reused by source kernels on the hot path.
@@ -81,10 +83,10 @@ class SourceWorkspace:
         )
         self.alpha_state = np.zeros(2, dtype=np.float64)
 
-        self.f_u = np.empty(0, dtype=np.float64)
-        self.f_fields = np.empty((0, nr), dtype=np.float64)
-        self.psin_u = np.empty(0, dtype=np.float64)
-        self.psin_fields = np.empty((0, nr), dtype=np.float64)
+        self.f_u = _empty_profile_values()
+        self.f_fields = _empty_profile_fields(nr)
+        self.psin_u = _empty_profile_values()
+        self.psin_fields = _empty_profile_fields(nr)
 
     def bind_profile_views(self, *, F_profile: Profile, psin_profile: Profile) -> None:
         """Bind borrowed profile arrays used by source evaluation."""
@@ -93,3 +95,15 @@ class SourceWorkspace:
         self.f_fields = F_profile.u_fields
         self.psin_u = psin_profile.u
         self.psin_fields = psin_profile.u_fields
+
+
+def _empty_profile_values() -> np.ndarray:
+    """Return an unbound one-dimensional profile-value sentinel."""
+
+    return np.empty(0, dtype=np.float64)
+
+
+def _empty_profile_fields(nr: int) -> np.ndarray:
+    """Return an unbound profile-field sentinel with the correct radial axis."""
+
+    return np.empty((0, nr), dtype=np.float64)

@@ -83,8 +83,8 @@ def _build_source_stage_runner_shared(
             heat_input = source_plan.heat_input
             current_input = source_plan.current_input
             parameterization_code = source_plan.parameterization_code
-            static_layout = plan.static_layout
-            n_axis_fix = int(np.searchsorted(static_layout.rho, fix_rho))
+            grid_workspace = plan.grid_workspace
+            n_axis_fix = int(np.searchsorted(grid_workspace.rho, fix_rho))
 
             def runner() -> tuple[float, float]:
                 if psin_profile_fields.size == 0:
@@ -103,9 +103,9 @@ def _build_source_stage_runner_shared(
                     source_workspace.heat_spline_coeff,
                     source_workspace.current_spline_coeff,
                     parameterization_code,
-                    static_layout.rho,
-                    static_layout.differentiator,
-                    static_layout.accumulator,
+                    grid_workspace.rho,
+                    grid_workspace.differentiator,
+                    grid_workspace.accumulator,
                     n_axis_fix,
                     source_workspace.barycentric_weights,
                     source_plan.uses_barycentric_interpolation,

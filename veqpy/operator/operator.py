@@ -42,12 +42,13 @@ from veqpy.operator.profile_runtime import (
     refresh_stage_a_runtime,
     validate_case_compatibility,
 )
+from veqpy.operator.snapshot import snapshot_equilibrium_from_runtime
 from veqpy.operator.source_plan import (
     validate_source_inputs,
     validate_source_plan_profile_support,
 )
 from veqpy.operator.source_runtime import refresh_source_runtime
-from veqpy.workspace import BackendState, allocate_runtime_state
+from veqpy.workspace import allocate_runtime_state
 from veqpy.workspace.geometry_workspace import GeometryWorkspace
 from veqpy.workspace.profile_workspace import ProfileWorkspace
 from veqpy.workspace.residual_workspace import ResidualWorkspace
@@ -68,7 +69,6 @@ class Operator:
     source_workspace: SourceWorkspace = field(init=False, repr=False)
     residual_workspace: ResidualWorkspace = field(init=False, repr=False)
     layout: OperatorLayout = field(init=False, repr=False)
-    backend_state: BackendState = field(init=False, repr=False)
 
     h_profile: Profile = field(init=False)
     v_profile: Profile = field(init=False)
@@ -189,7 +189,7 @@ class Operator:
             coeff_index=self.plan.coeff_index,
             order_offsets=self.plan.order_offsets,
             validate_source_inputs=lambda next_case: validate_source_inputs(
-                next_case, self.plan.static_layout.Nr
+                next_case, self.plan.grid_workspace.Nr
             ),
         )
         self.case = case
@@ -242,14 +242,14 @@ class Operator:
         ``(2 * Nr * Nt,)``.
         """
         out = np.empty(
-            2 * self.plan.static_layout.Nr * self.plan.static_layout.Nt, dtype=np.float64
+            2 * self.plan.grid_workspace.Nr * self.plan.grid_workspace.Nt, dtype=np.float64
         )
         self.residual_collocation_into(x, out)
         return out
 
     def residual_collocation_into(self, x: np.ndarray, out: np.ndarray) -> None:
         """Write the DESC-style collocation residual into caller-provided ``out``."""
-        expected_size = 2 * self.plan.static_layout.Nr * self.plan.static_layout.Nt
+        expected_size = 2 * self.plan.grid_workspace.Nr * self.plan.grid_workspace.Nt
         if not isinstance(out, np.ndarray):
             raise TypeError("Expected out to be a numpy.ndarray")
         out_eval = out
@@ -321,8 +321,8 @@ class Operator:
             raise ValueError(f"Expected x to have shape ({self.plan.x_size},), got {arr.shape}")
         return arr
 
-    def _refresh_workspace_views(self) -> None:
-        self.geometry_workspace.bind_shape_profile_views(
+    def _bind_workspace_views(self) -> None:
+        self.geometry_workspace.bind_profile_views(
             h_profile=self.h_profile,
             v_profile=self.v_profile,
             k_profile=self.k_profile,
@@ -333,8 +333,14 @@ class Operator:
         )
 
     def _setup_runtime_state(self) -> None:
-        bundle = allocate_runtime_state(
-            static_layout=self.plan.static_layout,
+        (
+            profiles_by_name,
+            profile_workspace,
+            geometry_workspace,
+            source_workspace,
+            residual_workspace,
+        ) = allocate_runtime_state(
+            grid_workspace=self.plan.grid_workspace,
             source_execution=self.plan.source_execution,
             profile_names=self.plan.profile_names,
             profile_index=self.plan.profile_index,
@@ -343,7 +349,7 @@ class Operator:
             x_size=self.plan.x_size,
             make_profile=lambda name: make_profile(
                 case=self.case,
-                operator_grid=self.plan.static_layout,
+                operator_grid=self.plan.grid_workspace,
                 name=name,
                 profile_L=self.plan.profile_L,
                 profile_names=self.plan.profile_names,
@@ -352,14 +358,14 @@ class Operator:
                 profile_offset_specs=self.plan.profile_offset_specs,
             ),
         )
-        self.profiles_by_name = bundle.profiles_by_name
+        self.profiles_by_name = profiles_by_name
         for name, profile in self.profiles_by_name.items():
             if hasattr(type(self), f"{name}_profile"):
                 setattr(self, f"{name}_profile", profile)
-        self.profile_workspace = bundle.profile_workspace
-        self.geometry_workspace = bundle.geometry_workspace
-        self.source_workspace = bundle.source_workspace
-        self.residual_workspace = bundle.residual_workspace
+        self.profile_workspace = profile_workspace
+        self.geometry_workspace = geometry_workspace
+        self.source_workspace = source_workspace
+        self.residual_workspace = residual_workspace
 
     def _refresh_runtime_state(self) -> None:
         self._apply_plan(
@@ -374,21 +380,20 @@ class Operator:
         self._refresh_fourier_family_metadata()
         refresh_source_runtime(
             case=self.case,
-            grid_rho=self.plan.static_layout.rho,
+            grid_rho=self.plan.grid_workspace.rho,
             source_plan=self.plan.source_plan,
             source_execution=self.plan.source_execution,
             source_workspace=self.source_workspace,
             psin=self.residual_workspace.root_fields[0],
         )
         self._refresh_stage_a_runtime()
-        self._refresh_workspace_views()
-        self._refresh_backend_state()
+        self._bind_workspace_views()
         self._refresh_runtime_bindings()
 
     def _refresh_profile_runtime(self) -> None:
         refresh_profile_runtime(
             case=self.case,
-            operator_grid=self.plan.static_layout,
+            operator_grid=self.plan.grid_workspace,
             profile_names=self.plan.profile_names,
             profile_index=self.plan.profile_index,
             profile_L=self.plan.profile_L,
@@ -396,7 +401,7 @@ class Operator:
             profile_static_kwargs_by_name=self.plan.profile_static_kwargs_by_name,
             profile_offset_specs=self.plan.profile_offset_specs,
             refresh_fourier_family_base_fields=lambda: refresh_fourier_family_base_fields(
-                M_max=self.plan.static_layout.M_max,
+                M_max=self.plan.grid_workspace.M_max,
                 profile_index=self.plan.profile_index,
                 profiles_by_name=self.profiles_by_name,
                 c_family_base_fields=self.profile_workspace.c_family_base_fields,
@@ -412,7 +417,8 @@ class Operator:
             geometry_workspace=self.geometry_workspace,
             source_workspace=self.source_workspace,
             residual_workspace=self.residual_workspace,
-            backend_state=self.backend_state,
+            grid_workspace=self.plan.grid_workspace,
+            residual_binding_layout=self.plan.residual_binding_layout,
             c_effective_order=self.c_effective_order,
             s_effective_order=self.s_effective_order,
             fix_rho=self.fix_rho,
@@ -426,16 +432,6 @@ class Operator:
         f_profile_id = self.plan.profile_index.get("F", -1)
         if f_profile_id >= 0 and not bool(self.plan.active_profile_mask[f_profile_id]):
             self.layout.profile.run_postprocess()
-
-    def _refresh_backend_state(self) -> None:
-        self.backend_state = BackendState(
-            static_layout=self.plan.static_layout,
-            residual_binding_layout=self.plan.residual_binding_layout,
-            profile_workspace=self.profile_workspace,
-            geometry_workspace=self.geometry_workspace,
-            source_workspace=self.source_workspace,
-            residual_workspace=self.residual_workspace,
-        )
 
     def _refresh_stage_a_runtime(self) -> None:
         profile_workspace = self.profile_workspace
@@ -474,7 +470,7 @@ class Operator:
         return snapshot_equilibrium_from_runtime(
             x,
             case=self.case,
-            grid=self.plan.static_layout.to_grid(),
+            grid=self.plan.grid_workspace.to_grid(),
             profile_L=self.plan.profile_L,
             coeff_index=self.plan.coeff_index,
             profile_names=self.plan.profile_names,
@@ -489,66 +485,3 @@ class Operator:
             alpha1=self.alpha1,
             alpha2=self.alpha2,
         )
-
-
-def snapshot_equilibrium_from_runtime(
-    x: np.ndarray,
-    *,
-    case: OperatorCase,
-    grid: Grid,
-    profile_L: np.ndarray,
-    coeff_index: np.ndarray,
-    profile_names: tuple[str, ...],
-    shape_profile_names: tuple[str, ...],
-    profile_index: dict[str, int],
-    profiles_by_name: dict[str, Profile],
-    psin: np.ndarray,
-    FFn_psin: np.ndarray,
-    Pn_psin: np.ndarray,
-    psin_r: np.ndarray,
-    psin_rr: np.ndarray,
-    alpha1: float,
-    alpha2: float,
-) -> Equilibrium:
-    """Materialize an Equilibrium snapshot from current Operator runtime arrays."""
-    coeff_valuess = decode_packed_blocks(x, profile_L, coeff_index, profile_names=profile_names)
-    shape_profiles = snapshot_equilibrium_profiles(
-        coeff_valuess,
-        shape_profile_names=shape_profile_names,
-        profile_index=profile_index,
-        profiles_by_name=profiles_by_name,
-    )
-    return Equilibrium(
-        R0=case.R0,
-        Z0=case.Z0,
-        B0=case.B0,
-        a=case.a,
-        grid=grid,
-        shape_profiles=shape_profiles,
-        psin=psin.copy(),
-        FFn_psin=np.asarray(FFn_psin, dtype=np.float64).copy(),
-        Pn_psin=Pn_psin.copy(),
-        psin_r=psin_r.copy(),
-        psin_rr=psin_rr.copy(),
-        alpha1=float(alpha1),
-        alpha2=float(alpha2),
-    )
-
-
-def snapshot_equilibrium_profiles(
-    coeff_valuess: tuple[np.ndarray | None, ...],
-    *,
-    shape_profile_names: tuple[str, ...],
-    profile_index: dict[str, int],
-    profiles_by_name: dict[str, Profile],
-) -> dict[str, Profile]:
-    return {
-        name: snapshot_profile(profiles_by_name[name], coeff_valuess[profile_index[name]])
-        for name in shape_profile_names
-    }
-
-
-def snapshot_profile(profile: Profile, coeff_values: np.ndarray | None) -> Profile:
-    copied = profile.copy()
-    copied.coeff = None if coeff_values is None else coeff_values.copy()
-    return copied

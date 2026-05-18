@@ -6,17 +6,15 @@
 
 ## Build, Test, and Development Commands
 
-Use the project `uv` environment rather than system Python.
+Use the checked-in project virtual environment rather than system Python.
 
-- `uv sync --group dev`: install runtime and development dependencies.
-- `uv run python -m pytest`: run the full regression suite.
-- `uv run python -m pytest tests/test_name.py`: run a focused test file.
-- `uv run python tests/demo.py` and `uv run python tests/demo_geqdsk_workflow.py`: exercise demo workflows.
-- `uv run python tests/benchmark.py`: compare performance-sensitive paths.
-- `uv run ruff check veqpy tests`: run lint and import-order checks.
-- `uv run python -m compileall veqpy tests`: validate imports and bytecode compilation.
-
-If `uv` is unavailable, use `.venv/bin/python -m pytest` with the checked-in virtual environment.
+- `.venv/bin/python -m pip install -e ".[dev]"`: install runtime and development dependencies.
+- `.venv/bin/python -m pytest`: run the full regression suite.
+- `.venv/bin/python -m pytest tests/test_name.py`: run a focused test file.
+- `.venv/bin/python tests/demo.py` and `.venv/bin/python tests/demo_geqdsk_workflow.py`: exercise demo workflows.
+- `.venv/bin/python tests/benchmark.py`: compare performance-sensitive paths.
+- `.venv/bin/ruff check veqpy tests`: run lint and import-order checks.
+- `.venv/bin/python -m compileall veqpy tests`: validate imports and bytecode compilation.
 
 ## Coding Style & Naming Conventions
 

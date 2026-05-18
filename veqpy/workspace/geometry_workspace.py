@@ -22,8 +22,10 @@ class GeometryWorkspace:
     S_r, V_r, Kn, Kn_r, Ln_r.
 
     ``h/v/k_fields`` are borrowed model profile field arrays consumed only by the
-    geometry stage. The owning ``Profile`` objects remain in the operator model state;
-    this workspace owns the runtime binding responsibility.
+    geometry stage. They start as empty ``(0, Nr)`` sentinels, then are rebound to
+    real ``(3, Nr)`` profile field arrays before executable layouts are built. The
+    owning ``Profile`` objects remain in the operator model state; this workspace
+    owns the runtime binding responsibility.
     """
 
     surface_fields: np.ndarray
@@ -37,15 +39,25 @@ class GeometryWorkspace:
 
         self.surface_fields = np.empty((9, nr, nt), dtype=np.float64)
         self.radial_fields = np.empty((5, nr), dtype=np.float64)
-        self.h_fields = np.empty((0, nr), dtype=np.float64)
-        self.v_fields = np.empty((0, nr), dtype=np.float64)
-        self.k_fields = np.empty((0, nr), dtype=np.float64)
+        self.h_fields = _empty_profile_fields(nr)
+        self.v_fields = _empty_profile_fields(nr)
+        self.k_fields = _empty_profile_fields(nr)
 
-    def bind_shape_profile_views(
-        self, *, h_profile: Profile, v_profile: Profile, k_profile: Profile
+    def bind_profile_views(
+        self,
+        *,
+        h_profile: Profile,
+        v_profile: Profile,
+        k_profile: Profile,
     ) -> None:
-        """Bind borrowed shape profile fields used by geometry kernels."""
+        """Bind borrowed shape-profile fields used by geometry kernels."""
 
         self.h_fields = h_profile.u_fields
         self.v_fields = v_profile.u_fields
         self.k_fields = k_profile.u_fields
+
+
+def _empty_profile_fields(nr: int) -> np.ndarray:
+    """Return an unbound profile-field sentinel with the correct radial axis."""
+
+    return np.empty((0, nr), dtype=np.float64)

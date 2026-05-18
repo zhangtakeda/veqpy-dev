@@ -26,39 +26,31 @@ a high-performance Python wrapper for plasma equilibrium simulations in magnetic
 
 ## Environment
 
-All scripts, benchmarks, compile checks, and `pytest` runs should be executed inside the project `uv`-managed virtual environment.
+All scripts, benchmarks, compile checks, and `pytest` runs should use the project `.venv` rather than system Python.
 
-Recommended workflow on Windows PowerShell:
+Install or refresh development dependencies from the repository root:
 
-```powershell
-uv sync --group dev
+```bash
+.venv/bin/python -m pip install -e ".[dev]"
 ```
 
-Recommended command style:
+Recommended command style on Linux/macOS:
 
-- `python -m pytest ...`
-- `python tests/demo.py`
-- `python tests/demo_geqdsk_workflow.py`
-- `python tests/benchmark.py`
-- `python -m compileall veqpy tests`
+- `.venv/bin/python -m pytest ...`
+- `.venv/bin/python tests/demo.py`
+- `.venv/bin/python tests/demo_geqdsk_workflow.py`
+- `.venv/bin/python tests/benchmark.py`
+- `.venv/bin/python -m compileall veqpy tests`
+- `.venv/bin/ruff check veqpy tests`
 
-Prefer running them through `uv`:
-
-- `uv run python -m pytest ...`
-- `uv run python tests/demo.py`
-- `uv run python tests/demo_geqdsk_workflow.py`
-- `uv run python tests/benchmark.py`
-- `uv run python -m compileall veqpy tests`
-
-If you prefer an activated shell, use:
+On Windows PowerShell, activate the project environment first:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
 ```
 
-Then run the same `python ...` commands inside that environment.  
-Avoid running repository commands from system Python or a non-project interpreter.  
-If you do not activate the environment, use `uv run ...` or `.\.venv\Scripts\python.exe ...` explicitly.
+Then run the corresponding `python ...` and `ruff ...` commands inside that environment.
+Avoid running repository commands from system Python or a non-project interpreter.
 
 ## Regression Suites
 

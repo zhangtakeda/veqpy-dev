@@ -34,14 +34,6 @@ dev = [
 ]
 nevergrad = ["nevergrad>=1.0"]
 
-[dependency-groups]
-dev = [
-    "build>=1.2",
-    "packaging>=24.2",
-    "pytest>=7.0",
-    "ruff>=0.4",
-    "twine>=6.2",
-]
 
 [tool.setuptools]
 include-package-data = false
@@ -52,8 +44,6 @@ include = ["veqpy*"]
 [tool.setuptools.dynamic]
 version = {attr = "veqpy.__version__"}
 
-[tool.uv]
-default-groups = ["dev"]
 
 [tool.ruff]
 line-length = 100

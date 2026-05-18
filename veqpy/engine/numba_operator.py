@@ -44,21 +44,30 @@ from veqpy.engine.numba_source import (
 from veqpy.math.interpolate import build_uniform_source_interpolation_coefficients
 
 if TYPE_CHECKING:
+    from veqpy.operator.build_plan import ResidualBindingLayout
     from veqpy.operator.source_plan import SourcePlan
-    from veqpy.workspace import BackendState
+    from veqpy.workspace.geometry_workspace import GeometryWorkspace
+    from veqpy.workspace.grid_workspace import GridWorkspace
+    from veqpy.workspace.profile_workspace import ProfileWorkspace
+    from veqpy.workspace.residual_workspace import ResidualWorkspace
+    from veqpy.workspace.source_workspace import SourceWorkspace
 
 
 def bind_source_eval_runner(
     *,
     source_plan: SourcePlan,
-    backend_state: BackendState,
+    grid_workspace: GridWorkspace,
+    geometry_workspace: GeometryWorkspace,
+    source_workspace: SourceWorkspace,
     B0: float,
     fix_rho: float,
 ) -> Callable:
     return _bind_source_eval_runner_for_fused_backend(
         source_eval_binding=backend_abi.build_fused_source_eval_abi(
             source_plan=source_plan,
-            backend_state=backend_state,
+            grid_workspace=grid_workspace,
+            geometry_workspace=geometry_workspace,
+            source_workspace=source_workspace,
             B0=B0,
             fix_rho=fix_rho,
         )
@@ -335,7 +344,12 @@ def bind_fused_residual_runner(
     *,
     source_plan: SourcePlan,
     source_execution: backend_abi.SourceExecutionABI,
-    backend_state: BackendState,
+    grid_workspace: GridWorkspace,
+    residual_binding_layout: ResidualBindingLayout,
+    profile_workspace: ProfileWorkspace,
+    geometry_workspace: GeometryWorkspace,
+    source_workspace: SourceWorkspace,
+    residual_workspace: ResidualWorkspace,
     alpha_state: np.ndarray,
     c_active_order: int,
     s_active_order: int,
@@ -348,7 +362,12 @@ def bind_fused_residual_runner(
     runner_into = bind_fused_residual_runner_into(
         source_plan=source_plan,
         source_execution=source_execution,
-        backend_state=backend_state,
+        grid_workspace=grid_workspace,
+        residual_binding_layout=residual_binding_layout,
+        profile_workspace=profile_workspace,
+        geometry_workspace=geometry_workspace,
+        source_workspace=source_workspace,
+        residual_workspace=residual_workspace,
         alpha_state=alpha_state,
         c_active_order=c_active_order,
         s_active_order=s_active_order,
@@ -358,7 +377,7 @@ def bind_fused_residual_runner(
         B0=B0,
         fix_rho=fix_rho,
     )
-    packed_residual = backend_state.residual_workspace.packed_residual
+    packed_residual = residual_workspace.packed_residual
 
     def runner(x: np.ndarray) -> np.ndarray:
         runner_into(x, packed_residual)
@@ -371,7 +390,12 @@ def bind_fused_residual_runner_into(
     *,
     source_plan: SourcePlan,
     source_execution: backend_abi.SourceExecutionABI,
-    backend_state: BackendState,
+    grid_workspace: GridWorkspace,
+    residual_binding_layout: ResidualBindingLayout,
+    profile_workspace: ProfileWorkspace,
+    geometry_workspace: GeometryWorkspace,
+    source_workspace: SourceWorkspace,
+    residual_workspace: ResidualWorkspace,
     alpha_state: np.ndarray,
     c_active_order: int,
     s_active_order: int,
@@ -389,7 +413,10 @@ def bind_fused_residual_runner_into(
         )
 
     hot_runtime_binding = backend_abi.build_fused_hot_runtime_abi(
-        backend_state=backend_state,
+        grid_workspace=grid_workspace,
+        profile_workspace=profile_workspace,
+        geometry_workspace=geometry_workspace,
+        source_workspace=source_workspace,
         source_execution=source_execution,
         c_active_order=c_active_order,
         s_active_order=s_active_order,
@@ -398,7 +425,10 @@ def bind_fused_residual_runner_into(
         Z0=Z0,
     )
     residual_pack_binding = backend_abi.build_fused_residual_pack_abi(
-        backend_state=backend_state,
+        grid_workspace=grid_workspace,
+        residual_binding_layout=residual_binding_layout,
+        profile_workspace=profile_workspace,
+        residual_workspace=residual_workspace,
         a=a,
         R0=R0,
         B0=B0,
@@ -407,7 +437,10 @@ def bind_fused_residual_runner_into(
     if route_key == ("PJ2", "psin", "uniform"):
         return _bind_pj2_psin_uniform_residual_runner_core(
             source_plan=source_plan,
-            backend_state=backend_state,
+            grid_workspace=grid_workspace,
+            geometry_workspace=geometry_workspace,
+            source_workspace=source_workspace,
+            residual_workspace=residual_workspace,
             hot_runtime_binding=hot_runtime_binding,
             residual_pack_binding=residual_pack_binding,
             alpha_state=alpha_state,
@@ -418,7 +451,9 @@ def bind_fused_residual_runner_into(
 
     source_eval_runner = bind_source_eval_runner(
         source_plan=source_plan,
-        backend_state=backend_state,
+        grid_workspace=grid_workspace,
+        geometry_workspace=geometry_workspace,
+        source_workspace=source_workspace,
         B0=B0,
         fix_rho=fix_rho,
     )
@@ -426,7 +461,10 @@ def bind_fused_residual_runner_into(
         return _bind_profile_owned_psin_residual_runner_core(
             source_plan=source_plan,
             source_execution=source_execution,
-            backend_state=backend_state,
+            grid_workspace=grid_workspace,
+            geometry_workspace=geometry_workspace,
+            source_workspace=source_workspace,
+            residual_workspace=residual_workspace,
             source_eval_runner=source_eval_runner,
             hot_runtime_binding=hot_runtime_binding,
             residual_pack_binding=residual_pack_binding,
@@ -436,7 +474,9 @@ def bind_fused_residual_runner_into(
         )
 
     return _bind_single_pass_residual_runner_core(
-        backend_state=backend_state,
+        geometry_workspace=geometry_workspace,
+        source_workspace=source_workspace,
+        residual_workspace=residual_workspace,
         source_eval_runner=source_eval_runner,
         hot_runtime_binding=hot_runtime_binding,
         residual_pack_binding=residual_pack_binding,
@@ -447,16 +487,15 @@ def bind_fused_residual_runner_into(
 
 def _bind_single_pass_residual_runner_core(
     *,
-    backend_state: BackendState,
+    geometry_workspace: GeometryWorkspace,
+    source_workspace: SourceWorkspace,
+    residual_workspace: ResidualWorkspace,
     source_eval_runner: Callable,
     hot_runtime_binding: backend_abi.FusedHotRuntimeABI,
     residual_pack_binding: backend_abi.FusedResidualPackABI,
     alpha_state: np.ndarray,
     R0: float,
 ) -> Callable[[np.ndarray, np.ndarray], None]:
-    geometry_workspace = backend_state.geometry_workspace
-    residual_workspace = backend_state.residual_workspace
-    source_workspace = backend_state.source_workspace
     surface_fields = geometry_workspace.surface_fields
     residual_surface_fields = residual_workspace.surface_fields
     root_fields = residual_workspace.root_fields
@@ -493,7 +532,10 @@ def _bind_profile_owned_psin_residual_runner_core(
     *,
     source_plan: SourcePlan,
     source_execution: backend_abi.SourceExecutionABI,
-    backend_state: BackendState,
+    grid_workspace: GridWorkspace,
+    geometry_workspace: GeometryWorkspace,
+    source_workspace: SourceWorkspace,
+    residual_workspace: ResidualWorkspace,
     source_eval_runner: Callable,
     hot_runtime_binding: backend_abi.FusedHotRuntimeABI,
     residual_pack_binding: backend_abi.FusedResidualPackABI,
@@ -501,16 +543,15 @@ def _bind_profile_owned_psin_residual_runner_core(
     R0: float,
     fix_rho: float,
 ) -> Callable[[np.ndarray, np.ndarray], None]:
-    geometry_workspace = backend_state.geometry_workspace
-    residual_workspace = backend_state.residual_workspace
     surface_fields = geometry_workspace.surface_fields
     residual_surface_fields = residual_workspace.surface_fields
-    n_axis_fix = int(np.searchsorted(backend_state.static_layout.rho, fix_rho))
+    n_axis_fix = int(np.searchsorted(grid_workspace.rho, fix_rho))
     root_fields = residual_workspace.root_fields
     profile_owned_psin_binding = backend_abi.build_profile_owned_psin_source_abi(
         source_plan=source_plan,
         source_execution=source_execution,
-        backend_state=backend_state,
+        grid_workspace=grid_workspace,
+        source_workspace=source_workspace,
     )
     psin = root_fields[0]
     psin_r = root_fields[1]
@@ -566,7 +607,10 @@ def _bind_profile_owned_psin_residual_runner_core(
 def _bind_pj2_psin_uniform_residual_runner_core(
     *,
     source_plan: SourcePlan,
-    backend_state: BackendState,
+    grid_workspace: GridWorkspace,
+    geometry_workspace: GeometryWorkspace,
+    source_workspace: SourceWorkspace,
+    residual_workspace: ResidualWorkspace,
     hot_runtime_binding: backend_abi.FusedHotRuntimeABI,
     residual_pack_binding: backend_abi.FusedResidualPackABI,
     alpha_state: np.ndarray,
@@ -574,17 +618,13 @@ def _bind_pj2_psin_uniform_residual_runner_core(
     B0: float,
     fix_rho: float,
 ) -> Callable[[np.ndarray, np.ndarray], None]:
-    static_layout = backend_state.static_layout
-    geometry_workspace = backend_state.geometry_workspace
-    residual_workspace = backend_state.residual_workspace
-    source_workspace = backend_state.source_workspace
     surface_fields = geometry_workspace.surface_fields
     radial_fields = geometry_workspace.radial_fields
     residual_surface_fields = residual_workspace.surface_fields
-    rho = static_layout.rho
-    weights = static_layout.weights
-    differentiator = static_layout.differentiator
-    accumulator = static_layout.accumulator
+    rho = grid_workspace.rho
+    weights = grid_workspace.weights
+    differentiator = grid_workspace.differentiator
+    accumulator = grid_workspace.accumulator
     n_axis_fix = int(np.searchsorted(rho, fix_rho))
     root_fields = residual_workspace.root_fields
 

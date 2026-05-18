@@ -52,24 +52,20 @@ has matching tests, packaging, and user-facing guarantees.
 
 ## Environment
 
-Repository commands are expected to run inside the project-managed Python environment.
-
-Recommended workflow on Windows PowerShell:
-
-```powershell
-uv sync --group dev
-```
+Repository commands are expected to run inside the project `.venv`. Avoid relying
+on a random system interpreter.
 
 Recommended command style:
 
-- `uv run python -m pytest ...`
-- `uv run python tests/demo.py`
-- `uv run python tests/demo_geqdsk_workflow.py`
-- `uv run python tests/benchmark.py`
-- `uv run python -m compileall veqpy tests`
+- `.venv/bin/python -m pytest ...`
+- `.venv/bin/python tests/demo.py`
+- `.venv/bin/python tests/demo_geqdsk_workflow.py`
+- `.venv/bin/python tests/benchmark.py`
+- `.venv/bin/python -m compileall veqpy tests`
+- `.venv/bin/ruff check veqpy tests`
 
-If an activated environment is already available, the corresponding `python ...`
-commands are also acceptable. Avoid relying on a random system interpreter.
+If the environment is already activated, the corresponding `python ...` and
+`ruff ...` commands are also acceptable.
 
 ## Runtime Path
 
