@@ -16,9 +16,9 @@ Notes:
 from __future__ import annotations
 
 import warnings
+from collections.abc import Callable
 from dataclasses import replace
 from time import perf_counter
-from typing import Callable
 
 import numpy as np
 from rich.console import Console
@@ -26,6 +26,13 @@ from rich.console import Console
 from veqpy.model.equilibrium import Equilibrium
 from veqpy.operator.operator import Operator
 from veqpy.operator.operator_case import OperatorCase
+from veqpy.solver.residual_scale import (
+    _block_rms_values,
+    _build_block_rms_scale,
+    _mode_is_block_rms,
+    _residual_rms,
+    make_residual_scale,
+)
 from veqpy.solver.solver_config import (
     LEAST_SQUARES_METHODS,
     ROOT_METHODS,
@@ -866,8 +873,8 @@ class Solver:
         elif scaled_fun is not None:
             root_fun = scaled_fun
         if scaled_fun is not None and solve_config.method == "hybr":
-            normalization_mode = getattr(solve_config, "residual_normalization", "robust_balanced")
-            if normalization_mode in {"legacy", "robust_balanced", "sensitivity_balanced"}:
+            normalization_mode = getattr(solve_config, "residual_normalization", "block_huber")
+            if normalization_mode != "none":
                 options = {**options, "factor": 1.0}
 
         return self._run_root_once(
@@ -894,15 +901,13 @@ class Solver:
     ]:
         """Build the solver-layer residual normalization wrapper."""
 
-        mode = getattr(solve_config, "residual_normalization", "robust_balanced")
+        mode = getattr(solve_config, "residual_normalization", "block_huber")
         if mode == "none":
             return None, None
-        if mode == "legacy":
+        if _mode_is_block_rms(mode):
             return self._build_legacy_residual_transform_wrapper(
                 x_guess, transform=legacy_transform
             )
-        if mode not in {"robust_balanced", "sensitivity_balanced"}:
-            raise ValueError(f"Unsupported residual_normalization {mode!r}.")
         return self._build_balanced_residual_transform_wrapper(
             x_guess,
             solve_config=solve_config,
@@ -972,7 +977,7 @@ class Solver:
         scope: str,
         initial_x: np.ndarray | None = None,
         initial_residual: np.ndarray | None = None,
-        mode: str = "robust_balanced",
+        mode: str = "block_huber",
     ) -> tuple[
         Callable[[np.ndarray], np.ndarray] | None, Callable[[np.ndarray], np.ndarray] | None
     ]:
@@ -1000,10 +1005,7 @@ class Solver:
         scale: np.ndarray | None = None
         last_x: np.ndarray | None = None
         last_raw_residual: np.ndarray | None = None
-        if initial_residual is None and mode in {
-            "robust_balanced",
-            "sensitivity_balanced",
-        }:
+        if initial_residual is None and not _mode_is_block_rms(mode):
             try:
                 initial_x_eval = self.operator.coerce_x(x_guess)
                 initial_residual = np.asarray(residual_fun(initial_x_eval), dtype=np.float64)
@@ -1079,29 +1081,20 @@ class Solver:
         max_ratio: float,
         huber_tau: float,
     ) -> np.ndarray:
-        if mode == "robust_balanced":
-            return _build_robust_balanced_residual_scale(
-                residual,
-                block_lengths,
-                floor=floor,
-                max_ratio=max_ratio,
-                huber_tau=huber_tau,
-            )
-        if mode == "sensitivity_balanced":
-            return _build_sensitivity_balanced_residual_scale(
-                residual_fun,
-                x_guess,
-                residual,
-                block_lengths,
-                x_scale=_build_x_block_scale_vector(self.operator, x_guess),
-                floor=floor,
-                max_ratio=max_ratio,
-                huber_tau=huber_tau,
-                probe_count=int(solve_config.residual_normalization_probe_count),
-                probe_step=float(solve_config.residual_normalization_probe_step),
-                sensitivity_lambda=float(solve_config.residual_normalization_sensitivity_lambda),
-            )
-        raise ValueError(f"Unsupported residual_normalization {mode!r}.")
+        return make_residual_scale(
+            mode,
+            residual,
+            block_lengths,
+            floor=floor,
+            max_ratio=max_ratio,
+            huber_tau=huber_tau,
+            residual_fun=residual_fun,
+            x_guess=x_guess,
+            x_scale=_build_x_block_scale_vector(self.operator, x_guess),
+            probe_count=int(solve_config.residual_normalization_probe_count),
+            probe_step=float(solve_config.residual_normalization_probe_step),
+            sensitivity_lambda=float(solve_config.residual_normalization_sensitivity_lambda),
+        )
 
     def _build_x_transform_wrapper(
         self,
@@ -1310,9 +1303,7 @@ def _build_boundary_slope_initial_state(
 ) -> np.ndarray:
     """Set first c/s coefficients so ``u_m'(1)=lambda*offset``."""
 
-    return operator.build_boundary_slope_initial_state(
-        boundary_slope_factor=boundary_slope_factor
-    )
+    return operator.build_boundary_slope_initial_state(boundary_slope_factor=boundary_slope_factor)
 
 
 def _accepted_residual_norm(solve_config: SolverConfig) -> float:
@@ -1339,41 +1330,6 @@ def _trf_robust_block_rms_threshold() -> float:
     return 2.0e40
 
 
-def _residual_rms(residual: np.ndarray) -> float:
-    residual_eval = np.asarray(residual, dtype=np.float64)
-    if residual_eval.ndim != 1 or residual_eval.size == 0:
-        return 1.0
-    return float(np.linalg.norm(residual_eval) / np.sqrt(residual_eval.size))
-
-
-def _block_rms_values(residual: np.ndarray, block_lengths: np.ndarray) -> np.ndarray | None:
-    residual_eval = np.asarray(residual, dtype=np.float64)
-    lengths_eval = np.asarray(block_lengths, dtype=np.int64)
-    if (
-        residual_eval.ndim != 1
-        or lengths_eval.ndim != 1
-        or residual_eval.size == 0
-        or lengths_eval.size == 0
-    ):
-        return None
-    if int(np.sum(lengths_eval)) != int(residual_eval.size):
-        return None
-
-    values = np.empty_like(lengths_eval, dtype=np.float64)
-    offset = 0
-    for idx, length in enumerate(lengths_eval):
-        block_size = int(length)
-        if block_size <= 0:
-            return None
-        block = residual_eval[offset : offset + block_size]
-        block_rms = float(np.linalg.norm(block) / np.sqrt(block_size))
-        if not np.isfinite(block_rms):
-            return None
-        values[idx] = block_rms
-        offset += block_size
-    return values
-
-
 def _should_use_robust_trf_loss(
     residual: np.ndarray | None,
     block_lengths: np.ndarray | None,
@@ -1385,217 +1341,6 @@ def _should_use_robust_trf_loss(
         return False
     return bool(np.median(block_rms) >= _trf_robust_block_rms_threshold())
 
-
-def _build_block_rms_scale(residual: np.ndarray, block_lengths: np.ndarray) -> np.ndarray | None:
-    residual_eval = np.asarray(residual, dtype=np.float64)
-    lengths_eval = np.asarray(block_lengths, dtype=np.int64)
-    block_rms = _block_rms_values(residual_eval, lengths_eval)
-    if block_rms is None:
-        return None
-
-    scale = np.empty_like(residual_eval)
-    offset = 0
-    for value, length in zip(block_rms, lengths_eval, strict=False):
-        block_scale = max(float(value), 1.0)
-        scale[offset : offset + int(length)] = block_scale
-        offset += int(length)
-    return scale
-
-
-def _build_robust_balanced_residual_scale(
-    residual: np.ndarray,
-    block_lengths: np.ndarray | None,
-    *,
-    floor: float,
-    max_ratio: float,
-    huber_tau: float,
-) -> np.ndarray:
-    residual_eval = np.asarray(residual, dtype=np.float64)
-    if residual_eval.ndim != 1 or residual_eval.size == 0:
-        return np.ones_like(residual_eval, dtype=np.float64)
-
-    floor_eval = max(float(floor), np.finfo(np.float64).tiny)
-    block_values = _robust_balanced_block_rms_values(
-        residual_eval,
-        block_lengths,
-        huber_tau=float(huber_tau),
-    )
-    if block_values is None:
-        global_scale = _robust_rms(residual_eval, huber_tau=float(huber_tau))
-        global_scale = _clip_scale_by_anchor(
-            np.asarray([global_scale], dtype=np.float64),
-            floor=floor_eval,
-            max_ratio=max_ratio,
-        )[0]
-        return np.full_like(residual_eval, global_scale, dtype=np.float64)
-
-    clipped_values = _clip_scale_by_anchor(block_values, floor=floor_eval, max_ratio=max_ratio)
-    lengths_eval = np.asarray(block_lengths, dtype=np.int64)
-    scale = np.empty_like(residual_eval, dtype=np.float64)
-    offset = 0
-    for value, length in zip(clipped_values, lengths_eval, strict=False):
-        block_size = int(length)
-        scale[offset : offset + block_size] = float(value)
-        offset += block_size
-    return scale
-
-
-def _build_sensitivity_balanced_residual_scale(
-    residual_fun: Callable[[np.ndarray], np.ndarray],
-    x_guess: np.ndarray,
-    residual: np.ndarray,
-    block_lengths: np.ndarray | None,
-    *,
-    x_scale: np.ndarray | None,
-    floor: float,
-    max_ratio: float,
-    huber_tau: float,
-    probe_count: int,
-    probe_step: float,
-    sensitivity_lambda: float,
-) -> np.ndarray:
-    residual_eval = np.asarray(residual, dtype=np.float64)
-    amplitude_values = _robust_balanced_block_rms_values(
-        residual_eval,
-        block_lengths,
-        huber_tau=huber_tau,
-    )
-    if amplitude_values is None or block_lengths is None or int(probe_count) <= 0:
-        return _build_robust_balanced_residual_scale(
-            residual_eval,
-            block_lengths,
-            floor=floor,
-            max_ratio=max_ratio,
-            huber_tau=huber_tau,
-        )
-
-    x_eval = np.asarray(x_guess, dtype=np.float64)
-    if x_scale is None or np.asarray(x_scale).shape != x_eval.shape:
-        x_scale_eval = np.maximum(np.abs(x_eval), 1.0)
-    else:
-        x_scale_eval = np.asarray(x_scale, dtype=np.float64)
-    q = int(probe_count)
-    step = float(probe_step)
-    rng = np.random.default_rng(0)
-    sensitivity_sq = np.zeros_like(amplitude_values, dtype=np.float64)
-    for _ in range(q):
-        signs = rng.integers(0, 2, size=x_eval.shape, dtype=np.int8).astype(np.float64)
-        signs = signs * 2.0 - 1.0
-        probe_x = x_eval + step * x_scale_eval * signs
-        diff = (np.asarray(residual_fun(probe_x), dtype=np.float64) - residual_eval) / step
-        probe_values = _robust_balanced_block_rms_values(diff, block_lengths, huber_tau=huber_tau)
-        if probe_values is None:
-            continue
-        sensitivity_sq += probe_values * probe_values
-    sensitivity_values = np.sqrt(sensitivity_sq / float(q))
-    combined = np.sqrt(
-        amplitude_values * amplitude_values + (float(sensitivity_lambda) * sensitivity_values) ** 2
-    )
-    clipped_values = _clip_scale_by_anchor(combined, floor=floor, max_ratio=max_ratio)
-
-    lengths_eval = np.asarray(block_lengths, dtype=np.int64)
-    scale = np.empty_like(residual_eval, dtype=np.float64)
-    offset = 0
-    for value, length in zip(clipped_values, lengths_eval, strict=False):
-        block_size = int(length)
-        scale[offset : offset + block_size] = float(value)
-        offset += block_size
-    return scale
-
-
-def _robust_balanced_block_rms_values(
-    residual: np.ndarray,
-    block_lengths: np.ndarray | None,
-    *,
-    huber_tau: float,
-) -> np.ndarray | None:
-    residual_eval = np.asarray(residual, dtype=np.float64)
-    if block_lengths is None:
-        return None
-    lengths_eval = np.asarray(block_lengths, dtype=np.int64)
-    if (
-        residual_eval.ndim != 1
-        or lengths_eval.ndim != 1
-        or residual_eval.size == 0
-        or lengths_eval.size == 0
-        or int(np.sum(lengths_eval)) != int(residual_eval.size)
-    ):
-        return None
-
-    values = np.empty_like(lengths_eval, dtype=np.float64)
-    offset = 0
-    for idx, length in enumerate(lengths_eval):
-        block_size = int(length)
-        if block_size <= 0:
-            return None
-        values[idx] = _robust_rms(
-            residual_eval[offset : offset + block_size],
-            huber_tau=huber_tau,
-        )
-        offset += block_size
-    return values
-
-
-def _robust_rms(values: np.ndarray, *, huber_tau: float) -> float:
-    arr = np.asarray(values, dtype=np.float64)
-    if arr.size == 0:
-        return 0.0
-    finite = np.abs(arr[np.isfinite(arr)])
-    if finite.size == 0:
-        return 0.0
-    center = float(np.median(finite))
-    mad = float(np.median(np.abs(finite - center)))
-    cutoff = center + max(float(huber_tau), 0.0) * 1.4826 * mad
-    if not np.isfinite(cutoff) or cutoff <= 0.0:
-        cutoff = center
-    clipped = np.minimum(finite, cutoff)
-    return _stable_rms(clipped)
-
-
-def _stable_rms(values: np.ndarray) -> float:
-    """Overflow-resistant RMS of finite entries, with nonfinite values ignored."""
-
-    arr = np.asarray(values, dtype=np.float64)
-    if arr.size == 0:
-        return 0.0
-    finite = np.abs(arr[np.isfinite(arr)])
-    if finite.size == 0:
-        return 0.0
-    max_abs = float(np.max(finite))
-    if max_abs == 0.0:
-        return 0.0
-    scaled = finite / max_abs
-    return float(max_abs * np.sqrt(np.mean(scaled * scaled)))
-
-
-def _balanced_residual_anchor(values: np.ndarray, *, floor: float) -> float:
-    finite_positive = np.asarray(values, dtype=np.float64)
-    finite_positive = finite_positive[np.isfinite(finite_positive) & (finite_positive > 0.0)]
-    if finite_positive.size == 0:
-        return float(floor)
-    anchor = float(np.median(finite_positive))
-    if not np.isfinite(anchor) or anchor < floor:
-        return float(floor)
-    return anchor
-
-
-def _clip_scale_by_anchor(values: np.ndarray, *, floor: float, max_ratio: float) -> np.ndarray:
-    values_eval = np.asarray(values, dtype=np.float64)
-    floor_eval = max(float(floor), np.finfo(np.float64).tiny)
-    ratio_eval = max(float(max_ratio), 1.0)
-    scale = np.maximum(values_eval, floor_eval)
-    scale[~np.isfinite(scale)] = floor_eval
-    anchor = _balanced_residual_anchor(scale, floor=floor_eval)
-    lower = max(floor_eval, anchor / ratio_eval)
-    upper = _balanced_residual_upper_cap(anchor, floor=floor_eval, max_ratio=ratio_eval)
-    return np.clip(scale, lower, upper)
-
-
-def _balanced_residual_upper_cap(anchor: float, *, floor: float, max_ratio: float) -> float:
-    cap = float(anchor) * float(max_ratio)
-    if not np.isfinite(cap) or cap < floor:
-        return float(np.finfo(np.float64).max)
-    return max(float(floor), cap)
 
 
 def _x_scale_floor() -> float:
