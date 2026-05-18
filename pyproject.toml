@@ -44,7 +44,6 @@ include = ["veqpy*"]
 [tool.setuptools.dynamic]
 version = {attr = "veqpy.__version__"}
 
-
 [tool.ruff]
 line-length = 100
 target-version = "py312"

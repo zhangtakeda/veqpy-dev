@@ -57,6 +57,7 @@ def bind_source_eval_runner(
     *,
     source_plan: SourcePlan,
     grid_workspace: GridWorkspace,
+    profile_workspace: ProfileWorkspace,
     geometry_workspace: GeometryWorkspace,
     source_workspace: SourceWorkspace,
     B0: float,
@@ -66,6 +67,7 @@ def bind_source_eval_runner(
         source_eval_binding=backend_abi.build_fused_source_eval_abi(
             source_plan=source_plan,
             grid_workspace=grid_workspace,
+            profile_workspace=profile_workspace,
             geometry_workspace=geometry_workspace,
             source_workspace=source_workspace,
             B0=B0,
@@ -113,9 +115,10 @@ def _refresh_hot_runtime(
     hot_runtime_binding: backend_abi.FusedHotRuntimeABI,
 ) -> None:
     update_profiles_packed_bulk(
-        hot_runtime_binding.active_u_fields,
-        hot_runtime_binding.active_rp_fields,
-        hot_runtime_binding.active_env_fields,
+        hot_runtime_binding.profile_fields,
+        hot_runtime_binding.profile_rp_fields,
+        hot_runtime_binding.profile_env_fields,
+        hot_runtime_binding.active_profile_ids,
         hot_runtime_binding.T,
         hot_runtime_binding.T_r,
         hot_runtime_binding.T_rr,
@@ -132,9 +135,9 @@ def _refresh_hot_runtime(
         hot_runtime_binding.s_family_fields,
         hot_runtime_binding.c_family_base_fields,
         hot_runtime_binding.s_family_base_fields,
-        hot_runtime_binding.active_u_fields,
-        hot_runtime_binding.c_family_source_slots,
-        hot_runtime_binding.s_family_source_slots,
+        hot_runtime_binding.profile_fields,
+        hot_runtime_binding.c_family_source_profile_ids,
+        hot_runtime_binding.s_family_source_profile_ids,
         hot_runtime_binding.c_active_order,
         hot_runtime_binding.s_active_order,
     )
@@ -416,7 +419,6 @@ def bind_fused_residual_runner_into(
         grid_workspace=grid_workspace,
         profile_workspace=profile_workspace,
         geometry_workspace=geometry_workspace,
-        source_workspace=source_workspace,
         source_execution=source_execution,
         c_active_order=c_active_order,
         s_active_order=s_active_order,
@@ -438,6 +440,7 @@ def bind_fused_residual_runner_into(
         return _bind_pj2_psin_uniform_residual_runner_core(
             source_plan=source_plan,
             grid_workspace=grid_workspace,
+            profile_workspace=profile_workspace,
             geometry_workspace=geometry_workspace,
             source_workspace=source_workspace,
             residual_workspace=residual_workspace,
@@ -452,6 +455,7 @@ def bind_fused_residual_runner_into(
     source_eval_runner = bind_source_eval_runner(
         source_plan=source_plan,
         grid_workspace=grid_workspace,
+        profile_workspace=profile_workspace,
         geometry_workspace=geometry_workspace,
         source_workspace=source_workspace,
         B0=B0,
@@ -462,6 +466,7 @@ def bind_fused_residual_runner_into(
             source_plan=source_plan,
             source_execution=source_execution,
             grid_workspace=grid_workspace,
+            profile_workspace=profile_workspace,
             geometry_workspace=geometry_workspace,
             source_workspace=source_workspace,
             residual_workspace=residual_workspace,
@@ -533,6 +538,7 @@ def _bind_profile_owned_psin_residual_runner_core(
     source_plan: SourcePlan,
     source_execution: backend_abi.SourceExecutionABI,
     grid_workspace: GridWorkspace,
+    profile_workspace: ProfileWorkspace,
     geometry_workspace: GeometryWorkspace,
     source_workspace: SourceWorkspace,
     residual_workspace: ResidualWorkspace,
@@ -551,6 +557,7 @@ def _bind_profile_owned_psin_residual_runner_core(
         source_plan=source_plan,
         source_execution=source_execution,
         grid_workspace=grid_workspace,
+        profile_workspace=profile_workspace,
         source_workspace=source_workspace,
     )
     psin = root_fields[0]
@@ -608,6 +615,7 @@ def _bind_pj2_psin_uniform_residual_runner_core(
     *,
     source_plan: SourcePlan,
     grid_workspace: GridWorkspace,
+    profile_workspace: ProfileWorkspace,
     geometry_workspace: GeometryWorkspace,
     source_workspace: SourceWorkspace,
     residual_workspace: ResidualWorkspace,
@@ -633,8 +641,8 @@ def _bind_pj2_psin_uniform_residual_runner_core(
     materialized_current_input = source_workspace.materialized_current_input
     source_scratch_1d = source_workspace.scratch_1d
     source_scratch_2d = source_workspace.scratch_2d
-    f_profile_u = source_workspace.f_u
-    psin_profile_u = source_workspace.psin_u
+    f_profile_u = profile_workspace.values_for("F")
+    psin_profile_u = profile_workspace.values_for("psin")
     heat_input = source_plan.heat_input
     current_input = source_plan.current_input
     heat_spline_coeff = build_uniform_source_interpolation_coefficients(

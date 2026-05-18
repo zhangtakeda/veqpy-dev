@@ -150,9 +150,10 @@ def build_source_execution_abi(
 
 @dataclass(frozen=True, slots=True)
 class FusedHotRuntimeABI:
-    active_u_fields: np.ndarray
-    active_rp_fields: np.ndarray
-    active_env_fields: np.ndarray
+    profile_fields: np.ndarray
+    profile_rp_fields: np.ndarray
+    profile_env_fields: np.ndarray
+    active_profile_ids: np.ndarray
     T: np.ndarray
     T_r: np.ndarray
     T_rr: np.ndarray
@@ -164,8 +165,8 @@ class FusedHotRuntimeABI:
     s_family_fields: np.ndarray
     c_family_base_fields: np.ndarray
     s_family_base_fields: np.ndarray
-    c_family_source_slots: np.ndarray
-    s_family_source_slots: np.ndarray
+    c_family_source_profile_ids: np.ndarray
+    s_family_source_profile_ids: np.ndarray
     geometry_surface_fields: np.ndarray
     geometry_radial_fields: np.ndarray
     rho: np.ndarray
@@ -233,7 +234,6 @@ def build_fused_hot_runtime_abi(
     grid_workspace: GridWorkspace,
     profile_workspace: ProfileWorkspace,
     geometry_workspace: GeometryWorkspace,
-    source_workspace: SourceWorkspace,
     source_execution: SourceExecutionABI,
     c_active_order: int,
     s_active_order: int,
@@ -242,9 +242,10 @@ def build_fused_hot_runtime_abi(
     Z0: float,
 ) -> FusedHotRuntimeABI:
     return FusedHotRuntimeABI(
-        active_u_fields=profile_workspace.active_u_fields,
-        active_rp_fields=profile_workspace.active_rp_fields,
-        active_env_fields=profile_workspace.active_env_fields,
+        profile_fields=profile_workspace.profile_fields,
+        profile_rp_fields=profile_workspace.profile_rp_fields,
+        profile_env_fields=profile_workspace.profile_env_fields,
+        active_profile_ids=profile_workspace.active_profile_ids,
         T=grid_workspace.T,
         T_r=grid_workspace.T_r,
         T_rr=grid_workspace.T_rr,
@@ -256,8 +257,8 @@ def build_fused_hot_runtime_abi(
         s_family_fields=profile_workspace.s_family_fields,
         c_family_base_fields=profile_workspace.c_family_base_fields,
         s_family_base_fields=profile_workspace.s_family_base_fields,
-        c_family_source_slots=profile_workspace.c_family_source_slots,
-        s_family_source_slots=profile_workspace.s_family_source_slots,
+        c_family_source_profile_ids=profile_workspace.c_family_source_profile_ids,
+        s_family_source_profile_ids=profile_workspace.s_family_source_profile_ids,
         geometry_surface_fields=geometry_workspace.surface_fields,
         geometry_radial_fields=geometry_workspace.radial_fields,
         rho=grid_workspace.rho,
@@ -268,10 +269,10 @@ def build_fused_hot_runtime_abi(
         m_sin_mtheta=grid_workspace.m_sin_mtheta,
         m2_cos_mtheta=grid_workspace.m2_cos_mtheta,
         m2_sin_mtheta=grid_workspace.m2_sin_mtheta,
-        h_fields=geometry_workspace.h_fields,
-        v_fields=geometry_workspace.v_fields,
-        k_fields=geometry_workspace.k_fields,
-        f_profile_fields=source_workspace.f_fields,
+        h_fields=profile_workspace.fields_for("h"),
+        v_fields=profile_workspace.fields_for("v"),
+        k_fields=profile_workspace.fields_for("k"),
+        f_profile_fields=profile_workspace.fields_for("F"),
         has_active_f_profile=bool(source_execution.has_active_f_profile),
         c_active_order=c_active_order,
         s_active_order=s_active_order,
@@ -317,6 +318,7 @@ def build_fused_source_eval_abi(
     *,
     source_plan: SourcePlan,
     grid_workspace: GridWorkspace,
+    profile_workspace: ProfileWorkspace,
     geometry_workspace: GeometryWorkspace,
     source_workspace: SourceWorkspace,
     B0: float,
@@ -337,7 +339,7 @@ def build_fused_source_eval_abi(
         n_axis_fix=n_axis_fix,
         radial_fields=geometry_workspace.radial_fields,
         surface_fields=geometry_workspace.surface_fields,
-        f_profile_u=source_workspace.f_u,
+        f_profile_u=profile_workspace.values_for("F"),
         Ip=float(source_plan.Ip),
         beta=float(source_plan.beta),
         source_scratch_1d=source_workspace.scratch_1d,
@@ -351,6 +353,7 @@ def build_profile_owned_psin_source_abi(
     source_plan: SourcePlan,
     source_execution: SourceExecutionABI,
     grid_workspace: GridWorkspace,
+    profile_workspace: ProfileWorkspace,
     source_workspace: SourceWorkspace,
 ):
     del source_execution
@@ -368,7 +371,7 @@ def build_profile_owned_psin_source_abi(
         endpoint_blend=source_workspace.endpoint_blend,
         materialized_heat_input=source_workspace.materialized_heat_input,
         materialized_current_input=source_workspace.materialized_current_input,
-        psin_profile_fields=source_workspace.psin_fields,
+        psin_profile_fields=profile_workspace.fields_for("psin"),
         parameterization_code=int(source_plan.parameterization_code),
         heat_input=source_plan.heat_input,
         current_input=source_plan.current_input,

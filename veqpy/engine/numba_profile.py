@@ -70,9 +70,10 @@ def update_profile(
 
 @njit(cache=True, fastmath=True, nogil=True)
 def update_profiles_packed_bulk(
-    active_u_fields: np.ndarray,
-    active_rp_fields: np.ndarray,
-    active_env_fields: np.ndarray,
+    profile_fields: np.ndarray,
+    profile_rp_fields: np.ndarray,
+    profile_env_fields: np.ndarray,
+    active_profile_ids: np.ndarray,
     T: np.ndarray,
     T_r: np.ndarray,
     T_rr: np.ndarray,
@@ -83,13 +84,14 @@ def update_profiles_packed_bulk(
     lengths: np.ndarray,
 ) -> None:
     """Refresh all active profile fields from packed x in bulk."""
-    n_active = active_u_fields.shape[0]
-    nr = active_u_fields.shape[2]
+    n_active = active_profile_ids.shape[0]
+    nr = profile_fields.shape[2]
 
-    for p in range(n_active):
-        coeff_size = lengths[p]
-        offset = offsets[p]
-        scale = scales[p]
+    for active_slot in range(n_active):
+        profile_id = active_profile_ids[active_slot]
+        coeff_size = lengths[active_slot]
+        offset = offsets[active_slot]
+        scale = scales[active_slot]
 
         for i in range(nr):
             series = 0.0
@@ -97,22 +99,24 @@ def update_profiles_packed_bulk(
             series_rr = 0.0
 
             for k in range(coeff_size):
-                c = x[coeff_index_rows[p, k]]
+                c = x[coeff_index_rows[active_slot, k]]
                 series += c * T[k, i]
                 series_r += c * T_r[k, i]
                 series_rr += c * T_rr[k, i]
 
-            env = active_env_fields[p, 0, i]
-            env_r = active_env_fields[p, 1, i]
-            env_rr = active_env_fields[p, 2, i]
+            env = profile_env_fields[profile_id, 0, i]
+            env_r = profile_env_fields[profile_id, 1, i]
+            env_rr = profile_env_fields[profile_id, 2, i]
             base = env * series
             base_r = env_r * series + env * series_r
             base_rr = env_rr * series + 2.0 * env_r * series_r + env * series_rr
             amp = offset + base
 
-            rp = active_rp_fields[p, 0, i]
-            rp_r = active_rp_fields[p, 1, i]
-            rp_rr = active_rp_fields[p, 2, i]
-            active_u_fields[p, 0, i] = scale * (rp * amp)
-            active_u_fields[p, 1, i] = scale * (rp_r * amp + rp * base_r)
-            active_u_fields[p, 2, i] = scale * (rp_rr * amp + 2.0 * rp_r * base_r + rp * base_rr)
+            rp = profile_rp_fields[profile_id, 0, i]
+            rp_r = profile_rp_fields[profile_id, 1, i]
+            rp_rr = profile_rp_fields[profile_id, 2, i]
+            profile_fields[profile_id, 0, i] = scale * (rp * amp)
+            profile_fields[profile_id, 1, i] = scale * (rp_r * amp + rp * base_r)
+            profile_fields[profile_id, 2, i] = scale * (
+                rp_rr * amp + 2.0 * rp_r * base_r + rp * base_rr
+            )

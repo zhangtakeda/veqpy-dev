@@ -153,10 +153,7 @@ class Operator:
         storage layout.
         """
 
-        return self.profile_workspace.active_profile_blocks(
-            active_profile_ids=self.plan.active_profile_ids,
-            profile_names=self.plan.profile_names,
-        )
+        return self.profile_workspace.active_profile_blocks()
 
     def build_boundary_slope_initial_state(
         self, *, boundary_slope_factor: float = 1.0
@@ -165,7 +162,6 @@ class Operator:
 
         return self.profile_workspace.build_boundary_slope_initial_state(
             x_size=self.plan.x_size,
-            profile_names=self.plan.profile_names,
             profiles_by_name=self.profiles_by_name,
             boundary_slope_factor=boundary_slope_factor,
         )
@@ -321,17 +317,6 @@ class Operator:
             raise ValueError(f"Expected x to have shape ({self.plan.x_size},), got {arr.shape}")
         return arr
 
-    def _bind_workspace_views(self) -> None:
-        self.geometry_workspace.bind_profile_views(
-            h_profile=self.h_profile,
-            v_profile=self.v_profile,
-            k_profile=self.k_profile,
-        )
-        self.source_workspace.bind_profile_views(
-            F_profile=self.F_profile,
-            psin_profile=self.psin_profile,
-        )
-
     def _setup_runtime_state(self) -> None:
         (
             profiles_by_name,
@@ -366,6 +351,7 @@ class Operator:
         self.geometry_workspace = geometry_workspace
         self.source_workspace = source_workspace
         self.residual_workspace = residual_workspace
+        self.profile_workspace.bind_profile_fields(profiles_by_name=self.profiles_by_name)
 
     def _refresh_runtime_state(self) -> None:
         self._apply_plan(
@@ -387,7 +373,6 @@ class Operator:
             psin=self.residual_workspace.root_fields[0],
         )
         self._refresh_stage_a_runtime()
-        self._bind_workspace_views()
         self._refresh_runtime_bindings()
 
     def _refresh_profile_runtime(self) -> None:
@@ -398,6 +383,7 @@ class Operator:
             profile_index=self.plan.profile_index,
             profile_L=self.plan.profile_L,
             profiles_by_name=self.profiles_by_name,
+            profile_workspace=self.profile_workspace,
             profile_static_kwargs_by_name=self.plan.profile_static_kwargs_by_name,
             profile_offset_specs=self.plan.profile_offset_specs,
             refresh_fourier_family_base_fields=lambda: refresh_fourier_family_base_fields(
@@ -441,9 +427,6 @@ class Operator:
             profiles_by_name=self.profiles_by_name,
             profile_L=self.plan.profile_L,
             coeff_index=self.plan.coeff_index,
-            active_u_fields=profile_workspace.active_u_fields,
-            active_rp_fields=profile_workspace.active_rp_fields,
-            active_env_fields=profile_workspace.active_env_fields,
             active_offsets=profile_workspace.active_offsets,
             active_scales=profile_workspace.active_scales,
             active_lengths=profile_workspace.active_lengths,

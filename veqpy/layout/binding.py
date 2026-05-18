@@ -58,7 +58,7 @@ def build_operator_layout(
         plan=plan, profile_workspace=profile_workspace
     )
     profile_postprocess_runner = _build_profile_postprocess_runner(
-        source_workspace=source_workspace
+        profile_workspace=profile_workspace,
     )
     geometry_stage_runner = _build_geometry_stage_runner(
         plan=plan,
@@ -71,6 +71,7 @@ def build_operator_layout(
     source_eval_runner = numba_operator.bind_source_eval_runner(
         source_plan=plan.source_plan,
         grid_workspace=grid_workspace,
+        profile_workspace=profile_workspace,
         geometry_workspace=geometry_workspace,
         source_workspace=source_workspace,
         B0=case.B0,
@@ -80,6 +81,7 @@ def build_operator_layout(
         plan=plan,
         case=case,
         source_workspace=source_workspace,
+        profile_workspace=profile_workspace,
         residual_workspace=residual_workspace,
         fix_rho=fix_rho,
         source_eval_runner=source_eval_runner,
@@ -152,9 +154,9 @@ def _build_profile_stage_runner(
 ) -> Callable[[np.ndarray], None]:
     return build_profile_stage_runner(
         active_profile_ids=plan.active_profile_ids,
-        active_u_fields=profile_workspace.active_u_fields,
-        active_rp_fields=profile_workspace.active_rp_fields,
-        active_env_fields=profile_workspace.active_env_fields,
+        profile_fields=profile_workspace.profile_fields,
+        profile_rp_fields=profile_workspace.profile_rp_fields,
+        profile_env_fields=profile_workspace.profile_env_fields,
         T=plan.grid_workspace.T,
         T_r=plan.grid_workspace.T_r,
         T_rr=plan.grid_workspace.T_rr,
@@ -168,11 +170,11 @@ def _build_profile_stage_runner(
 
 def _build_profile_postprocess_runner(
     *,
-    source_workspace: SourceWorkspace,
+    profile_workspace: ProfileWorkspace,
 ) -> Callable[[], None]:
     eps = 1.0e-10
 
-    f_fields = source_workspace.f_fields
+    f_fields = profile_workspace.fields_for("F")
 
     def runner() -> None:
         numba_operator.convert_f_squared_fields_to_f(f_fields, eps=eps)
@@ -194,14 +196,14 @@ def _build_geometry_stage_runner(
         s_family_fields=profile_workspace.s_family_fields,
         c_family_base_fields=profile_workspace.c_family_base_fields,
         s_family_base_fields=profile_workspace.s_family_base_fields,
-        active_u_fields=profile_workspace.active_u_fields,
-        c_family_source_slots=profile_workspace.c_family_source_slots,
-        s_family_source_slots=profile_workspace.s_family_source_slots,
+        profile_fields=profile_workspace.profile_fields,
+        c_family_source_profile_ids=profile_workspace.c_family_source_profile_ids,
+        s_family_source_profile_ids=profile_workspace.s_family_source_profile_ids,
         c_effective_order=c_effective_order,
         s_effective_order=s_effective_order,
-        h_fields=geometry_workspace.h_fields,
-        v_fields=geometry_workspace.v_fields,
-        k_fields=geometry_workspace.k_fields,
+        h_fields=profile_workspace.fields_for("h"),
+        v_fields=profile_workspace.fields_for("v"),
+        k_fields=profile_workspace.fields_for("k"),
         a=case.a,
         R0=case.R0,
         Z0=case.Z0,
@@ -223,6 +225,7 @@ def _build_bound_source_stage_runner(
     plan: OperatorBuildPlan,
     case: OperatorCase,
     source_workspace: SourceWorkspace,
+    profile_workspace: ProfileWorkspace,
     residual_workspace: ResidualWorkspace,
     fix_rho: float,
     source_eval_runner: Callable,
@@ -231,6 +234,7 @@ def _build_bound_source_stage_runner(
         plan=plan,
         case=case,
         source_workspace=source_workspace,
+        profile_workspace=profile_workspace,
         residual_workspace=residual_workspace,
         fix_rho=fix_rho,
         source_eval_runner=source_eval_runner,

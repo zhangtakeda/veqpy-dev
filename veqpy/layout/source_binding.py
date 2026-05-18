@@ -30,6 +30,7 @@ def build_bound_source_stage_runner(
     plan,
     case,
     source_workspace,
+    profile_workspace,
     residual_workspace,
     fix_rho: float,
     source_eval_runner: Callable,
@@ -40,6 +41,7 @@ def build_bound_source_stage_runner(
             plan=plan,
             case=case,
             source_workspace=source_workspace,
+            profile_workspace=profile_workspace,
             residual_workspace=residual_workspace,
             source_eval_runner=source_eval_runner,
         )
@@ -47,6 +49,7 @@ def build_bound_source_stage_runner(
         plan=plan,
         case=case,
         source_workspace=source_workspace,
+        profile_workspace=profile_workspace,
         residual_workspace=residual_workspace,
         fix_rho=fix_rho,
         source_eval_runner=source_eval_runner,
@@ -58,6 +61,7 @@ def _build_source_stage_runner_shared(
     plan,
     case,
     source_workspace,
+    profile_workspace,
     residual_workspace,
     fix_rho: float,
     source_eval_runner: Callable,
@@ -79,7 +83,7 @@ def _build_source_stage_runner_shared(
         if source_plan.is_psin_coordinate and not source_plan.is_grid_nodes:
             source_psin_query = source_workspace.psin_query
             source_parameter_query = source_workspace.parameter_query
-            psin_profile_fields = source_workspace.psin_fields
+            psin_profile_fields = profile_workspace.fields_for("psin")
             heat_input = source_plan.heat_input
             current_input = source_plan.current_input
             parameterization_code = source_plan.parameterization_code
@@ -122,8 +126,8 @@ def _build_source_stage_runner_shared(
             return runner
 
         source_psin_query = source_workspace.psin_query
-        psin_profile_u = source_workspace.psin_u
-        psin_profile_fields = source_workspace.psin_fields
+        psin_profile_u = profile_workspace.values_for("psin")
+        psin_profile_fields = profile_workspace.fields_for("psin")
 
         def runner() -> tuple[float, float]:
             if psin_profile_fields.size == 0:
@@ -189,12 +193,13 @@ def _build_pj2_psin_uniform_source_stage_runner(
     plan,
     case,
     source_workspace,
+    profile_workspace,
     residual_workspace,
     source_eval_runner: Callable,
 ) -> Callable[[], tuple[float, float]]:
     source_plan = plan.source_plan
     target_root_fields = source_workspace.target_root_fields
-    psin_profile_u = source_workspace.psin_u
+    psin_profile_u = profile_workspace.values_for("psin")
     root_fields = residual_workspace.root_fields
     psin = root_fields[0]
     psin_r = root_fields[1]
@@ -205,8 +210,6 @@ def _build_pj2_psin_uniform_source_stage_runner(
 
     def runner() -> tuple[float, float]:
         if source_workspace.psin_query[0] < 0.0:
-            if psin_profile_u is None:
-                raise RuntimeError("psin_profile.u is not initialized")
             np.copyto(source_workspace.psin_query, np.asarray(psin_profile_u, dtype=np.float64))
             if source_workspace.psin_query.ndim != 1 or source_workspace.psin_query.size < 2:
                 raise ValueError(

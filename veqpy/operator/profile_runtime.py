@@ -8,7 +8,7 @@ Role:
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 
@@ -17,6 +17,9 @@ from veqpy.model.profile import Profile
 from veqpy.operator.operator_case import OperatorCase
 from veqpy.operator.packed_layout import build_profile_layout, coeff_array_from_list
 from veqpy.workspace import GridWorkspace
+
+if TYPE_CHECKING:
+    from veqpy.workspace.profile_workspace import ProfileWorkspace
 
 
 def make_profile(
@@ -74,6 +77,7 @@ def refresh_profile_runtime(
     profile_index: dict[str, int],
     profile_L: np.ndarray,
     profiles_by_name: dict[str, Profile],
+    profile_workspace: ProfileWorkspace,
     profile_static_kwargs_by_name: dict[str, dict[str, int]],
     profile_offset_specs: dict[str, float | str],
     refresh_fourier_family_base_fields: Callable[[], None],
@@ -113,6 +117,7 @@ def refresh_profile_runtime(
             None if L < 0 or coeff is None else coeff_array_from_list(name, coeff)[: L + 1].copy()
         )
         profile._prepare_runtime_cache(operator_grid)
+        profile_workspace.bind_auxiliary_fields(profile_id=p, profile=profile)
         profile.update()
     refresh_fourier_family_base_fields()
 
@@ -130,9 +135,6 @@ def refresh_stage_a_runtime(
     profiles_by_name: dict[str, Profile],
     profile_L: np.ndarray,
     coeff_index: np.ndarray,
-    active_u_fields: np.ndarray,
-    active_rp_fields: np.ndarray,
-    active_env_fields: np.ndarray,
     active_offsets: np.ndarray,
     active_scales: np.ndarray,
     active_lengths: np.ndarray,
@@ -148,9 +150,6 @@ def refresh_stage_a_runtime(
         L = int(profile_L[p_int])
         coeff_indices = coeff_index[p_int, : L + 1]
 
-        profile.u_fields = active_u_fields[slot]
-        active_rp_fields[slot] = profile.rp_fields
-        active_env_fields[slot] = profile.env_fields
         active_offsets[slot] = profile.offset
         active_scales[slot] = profile.scale
         active_lengths[slot] = coeff_indices.size

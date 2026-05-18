@@ -19,9 +19,9 @@ import numpy as np
 def build_profile_stage_runner(
     *,
     active_profile_ids: np.ndarray,
-    active_u_fields: np.ndarray,
-    active_rp_fields: np.ndarray,
-    active_env_fields: np.ndarray,
+    profile_fields: np.ndarray,
+    profile_rp_fields: np.ndarray,
+    profile_env_fields: np.ndarray,
     T: np.ndarray,
     T_r: np.ndarray,
     T_rr: np.ndarray,
@@ -38,9 +38,10 @@ def build_profile_stage_runner(
 
     def runner(x: np.ndarray) -> None:
         update_profiles_packed_bulk(
-            active_u_fields,
-            active_rp_fields,
-            active_env_fields,
+            profile_fields,
+            profile_rp_fields,
+            profile_env_fields,
+            active_profile_ids,
             T,
             T_r,
             T_rr,

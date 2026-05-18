@@ -2534,9 +2534,9 @@ def update_fourier_family_fields(
     out_s_fields: np.ndarray,
     base_c_fields: np.ndarray,
     base_s_fields: np.ndarray,
-    active_u_fields: np.ndarray,
-    c_source_slots: np.ndarray,
-    s_source_slots: np.ndarray,
+    profile_fields: np.ndarray,
+    c_source_profile_ids: np.ndarray,
+    s_source_profile_ids: np.ndarray,
     c_active_order: int,
     s_active_order: int,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -2548,11 +2548,12 @@ def update_fourier_family_fields(
         raise ValueError(
             f"Base/output c/s shape mismatch: {base_c_fields.shape} and {base_s_fields.shape}"
         )
-    if active_u_fields.ndim != 3:
-        raise ValueError(f"Expected active_u_fields to be 3D, got {active_u_fields.shape}")
-    if c_source_slots.ndim != 1 or s_source_slots.ndim != 1:
+    if profile_fields.ndim != 3:
+        raise ValueError(f"Expected profile_fields to be 3D, got {profile_fields.shape}")
+    if c_source_profile_ids.ndim != 1 or s_source_profile_ids.ndim != 1:
         raise ValueError(
-            f"Expected 1D c/s slots, got {c_source_slots.shape} and {s_source_slots.shape}"
+            f"Expected 1D c/s profile ids, got "
+            f"{c_source_profile_ids.shape} and {s_source_profile_ids.shape}"
         )
 
     _update_fourier_family_fields_impl(
@@ -2560,9 +2561,9 @@ def update_fourier_family_fields(
         np.asarray(out_s_fields, dtype=np.float64),
         np.asarray(base_c_fields, dtype=np.float64),
         np.asarray(base_s_fields, dtype=np.float64),
-        np.asarray(active_u_fields, dtype=np.float64),
-        np.asarray(c_source_slots, dtype=np.int64),
-        np.asarray(s_source_slots, dtype=np.int64),
+        np.asarray(profile_fields, dtype=np.float64),
+        np.asarray(c_source_profile_ids, dtype=np.int64),
+        np.asarray(s_source_profile_ids, dtype=np.int64),
         int(c_active_order),
         int(s_active_order),
     )
@@ -2767,19 +2768,19 @@ def _update_fourier_family_fields_impl(
     out_s_fields: np.ndarray,
     base_c_fields: np.ndarray,
     base_s_fields: np.ndarray,
-    active_u_fields: np.ndarray,
-    c_source_slots: np.ndarray,
-    s_source_slots: np.ndarray,
+    profile_fields: np.ndarray,
+    c_source_profile_ids: np.ndarray,
+    s_source_profile_ids: np.ndarray,
     c_active_order: int,
     s_active_order: int,
 ) -> None:
     for order in range(out_c_fields.shape[0]):
         if order <= c_active_order:
-            slot = c_source_slots[order]
-            if slot >= 0:
+            profile_id = c_source_profile_ids[order]
+            if profile_id >= 0:
                 for d in range(out_c_fields.shape[1]):
                     for i in range(out_c_fields.shape[2]):
-                        out_c_fields[order, d, i] = active_u_fields[slot, d, i]
+                        out_c_fields[order, d, i] = profile_fields[profile_id, d, i]
             else:
                 for d in range(out_c_fields.shape[1]):
                     for i in range(out_c_fields.shape[2]):
@@ -2794,11 +2795,11 @@ def _update_fourier_family_fields_impl(
             out_s_fields[0, d, i] = base_s_fields[0, d, i]
     for order in range(1, out_s_fields.shape[0]):
         if order <= s_active_order:
-            slot = s_source_slots[order]
-            if slot >= 0:
+            profile_id = s_source_profile_ids[order]
+            if profile_id >= 0:
                 for d in range(out_s_fields.shape[1]):
                     for i in range(out_s_fields.shape[2]):
-                        out_s_fields[order, d, i] = active_u_fields[slot, d, i]
+                        out_s_fields[order, d, i] = profile_fields[profile_id, d, i]
             else:
                 for d in range(out_s_fields.shape[1]):
                     for i in range(out_s_fields.shape[2]):
