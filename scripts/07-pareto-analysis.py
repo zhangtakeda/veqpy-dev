@@ -325,7 +325,7 @@ PLOT_EPS = 1.0e-12
 CASE_SOLVER_METHODS = {
     "solovev": "hybr",
     "efit": "hybr",
-    "chease": "hybr",
+    "chease": "lm",
 }
 FRONTIER_MIN_REL_ERROR_IMPROVEMENT = 0.05
 FRONTIER_MIN_REL_ERROR = 1.0e-5

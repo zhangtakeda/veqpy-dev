@@ -62,7 +62,7 @@ class Operator:
     grid: InitVar[Grid]
     case: OperatorCase = field(repr=False)
     fix_rho: float = 0.05
-    source_interpolation_kind: str = "linear"
+    source_interpolation_kind: str = "barycentric"
     plan: OperatorBuildPlan = field(init=False, repr=False)
     profile_workspace: ProfileWorkspace = field(init=False, repr=False)
     geometry_workspace: GeometryWorkspace = field(init=False, repr=False)

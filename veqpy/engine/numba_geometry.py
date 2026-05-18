@@ -151,8 +151,8 @@ def update_geometry_hot(
             Z_tt_ij = a * rho_i * k_i * sin_t
 
             J_ij = R_t_ij * Z_r_ij - R_r_ij * Z_t_ij
-            if abs(J_ij) < 1e-6:
-                J_ij = np.sign(J_ij) * 1e-6
+            if J_ij < 1e-6:
+                J_ij = 1e-6
 
             J_r_ij = -(R_rr_ij * Z_t_ij - R_rt_ij * Z_r_ij + R_r_ij * Z_rt_ij - R_t_ij * Z_rr_ij)
             J_t_ij = -(R_rt_ij * Z_t_ij - R_tt_ij * Z_r_ij + R_r_ij * Z_tt_ij - R_t_ij * Z_rt_ij)
