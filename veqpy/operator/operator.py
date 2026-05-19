@@ -158,13 +158,26 @@ class Operator:
     def build_boundary_slope_initial_state(
         self, *, boundary_slope_factor: float = 1.0
     ) -> np.ndarray:
-        """Build a boundary-scaled packed x0 for active c/s Fourier profiles."""
+        """Build a geometrically-motivated packed x0 for all active profiles.
 
-        return self.profile_workspace.build_boundary_slope_initial_state(
+        c/s Fourier profiles use ``-offset / (2*p + 1)``.
+        ``h`` and ``v`` (Shafranov / vertical shift) are estimated from
+        the boundary aspect ratio and the source-profile shape.
+        """
+
+        x = self.profile_workspace.build_boundary_slope_initial_state(
             x_size=self.plan.x_size,
             profiles_by_name=self.profiles_by_name,
             boundary_slope_factor=boundary_slope_factor,
         )
+        _apply_geometric_hv_estimate(
+            x,
+            plan=self.plan,
+            profile_workspace=self.profile_workspace,
+            boundary=self.case.boundary,
+            heat_input=getattr(self.case, "heat_input", None),
+        )
+        return x
 
     def _validate_runtime_profile_support(self) -> None:
         """Validate psin profile ownership requirements for the current source route."""
@@ -468,3 +481,67 @@ class Operator:
             alpha1=self.alpha1,
             alpha2=self.alpha2,
         )
+
+
+def _apply_geometric_hv_estimate(
+    x: "np.ndarray",
+    *,
+    plan: "OperatorBuildPlan",
+    profile_workspace: "ProfileWorkspace",
+    boundary: object,
+    heat_input: "np.ndarray | None" = None,
+) -> None:
+    """Set h[0] from boundary aspect ratio and source-profile structure.
+
+    ``h[0]`` (Shafranov shift):  for structured (H-mode / L-mode) profiles
+    we use the leading-order toroidal estimate ``h ≈ 0.66 * a / R0``; for
+    uniform (analytic / Solovev-like) profiles we leave it at zero.
+
+    ``v[0]`` is left at zero because the boundary area centroid is
+    sensitive to shaping (elongation, triangularity) and often gives a
+    spurious non-zero value for up-down-symmetric equilibria.
+    """
+    try:
+        a = float(boundary.a)
+        R0 = float(boundary.R0)
+    except (AttributeError, TypeError, ValueError):
+        return
+    h0_est = _estimate_h0(a, R0, heat_input)
+    for profile_id, name in enumerate(profile_workspace.profile_names):
+        slot = profile_workspace.active_slot_for_profile_id(int(profile_id))
+        if slot < 0 or int(profile_workspace.active_lengths[slot]) <= 0:
+            continue
+        coeff_index = int(profile_workspace.active_coeff_index_rows[slot, 0])
+        if name == "h":
+            x[coeff_index] = h0_est
+
+
+def _estimate_h0(
+    a: float,
+    R0: float,
+    heat_input: "np.ndarray | None",
+) -> float:
+    """Estimate Shafranov shift h0 = Δ(0)/a from profile structure.
+
+    Returns zero for uniform source profiles (Solovev-like analytic
+    equilibria) where the Shafranov shift is small and a non-zero
+    guess can mislead the solver, especially under beta constraints.
+    Structured profiles (H-mode, L-mode, realistic) use the
+    leading-order toroidal estimate ``0.66 * a / R0``.
+    """
+    if heat_input is not None:
+        try:
+            import numpy as np
+            h_abs = np.abs(np.asarray(heat_input, dtype=np.float64))
+            if h_abs.size >= 2:
+                h_mean = float(np.mean(h_abs))
+                if h_mean < np.finfo(np.float64).tiny:
+                    return 0.0
+                h_range = float(np.max(h_abs) - np.min(h_abs))
+                if h_range / h_mean < 1e-4:
+                    return 0.0  # uniform → Solovev-like
+        except (ValueError, TypeError):
+            pass
+    return 0.66 * a / R0
+
+

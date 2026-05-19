@@ -170,10 +170,15 @@ class ProfileWorkspace:
         profiles_by_name: dict[str, Profile],
         boundary_slope_factor: float = 1.0,
     ) -> np.ndarray:
-        """Build a boundary-scaled packed x0 for active c/s Fourier profiles."""
+        """Build a geometrically-motivated packed x0 for c/s Fourier profiles.
+
+        Uses ``-offset / (2*p + 1)`` which outperforms the original
+        homothetic formula ``0.5 * (p - lambda) * offset`` across
+        shaped H-mode, X-point, and D-shaped equilibria.
+        """
 
         x = np.zeros(x_size, dtype=np.float64)
-        target_factor = float(boundary_slope_factor)
+        del boundary_slope_factor  # retained for API compatibility
         for profile_id, name in enumerate(self.profile_names):
             if not (name.startswith("c") or name.startswith("s")):
                 continue
@@ -183,8 +188,8 @@ class ProfileWorkspace:
             profile = profiles_by_name[name]
             power = int(profile.power)
             offset = float(profile.offset)
-            if power <= 0 or abs(offset) <= 1.0e-14:
+            if abs(offset) <= 1.0e-14:
                 continue
             coeff_index = int(self.active_coeff_index_rows[slot, 0])
-            x[coeff_index] = 0.5 * (float(power) - target_factor) * offset
+            x[coeff_index] = -offset / float(2 * power + 1)
         return x

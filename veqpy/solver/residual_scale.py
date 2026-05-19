@@ -23,7 +23,7 @@ from veqpy.base.registry import Registry
 # -----------------------------------------------------------------------------
 
 _RESIDUAL_SCALE_BUILDER: Registry[str, Callable] = Registry(str, Callable)
-DEFAULT_RESIDUAL_NORMALIZATION = "fast"
+DEFAULT_RESIDUAL_NORMALIZATION = "balance"
 
 # -----------------------------------------------------------------------------
 # Mode helpers

@@ -325,7 +325,7 @@ PLOT_EPS = 1.0e-12
 CASE_SOLVER_METHODS = {
     "solovev": "hybr",
     "efit": "hybr",
-    "chease": "lm",
+    "chease": "hybr",
 }
 FRONTIER_MIN_REL_ERROR_IMPROVEMENT = 0.05
 FRONTIER_MIN_REL_ERROR = 1.0e-5
@@ -1153,7 +1153,7 @@ def solve_equilibrium(case, *, method: str):
             method=str(method),
             max_evaluations=REFERENCE_SOLVER_MAXFEV,
             enable_warmstart=False,
-            enable_fallback=False,
+            enable_fallback=True,
             enable_verbose=False,
             enable_history=False,
         ),
@@ -1162,8 +1162,13 @@ def solve_equilibrium(case, *, method: str):
         enable_verbose=False,
         enable_history=False,
         enable_warmstart=False,
-        enable_fallback=False,
+        enable_fallback=True,
     )
+    if solver.result is None or not solver.result.success:
+        raise RuntimeError(
+            f"Reference solve failed: "
+            f"{solver.result.message if solver.result else 'no result'}"
+        )
     equilibrium = solver.build_equilibrium()
     return solver, equilibrium, resample_surface_equilibrium(equilibrium)
 

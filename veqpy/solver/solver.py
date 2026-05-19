@@ -1260,10 +1260,6 @@ def _build_initial_state(operator: Operator, solve_config: SolverConfig) -> np.n
         )
     if initial_policy == "warm":
         raise RuntimeError("_build_initial_state('warm') needs the current solver x0")
-    if initial_policy == "optimize":
-        raise NotImplementedError(
-            "initial_policy='optimize' is reserved for the line-search initializer"
-        )
     raise ValueError(f"Unsupported initial_policy {initial_policy!r}")
 
 
@@ -1325,7 +1321,6 @@ def _should_use_robust_trf_loss(
     if block_rms is None or block_rms.size == 0:
         return False
     return bool(np.median(block_rms) >= _trf_robust_block_rms_threshold())
-
 
 
 def _x_scale_floor() -> float:

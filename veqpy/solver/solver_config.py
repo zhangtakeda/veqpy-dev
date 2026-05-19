@@ -62,7 +62,7 @@ SUPPORTED_METHODS: dict[str, OptimizeMethod] = {
 DEFAULT_VARIATIONAL_METHOD = "hybr"
 DEFAULT_COLLOCATION_METHOD = "trf"
 DEFAULT_VARIATIONAL_FALLBACK_METHODS = ("lm",)
-SUPPORTED_INITIAL_POLICIES = frozenset(("zeros", "warm", "homothetic", "optimize"))
+SUPPORTED_INITIAL_POLICIES = frozenset(("zeros", "warm", "homothetic"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +79,7 @@ class SolverConfig:
     fallback_methods: tuple[str, ...] | list[str] | None = field(default=None)
     enable_verbose: bool = False
     enable_history: bool = True
-    residual_normalization: str | None = DEFAULT_RESIDUAL_NORMALIZATION
+    residual_normalization: str | None = None
     residual_normalization_floor: float = 1.0
     residual_normalization_max_ratio: float = 1.0e6
     residual_normalization_huber_tau: float = 3.0
