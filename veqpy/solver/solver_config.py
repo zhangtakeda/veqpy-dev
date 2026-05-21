@@ -73,13 +73,13 @@ class SolverConfig:
     max_residual: float = 1e-6
     max_evaluations: int = 1000
     enable_warmstart: bool = False
-    initial_policy: str | None = "homothetic"
+    initial_policy: str | None = None
     initial_homothetic_lambda: float = 1.0
     enable_fallback: bool = True
     fallback_methods: tuple[str, ...] | list[str] | None = field(default=None)
     enable_verbose: bool = False
     enable_history: bool = True
-    residual_normalization: str | None = None
+    residual_normalization: str | None = "fast"
     residual_normalization_floor: float = 1.0
     residual_normalization_max_ratio: float = 1.0e6
     residual_normalization_huber_tau: float = 3.0
