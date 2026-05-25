@@ -71,15 +71,23 @@ coefficients `N -> N`. Set `SolverConfig(enable_collocation=True)` (or pass
 `enable_collocation=True` to `solve`) to run a two-stage workflow:
 
 1. solve the normal variational problem;
-2. warm-start a DESC-style collocation polish using `Operator.residual_collocation(x)`.
+2. warm-start a collocation polish using `Operator.residual_collocation(x)`.
 
-The collocation polish residual is a quadrature-scaled pointwise force-balance
-vector containing `G*psin_R` and `G*psin_Z`, mapping packed coefficients
-`N -> 2*Nr*Nt`. Because it is generally rectangular, the polish method must be
-a least-squares method:
+The collocation polish residual is controlled by `collocation_weight`. The
+default `collocation_weight=1` keeps the pure quadrature-scaled pointwise
+force-balance objective containing `G*psin_R` and `G*psin_Z`, mapping packed
+coefficients `N -> 2*Nr*Nt`. Intermediate weights use a variational-state-anchored
+least-squares objective that keeps the solution local to the variational
+warm-start while reducing the collocation residual; `collocation_weight=0`
+skips the polish and is exactly the normal variational result. Because nonzero
+collocation polish is generally
+rectangular, the polish method must be a least-squares method:
 
 ```python
-solver = Solver(operator=operator, config=SolverConfig(enable_collocation=True))
+solver = Solver(
+    operator=operator,
+    config=SolverConfig(enable_collocation=True, collocation_weight=0.25),
+)
 ```
 
 The variational default remains `method="hybr"`; the collocation polish default

@@ -89,6 +89,7 @@ class SolverConfig:
 
     enable_collocation: bool = False
     collocation_method: str = DEFAULT_COLLOCATION_METHOD
+    collocation_weight: float = 1.0
     collocation_max_residual: float | None = None
     collocation_max_evaluations: int | None = None
 
@@ -118,6 +119,12 @@ class SolverConfig:
             supported = ", ".join(LEAST_SQUARES_METHODS)
             raise ValueError(
                 f"Unsupported collocation_method {collocation_method!r}; supported: {supported}."
+            )
+        collocation_weight = float(self.collocation_weight)
+        if not isfinite(collocation_weight) or collocation_weight < 0.0 or collocation_weight > 1.0:
+            raise ValueError(
+                "collocation_weight must be a finite float in [0, 1]; "
+                f"got {self.collocation_weight!r}."
             )
         unsupported_fallbacks = [
             method_name
@@ -229,6 +236,7 @@ class SolverConfig:
         object.__setattr__(self, "method", method)
         object.__setattr__(self, "enable_collocation", bool(self.enable_collocation))
         object.__setattr__(self, "collocation_method", collocation_method)
+        object.__setattr__(self, "collocation_weight", collocation_weight)
         object.__setattr__(self, "collocation_max_residual", collocation_max_residual)
         object.__setattr__(self, "collocation_max_evaluations", collocation_max_evaluations)
         object.__setattr__(self, "max_residual", max_residual)
@@ -263,6 +271,7 @@ class SolverConfig:
         tree.add(f"enable_collocation: {self.enable_collocation}")
         if self.enable_collocation:
             tree.add(f"collocation_method: {self.collocation_method}")
+            tree.add(f"collocation_weight: {self.collocation_weight:.6g}")
             if self.collocation_max_residual is not None:
                 tree.add(f"collocation_max_residual: {self.collocation_max_residual:.6g}")
             if self.collocation_max_evaluations is not None:

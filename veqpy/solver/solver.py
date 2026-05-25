@@ -99,6 +99,7 @@ class Solver:
         residual_normalization_sensitivity_lambda: float | None = None,
         enable_collocation: bool | None = None,
         collocation_method: str | None = None,
+        collocation_weight: float | None = None,
         collocation_max_residual: float | None = None,
         collocation_max_evaluations: int | None = None,
     ) -> np.ndarray:
@@ -124,6 +125,7 @@ class Solver:
             residual_normalization_sensitivity_lambda=residual_normalization_sensitivity_lambda,
             enable_collocation=enable_collocation,
             collocation_method=collocation_method,
+            collocation_weight=collocation_weight,
             collocation_max_residual=collocation_max_residual,
             collocation_max_evaluations=collocation_max_evaluations,
         )
@@ -250,6 +252,7 @@ class Solver:
         residual_normalization_sensitivity_lambda: float | None,
         enable_collocation: bool | None,
         collocation_method: str | None,
+        collocation_weight: float | None,
         collocation_max_residual: float | None,
         collocation_max_evaluations: int | None,
     ) -> SolverConfig:
@@ -302,6 +305,8 @@ class Solver:
             overrides["enable_collocation"] = bool(enable_collocation)
         if collocation_method is not None:
             overrides["collocation_method"] = str(collocation_method)
+        if collocation_weight is not None:
+            overrides["collocation_weight"] = float(collocation_weight)
         if collocation_max_residual is not None:
             overrides["collocation_max_residual"] = float(collocation_max_residual)
         if collocation_max_evaluations is not None:
@@ -321,8 +326,9 @@ class Solver:
 
         variational_config = self._variational_stage_config(solve_config)
         collocation_config = self._collocation_stage_config(solve_config)
+        collocation_residual_kind = self._collocation_residual_kind(solve_config)
         _validate_stage_solve_config(variational_config, residual_kind="variational")
-        _validate_stage_solve_config(collocation_config, residual_kind="collocation")
+        _validate_stage_solve_config(collocation_config, residual_kind=collocation_residual_kind)
 
         variational_result = self._solve_with_fallbacks(
             x_guess,
@@ -330,10 +336,24 @@ class Solver:
             residual_kind="variational",
             x0_was_provided=x0_was_provided,
         )
+        if float(solve_config.collocation_weight) <= 0.0:
+            return self._combine_variational_collocation_results(
+                variational_result=variational_result,
+                collocation_result=(
+                    variational_result[0].copy(),
+                    variational_result[1],
+                    "skipped because collocation_weight=0",
+                    0,
+                    0,
+                    0,
+                    variational_result[6],
+                ),
+                collocation_error=None,
+            )
         collocation_result, collocation_error = self._try_solve_attempt(
             variational_result[0],
             solve_config=collocation_config,
-            residual_kind="collocation",
+            residual_kind=collocation_residual_kind,
         )
         if collocation_result is None:
             if collocation_error is not None:
@@ -376,6 +396,16 @@ class Solver:
             fallback_methods=(),
         )
 
+    def _collocation_residual_kind(self, solve_config: SolverConfig) -> str:
+        """Return the residual objective used by the collocation-polish stage."""
+
+        collocation_weight = float(solve_config.collocation_weight)
+        if collocation_weight >= 1.0:
+            return "collocation"
+        if collocation_weight <= 0.0:
+            return "variational"
+        return "blended_collocation"
+
     def _final_residual_config(self, solve_config: SolverConfig) -> SolverConfig:
         """Return the residual evaluation configuration used for the final SolverResult x."""
 
@@ -387,7 +417,7 @@ class Solver:
         """Return the residual kind used for the final SolverResult x."""
 
         if solve_config.enable_collocation:
-            return "collocation"
+            return self._collocation_residual_kind(solve_config)
         return "variational"
 
     def _combine_variational_collocation_results(
@@ -604,8 +634,13 @@ class Solver:
         residual_kind: str = "variational",
     ) -> tuple[float, Exception | None]:
         try:
-            _ = self.config if solve_config is None else solve_config
-            return _residual_array_norm(self._residual_function_for(residual_kind)(x)), None
+            config_eval = self.config if solve_config is None else solve_config
+            residual_fun = self._residual_function_for(
+                residual_kind,
+                solve_config=config_eval,
+                x_reference=x,
+            )
+            return _residual_array_norm(residual_fun(x)), None
         except Exception as exc:
             return float("inf"), exc
 
@@ -780,7 +815,19 @@ class Solver:
             residual_kind=residual_kind,
         )
 
-    def _residual_function_for(self, residual_kind: str) -> Callable[[np.ndarray], np.ndarray]:
+    def _residual_function_for(
+        self,
+        residual_kind: str,
+        *,
+        solve_config: SolverConfig | None = None,
+        x_reference: np.ndarray | None = None,
+    ) -> Callable[[np.ndarray], np.ndarray]:
+        if residual_kind == "blended_collocation":
+            return self._blended_collocation_residual_function(
+                solve_config=solve_config,
+                x_reference=x_reference,
+            )
+
         def residual_fun(x: np.ndarray) -> np.ndarray:
             x_eval = self.operator.coerce_x(x)
             if residual_kind == "variational":
@@ -788,6 +835,68 @@ class Solver:
             if residual_kind == "collocation":
                 return self.operator.residual_collocation(x_eval)
             raise ValueError(f"Unsupported residual kind {residual_kind!r}.")
+
+        return residual_fun
+
+    def _blended_collocation_residual_function(
+        self,
+        *,
+        solve_config: SolverConfig | None,
+        x_reference: np.ndarray | None,
+    ) -> Callable[[np.ndarray], np.ndarray]:
+        """Build a variational-state-anchored collocation-polish residual.
+
+        The blend minimizes a convex combination of RMS-normalized distance
+        from the variational warm start and the point-collocation force-balance
+        residual:
+
+        ``(1-w) * rms((x - x_var) / x_scale)^2 + w * rms(R_col)^2``.
+
+        The reference state is the converged variational solution that warm-starts
+        the polish.  This keeps the post-process local in coefficient space
+        unless the collocation part has enough weight to justify moving away
+        from the weak-form equilibrium.
+        """
+
+        config_eval = self.config if solve_config is None else solve_config
+        x_ref: np.ndarray | None = (
+            None if x_reference is None else self.operator.coerce_x(x_reference).copy()
+        )
+        x_scale: np.ndarray | None = None
+        collocation_scale: float | None = None
+        collocation_weight = float(config_eval.collocation_weight)
+        anchor_weight = 1.0 - collocation_weight
+
+        def residual_fun(x: np.ndarray) -> np.ndarray:
+            nonlocal x_ref, x_scale, collocation_scale
+            x_eval = self.operator.coerce_x(x)
+            if x_ref is None:
+                x_ref = x_eval.copy()
+            if x_scale is None:
+                x_scale = _reference_x_scale_vector(self.operator, x_ref)
+            if collocation_scale is None:
+                collocation_scale = _reference_rms_scale(
+                    self.operator.residual_collocation(x_ref),
+                    floor=float(config_eval.max_residual),
+                )
+            anchor_delta = x_eval - x_ref
+            collocation_residual = np.asarray(
+                self.operator.residual_collocation(x_eval), dtype=np.float64
+            )
+            return np.concatenate(
+                (
+                    _weighted_rms_vector(
+                        anchor_delta,
+                        scale=x_scale,
+                        weight=anchor_weight,
+                    ),
+                    _weighted_rms_block(
+                        collocation_residual,
+                        scale=collocation_scale,
+                        weight=collocation_weight,
+                    ),
+                )
+            )
 
         return residual_fun
 
@@ -1127,7 +1236,11 @@ class Solver:
     ):
         """Call `scipy.optimize.least_squares` once on the full packed x."""
 
-        least_squares_fun = self._residual_function_for(residual_kind)
+        least_squares_fun = self._residual_function_for(
+            residual_kind,
+            solve_config=solve_config,
+            x_reference=x_guess,
+        )
         get_raw_residual: Callable[[np.ndarray], np.ndarray] | None = None
         kwargs = _least_squares_kwargs_for(solve_config)
         normalizer_applied = False
@@ -1172,7 +1285,7 @@ class Solver:
 
 def _validate_stage_solve_config(solve_config: SolverConfig, *, residual_kind: str) -> None:
     _validate_stage_method(solve_config, residual_kind=residual_kind)
-    if residual_kind != "collocation" or not solve_config.enable_fallback:
+    if residual_kind == "variational" or not solve_config.enable_fallback:
         return
 
     root_fallbacks = [
@@ -1186,9 +1299,11 @@ def _validate_stage_solve_config(solve_config: SolverConfig, *, residual_kind: s
 
 
 def _validate_stage_method(solve_config: SolverConfig, *, residual_kind: str) -> None:
-    if residual_kind == "collocation" and not _uses_least_squares_api(solve_config):
+    if residual_kind in {"collocation", "blended_collocation"} and not _uses_least_squares_api(
+        solve_config
+    ):
         raise ValueError("Collocation needs least_squares ('trf' or 'lm').")
-    if residual_kind not in {"variational", "collocation"}:
+    if residual_kind not in {"variational", "collocation", "blended_collocation"}:
         raise ValueError(f"Unsupported residual kind {residual_kind!r}.")
 
 
@@ -1240,6 +1355,61 @@ def _residual_array_norm(residual: np.ndarray) -> float:
     if residual_eval.ndim == 0:
         residual_eval = residual_eval.reshape(1)
     return float(np.linalg.norm(residual_eval))
+
+
+def _reference_rms_scale(residual: np.ndarray, *, floor: float) -> float:
+    """Return a positive RMS scale for dimensionless mixed residual blocks."""
+
+    residual_eval = np.asarray(residual, dtype=np.float64)
+    if residual_eval.ndim == 0:
+        residual_eval = residual_eval.reshape(1)
+    finite = residual_eval[np.isfinite(residual_eval)]
+    if finite.size == 0:
+        return max(float(floor), np.finfo(np.float64).tiny)
+    rms = float(np.sqrt(np.mean(finite * finite)))
+    return max(rms, float(floor), np.finfo(np.float64).tiny)
+
+
+def _weighted_rms_block(residual: np.ndarray, *, scale: float, weight: float) -> np.ndarray:
+    """Scale one residual block so its squared norm equals weighted RMS squared."""
+
+    residual_eval = np.asarray(residual, dtype=np.float64)
+    if residual_eval.ndim == 0:
+        residual_eval = residual_eval.reshape(1)
+    if residual_eval.size == 0 or float(weight) <= 0.0:
+        return np.zeros_like(residual_eval, dtype=np.float64)
+    block_scale = max(float(scale), np.finfo(np.float64).tiny) * np.sqrt(residual_eval.size)
+    return np.sqrt(float(weight)) * residual_eval / block_scale
+
+
+def _reference_x_scale_vector(operator: Operator, x_reference: np.ndarray) -> np.ndarray:
+    """Return a positive coefficient scale vector for local polish regularization."""
+
+    x_ref = np.asarray(x_reference, dtype=np.float64)
+    scale = _build_x_block_scale_vector(operator, x_ref)
+    if scale is None:
+        scale = np.maximum(np.abs(x_ref), 1.0)
+    scale = np.asarray(scale, dtype=np.float64)
+    if scale.shape != x_ref.shape:
+        scale = np.ones_like(x_ref)
+    return np.maximum(scale, np.finfo(np.float64).tiny)
+
+
+def _weighted_rms_vector(residual: np.ndarray, *, scale: np.ndarray, weight: float) -> np.ndarray:
+    """Scale one vector block by per-component scales and RMS block length."""
+
+    residual_eval = np.asarray(residual, dtype=np.float64)
+    scale_eval = np.asarray(scale, dtype=np.float64)
+    if residual_eval.ndim == 0:
+        residual_eval = residual_eval.reshape(1)
+    if scale_eval.shape != residual_eval.shape:
+        scale_eval = np.ones_like(residual_eval, dtype=np.float64)
+    if residual_eval.size == 0 or float(weight) <= 0.0:
+        return np.zeros_like(residual_eval, dtype=np.float64)
+    block_scale = np.maximum(scale_eval, np.finfo(np.float64).tiny) * np.sqrt(
+        residual_eval.size
+    )
+    return np.sqrt(float(weight)) * residual_eval / block_scale
 
 
 def _uses_least_squares_api(solve_config: SolverConfig) -> bool:
