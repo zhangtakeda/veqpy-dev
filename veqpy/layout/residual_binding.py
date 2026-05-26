@@ -100,7 +100,6 @@ def build_residual_full_stage_runner(
 
 def build_collocation_runner_into(
     *,
-    plan: OperatorBuildPlan,
     geometry_workspace: GeometryWorkspace,
     residual_workspace: ResidualWorkspace,
     profile_stage_runner: Callable[[np.ndarray], None],
@@ -109,7 +108,6 @@ def build_collocation_runner_into(
     alpha_state: np.ndarray,
 ) -> Callable[[np.ndarray, np.ndarray], None]:
     geometry_surface_fields = geometry_workspace.surface_fields
-    block_size = plan.grid_workspace.Nr * plan.grid_workspace.Nt
 
     def runner(x_eval: np.ndarray, out: np.ndarray) -> None:
         profile_stage_runner(x_eval)
@@ -124,17 +122,12 @@ def build_collocation_runner_into(
             residual_workspace.root_fields,
             geometry_surface_fields,
         )
-        numba_residual.write_weighted_collocation_field_into(
+        numba_residual.write_weighted_scaled_g_collocation_field_into(
             out,
-            residual_workspace.surface_fields[1],
+            residual_workspace.surface_fields[0],
+            geometry_surface_fields,
             residual_workspace.collocation_sqrt_weights,
             0,
-        )
-        numba_residual.write_weighted_collocation_field_into(
-            out,
-            residual_workspace.surface_fields[2],
-            residual_workspace.collocation_sqrt_weights,
-            block_size,
         )
 
     return runner

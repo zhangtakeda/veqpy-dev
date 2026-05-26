@@ -34,10 +34,15 @@ def test_operator_callable_and_snapshot_contract(tmp_path: Path) -> None:
 
     assert residual.shape == x.shape
     np.testing.assert_allclose(residual_into, residual)
-    expected_collocation_size = (
-        2 * operator.plan.grid_workspace.Nr * operator.plan.grid_workspace.Nt
-    )
+    expected_collocation_size = operator.plan.grid_workspace.Nr * operator.plan.grid_workspace.Nt
     assert collocation.shape == (expected_collocation_size,)
+    expected_collocation = (
+        operator.residual_workspace.collocation_sqrt_weights[:, None]
+        * operator.geometry_workspace.surface_fields[1]
+        / operator.geometry_workspace.surface_fields[4]
+        * operator.residual_workspace.surface_fields[0]
+    ).ravel()
+    np.testing.assert_allclose(collocation, expected_collocation)
     assert equilibrium.psin.shape == (operator.plan.grid_workspace.Nr,)
     assert not hasattr(equilibrium, "shape_profiles")
     assert equilibrium.geometry.R.shape == (

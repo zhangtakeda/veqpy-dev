@@ -7,7 +7,7 @@ Role:
 
 Public API:
 - update_residual_compact
-- write_weighted_collocation_field_into
+- write_weighted_scaled_g_collocation_field_into
 
 Notes:
 - Keep only the minimal interface required by the numba hot path.
@@ -207,16 +207,19 @@ run_residual_blocks_packed_precomputed = _run_residual_blocks_packed_precomputed
 
 
 @njit(cache=True, fastmath=True, nogil=True)
-def write_weighted_collocation_field_into(
+def write_weighted_scaled_g_collocation_field_into(
     out: np.ndarray,
-    field: np.ndarray,
+    G: np.ndarray,
+    geometry_surface_fields: np.ndarray,
     sqrt_weights: np.ndarray,
     offset: int,
 ) -> None:
-    nr, nt = field.shape
+    R_surface = geometry_surface_fields[1]
+    J_surface = geometry_surface_fields[4]
+    nr, nt = G.shape
     cursor = offset
     for i in range(nr):
         weight_i = sqrt_weights[i]
         for j in range(nt):
-            out[cursor] = weight_i * field[i, j]
+            out[cursor] = weight_i * (R_surface[i, j] / J_surface[i, j]) * G[i, j]
             cursor += 1

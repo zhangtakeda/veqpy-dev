@@ -133,7 +133,6 @@ def build_operator_layout(
         runner_into=fused_residual_runner_into,
     )
     collocation_runner_into = build_collocation_runner_into(
-        plan=plan,
         geometry_workspace=geometry_workspace,
         residual_workspace=residual_workspace,
         profile_stage_runner=profile_stage_runner,

@@ -249,26 +249,21 @@ class Operator:
         self.layout.run_fused_residual_into(x_eval, out_eval)
 
     def residual_collocation(self, x: np.ndarray) -> np.ndarray:
-        """Return the DESC-style pointwise force-balance collocation residual.
+        """Return the quadrature-scaled pointwise collocation residual.
 
         This residual does not append a Galerkin/weak-form residual to an external
-        objective. Instead, it directly constrains the force-balance components
-        ``G*psin_R`` and ``G*psin_Z`` associated with the Grad-Shafranov residual
-        ``G`` at every collocation node. Here ``G = J/R * GS_residual``; the two
-        components correspond to the volume-weighted pointwise force-balance
-        residual. Square-root radial/poloidal quadrature weights provide the
-        discrete least-squares scaling. The returned vector has shape
-        ``(2 * Nr * Nt,)``.
+        objective. Instead, it directly constrains ``R/J * G`` at every collocation
+        node, where ``G = J/R * GS_residual``. Square-root radial/poloidal quadrature
+        weights provide the discrete least-squares scaling. The returned vector has
+        shape ``(Nr * Nt,)``.
         """
-        out = np.empty(
-            2 * self.plan.grid_workspace.Nr * self.plan.grid_workspace.Nt, dtype=np.float64
-        )
+        out = np.empty(self.plan.grid_workspace.Nr * self.plan.grid_workspace.Nt, dtype=np.float64)
         self.residual_collocation_into(x, out)
         return out
 
     def residual_collocation_into(self, x: np.ndarray, out: np.ndarray) -> None:
-        """Write the DESC-style collocation residual into caller-provided ``out``."""
-        expected_size = 2 * self.plan.grid_workspace.Nr * self.plan.grid_workspace.Nt
+        """Write the quadrature-scaled collocation residual into caller-provided ``out``."""
+        expected_size = self.plan.grid_workspace.Nr * self.plan.grid_workspace.Nt
         if not isinstance(out, np.ndarray):
             raise TypeError("Expected out to be a numpy.ndarray")
         out_eval = out

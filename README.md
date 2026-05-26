@@ -75,12 +75,11 @@ coefficients `N -> N`. Set `SolverConfig(enable_collocation=True)` (or pass
 
 The collocation polish residual is controlled by `collocation_weight`. The
 default `collocation_weight=1` keeps the pure quadrature-scaled pointwise
-force-balance objective containing `G*psin_R` and `G*psin_Z`, mapping packed
-coefficients `N -> 2*Nr*Nt`. Intermediate weights use a variational-state-anchored
-least-squares objective that keeps the solution local to the variational
-warm-start while reducing the collocation residual; `collocation_weight=0`
-skips the polish and is exactly the normal variational result. Because nonzero
-collocation polish is generally
+objective containing `R/J * G`, mapping packed coefficients `N -> Nr*Nt`.
+Intermediate weights use a variational-state-anchored least-squares objective
+that keeps the solution local to the variational warm-start while reducing the
+collocation residual; `collocation_weight=0` skips the polish and is exactly the
+normal variational result. Because nonzero collocation polish is generally
 rectangular, the polish method must be a least-squares method:
 
 ```python
