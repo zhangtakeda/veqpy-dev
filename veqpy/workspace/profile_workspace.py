@@ -19,8 +19,11 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from veqpy.engine.numba_profile import update_profile
+
 if TYPE_CHECKING:
     from veqpy.model.profile import Profile
+    from veqpy.workspace.grid_workspace import GridWorkspace
 
 
 @dataclass(init=False, slots=True)
@@ -102,26 +105,63 @@ class ProfileWorkspace:
             if s_name in profile_index:
                 self.s_family_source_profile_ids[order] = profile_index[s_name]
 
-    def bind_profile_fields(self, *, profiles_by_name: dict[str, Profile]) -> None:
-        """Bind each model profile's value fields to workspace-owned storage."""
-
-        for profile_id, name in enumerate(self.profile_names):
-            profiles_by_name[name].u_fields = self.profile_fields[profile_id]
-
-    def bind_auxiliary_fields(self, *, profile_id: int, profile: Profile) -> None:
-        """Copy and bind one profile's radial-power/envelope fields into workspace storage."""
+    def refresh_profile_slot(
+        self,
+        *,
+        profile_id: int,
+        profile: Profile,
+        grid_workspace: GridWorkspace,
+    ) -> None:
+        """Refresh one workspace-owned profile slot from a passive Profile spec."""
 
         p = int(profile_id)
-        if profile.rp_fields is None or profile.env_fields is None:
-            raise RuntimeError("Profile auxiliary fields are not initialized")
-        self.profile_rp_fields[p].flags.writeable = True
-        self.profile_env_fields[p].flags.writeable = True
-        np.copyto(self.profile_rp_fields[p], profile.rp_fields)
-        np.copyto(self.profile_env_fields[p], profile.env_fields)
-        self.profile_rp_fields[p].flags.writeable = False
-        self.profile_env_fields[p].flags.writeable = False
-        profile.rp_fields = self.profile_rp_fields[p]
-        profile.env_fields = self.profile_env_fields[p]
+        self.profile_rp_fields.flags.writeable = True
+        self.profile_env_fields.flags.writeable = True
+        rp_fields = self.profile_rp_fields[p]
+        env_fields = self.profile_env_fields[p]
+        _fill_power_terms(rp_fields, grid_workspace.rho, int(profile.power))
+        _fill_envelope_terms(
+            env_fields,
+            grid_workspace.rho,
+            grid_workspace.rho_powers[2],
+            grid_workspace.y,
+            int(profile.envelope_power),
+        )
+        self.profile_rp_fields.flags.writeable = False
+        self.profile_env_fields.flags.writeable = False
+        _fill_profile_outputs(
+            self.profile_fields[p],
+            grid_workspace.T,
+            grid_workspace.T_r,
+            grid_workspace.T_rr,
+            rp_fields,
+            env_fields,
+            float(profile.offset),
+            profile.coeff,
+            float(profile.scale),
+        )
+
+    def refresh_profile_fields(
+        self,
+        *,
+        profile_id: int,
+        profile: Profile,
+        grid_workspace: GridWorkspace,
+    ) -> None:
+        """Refresh one workspace-owned value/derivative field set from existing auxiliary fields."""
+
+        p = int(profile_id)
+        _fill_profile_outputs(
+            self.profile_fields[p],
+            grid_workspace.T,
+            grid_workspace.T_r,
+            grid_workspace.T_rr,
+            self.profile_rp_fields[p],
+            self.profile_env_fields[p],
+            float(profile.offset),
+            profile.coeff,
+            float(profile.scale),
+        )
 
     def profile_id_for(self, name: str) -> int:
         """Return the stable plan profile id for ``name``."""
@@ -140,6 +180,11 @@ class ProfileWorkspace:
         """Return workspace-owned value row for ``name``."""
 
         return self.fields_for(name)[0]
+
+    def has_fields_for(self, name: str) -> bool:
+        """Return whether a named profile has a workspace field slot."""
+
+        return name in self.profile_index
 
     def active_slot_for_profile_id(self, profile_id: int) -> int:
         """Return active slot for ``profile_id`` or ``-1`` when fixed/inactive."""
@@ -205,3 +250,65 @@ class ProfileWorkspace:
             coeff_index = int(self.active_coeff_index_rows[slot, 0])
             x[coeff_index] = -offset / float(2 * power + 1)
         return x
+
+
+def _fill_profile_outputs(
+    u_fields: np.ndarray,
+    T: np.ndarray,
+    T_r: np.ndarray,
+    T_rr: np.ndarray,
+    rp_fields: np.ndarray,
+    env_fields: np.ndarray,
+    offset: float,
+    coeff: np.ndarray | None,
+    scale: float,
+) -> None:
+    """Refresh one profile field set from coefficients."""
+
+    update_profile(u_fields, T, T_r, T_rr, rp_fields, env_fields, offset, coeff)
+    if scale != 1.0:
+        np.multiply(u_fields, scale, out=u_fields)
+
+
+def _fill_power_terms(out: np.ndarray, rho: np.ndarray, power: int) -> None:
+    power = int(power)
+    if power == 0:
+        out[0].fill(1.0)
+        out[1].fill(0.0)
+        out[2].fill(0.0)
+        return
+
+    out[0] = rho**power
+    out[1] = power * rho ** (power - 1)
+    if power == 1:
+        out[2].fill(0.0)
+    else:
+        out[2] = power * (power - 1) * rho ** (power - 2)
+
+
+def _fill_envelope_terms(
+    out: np.ndarray,
+    rho: np.ndarray,
+    rho2: np.ndarray,
+    y: np.ndarray,
+    envelope_power: int,
+) -> None:
+    envelope_power = int(envelope_power)
+    if envelope_power == 0:
+        out[0].fill(1.0)
+        out[1].fill(0.0)
+        out[2].fill(0.0)
+        return
+
+    if envelope_power == 1:
+        out[0] = y
+        out[1] = -2.0 * rho
+        out[2].fill(-2.0)
+        return
+
+    out[0] = y**envelope_power
+    out[1] = -2.0 * envelope_power * rho * y ** (envelope_power - 1)
+    out[2] = (
+        -2.0 * envelope_power * y ** (envelope_power - 1)
+        + 4.0 * envelope_power * (envelope_power - 1) * rho2 * y ** (envelope_power - 2)
+    )

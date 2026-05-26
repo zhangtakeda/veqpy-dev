@@ -67,10 +67,11 @@ materialized profile、geometry 和求解路径结果都应与 `K_max=None`
 不同。
 
 实现上，`Grid.K_max` 在 Python 冷路径解析为 `Grid.fourier_radial_powers`，
-再为每个 Fourier profile 的 `power` 提供 authority；
-`Profile._prepare_runtime_cache(...)` 预计算 `rp_fields`。
-profile 热核只消费 `rp_fields` / `env_fields` / `offset` / `scale` /
-packed coefficients，不接收 `K_max`，也不按 `K_max` 分支。residual
+再为每个 Fourier profile 的 `power` 提供 authority；`Profile` 是 reactive
+冷端对象，只保留这些 root/spec 参数。`ProfileWorkspace` 在 setup/refresh 阶段预计算并拥有
+`rp_fields` / `env_fields` / `u_fields`。
+profile 热核只消费 workspace 内的 `rp_fields` / `env_fields` / `offset` /
+`scale` / packed coefficients，不接收 `K_max`，也不按 `K_max` 分支。residual
 路径同样把 Fourier 谐波阶数和径向投影幂次拆开为预计算 metadata：
 谐波阶数继续选择 `cos(m theta)` / `sin(m theta)`，径向幂次使用
 `K_m`。

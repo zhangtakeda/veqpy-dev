@@ -36,7 +36,6 @@ from veqpy.operator.packed_layout import (
 )
 from veqpy.operator.profile_runtime import (
     make_profile,
-    refresh_fourier_family_base_fields,
     refresh_fourier_family_metadata,
     refresh_profile_runtime,
     refresh_stage_a_runtime,
@@ -375,7 +374,6 @@ class Operator:
         self.geometry_workspace = geometry_workspace
         self.source_workspace = source_workspace
         self.residual_workspace = residual_workspace
-        self.profile_workspace.bind_profile_fields(profiles_by_name=self.profiles_by_name)
 
     def _refresh_runtime_state(self) -> None:
         self._apply_plan(
@@ -410,13 +408,6 @@ class Operator:
             profile_workspace=self.profile_workspace,
             profile_static_kwargs_by_name=self.plan.profile_static_kwargs_by_name,
             profile_offset_specs=self.plan.profile_offset_specs,
-            refresh_fourier_family_base_fields=lambda: refresh_fourier_family_base_fields(
-                M_max=self.plan.grid_workspace.M_max,
-                profile_index=self.plan.profile_index,
-                profiles_by_name=self.profiles_by_name,
-                c_family_base_fields=self.profile_workspace.c_family_base_fields,
-                s_family_base_fields=self.profile_workspace.s_family_base_fields,
-            ),
         )
 
     def _refresh_runtime_bindings(self) -> None:
@@ -432,13 +423,17 @@ class Operator:
             c_effective_order=self.c_effective_order,
             s_effective_order=self.s_effective_order,
             fix_rho=self.fix_rho,
-            psin_profile_fields_available=self.psin_profile.u_fields is not None,
+            psin_profile_fields_available=self.profile_workspace.has_fields_for("psin"),
         )
         fixed_profile_ids = np.flatnonzero(~self.plan.active_profile_mask).astype(
             np.int64, copy=False
         )
         for p in fixed_profile_ids:
-            self.profiles_by_name[self.plan.profile_names[int(p)]].update()
+            self.profile_workspace.refresh_profile_fields(
+                profile_id=int(p),
+                profile=self.profiles_by_name[self.plan.profile_names[int(p)]],
+                grid_workspace=self.plan.grid_workspace,
+            )
         f_profile_id = self.plan.profile_index.get("F", -1)
         if f_profile_id >= 0 and not bool(self.plan.active_profile_mask[f_profile_id]):
             self.layout.profile.run_postprocess()

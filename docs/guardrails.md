@@ -155,6 +155,10 @@ Semantic convenience properties are still acceptable for readability and cold
 paths, but the hot path should not expand back into long Python-managed call signatures
 when stable bundles already exist.
 
+`Profile` is reactive cold/passive root state. Profile runtime arrays (`u_fields`,
+`rp_fields`, `env_fields`) are owned by `ProfileWorkspace`; do not bind them back
+onto model `Profile` objects or make hot-path kernels read live `Profile` state.
+
 ## Stage Ownership
 
 The stage pipeline is owned by [`veqpy/operator/operator.py`](../veqpy/operator/operator.py).

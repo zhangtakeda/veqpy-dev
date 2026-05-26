@@ -134,8 +134,8 @@ residual. The most relevant implementation files are:
 - [`veqpy/layout/`](../veqpy/layout)
   - Executable stage layouts and bound callables.
 - [`veqpy/operator/profile_runtime.py`](../veqpy/operator/profile_runtime.py)
-  - Profile construction, profile runtime refresh, Stage-A binding, and Fourier
-    family metadata refresh.
+  - Passive `Profile` construction, `ProfileWorkspace` refresh, Stage-A binding,
+    and Fourier family metadata refresh.
 
 ## Backend Binding Surface
 

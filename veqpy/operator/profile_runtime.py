@@ -2,7 +2,7 @@
 Module: operator.profile_runtime
 
 Role:
-- Consolidate shared Python rules for profile/case setup and profile-stage assembly.
+- Consolidate shared Python rules for profile/case setup and ProfileWorkspace refresh.
 - Keep profile parameter parsing, Stage-A binding, and Fourier-family details out of operator.py.
 """
 
@@ -81,7 +81,6 @@ def refresh_profile_runtime(
     profile_workspace: ProfileWorkspace,
     profile_static_kwargs_by_name: dict[str, dict[str, int]],
     profile_offset_specs: dict[str, float | str],
-    refresh_fourier_family_base_fields: Callable[[], None],
 ) -> None:
     for name in profile_names:
         profile = profiles_by_name[name]
@@ -117,10 +116,18 @@ def refresh_profile_runtime(
         profile.coeff = (
             None if L < 0 or coeff is None else coeff_array_from_list(name, coeff)[: L + 1].copy()
         )
-        profile._prepare_runtime_cache(operator_grid)
-        profile_workspace.bind_auxiliary_fields(profile_id=p, profile=profile)
-        profile.update()
-    refresh_fourier_family_base_fields()
+        profile_workspace.refresh_profile_slot(
+            profile_id=p,
+            profile=profile,
+            grid_workspace=operator_grid,
+        )
+    refresh_fourier_family_base_fields(
+        M_max=operator_grid.M_max,
+        profile_index=profile_index,
+        profile_workspace=profile_workspace,
+        c_family_base_fields=profile_workspace.c_family_base_fields,
+        s_family_base_fields=profile_workspace.s_family_base_fields,
+    )
 
 
 def _profile_scale(case: OperatorCase, name: str) -> float:
@@ -163,7 +170,7 @@ def refresh_fourier_family_base_fields(
     *,
     M_max: int,
     profile_index: dict[str, int],
-    profiles_by_name: dict[str, Profile],
+    profile_workspace: ProfileWorkspace,
     c_family_base_fields: np.ndarray,
     s_family_base_fields: np.ndarray,
 ) -> None:
@@ -172,12 +179,12 @@ def refresh_fourier_family_base_fields(
     for order in range(int(M_max) + 1):
         c_name = f"c{order}"
         if c_name in profile_index:
-            np.copyto(c_family_base_fields[order], profiles_by_name[c_name].u_fields)
+            np.copyto(c_family_base_fields[order], profile_workspace.fields_for(c_name))
         if order == 0:
             continue
         s_name = f"s{order}"
         if s_name in profile_index:
-            np.copyto(s_family_base_fields[order], profiles_by_name[s_name].u_fields)
+            np.copyto(s_family_base_fields[order], profile_workspace.fields_for(s_name))
 
 
 def refresh_fourier_family_metadata(

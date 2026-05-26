@@ -118,17 +118,29 @@ def test_profile_workspace_owns_profile_fields() -> None:
 
     for profile_id, name in enumerate(operator.profile_names):
         profile = operator.profiles_by_name[name]
-        assert np.shares_memory(profile.u_fields, profile_workspace.profile_fields[profile_id])
-        assert np.shares_memory(profile.rp_fields, profile_workspace.profile_rp_fields[profile_id])
-        assert np.shares_memory(
-            profile.env_fields, profile_workspace.profile_env_fields[profile_id]
+        assert profile is operator.profiles_by_name[name]
+        for runtime_attr in ("u_fields", "rp_fields", "env_fields", "T", "T_r", "T_rr"):
+            assert not hasattr(profile, runtime_attr)
+        assert profile_workspace.profile_fields[profile_id].shape == (
+            3,
+            operator.plan.grid_workspace.Nr,
+        )
+        assert profile_workspace.profile_rp_fields[profile_id].shape == (
+            3,
+            operator.plan.grid_workspace.Nr,
+        )
+        assert profile_workspace.profile_env_fields[profile_id].shape == (
+            3,
+            operator.plan.grid_workspace.Nr,
         )
 
-    assert np.shares_memory(profile_workspace.fields_for("h"), operator.h_profile.u_fields)
-    assert np.shares_memory(profile_workspace.fields_for("v"), operator.v_profile.u_fields)
-    assert np.shares_memory(profile_workspace.fields_for("k"), operator.k_profile.u_fields)
-    assert np.shares_memory(profile_workspace.fields_for("F"), operator.F_profile.u_fields)
-    assert np.shares_memory(profile_workspace.fields_for("psin"), operator.psin_profile.u_fields)
+    assert profile_workspace.has_fields_for("h")
+    assert profile_workspace.has_fields_for("v")
+    assert profile_workspace.has_fields_for("k")
+    assert profile_workspace.has_fields_for("F")
+    assert profile_workspace.has_fields_for("psin")
+    assert not profile_workspace.profile_rp_fields.flags.writeable
+    assert not profile_workspace.profile_env_fields.flags.writeable
 
 
 def test_pj2_uses_profile_workspace_for_source_profile_inputs() -> None:

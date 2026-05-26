@@ -2,7 +2,7 @@
 Module: workspace.allocation
 
 Role:
-- Allocate operator runtime profiles and stage workspaces.
+- Allocate operator profile specs and stage workspaces.
 - Keep workspace construction coordinated from one entrypoint.
 
 Public API:
