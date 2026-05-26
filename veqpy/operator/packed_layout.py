@@ -8,6 +8,7 @@ Role:
 
 Public API:
 - PACKED_PROFILE_FAMILY_ORDER
+- PACKED_LAYOUT_PROFILE_FIRST
 - INTERLEAVE_SHAPE_COEFFS_BY_ORDER
 - get_prefix_profile_names
 - build_fourier_profile_names
@@ -186,7 +187,15 @@ def build_residual_block_radial_powers(
     return radial_powers
 
 
-INTERLEAVE_SHAPE_COEFFS_BY_ORDER = True
+# Global packed-vector ordering switch.
+# True  -> profile/name-first: h[0:L], v[0:L], ..., psin[0:L], F[0:L].
+# False -> degree-first: all active profile 0th coefficients, then 1st coefficients, ... .
+# Default remains degree-first because Zhang2026 script 06 was faster for all three
+# high-order reconstruction cases in the local A/B benchmark.
+PACKED_LAYOUT_PROFILE_FIRST = False
+
+# Backwards-readable alias for the previous degree-first switch name.
+INTERLEAVE_SHAPE_COEFFS_BY_ORDER = not PACKED_LAYOUT_PROFILE_FIRST
 
 
 def _validated_profile_family_order() -> tuple[str, ...]:
@@ -229,7 +238,7 @@ def build_profile_layout(
     order_offsets = np.full(max_L + 2, -1, dtype=np.int64)
 
     x_pos = 0
-    if INTERLEAVE_SHAPE_COEFFS_BY_ORDER:
+    if not PACKED_LAYOUT_PROFILE_FIRST:
         for k in range(max_L + 1):
             order_offsets[k] = x_pos
             for name in profile_names:

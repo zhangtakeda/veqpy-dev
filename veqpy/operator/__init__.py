@@ -20,6 +20,7 @@ from __future__ import annotations
 from veqpy.operator.operator import Operator
 from veqpy.operator.operator_case import OperatorCase
 from veqpy.operator.packed_layout import (
+    PACKED_LAYOUT_PROFILE_FIRST,
     build_active_profile_metadata,
     build_fourier_profile_names,
     build_profile_index,
@@ -36,6 +37,7 @@ from veqpy.operator.packed_layout import (
 __all__ = [
     "Operator",
     "OperatorCase",
+    "PACKED_LAYOUT_PROFILE_FIRST",
     "build_active_profile_metadata",
     "build_fourier_profile_names",
     "build_profile_index",

@@ -51,4 +51,5 @@ class ResidualWorkspace:
         self.packed_residual = np.empty(x_size, dtype=np.float64)
         self.surface_fields = np.empty((4, nr, nt), dtype=np.float64)
         self.pack_scratch = np.empty(nr, dtype=np.float64)
-        self.collocation_sqrt_weights = np.sqrt(radial_weights / max(nt, 1))
+        poloidal_quadrature_weight = 2.0 * np.pi / max(nt, 1)
+        self.collocation_sqrt_weights = np.sqrt(poloidal_quadrature_weight * radial_weights)
