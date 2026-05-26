@@ -185,6 +185,7 @@ def build_residual_block_radial_powers(
                 radial_powers[i] = int(K_values[order])
     return radial_powers
 
+
 INTERLEAVE_SHAPE_COEFFS_BY_ORDER = True
 
 

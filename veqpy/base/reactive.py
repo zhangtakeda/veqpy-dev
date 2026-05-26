@@ -22,9 +22,10 @@ from __future__ import annotations
 import ast
 import inspect
 import textwrap
+from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Dict, FrozenSet, Set
+from typing import Any
 
 import numpy as np
 
@@ -48,12 +49,12 @@ class Reactive:
     depend on ``parent.child``.
     """
 
-    dependency_graph: Dict[str, Set[str]] = {}
-    root_properties: Set[str]
-    _reactive_derived_properties: FrozenSet[str] = frozenset()
-    _reactive_all_properties: FrozenSet[str] = frozenset()
+    dependency_graph: dict[str, set[str]] = {}
+    root_properties: set[str]
+    _reactive_derived_properties: frozenset[str] = frozenset()
+    _reactive_all_properties: frozenset[str] = frozenset()
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._init_reactive_state()
 
     def __init_subclass__(cls, **kwargs):
@@ -133,7 +134,7 @@ class Reactive:
             object.__setattr__(self, "_revision", 0)
 
     @classmethod
-    def _validate_root_properties(cls) -> Set[str]:
+    def _validate_root_properties(cls) -> set[str]:
         roots = getattr(cls, "root_properties", None)
         if roots is None:
             raise TypeError(f"{cls.__name__} must define root_properties explicitly")
@@ -144,7 +145,7 @@ class Reactive:
         return roots
 
     @classmethod
-    def _setup_root_properties(cls, roots: Set[str]) -> None:
+    def _setup_root_properties(cls, roots: set[str]) -> None:
         """Create or wrap version-bumping properties for root attributes."""
 
         for name in roots:
@@ -218,7 +219,7 @@ class Reactive:
     @classmethod
     def _wrap_derived_properties(
         cls,
-        dependency_graph: Dict[str, Set[str]],
+        dependency_graph: dict[str, set[str]],
     ) -> None:
         """Wrap derived properties with version-token based lazy cache lookups."""
 
@@ -299,11 +300,11 @@ class Reactive:
         object.__setattr__(self, "_revision", self._revision + 1)
 
     @classmethod
-    def _build_dependency_graph(cls, roots: Set[str]) -> Dict[str, Set[str]]:
+    def _build_dependency_graph(cls, roots: set[str]) -> dict[str, set[str]]:
         """Build the dependency graph for all reactive derived properties."""
 
         valid_nodes = set(roots)
-        props: Dict[str, property] = {}
+        props: dict[str, property] = {}
         base_props = set(Reactive.__dict__.keys())
 
         for name in dir(cls):
@@ -316,7 +317,7 @@ class Reactive:
             if name not in roots:
                 props[name] = attr
 
-        graph: Dict[str, Set[str]] = {}
+        graph: dict[str, set[str]] = {}
         for name, prop in props.items():
             if prop.fget is None:
                 continue
@@ -342,7 +343,7 @@ class Reactive:
         return None
 
 
-def depends_on(*deps: str):
+def depends_on(*deps: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Declare additional dependencies for a property.
 
     The dependency names should be first-level reactive attribute names, e.g.
@@ -351,7 +352,7 @@ def depends_on(*deps: str):
     in the dependency token.
     """
 
-    def decorator(func):
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         setattr(func, "_reactive_deps", set(deps))
         return func
 
@@ -373,13 +374,32 @@ def _nested_reactive_revision(value: Any) -> int | None:
     if isinstance(value, Reactive):
         value._init_reactive_state()
         return value._revision
+
+    if isinstance(value, dict):
+        return _nested_reactive_collection_revision(value.values())
+
+    if isinstance(value, (tuple, list)):
+        return _nested_reactive_collection_revision(value)
+
     return None
 
 
-def _build_reverse_adj(dependency_graph: Dict[str, Set[str]]) -> Dict[str, Set[str]]:
+def _nested_reactive_collection_revision(values) -> int | None:
+    revisions: list[int] = []
+    for item in values:
+        revision = _nested_reactive_revision(item)
+        if revision is not None:
+            revisions.append(revision)
+
+    if not revisions:
+        return None
+    return hash(tuple(revisions))
+
+
+def _build_reverse_adj(dependency_graph: dict[str, set[str]]) -> dict[str, set[str]]:
     """Build a one-hop reverse adjacency map: property -> direct dependents."""
 
-    rev: Dict[str, Set[str]] = {}
+    rev: dict[str, set[str]] = {}
     for prop_name, deps in dependency_graph.items():
         for dep in deps:
             rev.setdefault(dep, set()).add(prop_name)
@@ -387,9 +407,9 @@ def _build_reverse_adj(dependency_graph: Dict[str, Set[str]]) -> Dict[str, Set[s
 
 
 def _validate_dependency_graph(
-    roots: Set[str],
-    dependency_graph: Dict[str, Set[str]],
-    reverse_adj: Dict[str, Set[str]],
+    roots: set[str],
+    dependency_graph: dict[str, set[str]],
+    reverse_adj: dict[str, set[str]],
 ) -> None:
     """Validate that the dependency graph is acyclic."""
 
@@ -397,7 +417,7 @@ def _validate_dependency_graph(
     if not all_props:
         return
 
-    in_degree: Dict[str, int] = {p: 0 for p in all_props}
+    in_degree: dict[str, int] = {p: 0 for p in all_props}
 
     for prop, deps in dependency_graph.items():
         in_degree[prop] = len(deps)
@@ -430,14 +450,14 @@ def _validate_dependency_graph(
 
 def _detect_cycles(
     nodes: list[str],
-    dependency_graph: Dict[str, Set[str]],
+    dependency_graph: dict[str, set[str]],
 ) -> list[list[str]]:
     """Detect and return all cyclic dependency paths."""
 
     cycles: list[list[str]] = []
     node_set = set(nodes)
 
-    def dfs(node: str, path: list[str], visited: Set[str]):
+    def dfs(node: str, path: list[str], visited: set[str]):
         if node in path:
             cycle_start = path.index(node)
             cycles.append(path[cycle_start:] + [node])
@@ -453,7 +473,7 @@ def _detect_cycles(
             if dep in node_set:
                 dfs(dep, path.copy(), visited)
 
-    visited_global: Set[str] = set()
+    visited_global: set[str] = set()
     for node in nodes:
         if node not in visited_global:
             dfs(node, [], visited_global)
@@ -467,7 +487,7 @@ def _unwrap_function(func):
     return func
 
 
-def _parse_dependency(func) -> Set[str]:
+def _parse_dependency(func) -> set[str]:
     """Parse names of ``self.xxx`` attributes accessed by a function."""
 
     try:
@@ -477,7 +497,7 @@ def _parse_dependency(func) -> Set[str]:
 
     source = textwrap.dedent(source)
     tree = ast.parse(source)
-    names: Set[str] = set()
+    names: set[str] = set()
 
     class Visitor(ast.NodeVisitor):
         """AST node visitor."""

@@ -79,25 +79,19 @@ j_{\rm tor} \equiv \langle j_{\phi} \rangle_S=  \frac{1}{S_\rho} \frac{\mathrm{d
 \end{aligned}
 $$
 
-当前代码中的 `Equilibrium` 已经从固定低阶 shape profile 快照扩展成动态 Fourier family 快照:
+当前代码中的 `Equilibrium` 已经从固定低阶 shape profile 快照扩展成 materialized geometry 快照:
 
 - snapshot 保存:
-  - `shape_profiles`
-- `c{k}` / `s{k}` 可以直接进入:
-  - `build_equilibrium()`
-  - `Equilibrium.resample(...)`
-  - JSON roundtrip
+  - `geometry`
+- `c{k}` / `s{k}` profile 只在 `build_equilibrium()` 上游用于刷新 geometry workspace；
+  JSON roundtrip 保存并恢复的是 materialized `geometry`，不是 profile dict。
 
-当前快照的权威 shape-profile 集合是:
+当前快照的权威几何状态是:
 
-- `shape_profiles: dict[str, Profile]`
+- `geometry: Geometry`
 
-其中:
-
-- `h_profile`
-- `v_profile`
-- `k_profile`
-
-仍然保留为方便读取的核心形状属性.  
-高阶 `c{k}` / `s{k}` 不再有单独的 legacy 构造接口.
-默认零形状项不会被持久化；重建时按 profile 名字自动补回默认 `Profile`.
+`Equilibrium` 不再持有公开的 `shape_profiles` 状态，构造接口也不再接受
+`shape_profiles` 兼容输入；调用方必须先建立 materialized `Geometry`，再构造
+`Equilibrium`。派生诊断从 materialized `Geometry` 和源/root profiles 计算。operator
+snapshot 路径会直接从已刷新的 profile workspace 字段 materialize `Geometry`，不再构造
+中间的 `shape_profiles` 数据 dict。

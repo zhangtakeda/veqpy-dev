@@ -19,9 +19,10 @@ Public API:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -55,6 +56,8 @@ SUPPORTED_FUSED_SOURCE_ROUTE_KEYS: frozenset[RouteKey] = frozenset(SOURCE_ROUTE_
 
 @dataclass(frozen=True, slots=True)
 class SourceExecutionABI:
+    """Source-route execution requirements derived at bind time."""
+
     route_key: RouteKey
     psin_active_length: int
     has_active_f_profile: bool
@@ -150,6 +153,8 @@ def build_source_execution_abi(
 
 @dataclass(frozen=True, slots=True)
 class FusedHotRuntimeABI:
+    """Array bundle required by fused profile/geometry hot-path kernels."""
+
     profile_fields: np.ndarray
     profile_rp_fields: np.ndarray
     profile_env_fields: np.ndarray
@@ -191,6 +196,8 @@ class FusedHotRuntimeABI:
 
 @dataclass(frozen=True, slots=True)
 class FusedResidualPackABI:
+    """Array bundle required to pack fused residual blocks."""
+
     residual_pack_scratch: np.ndarray
     residual_surface_fields: np.ndarray
     active_residual_block_codes: np.ndarray
@@ -211,6 +218,8 @@ class FusedResidualPackABI:
 
 @dataclass(frozen=True, slots=True)
 class FusedSourceEvalABI:
+    """Array and kernel bundle required by fused source evaluation."""
+
     source_kernel: Callable
     scratch_source_kernel: Callable | None
     coordinate_code: int
@@ -355,7 +364,7 @@ def build_profile_owned_psin_source_abi(
     grid_workspace: GridWorkspace,
     profile_workspace: ProfileWorkspace,
     source_workspace: SourceWorkspace,
-):
+) -> SimpleNamespace:
     del source_execution
     return SimpleNamespace(
         source_target_root_fields=source_workspace.target_root_fields,

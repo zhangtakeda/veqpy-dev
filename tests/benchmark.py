@@ -40,7 +40,7 @@ REFERENCE_SOURCE_SAMPLE_COUNT = 51
 TEST_SOURCE_SAMPLE_COUNT = 51
 BENCHMARK_REPEAT_COUNT = 100
 SHAPE_MATCH_TOL = 1e-2
-REFERENCE_CACHE_VERSION = 4
+REFERENCE_CACHE_VERSION = 5
 DIAGNOSTIC_SIGN_CHANGE_WINDOW = 12
 MU0 = 4.0e-7 * np.pi
 
@@ -413,7 +413,10 @@ def _reference_cache_signature() -> dict[str, object]:
 
 def _is_reference_equilibrium_cache_compatible(equilibrium: object) -> bool:
     grid = getattr(equilibrium, "grid", None)
+    geometry = getattr(equilibrium, "geometry", None)
     if grid is None:
+        return False
+    if geometry is None:
         return False
     if not isinstance(getattr(grid, "L_max", None), int):
         return False
@@ -430,6 +433,8 @@ def _is_reference_equilibrium_cache_compatible(equilibrium: object) -> bool:
     pn_psin = np.asarray(getattr(equilibrium, "Pn_psin", None), dtype=np.float64)
 
     if rho.ndim != 1:
+        return False
+    if np.asarray(getattr(geometry, "R", None), dtype=np.float64).shape != (grid.Nr, grid.Nt):
         return False
 
     expected_shape = rho.shape

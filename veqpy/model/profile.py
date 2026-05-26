@@ -53,7 +53,7 @@ class Profile(Serial):
             "coeff": np.ndarray | None,
         }
 
-    def __post_init__(self, grid: Grid | None):
+    def __post_init__(self, grid: Grid | None) -> None:
         self.scale = float(self.scale)
         self.power = int(self.power)
         self.envelope_power = int(self.envelope_power)

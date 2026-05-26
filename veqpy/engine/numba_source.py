@@ -131,6 +131,8 @@ SOURCE_ROUTE_KEY_SET: frozenset[RouteKey] = frozenset(SOURCE_ROUTE_KEYS)
 
 @dataclass(frozen=True, slots=True)
 class _SourceRouteSpec:
+    """Registered concrete source-route implementation metadata."""
+
     route: str
     coordinate: str
     coordinate_code: int
@@ -515,7 +517,6 @@ def _fill_pj_ffn_psin(
     return out
 
 
-
 @njit(cache=True, nogil=True)
 def _dense_solve_one_rhs_inplace(A: np.ndarray, b: np.ndarray, n: int, pivot_tol: float) -> None:
     """Solve ``A x = b`` in-place using dense Gaussian elimination with partial pivoting.
@@ -654,6 +655,7 @@ def _fill_pq_W_and_derivative(
         if not np.isfinite(W[i]):
             raise ValueError("PQ strict solve produced invalid W")
     full_differentiation(W_r, W, differentiator)
+
 
 @njit(cache=True, nogil=True)
 def _pq_psin_beta_residual(
@@ -795,7 +797,6 @@ def _solve_pq_psin_beta_alpha1(
     return 0.5 * (lower + upper)
 
 
-
 def build_source_remap_cache(
     coordinate: str,
     source_sample_count: int,
@@ -827,7 +828,6 @@ def build_source_remap_cache(
         )
 
     return local_size, weights, fixed_remap_matrix
-
 
 
 def resolve_source_inputs(
@@ -927,9 +927,7 @@ def _update_pf_from_rho_inputs_with_scratch(
     source_scratch_2d: np.ndarray,
 ) -> tuple[float, float]:
     out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
-    V_r, Kn, _, Ln_r, _, R, JdivR = _source_geometry_workspace_views(
-        radial_fields, surface_fields
-    )
+    V_r, Kn, _, Ln_r, _, R, JdivR = _source_geometry_workspace_views(radial_fields, surface_fields)
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
     integrand = source_scratch_1d[_SLOT_INTEGRAND]
@@ -1006,9 +1004,7 @@ def _update_pf_from_psin_uniform_inputs_with_scratch(
     source_scratch_2d: np.ndarray,
 ) -> tuple[float, float]:
     out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
-    V_r, Kn, _, Ln_r, _, R, JdivR = _source_geometry_workspace_views(
-        radial_fields, surface_fields
-    )
+    V_r, Kn, _, Ln_r, _, R, JdivR = _source_geometry_workspace_views(radial_fields, surface_fields)
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
     integrand = source_scratch_1d[_SLOT_INTEGRAND]
@@ -1088,9 +1084,7 @@ def _update_pf_from_psin_grid_inputs_with_scratch(
     source_scratch_2d: np.ndarray,
 ) -> tuple[float, float]:
     out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
-    V_r, Kn, _, Ln_r, _, R, JdivR = _source_geometry_workspace_views(
-        radial_fields, surface_fields
-    )
+    V_r, Kn, _, Ln_r, _, R, JdivR = _source_geometry_workspace_views(radial_fields, surface_fields)
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
     integrand = source_scratch_1d[_SLOT_INTEGRAND]
@@ -1869,9 +1863,7 @@ def _update_pj2_from_psin_uniform_inputs_with_scratch(
     source_scratch_2d: np.ndarray,
 ) -> tuple[float, float]:
     out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
-    V_r, Kn, _, Ln_r, _, _, _ = _source_geometry_workspace_views(
-        radial_fields, surface_fields
-    )
+    V_r, Kn, _, Ln_r, _, _, _ = _source_geometry_workspace_views(radial_fields, surface_fields)
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
     integrand = source_scratch_1d[_SLOT_INTEGRAND]
@@ -1947,9 +1939,7 @@ def _update_pj2_from_psin_grid_inputs_with_scratch(
     source_scratch_2d: np.ndarray,
 ) -> tuple[float, float]:
     out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
-    V_r, Kn, _, Ln_r, _, _, _ = _source_geometry_workspace_views(
-        radial_fields, surface_fields
-    )
+    V_r, Kn, _, Ln_r, _, _, _ = _source_geometry_workspace_views(radial_fields, surface_fields)
     has_Ip = not np.isnan(Ip)
     has_beta = not np.isnan(beta)
     integrand = source_scratch_1d[_SLOT_INTEGRAND]
@@ -2102,9 +2092,7 @@ def _update_pq_from_psin_uniform_inputs_with_scratch(
     source_scratch_2d: np.ndarray,
 ) -> tuple[float, float]:
     out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
-    V_r, Kn, _, Ln_r, _, _, _ = _source_geometry_workspace_views(
-        radial_fields, surface_fields
-    )
+    V_r, Kn, _, Ln_r, _, _, _ = _source_geometry_workspace_views(radial_fields, surface_fields)
     n = rho.shape[0]
     edge_F = R0 * B0
     if not np.isfinite(edge_F) or abs(edge_F) <= 1.0e-14:
@@ -2230,9 +2218,7 @@ def _update_pq_from_psin_grid_inputs_with_scratch(
     source_scratch_2d: np.ndarray,
 ) -> tuple[float, float]:
     out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
-    V_r, Kn, _, Ln_r, _, _, _ = _source_geometry_workspace_views(
-        radial_fields, surface_fields
-    )
+    V_r, Kn, _, Ln_r, _, _, _ = _source_geometry_workspace_views(radial_fields, surface_fields)
     n = rho.shape[0]
     edge_F = R0 * B0
     if not np.isfinite(edge_F) or abs(edge_F) <= 1.0e-14:
@@ -2361,9 +2347,7 @@ def _update_pq_from_rho_inputs_with_scratch(
     source_scratch_2d: np.ndarray,
 ) -> tuple[float, float]:
     out_psin, out_psin_r, out_psin_rr = _source_output_root_views(out_root_fields)
-    V_r, Kn, _, Ln_r, _, _, _ = _source_geometry_workspace_views(
-        radial_fields, surface_fields
-    )
+    V_r, Kn, _, Ln_r, _, _, _ = _source_geometry_workspace_views(radial_fields, surface_fields)
     n = rho.shape[0]
     edge_F = R0 * B0
     if not np.isfinite(edge_F) or abs(edge_F) <= 1.0e-14:
@@ -2445,7 +2429,6 @@ def _update_pq_from_rho_inputs_with_scratch(
             raise ValueError("PQ/rho strict solve produced non-finite normalized source")
     _regularize_ffn_psin(out_FFn_psin, rho, n_axis_fix)
     return alpha1, alpha2
-
 
 
 def resolve_source_scratch_kernel(operator_kernel: Callable) -> Callable | None:
@@ -2586,7 +2569,6 @@ def update_fixed_point_psin_query(
     )
 
 
-
 @njit(cache=True, fastmath=True, nogil=True)
 def _update_fixed_point_psin_query_impl(
     query: np.ndarray,
@@ -2699,7 +2681,6 @@ def _update_fixed_point_psin_query_and_local_barycentric_inputs_impl(
     return max_abs_diff <= max_residual
 
 
-
 @njit(cache=True, fastmath=True, nogil=True)
 def _materialize_profile_owned_psin_source_impl(
     out_psin: np.ndarray,
@@ -2810,7 +2791,6 @@ def _update_fourier_family_fields_impl(
                     out_s_fields[order, d, i] = 0.0
 
 
-
 @njit(cache=True, fastmath=True, nogil=True)
 def _uniform_spline_interpolate_pair(
     out0: np.ndarray,
@@ -2827,14 +2807,8 @@ def _uniform_spline_interpolate_pair(
                 q = 0.0
             elif q > 1.0:
                 q = 1.0
-            out0[i] = (
-                ((coeff0[0, 3] * q + coeff0[0, 2]) * q + coeff0[0, 1]) * q
-                + coeff0[0, 0]
-            )
-            out1[i] = (
-                ((coeff1[0, 3] * q + coeff1[0, 2]) * q + coeff1[0, 1]) * q
-                + coeff1[0, 0]
-            )
+            out0[i] = ((coeff0[0, 3] * q + coeff0[0, 2]) * q + coeff0[0, 1]) * q + coeff0[0, 0]
+            out1[i] = ((coeff1[0, 3] * q + coeff1[0, 2]) * q + coeff1[0, 1]) * q + coeff1[0, 0]
         return out0, out1
 
     denom_scale = float(interval_count)
@@ -2855,13 +2829,11 @@ def _uniform_spline_interpolate_pair(
             t = position - interval
 
         out0[i] = (
-            ((coeff0[interval, 3] * t + coeff0[interval, 2]) * t + coeff0[interval, 1]) * t
-            + coeff0[interval, 0]
-        )
+            (coeff0[interval, 3] * t + coeff0[interval, 2]) * t + coeff0[interval, 1]
+        ) * t + coeff0[interval, 0]
         out1[i] = (
-            ((coeff1[interval, 3] * t + coeff1[interval, 2]) * t + coeff1[interval, 1]) * t
-            + coeff1[interval, 0]
-        )
+            (coeff1[interval, 3] * t + coeff1[interval, 2]) * t + coeff1[interval, 1]
+        ) * t + coeff1[interval, 0]
     return out0, out1
 
 
@@ -3002,5 +2974,6 @@ def _assert_default_source_routes_registered() -> None:
             f"extra={sorted(extra)!r}, "
             f"implementation_count={implementation_count!r}"
         )
+
 
 _assert_default_source_routes_registered()

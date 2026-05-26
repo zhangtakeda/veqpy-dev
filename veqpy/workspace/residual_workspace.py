@@ -1,4 +1,16 @@
-"""Residual/root-stage runtime memory ownership."""
+"""
+Module: workspace.residual_workspace
+
+Role:
+- Own residual/root-stage runtime memory.
+
+Public API:
+- ResidualWorkspace
+
+Notes:
+- Packed residual semantics remain owned by ``veqpy.operator``.
+- This module allocates reusable residual buffers and scratch arrays.
+"""
 
 from __future__ import annotations
 

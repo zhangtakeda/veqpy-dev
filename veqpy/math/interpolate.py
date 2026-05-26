@@ -61,9 +61,7 @@ _SOURCE_INTERP_ALIASES = {
 CoefficientBuilder = Callable[[np.ndarray], np.ndarray]
 MatrixBuilder = Callable[[np.ndarray, int], np.ndarray]
 
-uniform_source_interpolation_generator: Registry[str, CoefficientBuilder] = Registry(
-    str, Callable
-)
+uniform_source_interpolation_generator: Registry[str, CoefficientBuilder] = Registry(str, Callable)
 uniform_source_interpolation_matrix_generator: Registry[str, MatrixBuilder] = Registry(
     str, Callable
 )
@@ -278,9 +276,8 @@ def _evaluate_uniform_coefficients(coeff: np.ndarray, query: np.ndarray) -> np.n
         else:
             t = position - interval
         out[i] = (
-            ((coeff[interval, 3] * t + coeff[interval, 2]) * t + coeff[interval, 1]) * t
-            + coeff[interval, 0]
-        )
+            (coeff[interval, 3] * t + coeff[interval, 2]) * t + coeff[interval, 1]
+        ) * t + coeff[interval, 0]
     return out
 
 

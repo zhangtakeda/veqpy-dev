@@ -299,7 +299,7 @@ class Operator:
         """Build a complete Equilibrium snapshot from a packed state vector."""
         x_eval = self.coerce_x(x)
         self.residual_var(x_eval)
-        return self._snapshot_equilibrium_from_runtime(x_eval)
+        return self._snapshot_equilibrium_from_runtime()
 
     def stage_a_profile(self, x: np.ndarray) -> None:
         """Run the profile stage and refresh active profile fields."""
@@ -472,18 +472,19 @@ class Operator:
         if tuple(self.plan.source_execution.route_key) == ("PJ2", "psin", "uniform"):
             self.source_workspace.psin_query.fill(-1.0)
 
-    def _snapshot_equilibrium_from_runtime(self, x: np.ndarray) -> Equilibrium:
+    def _snapshot_equilibrium_from_runtime(self) -> Equilibrium:
         root_fields = self.residual_workspace.root_fields
+        profile_workspace = self.profile_workspace
         return snapshot_equilibrium_from_runtime(
-            x,
             case=self.case,
             grid=self.plan.grid_workspace.to_grid(),
-            profile_L=self.plan.profile_L,
-            coeff_index=self.plan.coeff_index,
-            profile_names=self.plan.profile_names,
-            shape_profile_names=self.plan.shape_profile_names,
-            profile_index=self.plan.profile_index,
-            profiles_by_name=self.profiles_by_name,
+            h_fields=profile_workspace.fields_for("h"),
+            v_fields=profile_workspace.fields_for("v"),
+            k_fields=profile_workspace.fields_for("k"),
+            c_family_fields=profile_workspace.c_family_fields,
+            s_family_fields=profile_workspace.s_family_fields,
+            c_active_order=self.c_effective_order,
+            s_active_order=self.s_effective_order,
             psin=root_fields[0],
             FFn_psin=root_fields[3],
             Pn_psin=root_fields[4],
@@ -555,5 +556,3 @@ def _estimate_h0_from_case(case: "OperatorCase") -> float:
         return 0.66 * a / R0  # structured, no clear pedestal
     except (TypeError, ValueError):
         return 0.66 * a / R0
-
-

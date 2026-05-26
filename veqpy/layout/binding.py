@@ -1,14 +1,22 @@
 """
-Operator layout binding.
+Module: layout.binding
 
-This module owns Python closure wiring for executable operator layouts.  The
-Operator facade refreshes plan and workspaces, then calls this module
-to bind hot-path callables against those already-refreshed objects.
+Role:
+- Own Python closure wiring for executable operator layouts.
+- Bind hot-path callables against refreshed plan and workspace objects.
+
+Public API:
+- build_operator_layout
+
+Notes:
+- Workspace objects own memory; layout objects own executable stage callables.
+- Numerical kernels remain in ``veqpy.engine``.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import numpy as np
 

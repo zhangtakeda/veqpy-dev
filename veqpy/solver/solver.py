@@ -1406,9 +1406,7 @@ def _weighted_rms_vector(residual: np.ndarray, *, scale: np.ndarray, weight: flo
         scale_eval = np.ones_like(residual_eval, dtype=np.float64)
     if residual_eval.size == 0 or float(weight) <= 0.0:
         return np.zeros_like(residual_eval, dtype=np.float64)
-    block_scale = np.maximum(scale_eval, np.finfo(np.float64).tiny) * np.sqrt(
-        residual_eval.size
-    )
+    block_scale = np.maximum(scale_eval, np.finfo(np.float64).tiny) * np.sqrt(residual_eval.size)
     return np.sqrt(float(weight)) * residual_eval / block_scale
 
 

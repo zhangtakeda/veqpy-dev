@@ -13,7 +13,8 @@ Notes:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -219,12 +220,3 @@ def build_fused_residual_runner(
         return out
 
     return runner
-
-
-__all__ = [
-    "build_collocation_runner_into",
-    "build_fused_residual_runner",
-    "build_fused_residual_runner_into",
-    "build_residual_full_stage_runner",
-    "build_residual_full_stage_runner_into",
-]

@@ -1,5 +1,16 @@
 """
-Boundary parameter aggregate and GEQDSK-to-Boundary fitting helpers.
+Module: model.boundary
+
+Role:
+- Hold boundary parameter aggregates.
+- Fit GEQDSK boundary points into Fourier-compatible boundary parameters.
+
+Public API:
+- Boundary
+
+Notes:
+- GEQDSK payload parsing and serialization live in ``veqpy.model.geqdsk``.
+- Boundary fitting does not own grid, operator, or solver runtime state.
 """
 
 from __future__ import annotations
@@ -21,6 +32,8 @@ MAX_FOURIER_ORDER = 20
 
 @dataclass(slots=True, frozen=True)
 class Boundary:
+    """Boundary geometry and magnetic-field parameter aggregate."""
+
     a: float
     R0: float
     Z0: float
@@ -38,7 +51,7 @@ class Boundary:
         object.__setattr__(self, "c_offsets", _normalize_array(self.c_offsets, name="c_offsets"))
         object.__setattr__(self, "s_offsets", _normalize_array(self.s_offsets, name="s_offsets"))
 
-    def __rich__(self):
+    def __rich__(self) -> Tree:
         tree = Tree("[bold blue]Boundary[/]")
         tree.add(Text(f"a: {self.a:.3f} [m]"))
         tree.add(Text(f"R0: {self.R0:.3f} [m]"))

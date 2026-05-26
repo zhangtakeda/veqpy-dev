@@ -42,6 +42,7 @@ class OperatorCase:
     nodes: str = "uniform"
     Ip: float | None = None
     beta: float | None = None
+
     def __post_init__(self) -> None:
         """Normalize fields into stable runtime representations after construction."""
         object.__setattr__(self, "route", _normalize_case_value("route", self.route))
@@ -79,7 +80,7 @@ class OperatorCase:
             value = _normalize_case_value(name, value)
         object.__setattr__(self, name, value)
 
-    def __rich__(self):
+    def __rich__(self) -> Tree:
         tree = Tree("[bold blue]OperatorCase[/]")
         tree.add(f"route: {self.route}")
         tree.add(f"coordinate: {self.coordinate}")

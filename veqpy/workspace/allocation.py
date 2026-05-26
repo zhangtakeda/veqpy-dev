@@ -1,8 +1,22 @@
-"""Operator workspace allocation."""
+"""
+Module: workspace.allocation
+
+Role:
+- Allocate operator runtime profiles and stage workspaces.
+- Keep workspace construction coordinated from one entrypoint.
+
+Public API:
+- allocate_runtime_state
+
+Notes:
+- Workspace classes own memory for their respective stages.
+- Operator and layout modules own orchestration and executable callables.
+"""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import numpy as np
 

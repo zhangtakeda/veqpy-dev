@@ -12,8 +12,9 @@ Notes:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
     from veqpy.operator.operator_case import OperatorCase
 
 RouteKey = tuple[str, str, str]
+
 
 @dataclass(frozen=True, slots=True)
 class SourcePlan:
@@ -69,9 +71,8 @@ class SourcePlan:
 
     @property
     def uses_barycentric_interpolation(self) -> bool:
-        return (
-            not self.is_grid_nodes
-            and source_interpolation_kind_is_barycentric(self.interpolation_kind)
+        return not self.is_grid_nodes and source_interpolation_kind_is_barycentric(
+            self.interpolation_kind
         )
 
 
@@ -153,11 +154,3 @@ def validate_source_inputs(case: OperatorCase, nr: int) -> None:
         raise ValueError(
             f"Expected {case.coordinate}-coordinate inputs to contain at least one sample"
         )
-
-
-__all__ = [
-    SourcePlan,
-    "build_source_plan",
-    "validate_source_inputs",
-    "validate_source_plan_profile_support",
-]

@@ -12,7 +12,7 @@ Notes:
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 import numpy as np
 
@@ -274,6 +274,3 @@ def _build_pj2_psin_uniform_source_stage_runner(
         return alpha1, alpha2
 
     return runner
-
-
-__all__ = ["build_bound_source_stage_runner"]

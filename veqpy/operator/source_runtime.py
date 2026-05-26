@@ -95,6 +95,3 @@ def refresh_source_runtime(
             )
     elif tuple(source_execution.route_key) == ("PJ2", "psin", "uniform"):
         source_workspace.psin_query.fill(-1.0)
-
-
-__all__ = ["refresh_source_runtime"]

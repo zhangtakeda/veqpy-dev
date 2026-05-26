@@ -42,7 +42,7 @@ class SolverResult:
         object.__setattr__(self, "x0", _as_1d_array(self.x0, name="x0"))
         object.__setattr__(self, "x", _as_1d_array(self.x, name="x"))
 
-    def __rich__(self):
+    def __rich__(self) -> Tree:
         tree = Tree("[bold blue]SolverResult[/]")
         tree.add(f"success: {self.success}")
         tree.add(f"message: {self.message}")

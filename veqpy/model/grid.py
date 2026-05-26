@@ -54,7 +54,7 @@ class Grid(Reactive, Serial):
         K_max: int | None = None,
         quadrature_scheme: str = "legendre",
         calculus_scheme: str = "spectral",
-    ):
+    ) -> None:
         super().__init__()
 
         self.Nr = Nr
@@ -65,7 +65,7 @@ class Grid(Reactive, Serial):
         self.quadrature_scheme = quadrature_scheme
         self.calculus_scheme = calculus_scheme
 
-    def __rich__(self):
+    def __rich__(self) -> Tree:
         tree = Tree("[bold blue]Grid[/]")
         tree.add(f"Nr: {self.Nr}")
         tree.add(f"Nt: {self.Nt}")
@@ -87,7 +87,7 @@ class Grid(Reactive, Serial):
         return str(self)
 
     @classmethod
-    def reactive_inspections(cls, name: str, value):
+    def reactive_inspections(cls, name: str, value: object) -> object:
         match name:
             case "Nr":
                 value = int(value)

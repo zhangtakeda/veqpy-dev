@@ -1,4 +1,16 @@
-"""Static grid memory snapshot used by operator hot paths."""
+"""
+Module: workspace.grid_workspace
+
+Role:
+- Hold static grid memory snapshots for operator hot paths.
+
+Public API:
+- GridWorkspace
+
+Notes:
+- ``GridWorkspace`` lowers ``Grid`` data into packed array views.
+- Grid construction remains outside hot runtime kernels.
+"""
 
 from __future__ import annotations
 

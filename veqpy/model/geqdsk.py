@@ -1,8 +1,16 @@
 """
-Passive GEQDSK payload container plus canonical text read/write helpers.
+Module: model.geqdsk
 
-Boundary fitting is owned by `veqpy.model.boundary`; `Geqdsk` only stores
-GEQDSK data and serializes it.
+Role:
+- Hold passive GEQDSK payload data.
+- Read and write canonical GEQDSK text files.
+
+Public API:
+- Geqdsk
+
+Notes:
+- Boundary fitting is owned by ``veqpy.model.boundary``.
+- ``Geqdsk`` stores GEQDSK data and serialization behavior only.
 """
 
 from __future__ import annotations
@@ -19,6 +27,8 @@ from veqpy.base import Serial, read_serializer, write_serializer
 
 @dataclass(slots=True)
 class Geqdsk(Serial):
+    """Passive GEQDSK payload with canonical text serialization helpers."""
+
     path: InitVar[str | os.PathLike[str] | None] = None
     header: str = ""
 

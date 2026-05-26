@@ -1,4 +1,16 @@
-"""Profile-stage runtime memory ownership."""
+"""
+Module: workspace.profile_workspace
+
+Role:
+- Own profile-stage runtime memory and profile metadata arrays.
+
+Public API:
+- ProfileWorkspace
+
+Notes:
+- Profile field storage is keyed by stable operator-plan profile ids.
+- This module does not own profile object construction semantics.
+"""
 
 from __future__ import annotations
 

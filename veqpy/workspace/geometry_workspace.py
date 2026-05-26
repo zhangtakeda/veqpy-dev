@@ -1,4 +1,16 @@
-"""Geometry-stage runtime memory ownership."""
+"""
+Module: workspace.geometry_workspace
+
+Role:
+- Own geometry-stage runtime memory.
+
+Public API:
+- GeometryWorkspace
+
+Notes:
+- Geometry kernels consume the arrays allocated here.
+- This module does not bind executable layout callables.
+"""
 
 from __future__ import annotations
 

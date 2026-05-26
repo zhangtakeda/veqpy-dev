@@ -30,6 +30,8 @@ Public API:
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numba as nb
 import numpy as np
 
@@ -47,7 +49,7 @@ const_matrix = nb.types.Array(nb.float64, 2, "C", readonly=True)
 const_indices = nb.types.Array(nb.intp, 1, "C", readonly=True)
 
 
-def fast_kernel(signature):
+def fast_kernel(signature) -> Callable:
     """Decorator for small fast Numba kernels."""
     return nb.njit(signature, cache=True, nogil=True, fastmath=True, inline="always")
 

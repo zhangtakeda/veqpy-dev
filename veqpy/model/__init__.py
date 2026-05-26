@@ -29,12 +29,12 @@ from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile
 
 __all__ = [
-    Equilibrium,
+    "Equilibrium",
     "Geometry",
-    Grid,
+    "Grid",
     "Geqdsk",
     "Boundary",
-    Profile,
+    "Profile",
     "Reactive",
     "Serial",
 ]

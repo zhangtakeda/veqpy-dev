@@ -17,7 +17,7 @@ Notes:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Self
+from typing import Any, Self
 
 import matplotlib
 
@@ -27,6 +27,7 @@ import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import ticker
+from matplotlib.figure import Figure
 from matplotlib.gridspec import GridSpec
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from rich.console import Console
@@ -37,7 +38,6 @@ from veqpy.base import Reactive, Serial
 from veqpy.model.geometry import Geometry
 from veqpy.model.geqdsk import Geqdsk
 from veqpy.model.grid import Grid
-from veqpy.model.profile import Profile
 
 plt.style.use("seaborn-v0_8-paper")
 plt.rcParams.update(
@@ -147,7 +147,7 @@ class Equilibrium(Reactive, Serial):
         "B0",
         "a",
         "grid",
-        "shape_profiles",
+        "geometry",
         "FFn_psin",
         "Pn_psin",
         "psin",
@@ -164,7 +164,8 @@ class Equilibrium(Reactive, Serial):
         B0: float,
         a: float,
         grid: Grid,
-        shape_profiles: dict[str, Profile],
+        *,
+        geometry: Geometry | dict[str, Any],
         FFn_psin: np.ndarray,
         Pn_psin: np.ndarray,
         psin: np.ndarray,
@@ -172,27 +173,18 @@ class Equilibrium(Reactive, Serial):
         psin_rr: np.ndarray,
         alpha1: float = 1.0,
         alpha2: float = 1.0,
-    ):
+    ) -> None:
         """Initialize the equilibrium snapshot object."""
         super().__init__()
+        if FFn_psin is None or Pn_psin is None or psin is None or psin_r is None or psin_rr is None:
+            raise TypeError("FFn_psin, Pn_psin, psin, psin_r, and psin_rr are required")
 
         self.R0 = R0
         self.Z0 = Z0
         self.B0 = B0
         self.a = a
         self.grid = grid
-        self.shape_profiles = _normalize_shape_profiles(shape_profiles)
-
-        for name, profile in self.shape_profiles.items():
-            setattr(self, f"{name}_profile", profile)
-        self.h_profile = self.shape_profiles.get("h", _build_default_shape_profile("h", self.grid))
-        self.v_profile = self.shape_profiles.get("v", _build_default_shape_profile("v", self.grid))
-        self.k_profile = self.shape_profiles.get("k", _build_default_shape_profile("k", self.grid))
-
-        for profile in _unique_profiles(
-            (*self.shape_profiles.values(), self.h_profile, self.v_profile, self.k_profile)
-        ):
-            profile.update(grid=self.grid)
+        self.geometry = _coerce_geometry(geometry)
 
         self.psin = np.asarray(psin, dtype=np.float64)
         self.FFn_psin = _regularize_axis_linear_profile(FFn_psin, grid.rho, copy=True)
@@ -202,7 +194,7 @@ class Equilibrium(Reactive, Serial):
         self.alpha1 = alpha1
         self.alpha2 = alpha2
 
-    def __rich__(self):
+    def __rich__(self) -> Tree:
         tree = Tree("[bold blue]Equilibrium[/]")
         tree.add(self.grid)
         tree.add(Text(f"a: {self.a:.3f} [m]"))
@@ -235,7 +227,7 @@ class Equilibrium(Reactive, Serial):
             "B0": float,
             "a": float,
             "grid": Grid,
-            "shape_profiles": dict[str, Profile],
+            "geometry": Any,
             "psin": np.ndarray,
             "FFn_psin": np.ndarray,
             "Pn_psin": np.ndarray,
@@ -269,40 +261,6 @@ class Equilibrium(Reactive, Serial):
     @property
     def Z(self) -> np.ndarray:
         return self.geometry.Z
-
-    @property
-    def geometry(self) -> Geometry:
-        """Re-materialize Geometry from current snapshot root fields."""
-        geometry = Geometry(grid=self.grid)
-        c_fields = np.zeros((self.grid.M_max + 1, 3, self.grid.Nr), dtype=np.float64)
-        s_fields = np.zeros((self.grid.M_max + 1, 3, self.grid.Nr), dtype=np.float64)
-        c_active_order = 0
-        s_active_order = 0
-        for name, profile in self.shape_profiles.items():
-            if name.startswith("c") and name[1:].isdigit():
-                order = int(name[1:])
-                if order <= self.grid.M_max:
-                    c_fields[order] = profile.u_fields
-                    c_active_order = max(c_active_order, order)
-            elif name.startswith("s") and name[1:].isdigit():
-                order = int(name[1:])
-                if order <= self.grid.M_max:
-                    s_fields[order] = profile.u_fields
-                    s_active_order = max(s_active_order, order)
-        geometry.update(
-            self.a,
-            self.R0,
-            self.Z0,
-            self.grid,
-            self.h_profile.u_fields,
-            self.v_profile.u_fields,
-            self.k_profile.u_fields,
-            c_fields,
-            s_fields,
-            c_active_order=c_active_order,
-            s_active_order=s_active_order,
-        )
-        return geometry
 
     @property
     def S(self) -> np.ndarray:
@@ -487,7 +445,7 @@ class Equilibrium(Reactive, Serial):
         show: bool = False,
         plot_residual: bool = False,
         grid: Grid | None = None,
-    ):
+    ) -> Figure:
         """Render the legacy 6-panel summary figure for this equilibrium."""
 
         return _plot_equilibrium(
@@ -604,38 +562,34 @@ class Equilibrium(Reactive, Serial):
         return geqdsk
 
 
-def _normalize_shape_profiles(shape_profiles: dict[str, Profile]) -> dict[str, Profile]:
-    if not isinstance(shape_profiles, dict):
-        raise TypeError(
-            f"shape_profiles must be dict[str, Profile], got {type(shape_profiles).__name__}"
-        )
-    for name, profile in shape_profiles.items():
-        if not isinstance(name, str):
-            raise TypeError(f"shape profile names must be str, got {type(name).__name__}")
-        profile_type = type(profile)
-        if not (
-            isinstance(profile, Profile)
-            or (
-                profile_type.__name__ == Profile.__name__
-                and getattr(profile_type, "__module__", None) == Profile.__module__
-            )
-        ):
-            raise TypeError(f"shape profile {name!r} must be Profile, got {type(profile).__name__}")
-    return {name: profile.copy() for name, profile in shape_profiles.items()}
+def _coerce_geometry(value: Geometry | dict[str, Any]) -> Geometry:
+    if isinstance(value, Geometry):
+        return value
+    if isinstance(value, dict):
+        payload = value.get("Geometry", value)
+        if isinstance(payload, dict):
+            return _geometry_from_fields(payload)
+    raise TypeError(f"geometry must be Geometry, got {type(value).__name__}")
 
 
-def _build_default_shape_profile(name: str, grid: Grid) -> Profile:
-    power = 0
-    if name.startswith(("c", "s")) and name[1:].isdigit():
-        power = int(grid.K_values[int(name[1:])])
-    return Profile(scale=1.0, power=power, envelope_power=1, offset=0.0, coeff=None)
-
-
-def _unique_profiles(profiles) -> list[Profile]:
-    unique: dict[int, Profile] = {}
-    for profile in profiles:
-        unique.setdefault(id(profile), profile)
-    return list(unique.values())
+def _geometry_from_fields(fields: dict[str, Any]) -> Geometry:
+    geometry = Geometry.__new__(Geometry)
+    for name in (
+        "S_r",
+        "V_r",
+        "Kn",
+        "Kn_r",
+        "Ln_r",
+        "tb_fields",
+        "R_fields",
+        "Z_fields",
+        "J_fields",
+        "g_fields",
+    ):
+        if name not in fields:
+            raise ValueError(f"Serialized Geometry is missing {name!r}")
+        object.__setattr__(geometry, name, np.asarray(fields[name], dtype=np.float64))
+    return geometry
 
 
 def _shape_profile_plot_meta(name: str) -> dict[str, str | None]:
@@ -665,7 +619,7 @@ def _plot_equilibrium(
     show: bool = False,
     plot_residual: bool = False,
     grid: Grid | None = None,
-):
+) -> Figure:
     """Render the legacy 6-panel equilibrium summary for one model-side equilibrium."""
     surface_equilibrium = _build_resampled_equilibrium(equilibrium, grid=grid)
     fig = _render_equilibrium_summary(
@@ -706,11 +660,7 @@ def _compare_equilibrium(
     ref_surface = _build_resampled_equilibrium(reference, grid=compare_grid)
     other_surface = _build_resampled_equilibrium(other, grid=compare_grid)
 
-    shape_keys = [
-        key
-        for key in ["h", "k", "s1"]
-        if key in reference.shape_profiles or key in other.shape_profiles
-    ]
+    shape_keys: list[str] = []
     source_groups = [
         ("psi_r", r"$\psi_\rho$", None),
         ("FF_psi", r"$FF_\psi$", None),
@@ -749,7 +699,12 @@ def _compare_equilibrium(
         label_other=label_other,
     )
 
-    shape_axes = [fig.add_subplot(gs[row, 1]) for row in range(3)]
+    shape_axes = [fig.add_subplot(gs[row, 1]) for row in range(len(shape_keys))]
+    if not shape_axes:
+        ax = fig.add_subplot(gs[:, 1])
+        ax.set_title("(b) Shape Profiles", fontsize=SUBPLOT_TITLE_FONTSIZE)
+        ax.text(0.5, 0.5, "not stored in Equilibrium snapshot", ha="center", va="center")
+        ax.set_axis_off()
     source_axes = [fig.add_subplot(gs[row, 2]) for row in range(3)]
 
     for i, (ax, key) in enumerate(zip(shape_axes, shape_keys, strict=True)):
@@ -920,11 +875,7 @@ def _build_resampled_equilibrium(
         right=0.0,
     )
 
-    shape_profiles: dict[str, Profile] = {}
-    for name, profile in equilibrium.shape_profiles.items():
-        copied = profile.copy()
-        copied.update(grid=plot_grid)
-        shape_profiles[name] = copied
+    geometry = _resample_geometry(equilibrium.geometry, source_grid, plot_grid)
 
     return Equilibrium(
         R0=equilibrium.R0,
@@ -932,7 +883,6 @@ def _build_resampled_equilibrium(
         B0=equilibrium.B0,
         a=equilibrium.a,
         grid=plot_grid,
-        shape_profiles=shape_profiles,
         psin=psin,
         FFn_psin=FFn_psin,
         Pn_psin=Pn_psin,
@@ -940,6 +890,7 @@ def _build_resampled_equilibrium(
         psin_rr=plot_grid.differentiate(psin_r),
         alpha1=equilibrium.alpha1,
         alpha2=equilibrium.alpha2,
+        geometry=geometry,
     )
 
 
@@ -955,11 +906,7 @@ def _build_comparison_profile_data(
         "mu0_P_psi": np.asarray(equilibrium.alpha1 * equilibrium.Pn_psin, dtype=np.float64),
     }
     for key in shape_keys:
-        profile = equilibrium.shape_profiles.get(key)
-        if profile is None:
-            data[key] = np.zeros_like(equilibrium.rho, dtype=np.float64)
-        else:
-            data[key] = np.asarray(profile.u, dtype=np.float64)
+        data[key] = np.zeros_like(equilibrium.rho, dtype=np.float64)
     return data
 
 
@@ -1078,12 +1025,7 @@ def _merge_surface_boundaries(*boundaries: dict) -> dict:
 
 
 def _build_shape_panel_data(equilibrium: Equilibrium) -> dict:
-    values = {
-        key: profile.u
-        for key, profile in equilibrium.shape_profiles.items()
-        if _include_shape_panel_profile(key)
-    }
-    return {"shape": {"rho": equilibrium.rho, "values": values}}
+    return {"shape": {"rho": equilibrium.rho, "values": {}}}
 
 
 def _include_shape_panel_profile(name: str) -> bool:
@@ -1151,6 +1093,64 @@ def _resample_profile_linear(
     left_val = float(y_src[0]) if left is None else float(left)
     right_val = float(y_src[-1]) if right is None else float(right)
     return np.interp(rho_eval, rho_src, y_src, left=left_val, right=right_val)
+
+
+def _resample_geometry(geometry: Geometry, source_grid: Grid, target_grid: Grid) -> Geometry:
+    out = Geometry(grid=target_grid)
+    for name in ("S_r", "V_r", "Kn", "Kn_r", "Ln_r"):
+        np.copyto(
+            getattr(out, name),
+            _resample_profile_linear(
+                source_grid.rho,
+                np.asarray(getattr(geometry, name), dtype=np.float64),
+                target_grid.rho,
+            ),
+        )
+    for name in ("tb_fields", "R_fields", "Z_fields", "J_fields", "g_fields"):
+        np.copyto(
+            getattr(out, name),
+            _resample_surface_fields(
+                np.asarray(getattr(geometry, name), dtype=np.float64),
+                source_grid,
+                target_grid,
+            ),
+        )
+    return out
+
+
+def _resample_surface_fields(
+    fields: np.ndarray,
+    source_grid: Grid,
+    target_grid: Grid,
+) -> np.ndarray:
+    if fields.ndim != 3 or fields.shape[1:] != (source_grid.Nr, source_grid.Nt):
+        raise ValueError(
+            f"Expected surface fields shape (*, {source_grid.Nr}, {source_grid.Nt}), "
+            f"got {fields.shape}"
+        )
+
+    radial = np.empty((fields.shape[0], target_grid.Nr, source_grid.Nt), dtype=np.float64)
+    for field_index in range(fields.shape[0]):
+        for theta_index in range(source_grid.Nt):
+            radial[field_index, :, theta_index] = _resample_profile_linear(
+                source_grid.rho,
+                fields[field_index, :, theta_index],
+                target_grid.rho,
+            )
+
+    theta_src = np.asarray(source_grid.theta, dtype=np.float64)
+    theta_eval = np.asarray(target_grid.theta, dtype=np.float64)
+    if theta_src.shape == theta_eval.shape and np.allclose(theta_src, theta_eval):
+        return radial
+
+    theta_periodic = np.concatenate([theta_src, theta_src[:1] + 2.0 * np.pi])
+    out = np.empty((fields.shape[0], target_grid.Nr, target_grid.Nt), dtype=np.float64)
+    for field_index in range(fields.shape[0]):
+        for rho_index in range(target_grid.Nr):
+            values = radial[field_index, rho_index]
+            values_periodic = np.concatenate([values, values[:1]])
+            out[field_index, rho_index] = np.interp(theta_eval, theta_periodic, values_periodic)
+    return out
 
 
 def _build_geqdsk_rectilinear_grid(
@@ -1565,7 +1565,7 @@ def _render_panel_b_shapes(ax: plt.Axes, data: dict):
             label=meta["label"],
         )
 
-    ax.set(xlabel=r"$\rho$", ylabel=Profile)
+    ax.set(xlabel=r"$\rho$", ylabel="Profile")
     if shape["values"]:
         if len(shape["values"]) < 5:
             ax.legend(loc="center left")
@@ -1588,7 +1588,7 @@ def _render_panel_c_sources(ax: plt.Axes, data: dict):
         ax.plot(rho, data["FF_psi"], "-", color=RED, label=r"$FF_\psi$")
         ax.plot(rho, data["mu0_P_psi"], "-", color=PURPLE, label=r"$\mu_0 P_\psi$")
 
-    ax.set(xlabel=r"$\rho$", ylabel=Profile)
+    ax.set(xlabel=r"$\rho$", ylabel="Profile")
     _add_top_headroom(ax, ratio=0.35)
     ax.legend(loc="upper left")
     ax.grid(True)
@@ -1671,6 +1671,6 @@ def _render_panel_f_safety(ax: plt.Axes, data: dict):
     else:
         ax.plot(data["rho"], data["q"], "-", color=BLUE, label=r"$q$")
         ax.plot(data["rho"], data["s"], "--", color=ORANGE, label=r"$s$")
-    ax.set(xlabel=r"$\rho$", ylabel=Profile)
+    ax.set(xlabel=r"$\rho$", ylabel="Profile")
     ax.legend(loc="upper left")
     ax.grid(True)

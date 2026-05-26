@@ -41,7 +41,7 @@ class Geometry:
     J_fields: np.ndarray = field(init=False, repr=False)
     g_fields: np.ndarray = field(init=False, repr=False)
 
-    def __post_init__(self, grid: Grid):
+    def __post_init__(self, grid: Grid) -> None:
         nr = grid.Nr
         nt = grid.Nt
         object.__setattr__(self, "S_r", np.empty(nr, dtype=np.float64))
@@ -69,7 +69,7 @@ class Geometry:
         *,
         c_active_order: int | None = None,
         s_active_order: int | None = None,
-    ):
+    ) -> None:
         """Refresh geometry from the current Grid and profile fields."""
         if self.R_fields.shape[1:] != (grid.Nr, grid.Nt):
             raise ValueError(

@@ -1,4 +1,16 @@
-"""Source-stage runtime memory ownership."""
+"""
+Module: workspace.source_workspace
+
+Role:
+- Own source-stage runtime memory, caches, and scratch arrays.
+
+Public API:
+- SourceWorkspace
+
+Notes:
+- Source planning and validation live in ``veqpy.operator.source_plan``.
+- Source numerical kernels live in ``veqpy.engine``.
+"""
 
 from __future__ import annotations
 

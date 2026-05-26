@@ -41,7 +41,7 @@ def update_geometry_hot(
     s_fields: np.ndarray,
     c_active_order: int,
     s_active_order: int,
-):
+) -> None:
     """Materialize only the geometry fields and integrals required by the fused solve hot path."""
     sin_tb = surface_fields[0]
     R_surface = surface_fields[1]

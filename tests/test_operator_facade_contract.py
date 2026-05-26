@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import numpy as np
+import pytest
 
 from veqpy.model.boundary import Boundary
+from veqpy.model.equilibrium import Equilibrium
 from veqpy.model.grid import Grid
 from veqpy.operator import Operator, OperatorCase
 
 
-def test_operator_callable_and_snapshot_contract() -> None:
+def test_operator_callable_and_snapshot_contract(tmp_path: Path) -> None:
     psin = np.linspace(0.0, 1.0, 8, dtype=np.float64)
     case = OperatorCase(
         route="PF",
@@ -34,7 +39,62 @@ def test_operator_callable_and_snapshot_contract() -> None:
     )
     assert collocation.shape == (expected_collocation_size,)
     assert equilibrium.psin.shape == (operator.plan.grid_workspace.Nr,)
-    assert set(equilibrium.shape_profiles) == set(operator.plan.shape_profile_names)
+    assert not hasattr(equilibrium, "shape_profiles")
+    assert equilibrium.geometry.R.shape == (
+        operator.plan.grid_workspace.Nr,
+        operator.plan.grid_workspace.Nt,
+    )
+    np.testing.assert_allclose(
+        equilibrium.geometry.S_r,
+        operator.geometry_workspace.radial_fields[0],
+    )
+    np.testing.assert_allclose(
+        equilibrium.geometry.R,
+        operator.geometry_workspace.surface_fields[1],
+    )
+    snapshot_R = equilibrium.geometry.R.copy()
+    operator.profile_workspace.fields_for("h").fill(123.0)
+    np.testing.assert_allclose(equilibrium.geometry.R, snapshot_R)
+
+    path = tmp_path / "equilibrium.json"
+    equilibrium.write(str(path))
+    payload = json.loads(path.read_text())["Equilibrium"]
+    assert "shape_profiles" not in payload
+    assert "geometry" in payload
+
+
+def test_equilibrium_requires_materialized_geometry_constructor() -> None:
+    grid = Grid(Nr=6, Nt=8, L_max=4, M_max=2)
+    zeros = np.zeros(grid.Nr, dtype=np.float64)
+
+    with pytest.raises(TypeError, match="geometry"):
+        Equilibrium(
+            R0=3.0,
+            Z0=0.0,
+            B0=2.0,
+            a=1.0,
+            grid=grid,
+            psin=zeros,
+            FFn_psin=zeros,
+            Pn_psin=zeros,
+            psin_r=zeros,
+            psin_rr=zeros,
+        )
+
+    with pytest.raises(TypeError, match="shape_profiles"):
+        Equilibrium(
+            R0=3.0,
+            Z0=0.0,
+            B0=2.0,
+            a=1.0,
+            grid=grid,
+            shape_profiles={},
+            psin=zeros,
+            FFn_psin=zeros,
+            Pn_psin=zeros,
+            psin_r=zeros,
+            psin_rr=zeros,
+        )
 
 
 def test_profile_workspace_owns_profile_fields() -> None:

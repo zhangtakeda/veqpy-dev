@@ -18,9 +18,10 @@ Notes:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from math import isfinite
-from typing import Any, Callable
+from typing import Any
 
 from rich.console import Console
 from rich.tree import Tree
@@ -265,7 +266,7 @@ class SolverConfig:
             residual_normalization_sensitivity_lambda,
         )
 
-    def __rich__(self):
+    def __rich__(self) -> Tree:
         tree = Tree("[bold blue]SolverConfig[/]")
         tree.add(f"method: {self.method}")
         tree.add(f"enable_collocation: {self.enable_collocation}")

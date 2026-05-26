@@ -32,7 +32,7 @@ class SolverRecord:
     config_snapshot: SolverConfig
     result_snapshot: SolverResult
 
-    def __rich__(self):
+    def __rich__(self) -> Tree:
         tree = Tree("[bold blue]SolverRecord[/]")
         tree.add(self.case_snapshot)
         tree.add(self.config_snapshot)

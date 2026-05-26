@@ -1,15 +1,27 @@
 """
-Executable runtime layouts.
+Module: layout.runtime
 
-Layout objects describe fixed stage structure and own the bound callables that execute
-that structure.  Workspace objects own memory; layouts execute against already-bound
-workspace arrays captured by their callables.
+Role:
+- Define executable runtime layout containers.
+- Compose profile, geometry, source, residual, and collocation stage callables.
+
+Public API:
+- ProfileLayout
+- GeometryLayout
+- SourceLayout
+- ResidualLayout
+- OperatorLayout
+
+Notes:
+- Workspace objects own memory; layouts execute against already-bound arrays.
+- Layout package exports are controlled only by package roots.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Self
+from typing import Self
 
 import numpy as np
 

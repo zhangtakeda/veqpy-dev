@@ -12,7 +12,7 @@ Notes:
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 import numpy as np
 
@@ -90,6 +90,3 @@ def build_geometry_stage_runner(
         )
 
     return runner
-
-
-__all__ = ["build_geometry_stage_runner"]
