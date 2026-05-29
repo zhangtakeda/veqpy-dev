@@ -32,7 +32,7 @@ from veqpy.operator import (
 )
 from veqpy.solver import Solver, SolverConfig
 
-PLOT = False
+PLOT = True
 SHOW_PROGRESS = True
 
 # Reference solve: high-resolution baseline used to derive downstream cases.
@@ -51,7 +51,7 @@ REFERENCE_GRID = Grid(
 )
 
 TEST_GRID = Grid(
-    Nr=16,
+    Nr=32,
     Nt=16,
     quadrature_scheme="legendre",
 )
@@ -72,18 +72,18 @@ CONFIG = SolverConfig(
 # Minimal robust coefficient seeds for benchmark cases.
 BASE_COEFFS = {
     "h": [0.0] * 3,
-    "k": [0.0] * 5,
+    "k": [0.0] * 6,
     "s1": [0.0] * 3,
 }
 
 PSIN_ROBUST_COEFFS = {
     **BASE_COEFFS,
-    "psin": [0.0] * 5,
+    "psin": [0.0] * 6,
 }
 
 F_ROBUST_COEFFS = {
     **BASE_COEFFS,
-    "F": [0.0] * 5,
+    "F": [0.0] * 6,
 }
 
 BOUNDARY = Boundary(
