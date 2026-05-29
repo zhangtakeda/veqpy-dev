@@ -15,7 +15,7 @@ a high-performance Python wrapper for plasma equilibrium simulations in magnetic
 - `veqpy/orchestration.py`
   - Python-level route, source, residual metadata, and stage-runner orchestration.
 - `veqpy/model/`
-  - Passive or snapshot-oriented objects: `Grid`, `Profile`, `Geometry`, `Equilibrium`.
+  - Passive or snapshot-oriented objects: `Grid`, `Profile`, `Equilibrium`.
 - `veqpy/operator/`
   - Packed layout and the main `x -> residual` runtime path.
   - Owns `OperatorCase`, packed `layout/codec`, and `Operator`.
@@ -100,7 +100,7 @@ Current Fourier-family runtime is driven by `Grid.M_max`, but hot-path kernels o
 
 - Low-order case with the same active profiles:
   - `M_max=4` vs `M_max=2` currently gives about `1.05x` full residual time in the `numba` microbenchmark.
-  - Geometry alone is about `1.03x`.
+  - Geometry-stage computation alone is about `1.03x`.
 - When higher-order terms are actually active:
   - `M_max=4` high-order case is about `1.23x` full residual time relative to the low-order `M_max=2` baseline.
 

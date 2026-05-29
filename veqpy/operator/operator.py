@@ -464,7 +464,6 @@ class Operator:
 
     def _snapshot_equilibrium_from_runtime(self, x: np.ndarray) -> Equilibrium:
         root_fields = self.residual_workspace.root_fields
-        profile_workspace = self.profile_workspace
         return snapshot_equilibrium_from_runtime(
             x=x,
             case=self.case,
@@ -475,13 +474,6 @@ class Operator:
             shape_profile_names=self.plan.shape_profile_names,
             profile_index=self.plan.profile_index,
             profiles_by_name=self.profiles_by_name,
-            h_fields=profile_workspace.fields_for("h"),
-            v_fields=profile_workspace.fields_for("v"),
-            k_fields=profile_workspace.fields_for("k"),
-            c_family_fields=profile_workspace.c_family_fields,
-            s_family_fields=profile_workspace.s_family_fields,
-            c_active_order=self.c_effective_order,
-            s_active_order=self.s_effective_order,
             psin=root_fields[0],
             FFn_psin=root_fields[3],
             Pn_psin=root_fields[4],

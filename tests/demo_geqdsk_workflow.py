@@ -65,13 +65,12 @@ def build_surface_from_psin(equilibrium, level: float) -> np.ndarray:
     order = np.argsort(psin)
     psin_unique, unique_idx = np.unique(psin[order], return_index=True)
     rho_level = float(np.interp(float(level), psin_unique, rho[order][unique_idx]))
-    geometry = equilibrium.geometry
     R = np.array(
-        [np.interp(rho_level, rho, geometry.R[:, idx]) for idx in range(equilibrium.grid.Nt)],
+        [np.interp(rho_level, rho, equilibrium.R[:, idx]) for idx in range(equilibrium.grid.Nt)],
         dtype=np.float64,
     )
     Z = np.array(
-        [np.interp(rho_level, rho, geometry.Z[:, idx]) for idx in range(equilibrium.grid.Nt)],
+        [np.interp(rho_level, rho, equilibrium.Z[:, idx]) for idx in range(equilibrium.grid.Nt)],
         dtype=np.float64,
     )
     return np.column_stack((R, Z))

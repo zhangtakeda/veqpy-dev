@@ -413,10 +413,7 @@ def _reference_cache_signature() -> dict[str, object]:
 
 def _is_reference_equilibrium_cache_compatible(equilibrium: object) -> bool:
     grid = getattr(equilibrium, "grid", None)
-    geometry = getattr(equilibrium, "geometry", None)
     if grid is None:
-        return False
-    if geometry is None:
         return False
     if not isinstance(getattr(grid, "L_max", None), int):
         return False
@@ -434,7 +431,11 @@ def _is_reference_equilibrium_cache_compatible(equilibrium: object) -> bool:
 
     if rho.ndim != 1:
         return False
-    if np.asarray(getattr(geometry, "R", None), dtype=np.float64).shape != (grid.Nr, grid.Nt):
+    try:
+        R = np.asarray(getattr(equilibrium, "R"), dtype=np.float64)
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+    if R.shape != (grid.Nr, grid.Nt):
         return False
 
     expected_shape = rho.shape
@@ -1230,8 +1231,8 @@ def _write_reference_summary_json(reference: ReferenceBundle) -> None:
     native_eq = reference.equilibrium
     summary_eq = native_eq.resample(REFERENCE_SUMMARY_GRID)
 
-    boundary_R = _as_float64_array(summary_eq.geometry.R[-1])
-    boundary_Z = _as_float64_array(summary_eq.geometry.Z[-1])
+    boundary_R = _as_float64_array(summary_eq.R[-1])
+    boundary_Z = _as_float64_array(summary_eq.Z[-1])
     boundary_R_closed = np.concatenate([boundary_R, boundary_R[:1]])
     boundary_Z_closed = np.concatenate([boundary_Z, boundary_Z[:1]])
     R_in = float(np.min(boundary_R))

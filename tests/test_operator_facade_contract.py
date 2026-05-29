@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from veqpy.model.boundary import Boundary
 from veqpy.model.equilibrium import Equilibrium
@@ -49,21 +48,35 @@ def test_operator_callable_and_snapshot_contract(tmp_path: Path) -> None:
     for profile in equilibrium.shape_profiles.values():
         for runtime_attr in ("u_fields", "rp_fields", "env_fields", "T", "T_r", "T_rr"):
             assert not hasattr(profile, runtime_attr)
-    assert equilibrium.geometry.R.shape == (
+    assert equilibrium.R.shape == (
         operator.plan.grid_workspace.Nr,
         operator.plan.grid_workspace.Nt,
     )
+    assert equilibrium.surface_fields.shape == (
+        9,
+        operator.plan.grid_workspace.Nr,
+        operator.plan.grid_workspace.Nt,
+    )
+    assert equilibrium.radial_fields.shape == (5, operator.plan.grid_workspace.Nr)
     np.testing.assert_allclose(
-        equilibrium.geometry.S_r,
+        equilibrium.S_r,
         operator.geometry_workspace.radial_fields[0],
     )
     np.testing.assert_allclose(
-        equilibrium.geometry.R,
+        equilibrium.R,
         operator.geometry_workspace.surface_fields[1],
     )
-    snapshot_R = equilibrium.geometry.R.copy()
+    np.testing.assert_allclose(
+        equilibrium.J,
+        operator.geometry_workspace.surface_fields[4],
+    )
+    np.testing.assert_allclose(
+        equilibrium.gttdivJR,
+        operator.geometry_workspace.surface_fields[7],
+    )
+    snapshot_R = equilibrium.R.copy()
     operator.profile_workspace.fields_for("h").fill(123.0)
-    np.testing.assert_allclose(equilibrium.geometry.R, snapshot_R)
+    np.testing.assert_allclose(equilibrium.R, snapshot_R)
 
     path = tmp_path / "equilibrium.json"
     equilibrium.write(str(path))
@@ -73,55 +86,7 @@ def test_operator_callable_and_snapshot_contract(tmp_path: Path) -> None:
     loaded = Equilibrium.load(str(path))
     assert loaded.shape_profiles
     assert set(loaded.shape_profiles) == set(equilibrium.shape_profiles)
-    np.testing.assert_allclose(loaded.geometry.R, equilibrium.geometry.R)
-
-
-def test_equilibrium_geometry_is_derived_or_legacy_fallback() -> None:
-    grid = Grid(Nr=6, Nt=8, L_max=4, M_max=2)
-    zeros = np.zeros(grid.Nr, dtype=np.float64)
-    surface_zeros = np.zeros((grid.Nr, grid.Nt), dtype=np.float64)
-    geometry = {
-        "S_r": zeros,
-        "V_r": zeros,
-        "Kn": zeros,
-        "Kn_r": zeros,
-        "Ln_r": zeros,
-        "tb_fields": np.zeros((8, grid.Nr, grid.Nt), dtype=np.float64),
-        "R_fields": np.zeros((6, grid.Nr, grid.Nt), dtype=np.float64),
-        "Z_fields": np.zeros((6, grid.Nr, grid.Nt), dtype=np.float64),
-        "J_fields": np.zeros((8, grid.Nr, grid.Nt), dtype=np.float64),
-        "g_fields": np.zeros((7, grid.Nr, grid.Nt), dtype=np.float64),
-    }
-
-    equilibrium = Equilibrium(
-        R0=3.0,
-        Z0=0.0,
-        B0=2.0,
-        a=1.0,
-        grid=grid,
-        psin=zeros,
-        FFn_psin=zeros,
-        Pn_psin=zeros,
-        psin_r=zeros,
-        psin_rr=zeros,
-    )
-    with pytest.raises(RuntimeError, match="shape_profiles or legacy geometry"):
-        _ = equilibrium.geometry
-
-    legacy_equilibrium = Equilibrium(
-        R0=3.0,
-        Z0=0.0,
-        B0=2.0,
-        a=1.0,
-        grid=grid,
-        geometry=geometry,
-        psin=zeros,
-        FFn_psin=zeros,
-        Pn_psin=zeros,
-        psin_r=zeros,
-        psin_rr=zeros,
-    )
-    np.testing.assert_allclose(legacy_equilibrium.geometry.R, surface_zeros)
+    np.testing.assert_allclose(loaded.R, equilibrium.R)
 
 
 def test_profile_workspace_owns_profile_fields() -> None:
@@ -207,8 +172,8 @@ def test_equilibrium_resample_uses_shape_profile_snapshot_not_field_interpolatio
     high_operator = Operator(grid=high_grid, case=case)
     expected = high_operator.build_equilibrium(high_operator.encode_initial_state())
 
-    np.testing.assert_allclose(resampled.geometry.R, expected.geometry.R, atol=1.0e-12)
-    np.testing.assert_allclose(resampled.geometry.Z, expected.geometry.Z, atol=1.0e-12)
+    np.testing.assert_allclose(resampled.R, expected.R, atol=1.0e-12)
+    np.testing.assert_allclose(resampled.Z, expected.Z, atol=1.0e-12)
 
 
 def test_pj2_uses_profile_workspace_for_source_profile_inputs() -> None:

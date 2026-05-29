@@ -16,7 +16,7 @@ $$
 当前代码里的 geometry kernel 不再把 `c1/s2` 写死, 而是:
 
 - `Grid` 预计算到 `M_max` 的三角表
-- `Geometry.update(...)` 接收连续的 `c_fields/s_fields`
+- `Equilibrium` 的几何场派生逻辑接收连续的 `c_fields/s_fields`
 - backend kernel 按 `c_active_order/s_active_order` 循环
 
 因此实现上区分两个上界:
