@@ -44,7 +44,11 @@ def test_operator_callable_and_snapshot_contract(tmp_path: Path) -> None:
     ).ravel()
     np.testing.assert_allclose(collocation, expected_collocation)
     assert equilibrium.psin.shape == (operator.plan.grid_workspace.Nr,)
-    assert not hasattr(equilibrium, "shape_profiles")
+    assert equilibrium.shape_profiles
+    assert {"h", "v", "k", "s1"}.issubset(equilibrium.shape_profiles)
+    for profile in equilibrium.shape_profiles.values():
+        for runtime_attr in ("u_fields", "rp_fields", "env_fields", "T", "T_r", "T_rr"):
+            assert not hasattr(profile, runtime_attr)
     assert equilibrium.geometry.R.shape == (
         operator.plan.grid_workspace.Nr,
         operator.plan.grid_workspace.Nt,
@@ -64,42 +68,60 @@ def test_operator_callable_and_snapshot_contract(tmp_path: Path) -> None:
     path = tmp_path / "equilibrium.json"
     equilibrium.write(str(path))
     payload = json.loads(path.read_text())["Equilibrium"]
-    assert "shape_profiles" not in payload
-    assert "geometry" in payload
+    assert "shape_profiles" in payload
+    assert "geometry" not in payload
+    loaded = Equilibrium.load(str(path))
+    assert loaded.shape_profiles
+    assert set(loaded.shape_profiles) == set(equilibrium.shape_profiles)
+    np.testing.assert_allclose(loaded.geometry.R, equilibrium.geometry.R)
 
 
-def test_equilibrium_requires_materialized_geometry_constructor() -> None:
+def test_equilibrium_geometry_is_derived_or_legacy_fallback() -> None:
     grid = Grid(Nr=6, Nt=8, L_max=4, M_max=2)
     zeros = np.zeros(grid.Nr, dtype=np.float64)
+    surface_zeros = np.zeros((grid.Nr, grid.Nt), dtype=np.float64)
+    geometry = {
+        "S_r": zeros,
+        "V_r": zeros,
+        "Kn": zeros,
+        "Kn_r": zeros,
+        "Ln_r": zeros,
+        "tb_fields": np.zeros((8, grid.Nr, grid.Nt), dtype=np.float64),
+        "R_fields": np.zeros((6, grid.Nr, grid.Nt), dtype=np.float64),
+        "Z_fields": np.zeros((6, grid.Nr, grid.Nt), dtype=np.float64),
+        "J_fields": np.zeros((8, grid.Nr, grid.Nt), dtype=np.float64),
+        "g_fields": np.zeros((7, grid.Nr, grid.Nt), dtype=np.float64),
+    }
 
-    with pytest.raises(TypeError, match="geometry"):
-        Equilibrium(
-            R0=3.0,
-            Z0=0.0,
-            B0=2.0,
-            a=1.0,
-            grid=grid,
-            psin=zeros,
-            FFn_psin=zeros,
-            Pn_psin=zeros,
-            psin_r=zeros,
-            psin_rr=zeros,
-        )
+    equilibrium = Equilibrium(
+        R0=3.0,
+        Z0=0.0,
+        B0=2.0,
+        a=1.0,
+        grid=grid,
+        psin=zeros,
+        FFn_psin=zeros,
+        Pn_psin=zeros,
+        psin_r=zeros,
+        psin_rr=zeros,
+    )
+    with pytest.raises(RuntimeError, match="shape_profiles or legacy geometry"):
+        _ = equilibrium.geometry
 
-    with pytest.raises(TypeError, match="shape_profiles"):
-        Equilibrium(
-            R0=3.0,
-            Z0=0.0,
-            B0=2.0,
-            a=1.0,
-            grid=grid,
-            shape_profiles={},
-            psin=zeros,
-            FFn_psin=zeros,
-            Pn_psin=zeros,
-            psin_r=zeros,
-            psin_rr=zeros,
-        )
+    legacy_equilibrium = Equilibrium(
+        R0=3.0,
+        Z0=0.0,
+        B0=2.0,
+        a=1.0,
+        grid=grid,
+        geometry=geometry,
+        psin=zeros,
+        FFn_psin=zeros,
+        Pn_psin=zeros,
+        psin_r=zeros,
+        psin_rr=zeros,
+    )
+    np.testing.assert_allclose(legacy_equilibrium.geometry.R, surface_zeros)
 
 
 def test_profile_workspace_owns_profile_fields() -> None:
@@ -146,6 +168,47 @@ def test_profile_workspace_owns_profile_fields() -> None:
     assert profile_workspace.has_fields_for("psin")
     assert not profile_workspace.profile_rp_fields.flags.writeable
     assert not profile_workspace.profile_env_fields.flags.writeable
+
+
+def test_equilibrium_resample_uses_shape_profile_snapshot_not_field_interpolation() -> None:
+    psin = np.linspace(0.0, 1.0, 9, dtype=np.float64)
+    case = OperatorCase(
+        route="PF",
+        coordinate="psin",
+        profile_coeffs={
+            "psin": [0.0, 0.02],
+            "h": [0.04, -0.01],
+            "k": [0.03, 0.02],
+            "c0": [0.02, -0.01],
+            "c1": [0.03, 0.01],
+            "s1": [0.04, -0.02],
+            "s2": [0.02, 0.01],
+        },
+        boundary=Boundary(
+            a=1.0,
+            R0=3.0,
+            Z0=0.0,
+            B0=2.0,
+            ka=1.2,
+            c_offsets=np.array([0.0, 0.08, -0.03], dtype=np.float64),
+            s_offsets=np.array([0.0, 0.05, 0.02], dtype=np.float64),
+        ),
+        heat_input=1.0 - 0.2 * psin,
+        current_input=0.5 + psin,
+        Ip=1.0,
+    )
+    low_grid = Grid(Nr=7, Nt=10, L_max=4, M_max=2)
+    high_grid = Grid(Nr=19, Nt=28, L_max=4, M_max=2)
+
+    low_operator = Operator(grid=low_grid, case=case)
+    low_equilibrium = low_operator.build_equilibrium(low_operator.encode_initial_state())
+    resampled = low_equilibrium.resample(grid=high_grid)
+
+    high_operator = Operator(grid=high_grid, case=case)
+    expected = high_operator.build_equilibrium(high_operator.encode_initial_state())
+
+    np.testing.assert_allclose(resampled.geometry.R, expected.geometry.R, atol=1.0e-12)
+    np.testing.assert_allclose(resampled.geometry.Z, expected.geometry.Z, atol=1.0e-12)
 
 
 def test_pj2_uses_profile_workspace_for_source_profile_inputs() -> None:

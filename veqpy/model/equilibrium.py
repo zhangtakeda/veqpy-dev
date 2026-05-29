@@ -34,10 +34,12 @@ from rich.console import Console
 from rich.text import Text
 from rich.tree import Tree
 
-from veqpy.base import Reactive, Serial
+from veqpy.base import Reactive, Serial, depends_on
+from veqpy.engine.numba_profile import update_profile
 from veqpy.model.geometry import Geometry
 from veqpy.model.geqdsk import Geqdsk
 from veqpy.model.grid import Grid
+from veqpy.model.profile import Profile
 
 plt.style.use("seaborn-v0_8-paper")
 plt.rcParams.update(
@@ -147,7 +149,7 @@ class Equilibrium(Reactive, Serial):
         "B0",
         "a",
         "grid",
-        "geometry",
+        "shape_profiles",
         "FFn_psin",
         "Pn_psin",
         "psin",
@@ -165,7 +167,8 @@ class Equilibrium(Reactive, Serial):
         a: float,
         grid: Grid,
         *,
-        geometry: Geometry | dict[str, Any],
+        geometry: Geometry | dict[str, Any] | None = None,
+        shape_profiles: dict[str, Profile] | None = None,
         FFn_psin: np.ndarray,
         Pn_psin: np.ndarray,
         psin: np.ndarray,
@@ -184,7 +187,12 @@ class Equilibrium(Reactive, Serial):
         self.B0 = B0
         self.a = a
         self.grid = grid
-        self.geometry = _coerce_geometry(geometry)
+        self.shape_profiles = _normalize_shape_profiles(shape_profiles)
+        object.__setattr__(
+            self,
+            "_legacy_geometry",
+            None if geometry is None else _coerce_geometry(geometry),
+        )
 
         self.psin = np.asarray(psin, dtype=np.float64)
         self.FFn_psin = _regularize_axis_linear_profile(FFn_psin, grid.rho, copy=True)
@@ -227,7 +235,7 @@ class Equilibrium(Reactive, Serial):
             "B0": float,
             "a": float,
             "grid": Grid,
-            "geometry": Any,
+            "shape_profiles": dict[str, Profile] | None,
             "psin": np.ndarray,
             "FFn_psin": np.ndarray,
             "Pn_psin": np.ndarray,
@@ -253,6 +261,27 @@ class Equilibrium(Reactive, Serial):
     @property
     def sin_theta(self) -> np.ndarray:
         return self.grid.sin_mtheta[1]
+
+    @property
+    @depends_on("shape_profiles", "grid", "a", "R0", "Z0")
+    def geometry(self) -> Geometry:
+        """Materialized geometry derived from the shape-profile snapshot.
+
+        ``Geometry`` is intentionally not root/serialized equilibrium state.
+        It is a materialized bundle of arrays used by diagnostics.  New
+        snapshots reconstruct it from stored shape profiles; the private
+        legacy fallback only supports in-memory objects constructed from older
+        materialized fields.
+        """
+
+        if self.shape_profiles:
+            return _geometry_from_shape_profiles(self, self.grid)
+        legacy_geometry = self.__dict__.get("_legacy_geometry")
+        if legacy_geometry is not None:
+            return legacy_geometry
+        raise RuntimeError(
+            "Equilibrium geometry is unavailable; provide shape_profiles or legacy geometry fields"
+        )
 
     @property
     def R(self) -> np.ndarray:
@@ -572,6 +601,23 @@ def _coerce_geometry(value: Geometry | dict[str, Any]) -> Geometry:
     raise TypeError(f"geometry must be Geometry, got {type(value).__name__}")
 
 
+def _normalize_shape_profiles(shape_profiles: dict[str, Profile] | None) -> dict[str, Profile] | None:
+    if shape_profiles is None:
+        return None
+    if not isinstance(shape_profiles, dict):
+        raise TypeError(
+            f"shape_profiles must be dict[str, Profile], got {type(shape_profiles).__name__}"
+        )
+    normalized: dict[str, Profile] = {}
+    for name, profile in shape_profiles.items():
+        if not isinstance(name, str):
+            raise TypeError(f"shape profile names must be str, got {type(name).__name__}")
+        if not isinstance(profile, Profile):
+            raise TypeError(f"shape profile {name!r} must be Profile, got {type(profile).__name__}")
+        normalized[name] = profile.copy()
+    return normalized
+
+
 def _geometry_from_fields(fields: dict[str, Any]) -> Geometry:
     geometry = Geometry.__new__(Geometry)
     for name in (
@@ -875,7 +921,9 @@ def _build_resampled_equilibrium(
         right=0.0,
     )
 
-    geometry = _resample_geometry(equilibrium.geometry, source_grid, plot_grid)
+    legacy_geometry = None
+    if not equilibrium.shape_profiles:
+        legacy_geometry = _resample_geometry(equilibrium.geometry, source_grid, plot_grid)
 
     return Equilibrium(
         R0=equilibrium.R0,
@@ -883,6 +931,7 @@ def _build_resampled_equilibrium(
         B0=equilibrium.B0,
         a=equilibrium.a,
         grid=plot_grid,
+        shape_profiles=equilibrium.shape_profiles,
         psin=psin,
         FFn_psin=FFn_psin,
         Pn_psin=Pn_psin,
@@ -890,7 +939,7 @@ def _build_resampled_equilibrium(
         psin_rr=plot_grid.differentiate(psin_r),
         alpha1=equilibrium.alpha1,
         alpha2=equilibrium.alpha2,
-        geometry=geometry,
+        geometry=legacy_geometry,
     )
 
 
@@ -906,7 +955,12 @@ def _build_comparison_profile_data(
         "mu0_P_psi": np.asarray(equilibrium.alpha1 * equilibrium.Pn_psin, dtype=np.float64),
     }
     for key in shape_keys:
-        data[key] = np.zeros_like(equilibrium.rho, dtype=np.float64)
+        profile = (equilibrium.shape_profiles or {}).get(key)
+        data[key] = (
+            np.zeros_like(equilibrium.rho, dtype=np.float64)
+            if profile is None
+            else _evaluate_profile_fields(profile, equilibrium.grid)[0]
+        )
     return data
 
 
@@ -1025,7 +1079,12 @@ def _merge_surface_boundaries(*boundaries: dict) -> dict:
 
 
 def _build_shape_panel_data(equilibrium: Equilibrium) -> dict:
-    return {"shape": {"rho": equilibrium.rho, "values": {}}}
+    values = {
+        key: _evaluate_profile_fields(profile, equilibrium.grid)[0]
+        for key, profile in (equilibrium.shape_profiles or {}).items()
+        if _include_shape_panel_profile(key)
+    }
+    return {"shape": {"rho": equilibrium.rho, "values": values}}
 
 
 def _include_shape_panel_profile(name: str) -> bool:
@@ -1093,6 +1152,127 @@ def _resample_profile_linear(
     left_val = float(y_src[0]) if left is None else float(left)
     right_val = float(y_src[-1]) if right is None else float(right)
     return np.interp(rho_eval, rho_src, y_src, left=left_val, right=right_val)
+
+
+def _geometry_from_shape_profiles(equilibrium: Equilibrium, target_grid: Grid) -> Geometry:
+    """Re-materialize geometry on ``target_grid`` from passive shape-profile specs."""
+
+    shape_profiles = equilibrium.shape_profiles or {}
+    h_fields = _shape_profile_fields(shape_profiles, "h", target_grid)
+    v_fields = _shape_profile_fields(shape_profiles, "v", target_grid)
+    k_fields = _shape_profile_fields(shape_profiles, "k", target_grid)
+
+    c_fields = np.zeros((target_grid.M_max + 1, 3, target_grid.Nr), dtype=np.float64)
+    s_fields = np.zeros((target_grid.M_max + 1, 3, target_grid.Nr), dtype=np.float64)
+    c_active_order = 0
+    s_active_order = 0
+    for order in range(target_grid.M_max + 1):
+        profile = shape_profiles.get(f"c{order}")
+        if profile is not None:
+            c_fields[order] = _evaluate_profile_fields(profile, target_grid)
+            c_active_order = max(c_active_order, order)
+        if order == 0:
+            continue
+        profile = shape_profiles.get(f"s{order}")
+        if profile is not None:
+            s_fields[order] = _evaluate_profile_fields(profile, target_grid)
+            s_active_order = max(s_active_order, order)
+
+    geometry = Geometry(grid=target_grid)
+    geometry.update(
+        equilibrium.a,
+        equilibrium.R0,
+        equilibrium.Z0,
+        target_grid,
+        h_fields,
+        v_fields,
+        k_fields,
+        c_fields,
+        s_fields,
+        c_active_order=c_active_order,
+        s_active_order=s_active_order,
+    )
+    return geometry
+
+
+def _shape_profile_fields(
+    shape_profiles: dict[str, Profile],
+    name: str,
+    grid: Grid,
+) -> np.ndarray:
+    profile = shape_profiles.get(name)
+    if profile is None:
+        return np.zeros((3, grid.Nr), dtype=np.float64)
+    return _evaluate_profile_fields(profile, grid)
+
+
+def _evaluate_profile_fields(profile: Profile, grid: Grid) -> np.ndarray:
+    fields = np.empty((3, grid.Nr), dtype=np.float64)
+    rp_fields = _power_terms(grid.rho, int(profile.power))
+    env_fields = _envelope_terms(
+        grid.rho,
+        grid.rho_powers[2],
+        grid.y,
+        int(profile.envelope_power),
+    )
+    update_profile(
+        fields,
+        grid.T,
+        grid.T_r,
+        grid.T_rr,
+        rp_fields,
+        env_fields,
+        float(profile.offset),
+        profile.coeff,
+    )
+    scale = float(profile.scale)
+    if scale != 1.0:
+        np.multiply(fields, scale, out=fields)
+    return fields
+
+
+def _power_terms(rho: np.ndarray, power: int) -> np.ndarray:
+    power = int(power)
+    out = np.empty((3, rho.shape[0]), dtype=np.float64)
+    if power == 0:
+        out[0].fill(1.0)
+        out[1].fill(0.0)
+        out[2].fill(0.0)
+        return out
+    out[0] = rho**power
+    out[1] = power * rho ** (power - 1)
+    if power == 1:
+        out[2].fill(0.0)
+    else:
+        out[2] = power * (power - 1) * rho ** (power - 2)
+    return out
+
+
+def _envelope_terms(
+    rho: np.ndarray,
+    rho2: np.ndarray,
+    y: np.ndarray,
+    envelope_power: int,
+) -> np.ndarray:
+    envelope_power = int(envelope_power)
+    out = np.empty((3, rho.shape[0]), dtype=np.float64)
+    if envelope_power == 0:
+        out[0].fill(1.0)
+        out[1].fill(0.0)
+        out[2].fill(0.0)
+        return out
+    if envelope_power == 1:
+        out[0] = y
+        out[1] = -2.0 * rho
+        out[2].fill(-2.0)
+        return out
+    out[0] = y**envelope_power
+    out[1] = -2.0 * envelope_power * rho * y ** (envelope_power - 1)
+    out[2] = (
+        -2.0 * envelope_power * y ** (envelope_power - 1)
+        + 4.0 * envelope_power * (envelope_power - 1) * rho2 * y ** (envelope_power - 2)
+    )
+    return out
 
 
 def _resample_geometry(geometry: Geometry, source_grid: Grid, target_grid: Grid) -> Geometry:
