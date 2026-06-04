@@ -1,8 +1,16 @@
 """
-Passive GEQDSK payload container plus canonical text read/write helpers.
+Module: model.geqdsk
 
-Boundary fitting is owned by `veqpy.model.boundary`; `Geqdsk` only stores
-GEQDSK data and serializes it.
+Role:
+- Hold passive GEQDSK payload data.
+- Read and write canonical GEQDSK text files.
+
+Public API:
+- Geqdsk
+
+Notes:
+- Boundary fitting is owned by ``veqpy.model.boundary``.
+- ``Geqdsk`` stores GEQDSK data and serialization behavior only.
 """
 
 from __future__ import annotations
@@ -10,14 +18,17 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import InitVar, dataclass, field
+from typing import Self
 
 import numpy as np
 
-from veqpy.model.serial import Serial, read_serializer, write_serializer
+from veqpy.base import Serial, read_serializer, write_serializer
 
 
 @dataclass(slots=True)
 class Geqdsk(Serial):
+    """Passive GEQDSK payload with canonical text serialization helpers."""
+
     path: InitVar[str | os.PathLike[str] | None] = None
     header: str = ""
 
@@ -149,7 +160,7 @@ class Geqdsk(Serial):
             raise ValueError(f"psi must have shape {expected_psi}, got {self.psi.shape}")
 
     @read_serializer("txt", "geqdsk", "gfile")
-    def read_geqdsk(self, file: str) -> Geqdsk:
+    def read_geqdsk(self, file: str) -> Self:
         with open(file, "r", encoding="utf-8") as handle:
             self._read_header(handle)
             self._read_geometry(handle)
@@ -163,20 +174,26 @@ class Geqdsk(Serial):
         self.check()
         with open(file, "w", encoding="utf-8") as handle:
             handle.write(_header_line(self.header, self.NR, self.NZ))
-            handle.write(_float_line([self.Rmax - self.Rmin, self.Zmax - self.Zmin, self.R0, self.Rmin, self.Z0]))
-            handle.write(_float_line([self.Raxis, self.Zaxis, self.psi_axis, self.psi_bound, self.Bt0]))
+            handle.write(
+                _float_line(
+                    [self.Rmax - self.Rmin, self.Zmax - self.Zmin, self.R0, self.Rmin, self.Z0]
+                )
+            )
+            handle.write(
+                _float_line([self.Raxis, self.Zaxis, self.psi_axis, self.psi_bound, self.Bt0])
+            )
             handle.write(_float_line([self.Ip, self.psi_axis, 0.0, self.Raxis, 0.0]))
             handle.write(_float_line([self.Zaxis, 0.0, self.psi_bound, 0.0, 0.0]))
-            handle.write(_format_float_block(self.F))
-            handle.write(_format_float_block(self.P))
-            handle.write(_format_float_block(self.FF_psi))
-            handle.write(_format_float_block(self.P_psi))
+            handle.write(_format_float_fields(self.F))
+            handle.write(_format_float_fields(self.P))
+            handle.write(_format_float_fields(self.FF_psi))
+            handle.write(_format_float_fields(self.P_psi))
             # GEQDSK stores psirz with Z as the leading dimension in file order.
-            handle.write(_format_float_block(self.psi.T.reshape(-1)))
-            handle.write(_format_float_block(self.q))
+            handle.write(_format_float_fields(self.psi.T.reshape(-1)))
+            handle.write(_format_float_fields(self.q))
             handle.write(f"{int(self.boundary.shape[0])} {int(self.limiter.shape[0])}\n")
-            handle.write(_format_float_block(self.boundary.reshape(-1)))
-            handle.write(_format_float_block(self.limiter.reshape(-1)))
+            handle.write(_format_float_fields(self.boundary.reshape(-1)))
+            handle.write(_format_float_fields(self.limiter.reshape(-1)))
 
     def _read_header(self, file) -> None:
         line = file.readline()
@@ -211,7 +228,9 @@ class Geqdsk(Serial):
         file.readline()
         payload = _sanitize_line(file.read().replace("\n", " "))
         fields = re.split(r"\s+", payload.strip())
-        data = np.array([_safe_float_conversion(value) for value in fields if value], dtype=np.float64)
+        data = np.array(
+            [_safe_float_conversion(value) for value in fields if value], dtype=np.float64
+        )
 
         nr = self.NR
         nz = self.NZ
@@ -292,7 +311,7 @@ def _safe_float_conversion(value: str) -> float:
 
 
 def _header_line(header: str, nr: int, nz: int) -> str:
-    title = (header or "veqpy GEQDSK").strip()
+    title = (header or "VEQPy GEQDSK").strip()
     return f"{title} {int(nr)} {int(nz)}\n"
 
 
@@ -300,7 +319,7 @@ def _float_line(values: list[float] | tuple[float, ...]) -> str:
     return "".join(f"{float(value):16.9E}" for value in values) + "\n"
 
 
-def _format_float_block(values: np.ndarray, *, columns: int = 5) -> str:
+def _format_float_fields(values: np.ndarray, *, columns: int = 5) -> str:
     arr = np.asarray(values, dtype=np.float64).reshape(-1)
     if arr.size == 0:
         return ""

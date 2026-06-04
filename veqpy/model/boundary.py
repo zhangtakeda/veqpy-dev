@@ -1,11 +1,23 @@
 """
-Boundary parameter aggregate and GEQDSK-to-Boundary fitting helpers.
+Module: model.boundary
+
+Role:
+- Hold boundary parameter aggregates.
+- Fit GEQDSK boundary points into Fourier-compatible boundary parameters.
+
+Public API:
+- Boundary
+
+Notes:
+- GEQDSK payload parsing and serialization live in ``veqpy.model.geqdsk``.
+- Boundary fitting does not own grid, operator, or solver runtime state.
 """
 
 from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
+from typing import Self
 
 import numpy as np
 from rich.console import Console
@@ -20,6 +32,8 @@ MAX_FOURIER_ORDER = 20
 
 @dataclass(slots=True, frozen=True)
 class Boundary:
+    """Boundary geometry and magnetic-field parameter aggregate."""
+
     a: float
     R0: float
     Z0: float
@@ -34,10 +48,10 @@ class Boundary:
         object.__setattr__(self, "Z0", float(self.Z0))
         object.__setattr__(self, "B0", float(self.B0))
         object.__setattr__(self, "ka", float(self.ka))
-        object.__setattr__(self, "c_offsets", _normalize_offset_array(self.c_offsets, name="c_offsets"))
-        object.__setattr__(self, "s_offsets", _normalize_offset_array(self.s_offsets, name="s_offsets"))
+        object.__setattr__(self, "c_offsets", _normalize_array(self.c_offsets, name="c_offsets"))
+        object.__setattr__(self, "s_offsets", _normalize_array(self.s_offsets, name="s_offsets"))
 
-    def __rich__(self):
+    def __rich__(self) -> Tree:
         tree = Tree("[bold blue]Boundary[/]")
         tree.add(Text(f"a: {self.a:.3f} [m]"))
         tree.add(Text(f"R0: {self.R0:.3f} [m]"))
@@ -77,7 +91,7 @@ class Boundary:
         Z0: float | None = None,
         a: float | None = None,
         ka: float | None = None,
-    ) -> Boundary:
+    ) -> Self:
         if not isinstance(geqdsk, Geqdsk):
             raise TypeError(f"geqdsk must be Geqdsk, got {type(geqdsk).__name__}")
         params = _fit_boundary_params(geqdsk, M=M, N=N, maxtol=maxtol, R0=R0, Z0=Z0, a=a, ka=ka)
@@ -120,8 +134,8 @@ def _fit_boundary_params(
     if params["rms"] >= maxtol:
         warnings.warn(
             (
-                f"Boundary fit with fixed M/N={M}/{N} did not satisfy maxtol={maxtol:.6e}; "
-                f"got rms={float(params['rms']):.6e}"
+                f"Boundary fit RMS {float(params['rms']):.6e} exceeds maxtol {maxtol:.6e} "
+                f"for M/N={M}/{N}"
             ),
             stacklevel=2,
         )
@@ -212,7 +226,9 @@ def _fit_boundary_for_orders(
         fit = _fit_boundary_variant(r_points, z_points, start=start, bounds=bounds, M=M, N=N)
         fitted_boundary = _evaluate_boundary_fit(r_points, z_points, fit["params"])
         rms = float(fit["rms"])
-        max_curve_error = _max_bidirectional_distance(np.column_stack((r_points, z_points)), fitted_boundary)
+        max_curve_error = _max_bidirectional_distance(
+            np.column_stack((r_points, z_points)), fitted_boundary
+        )
         if best_fit is None or rms < best_fit["rms"]:
             best_fit = {
                 "rms": rms,
@@ -251,7 +267,7 @@ def _as_1d_array(value: np.ndarray | list[float], *, name: str) -> np.ndarray:
     return arr
 
 
-def _normalize_offset_array(value, *, name: str) -> np.ndarray:
+def _normalize_array(value, *, name: str) -> np.ndarray:
     if name not in {"c_offsets", "s_offsets"}:
         raise KeyError(f"Unknown offset array {name!r}")
     if value is None:
@@ -265,7 +281,9 @@ def _normalize_offset_array(value, *, name: str) -> np.ndarray:
     return arr
 
 
-def _ordered_boundary_variants(R: np.ndarray, Z: np.ndarray) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
+def _ordered_boundary_variants(
+    R: np.ndarray, Z: np.ndarray
+) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
     start = int(np.argmin(Z))
     r_ordered = np.roll(R, -start)
     z_ordered = np.roll(Z, -start)
@@ -322,7 +340,9 @@ def _pack_boundary_fit_params(params: dict[str, float | np.ndarray], *, N: int) 
     return np.asarray(vector, dtype=np.float64)
 
 
-def _unpack_boundary_fit_params(vector: np.ndarray, *, M: int, N: int) -> dict[str, float | np.ndarray]:
+def _unpack_boundary_fit_params(
+    vector: np.ndarray, *, M: int, N: int
+) -> dict[str, float | np.ndarray]:
     idx = 0
     params = {
         "R0": float(vector[idx]),

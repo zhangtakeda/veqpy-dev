@@ -19,7 +19,8 @@ from pathlib import Path
 import numpy as np
 from scipy.interpolate import PchipInterpolator, interp1d
 
-from veqpy.engine import validate_route
+import veqpy.engine.backend_abi as backend_abi
+from veqpy.engine.numba_source import source_parameterization_for_route_key
 from veqpy.model import Boundary, Grid
 from veqpy.operator import (
     Operator,
@@ -37,28 +38,28 @@ SHOW_PROGRESS = True
 # Reference solve: high-resolution baseline used to derive downstream cases.
 REFERENCE_SOURCE_SAMPLE_COUNT = 51
 TEST_SOURCE_SAMPLE_COUNT = 51
-BENCHMARK_REPEAT_COUNT = 10
+BENCHMARK_REPEAT_COUNT = 100
 SHAPE_MATCH_TOL = 1e-2
-REFERENCE_CACHE_VERSION = 2
+REFERENCE_CACHE_VERSION = 5
 DIAGNOSTIC_SIGN_CHANGE_WINDOW = 12
 MU0 = 4.0e-7 * np.pi
 
 REFERENCE_GRID = Grid(
     Nr=64,
     Nt=32,
-    scheme="legendre",
+    quadrature_scheme="legendre",
 )
 
 TEST_GRID = Grid(
-    Nr=16,
+    Nr=32,
     Nt=16,
-    scheme="legendre",
+    quadrature_scheme="legendre",
 )
 
 REFERENCE_SUMMARY_GRID = Grid(
     Nr=64,
     Nt=128,
-    scheme="uniform",
+    quadrature_scheme="uniform",
 )
 
 CONFIG = SolverConfig(
@@ -71,18 +72,18 @@ CONFIG = SolverConfig(
 # Minimal robust coefficient seeds for benchmark cases.
 BASE_COEFFS = {
     "h": [0.0] * 3,
-    "k": [0.0] * 5,
+    "k": [0.0] * 6,
     "s1": [0.0] * 3,
 }
 
 PSIN_ROBUST_COEFFS = {
     **BASE_COEFFS,
-    "psin": [0.0] * 5,
+    "psin": [0.0] * 6,
 }
 
 F_ROBUST_COEFFS = {
     **BASE_COEFFS,
-    "F": [0.0] * 5,
+    "F": [0.0] * 6,
 }
 
 BOUNDARY = Boundary(
@@ -276,17 +277,23 @@ def _unique_interp(
     unique_axis = prepared_axis.unique_axis
     unique_values = _prepare_interp_values(values, prepared_axis)
     interp_kind = kind if unique_axis.size >= 4 else "linear"
-    fn = interp1d(unique_axis, unique_values, kind=interp_kind, fill_value="extrapolate", assume_sorted=True)
+    fn = interp1d(
+        unique_axis, unique_values, kind=interp_kind, fill_value="extrapolate", assume_sorted=True
+    )
     return _as_float64_array(fn(_as_float64_array(x_new)))
 
 
-def _profile_interp(axis: np.ndarray | PreparedInterpAxis, values: np.ndarray, x_new: np.ndarray) -> np.ndarray:
+def _profile_interp(
+    axis: np.ndarray | PreparedInterpAxis, values: np.ndarray, x_new: np.ndarray
+) -> np.ndarray:
     prepared_axis = axis if isinstance(axis, PreparedInterpAxis) else _prepare_interp_axis(axis)
     unique_axis = prepared_axis.unique_axis
     unique_values = _prepare_interp_values(values, prepared_axis)
     x_new = _as_float64_array(x_new)
     if unique_axis.size < 2:
-        return np.full_like(x_new, float(unique_values[0] if unique_values.size else 0.0), dtype=np.float64)
+        return np.full_like(
+            x_new, float(unique_values[0] if unique_values.size else 0.0), dtype=np.float64
+        )
     if unique_axis.size < 3:
         return np.interp(x_new, unique_axis, unique_values).astype(np.float64, copy=False)
     return _as_float64_array(PchipInterpolator(unique_axis, unique_values, extrapolate=True)(x_new))
@@ -383,7 +390,8 @@ def _reference_cache_signature() -> dict[str, object]:
         "reference_grid": {
             "Nr": int(REFERENCE_GRID.Nr),
             "Nt": int(REFERENCE_GRID.Nt),
-            "scheme": REFERENCE_GRID.scheme,
+            "quadrature_scheme": REFERENCE_GRID.quadrature_scheme,
+            "calculus": REFERENCE_GRID.calculus_scheme,
             "L_max": int(REFERENCE_GRID.L_max),
             "M_max": int(REFERENCE_GRID.M_max),
         },
@@ -403,6 +411,41 @@ def _reference_cache_signature() -> dict[str, object]:
     }
 
 
+def _is_reference_equilibrium_cache_compatible(equilibrium: object) -> bool:
+    grid = getattr(equilibrium, "grid", None)
+    if grid is None:
+        return False
+    if not isinstance(getattr(grid, "L_max", None), int):
+        return False
+    if not isinstance(getattr(grid, "M_max", None), int):
+        return False
+    K_max = getattr(grid, "K_max", None)
+    if K_max is not None and not isinstance(K_max, int):
+        return False
+
+    rho = np.asarray(getattr(grid, "rho", None), dtype=np.float64)
+    psin = np.asarray(getattr(equilibrium, "psin", None), dtype=np.float64)
+    psin_r = np.asarray(getattr(equilibrium, "psin_r", None), dtype=np.float64)
+    ffn_psin = np.asarray(getattr(equilibrium, "FFn_psin", None), dtype=np.float64)
+    pn_psin = np.asarray(getattr(equilibrium, "Pn_psin", None), dtype=np.float64)
+
+    if rho.ndim != 1:
+        return False
+    try:
+        R = np.asarray(getattr(equilibrium, "R"), dtype=np.float64)
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+    if R.shape != (grid.Nr, grid.Nt):
+        return False
+
+    expected_shape = rho.shape
+    for profile in (psin, psin_r, ffn_psin, pn_psin):
+        if profile.ndim != 1 or profile.shape != expected_shape:
+            return False
+
+    return True
+
+
 def _load_reference_cache() -> ReferenceBundle | None:
     path = _reference_cache_path()
     if not path.exists():
@@ -419,12 +462,15 @@ def _load_reference_cache() -> ReferenceBundle | None:
     bundle = payload.get("bundle")
     if not isinstance(bundle, dict):
         return None
+    equilibrium = bundle.get("equilibrium")
+    if not _is_reference_equilibrium_cache_compatible(equilibrium):
+        return None
 
     rho_axis = _as_float64_array(bundle["rho_axis"])
     psin_axis = _as_float64_array(bundle["psin_axis"])
     return ReferenceBundle(
         result=bundle["result"],
-        equilibrium=bundle["equilibrium"],
+        equilibrium=equilibrium,
         ref_profiles=bundle["ref_profiles"],
         reference_shape_x=_as_float64_array(bundle["reference_shape_x"]),
         rho_axis=rho_axis,
@@ -529,7 +575,9 @@ def _build_mode_init_kwargs(
         driver_keys = ("FFn_r", "FF_r") if coordinate == "rho" else ("FFn_psin", "FF_psi")
         return {
             "current_input": _pick_ref_profile(ref, driver_keys[0], driver_keys[1], use_normalized),
-            "heat_input": _pick_ref_profile(ref, pressure_keys[0], pressure_keys[1], use_normalized),
+            "heat_input": _pick_ref_profile(
+                ref, pressure_keys[0], pressure_keys[1], use_normalized
+            ),
         }
 
     if mode == "PP":
@@ -537,7 +585,9 @@ def _build_mode_init_kwargs(
         pressure_normalized = constraint in {"Ip_beta", "beta"}
         return {
             "current_input": _pick_ref_profile(ref, "psin_r", "psi_r", driver_normalized),
-            "heat_input": _pick_ref_profile(ref, pressure_keys[0], pressure_keys[1], pressure_normalized),
+            "heat_input": _pick_ref_profile(
+                ref, pressure_keys[0], pressure_keys[1], pressure_normalized
+            ),
         }
 
     driver_domain, pressure_domain = _constraint_route_domains(constraint)
@@ -551,13 +601,15 @@ def _build_mode_init_kwargs(
     pressure_normalized = pressure_domain == "normalized"
     return {
         "current_input": _pick_ref_profile(ref, driver_keys[0], driver_keys[1], driver_normalized),
-        "heat_input": _pick_ref_profile(ref, pressure_keys[0], pressure_keys[1], pressure_normalized),
+        "heat_input": _pick_ref_profile(
+            ref, pressure_keys[0], pressure_keys[1], pressure_normalized
+        ),
     }
 
 
 def _uniform_source_axis(spec: BenchmarkCaseSpec) -> np.ndarray:
-    route_spec = validate_route(spec.mode, spec.coordinate, spec.input_kind)
-    if route_spec.source_parameterization == "sqrt_psin":
+    route_key = (str(spec.mode).upper(), str(spec.coordinate).lower(), str(spec.input_kind).lower())
+    if source_parameterization_for_route_key(route_key) == "sqrt_psin":
         return _UNIFORM_SOURCE_AXIS_SQRT_PSIN
     return _UNIFORM_SOURCE_AXIS
 
@@ -587,20 +639,22 @@ def _profile_coeffs_for_case(
     constraint: str | None = None,
 ) -> dict[str, list[float] | None]:
     """Choose a conservative coefficient seed for one benchmark case."""
-    route_spec = validate_route(mode, coordinate, input_kind)
-    if route_spec.source_strategy == "profile_owned_psin":
+    route_key = (str(mode).upper(), str(coordinate).lower(), str(input_kind).lower())
+    if route_key in backend_abi.PROFILE_OWNED_PSIN_ROUTE_KEYS:
         coeffs = {name: list(values) for name, values in PSIN_ROBUST_COEFFS.items()}
     else:
         coeffs = {name: list(values) for name, values in BASE_COEFFS.items()}
-    if mode in {"PJ2", "PQ"}:
-        f_order = 7 if mode == "PQ" and constraint in {"Ip", "Ip_beta"} else 6
+    if mode in {"PJ2"}:
+        f_order = 5
         coeffs["F"] = [0.0] * f_order
     return coeffs
 
 
 def _make_benchmark_case(spec: BenchmarkCaseSpec, reference: ReferenceBundle) -> OperatorCase:
     """Project the reference solution onto one route/constraint test case."""
-    init_kwargs = _build_mode_init_kwargs(spec.mode, spec.coordinate, spec.constraint, reference.ref_profiles)
+    init_kwargs = _build_mode_init_kwargs(
+        spec.mode, spec.coordinate, spec.constraint, reference.ref_profiles
+    )
     heat_profile = init_kwargs["heat_input"]
     current_profile = init_kwargs["current_input"]
     if spec.input_kind == "grid":
@@ -608,18 +662,26 @@ def _make_benchmark_case(spec: BenchmarkCaseSpec, reference: ReferenceBundle) ->
             grid_axis = _TEST_GRID_RHO_AXIS
             source_axis = reference.rho_interp_axis
         else:
-            grid_axis = _profile_interp(reference.rho_interp_axis, reference.psin_axis, _TEST_GRID_RHO_AXIS)
+            grid_axis = _profile_interp(
+                reference.rho_interp_axis, reference.psin_axis, _TEST_GRID_RHO_AXIS
+            )
             source_axis = reference.psin_interp_axis
         heat_input = _sample_reference_input_on_grid(heat_profile, source_axis, grid_axis)
         current_input = _sample_reference_input_on_grid(current_profile, source_axis, grid_axis)
         nodes = "grid"
     else:
-        source_axis = reference.rho_interp_axis if spec.coordinate == "rho" else reference.psin_interp_axis
+        source_axis = (
+            reference.rho_interp_axis if spec.coordinate == "rho" else reference.psin_interp_axis
+        )
         heat_input = _resample_reference_input(heat_profile, source_axis, spec)
         current_input = _resample_reference_input(current_profile, source_axis, spec)
         nodes = "uniform"
     Ip = float(reference.ref_profiles["mu0_Ip"]) if spec.constraint in {"Ip", "Ip_beta"} else None
-    beta = float(reference.ref_profiles["beta_constraint"]) if spec.constraint in {"beta", "Ip_beta"} else None
+    beta = (
+        float(reference.ref_profiles["beta_constraint"])
+        if spec.constraint in {"beta", "Ip_beta"}
+        else None
+    )
     return OperatorCase(
         route=spec.mode,
         profile_coeffs=_profile_coeffs_for_case(
@@ -644,7 +706,10 @@ def _iter_benchmark_specs():
             for input_kind in BENCHMARK_INPUT_KINDS:
                 for constraint in BENCHMARK_MODE_CONSTRAINTS[mode]:
                     yield BenchmarkCaseSpec(
-                        mode=mode, coordinate=coordinate, constraint=constraint, input_kind=input_kind
+                        mode=mode,
+                        coordinate=coordinate,
+                        constraint=constraint,
+                        input_kind=input_kind,
                     )
 
 
@@ -678,7 +743,13 @@ def _solve_with_timing(case: OperatorCase) -> tuple[object, object, np.ndarray, 
 
     equilibrium = solver.build_equilibrium()
     shape_x = _extract_shape_x(case.profile_coeffs, result.x)
-    return result, equilibrium, shape_x, float(np.mean(elapsed_ms_samples)), float(np.std(elapsed_ms_samples))
+    return (
+        result,
+        equilibrium,
+        shape_x,
+        float(np.mean(elapsed_ms_samples)),
+        float(np.std(elapsed_ms_samples)),
+    )
 
 
 def _shape_error(reference_x: np.ndarray, current_x: np.ndarray) -> float:
@@ -688,7 +759,9 @@ def _shape_error(reference_x: np.ndarray, current_x: np.ndarray) -> float:
     return float(np.max(np.abs(current_x[:n] - reference_x[:n])))
 
 
-def _relative_profile_errors(reference_values: np.ndarray, current_values: np.ndarray) -> tuple[float, float]:
+def _relative_profile_errors(
+    reference_values: np.ndarray, current_values: np.ndarray
+) -> tuple[float, float]:
     reference_values = _as_float64_array(reference_values)
     current_values = _as_float64_array(current_values)
     n = min(reference_values.shape[0], current_values.shape[0])
@@ -740,7 +813,9 @@ def _diagnostic_profile_metrics(
     )
 
 
-def _benchmark_case_result(spec: BenchmarkCaseSpec, reference: ReferenceBundle) -> BenchmarkCaseResult:
+def _benchmark_case_result(
+    spec: BenchmarkCaseSpec, reference: ReferenceBundle
+) -> BenchmarkCaseResult:
     case = _make_benchmark_case(spec, reference)
     result, equilibrium, shape_x, avg_ms, std_ms = _solve_with_timing(case)
     psi_r_rel_rms_error, psi_r_rel_max_error, psi_r_head_sign_changes, psi_r_tail_sign_changes = (
@@ -751,21 +826,27 @@ def _benchmark_case_result(spec: BenchmarkCaseSpec, reference: ReferenceBundle) 
             equilibrium.alpha2 * equilibrium.psin_r,
         )
     )
-    ff_psi_rel_rms_error, ff_psi_rel_max_error, ff_psi_head_sign_changes, ff_psi_tail_sign_changes = (
-        _diagnostic_profile_metrics(
-            reference.rho_interp_axis,
-            reference.ref_profiles["FF_psi"],
-            equilibrium.rho,
-            equilibrium.alpha1 * equilibrium.FFn_psin,
-        )
+    (
+        ff_psi_rel_rms_error,
+        ff_psi_rel_max_error,
+        ff_psi_head_sign_changes,
+        ff_psi_tail_sign_changes,
+    ) = _diagnostic_profile_metrics(
+        reference.rho_interp_axis,
+        reference.ref_profiles["FF_psi"],
+        equilibrium.rho,
+        equilibrium.alpha1 * equilibrium.FFn_psin,
     )
-    mu0_p_psi_rel_rms_error, mu0_p_psi_rel_max_error, mu0_p_psi_head_sign_changes, mu0_p_psi_tail_sign_changes = (
-        _diagnostic_profile_metrics(
-            reference.rho_interp_axis,
-            reference.ref_profiles["mu0_P_psi"],
-            equilibrium.rho,
-            equilibrium.alpha1 * equilibrium.Pn_psin,
-        )
+    (
+        mu0_p_psi_rel_rms_error,
+        mu0_p_psi_rel_max_error,
+        mu0_p_psi_head_sign_changes,
+        mu0_p_psi_tail_sign_changes,
+    ) = _diagnostic_profile_metrics(
+        reference.rho_interp_axis,
+        reference.ref_profiles["mu0_P_psi"],
+        equilibrium.rho,
+        equilibrium.alpha1 * equilibrium.Pn_psin,
     )
     return BenchmarkCaseResult(
         spec=spec,
@@ -796,11 +877,15 @@ def _write_report(
 ) -> None:
     worst_shape = max(rows, key=lambda row: row.shape_error)
     slowest_case = max(rows, key=lambda row: row.avg_ms)
-    largest_function_evaluations_case = max(rows, key=lambda row: int(row.result.function_evaluations))
+    largest_function_evaluations_case = max(
+        rows, key=lambda row: int(row.result.function_evaluations)
+    )
     worst_psi_r_case = max(rows, key=lambda row: row.psi_r_rel_rms_error)
     worst_ff_psi_case = max(rows, key=lambda row: row.ff_psi_rel_rms_error)
     worst_mu0_p_psi_case = max(rows, key=lambda row: row.mu0_p_psi_rel_rms_error)
-    most_oscillatory_psi_r_case = max(rows, key=lambda row: row.psi_r_head_sign_changes + row.psi_r_tail_sign_changes)
+    most_oscillatory_psi_r_case = max(
+        rows, key=lambda row: row.psi_r_head_sign_changes + row.psi_r_tail_sign_changes
+    )
     most_oscillatory_ff_psi_case = max(
         rows, key=lambda row: row.ff_psi_head_sign_changes + row.ff_psi_tail_sign_changes
     )
@@ -810,7 +895,9 @@ def _write_report(
     failing_rows = [row for row in rows if row.shape_error > SHAPE_MATCH_TOL]
     rows_by_error = _sort_rows_desc(rows, lambda row: row.shape_error)
     rows_by_time = _sort_rows_desc(rows, lambda row: row.avg_ms)
-    rows_by_function_evaluations = _sort_rows_desc(rows, lambda row: int(row.result.function_evaluations))
+    rows_by_function_evaluations = _sort_rows_desc(
+        rows, lambda row: int(row.result.function_evaluations)
+    )
     rows_by_psi_r_rms = _sort_rows_desc(rows, lambda row: row.psi_r_rel_rms_error)
     rows_by_ff_psi_rms = _sort_rows_desc(rows, lambda row: row.ff_psi_rel_rms_error)
     rows_by_mu0_p_psi_rms = _sort_rows_desc(rows, lambda row: row.mu0_p_psi_rel_rms_error)
@@ -829,9 +916,12 @@ def _write_report(
         _render_pairs(
             [
                 ("reference_case", "PF_RHO + Ip"),
-                ("reference_grid", f"{REFERENCE_GRID.Nr}x{REFERENCE_GRID.Nt} ({REFERENCE_GRID.scheme})"),
+                (
+                    "reference_grid",
+                    f"{REFERENCE_GRID.Nr}x{REFERENCE_GRID.Nt} ({REFERENCE_GRID.quadrature_scheme})",
+                ),
                 ("reference_source_samples", str(REFERENCE_SOURCE_SAMPLE_COUNT)),
-                ("test_grid", f"{TEST_GRID.Nr}x{TEST_GRID.Nt} ({TEST_GRID.scheme})"),
+                ("test_grid", f"{TEST_GRID.Nr}x{TEST_GRID.Nt} ({TEST_GRID.quadrature_scheme})"),
                 ("test_source_samples", str(TEST_SOURCE_SAMPLE_COUNT)),
                 ("repeat_count", str(BENCHMARK_REPEAT_COUNT)),
                 ("shape_tol", f"{SHAPE_MATCH_TOL:.3e}"),
@@ -847,7 +937,8 @@ def _write_report(
                 ),
                 (
                     "worst_mu0_p_psi_rel_rms_case",
-                    f"{worst_mu0_p_psi_case.case_name} ({worst_mu0_p_psi_case.mu0_p_psi_rel_rms_error:.6e})",
+                    f"{worst_mu0_p_psi_case.case_name} "
+                    f"({worst_mu0_p_psi_case.mu0_p_psi_rel_rms_error:.6e})",
                 ),
                 (
                     "most_oscillatory_psi_r_case",
@@ -953,7 +1044,12 @@ def _write_report(
                 ("right", "shape_error", 12, lambda index, row: f"{row.shape_error:.6e}"),
                 ("right", "avg_ms", 12, lambda index, row: f"{row.avg_ms:.3f}"),
                 ("right", "std_ms", 12, lambda index, row: f"{row.std_ms:.3f}"),
-                ("right", "evaluations", 6, lambda index, row: int(row.result.function_evaluations)),
+                (
+                    "right",
+                    "evaluations",
+                    6,
+                    lambda index, row: int(row.result.function_evaluations),
+                ),
             ],
         )
     )
@@ -970,7 +1066,9 @@ def _write_report(
                     "right",
                     "psi_r_h/t",
                     9,
-                    lambda index, row: f"{row.psi_r_head_sign_changes}/{row.psi_r_tail_sign_changes}",
+                    lambda index, row: (
+                        f"{row.psi_r_head_sign_changes}/{row.psi_r_tail_sign_changes}"
+                    ),
                 ),
                 ("right", "shape_error", 12, lambda index, row: f"{row.shape_error:.6e}"),
             ],
@@ -989,7 +1087,9 @@ def _write_report(
                     "right",
                     "FF_psi_h/t",
                     10,
-                    lambda index, row: f"{row.ff_psi_head_sign_changes}/{row.ff_psi_tail_sign_changes}",
+                    lambda index, row: (
+                        f"{row.ff_psi_head_sign_changes}/{row.ff_psi_tail_sign_changes}"
+                    ),
                 ),
                 ("right", "shape_error", 12, lambda index, row: f"{row.shape_error:.6e}"),
             ],
@@ -1006,7 +1106,9 @@ def _write_report(
                     "right",
                     "mu0P_h/t",
                     9,
-                    lambda index, row: f"{row.mu0_p_psi_head_sign_changes}/{row.mu0_p_psi_tail_sign_changes}",
+                    lambda index, row: (
+                        f"{row.mu0_p_psi_head_sign_changes}/{row.mu0_p_psi_tail_sign_changes}"
+                    ),
                 ),
                 ("right", "mu0P_rms", 10, lambda index, row: f"{row.mu0_p_psi_rel_rms_error:.3e}"),
                 ("right", "mu0P_max", 10, lambda index, row: f"{row.mu0_p_psi_rel_max_error:.3e}"),
@@ -1025,7 +1127,9 @@ def _write_report(
                     "right",
                     "psi_r_h/t",
                     9,
-                    lambda index, row: f"{row.psi_r_head_sign_changes}/{row.psi_r_tail_sign_changes}",
+                    lambda index, row: (
+                        f"{row.psi_r_head_sign_changes}/{row.psi_r_tail_sign_changes}"
+                    ),
                 ),
                 ("right", "psi_r_rms", 10, lambda index, row: f"{row.psi_r_rel_rms_error:.3e}"),
                 ("right", "psi_r_max", 10, lambda index, row: f"{row.psi_r_rel_max_error:.3e}"),
@@ -1044,7 +1148,9 @@ def _write_report(
                     "right",
                     "FF_psi_h/t",
                     10,
-                    lambda index, row: f"{row.ff_psi_head_sign_changes}/{row.ff_psi_tail_sign_changes}",
+                    lambda index, row: (
+                        f"{row.ff_psi_head_sign_changes}/{row.ff_psi_tail_sign_changes}"
+                    ),
                 ),
                 ("right", "FF_psi_rms", 10, lambda index, row: f"{row.ff_psi_rel_rms_error:.3e}"),
                 ("right", "FF_psi_max", 10, lambda index, row: f"{row.ff_psi_rel_max_error:.3e}"),
@@ -1063,7 +1169,9 @@ def _write_report(
                     "right",
                     "mu0P_h/t",
                     9,
-                    lambda index, row: f"{row.mu0_p_psi_head_sign_changes}/{row.mu0_p_psi_tail_sign_changes}",
+                    lambda index, row: (
+                        f"{row.mu0_p_psi_head_sign_changes}/{row.mu0_p_psi_tail_sign_changes}"
+                    ),
                 ),
                 ("right", "mu0P_rms", 10, lambda index, row: f"{row.mu0_p_psi_rel_rms_error:.3e}"),
                 ("right", "mu0P_max", 10, lambda index, row: f"{row.mu0_p_psi_rel_max_error:.3e}"),
@@ -1081,7 +1189,12 @@ def _write_report(
                 ("right", "avg_ms", 12, lambda index, row: f"{row.avg_ms:.3f}"),
                 ("right", "std_ms", 12, lambda index, row: f"{row.std_ms:.3f}"),
                 ("right", "shape_error", 12, lambda index, row: f"{row.shape_error:.6e}"),
-                ("right", "evaluations", 6, lambda index, row: int(row.result.function_evaluations)),
+                (
+                    "right",
+                    "evaluations",
+                    6,
+                    lambda index, row: int(row.result.function_evaluations),
+                ),
             ],
         )
     )
@@ -1092,7 +1205,12 @@ def _write_report(
             columns=[
                 ("right", "rank", 4, lambda index, row: index),
                 ("left", "case", 24, lambda index, row: row.case_name),
-                ("right", "evaluations", 6, lambda index, row: int(row.result.function_evaluations)),
+                (
+                    "right",
+                    "evaluations",
+                    6,
+                    lambda index, row: int(row.result.function_evaluations),
+                ),
                 ("right", "avg_ms", 12, lambda index, row: f"{row.avg_ms:.3f}"),
                 ("right", "std_ms", 12, lambda index, row: f"{row.std_ms:.3f}"),
                 ("right", "shape_error", 12, lambda index, row: f"{row.shape_error:.6e}"),
@@ -1104,15 +1222,17 @@ def _write_report(
         lines.extend(["", "Plot failures", ""])
         lines.extend(plot_failures)
 
-    (_artifact_dir() / "benchmark_compare.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (_artifact_dir() / "benchmark_compare.txt").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
 
 
 def _write_reference_summary_json(reference: ReferenceBundle) -> None:
     native_eq = reference.equilibrium
     summary_eq = native_eq.resample(REFERENCE_SUMMARY_GRID)
 
-    boundary_R = _as_float64_array(summary_eq.geometry.R[-1])
-    boundary_Z = _as_float64_array(summary_eq.geometry.Z[-1])
+    boundary_R = _as_float64_array(summary_eq.R[-1])
+    boundary_Z = _as_float64_array(summary_eq.Z[-1])
     boundary_R_closed = np.concatenate([boundary_R, boundary_R[:1]])
     boundary_Z_closed = np.concatenate([boundary_Z, boundary_Z[:1]])
     R_in = float(np.min(boundary_R))
@@ -1146,7 +1266,7 @@ def _write_reference_summary_json(reference: ReferenceBundle) -> None:
         "sampling": {
             "Nr": int(REFERENCE_SUMMARY_GRID.Nr),
             "Nt": int(REFERENCE_SUMMARY_GRID.Nt),
-            "scheme": REFERENCE_SUMMARY_GRID.scheme,
+            "quadrature_scheme": REFERENCE_SUMMARY_GRID.quadrature_scheme,
         },
         "geometry": {
             "R0": float(native_eq.R0),
@@ -1180,7 +1300,9 @@ def _write_reference_summary_json(reference: ReferenceBundle) -> None:
     _reference_summary_json_path().write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def run_full_benchmark(*, show_progress: bool = SHOW_PROGRESS) -> tuple[ReferenceBundle, list[BenchmarkCaseResult]]:
+def run_full_benchmark(
+    *, show_progress: bool = SHOW_PROGRESS
+) -> tuple[ReferenceBundle, list[BenchmarkCaseResult]]:
     """Main script entry: sweep the benchmark matrix and write reports."""
     reference = _solve_reference(show_progress=show_progress)
     rows: list[BenchmarkCaseResult] = []

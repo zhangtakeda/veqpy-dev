@@ -1,4 +1,4 @@
-"""Minimal no-argument veqpy demo script.
+"""Minimal no-argument VEQPy demo script.
 
 Run it directly to get one solved equilibrium plus a simple flux-surface plot.
 This is meant to be the smallest user-facing workflow example in the repo.
@@ -59,13 +59,12 @@ def build_surface_from_psin(equilibrium, level: float) -> np.ndarray:
     order = np.argsort(psin)
     psin_unique, unique_idx = np.unique(psin[order], return_index=True)
     rho_level = float(np.interp(float(level), psin_unique, rho[order][unique_idx]))
-    geometry = equilibrium.geometry
     R = np.array(
-        [np.interp(rho_level, rho, geometry.R[:, idx]) for idx in range(equilibrium.grid.Nt)],
+        [np.interp(rho_level, rho, equilibrium.R[:, idx]) for idx in range(equilibrium.grid.Nt)],
         dtype=np.float64,
     )
     Z = np.array(
-        [np.interp(rho_level, rho, geometry.Z[:, idx]) for idx in range(equilibrium.grid.Nt)],
+        [np.interp(rho_level, rho, equilibrium.Z[:, idx]) for idx in range(equilibrium.grid.Nt)],
         dtype=np.float64,
     )
     return np.column_stack((R, Z))
@@ -98,18 +97,30 @@ def compute_rz_limits(
     return (r_min - r_pad, r_max + r_pad), (z_min - z_pad, z_max + z_pad)
 
 
-def plot_equilibrium_surfaces(ax: plt.Axes, equilibrium, *, levels: tuple[float, ...] = DEFAULT_LEVELS) -> None:
-    first_label = "veqpy surfaces"
+def plot_equilibrium_surfaces(
+    ax: plt.Axes, equilibrium, *, levels: tuple[float, ...] = DEFAULT_LEVELS
+) -> None:
+    first_label = "VEQPy surfaces"
     for index, level in enumerate(levels):
         surface = build_surface_from_psin(equilibrium, float(level))
         color = DEFAULT_SURFACE_COLORS[min(index, len(DEFAULT_SURFACE_COLORS) - 1)]
-        ax.plot(close_curve(surface)[:, 0], close_curve(surface)[:, 1], color=color, linewidth=1.1, label=first_label)
+        ax.plot(
+            close_curve(surface)[:, 0],
+            close_curve(surface)[:, 1],
+            color=color,
+            linewidth=1.1,
+            label=first_label,
+        )
         first_label = None
     boundary = build_surface_from_psin(equilibrium, 1.0)
-    ax.plot(close_curve(boundary)[:, 0], close_curve(boundary)[:, 1], color="#111111", linewidth=1.8)
+    ax.plot(
+        close_curve(boundary)[:, 0], close_curve(boundary)[:, 1], color="#111111", linewidth=1.8
+    )
 
 
-def style_surface_axis(ax: plt.Axes, *, title: str, rz_limits: tuple[tuple[float, float], tuple[float, float]]) -> None:
+def style_surface_axis(
+    ax: plt.Axes, *, title: str, rz_limits: tuple[tuple[float, float], tuple[float, float]]
+) -> None:
     ax.set_title(title)
     ax.set_xlabel("R [m]")
     ax.set_ylabel("Z [m]")
@@ -131,20 +142,21 @@ def main() -> None:
     case = OperatorCase(
         route="PF",
         coordinate="psin",
-        nodes="uniform",
         profile_coeffs={
-            "psin": [0.0] * 5,
-            "h": [0.0] * 3,
-            "k": [0.0] * 5,
-            "s1": [0.0] * 3,
+            "psin": 5,
+            "h": 3,
+            "k": 5,
+            "s1": 3,
         },
         boundary=boundary,
         heat_input=heat_input,
         current_input=current_input,
         Ip=MU0 * 3.0e6,
     )
-    solve_grid = Grid(Nr=16, Nt=16, scheme="legendre")
-    plot_grid = Grid(Nr=128, Nt=256, scheme="uniform", L_max=solve_grid.L_max, M_max=solve_grid.M_max)
+    solve_grid = Grid(Nr=16, Nt=16, quadrature_scheme="legendre")
+    plot_grid = Grid(
+        Nr=128, Nt=256, quadrature_scheme="uniform", L_max=solve_grid.L_max, M_max=solve_grid.M_max
+    )
     solver = Solver(
         operator=Operator(grid=solve_grid, case=case),
         config=SolverConfig(
@@ -162,6 +174,7 @@ def main() -> None:
     solver.solve(enable_warmstart=False, enable_verbose=False, enable_history=False)
     print(solver.result)
     equilibrium = solver.build_equilibrium()
+    equilibrium.plot("tests/demo/demo_equilibrium.png", grid=plot_grid)
     plot_equilibrium = equilibrium.resample(grid=plot_grid)
 
     boundary_curve = build_surface_from_psin(plot_equilibrium, 1.0)
@@ -169,9 +182,15 @@ def main() -> None:
     fig, ax = plt.subplots(figsize=(7.4, 6.6), constrained_layout=True)
     plot_equilibrium_surfaces(ax, plot_equilibrium, levels=DEFAULT_LEVELS)
     ax.scatter(
-        [equilibrium.R0], [equilibrium.Z0], marker="x", color="#d62728", s=42, linewidths=1.4, label="Boundary (R0, Z0)"
+        [equilibrium.R0],
+        [equilibrium.Z0],
+        marker="x",
+        color="#d62728",
+        s=42,
+        linewidths=1.4,
+        label="Boundary (R0, Z0)",
     )
-    style_surface_axis(ax, title="veqpy Demo Flux Surfaces", rz_limits=rz_limits)
+    style_surface_axis(ax, title="VEQPy Demo Flux Surfaces", rz_limits=rz_limits)
     ax.legend(loc="upper right")
     fig.savefig(figure_path, dpi=220)
     plt.close(fig)

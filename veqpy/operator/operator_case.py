@@ -2,20 +2,22 @@
 Module: operator.operator_case
 
 Role:
-- 负责把算例输入规范化为稳定的 case 配置对象.
+- Normalize case inputs into a stable case configuration object.
 
 Public API:
 - OperatorCase
 
 Notes:
-- `OperatorCase` 只保存 case 输入.
-- 不负责 layout 构造, residual 计算, 或 solver 策略管理.
+- `OperatorCase` only stores case inputs.
+- Does not build layouts, compute residuals, or manage solver policy.
 """
 
 from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
+from numbers import Integral
+from typing import Self
 
 import numpy as np
 from rich.console import Console
@@ -23,32 +25,39 @@ from rich.tree import Tree
 
 from veqpy.model.boundary import Boundary
 
+ProfileCoeffInput = list[float] | np.ndarray | int | None
+ProfileCoeff = np.ndarray | None
+
 
 @dataclass(slots=True)
 class OperatorCase:
-    """描述一次 operator 求值所需的静态 case 输入."""
+    """Describe the static case inputs required for one operator evaluation."""
 
     route: str
     coordinate: str
-    nodes: str
-    profile_coeffs: dict[str, list[float] | None]
+    profile_coeffs: dict[str, ProfileCoeffInput]
     boundary: Boundary
     heat_input: np.ndarray
     current_input: np.ndarray
+    nodes: str = "uniform"
     Ip: float | None = None
     beta: float | None = None
 
     def __post_init__(self) -> None:
-        """在构造后把各字段规整为稳定运行时表示."""
+        """Normalize fields into stable runtime representations after construction."""
         object.__setattr__(self, "route", _normalize_case_value("route", self.route))
         object.__setattr__(self, "coordinate", _normalize_case_value("coordinate", self.coordinate))
         object.__setattr__(self, "nodes", _normalize_case_value("nodes", self.nodes))
-        object.__setattr__(self, "profile_coeffs", _normalize_case_value("profile_coeffs", self.profile_coeffs))
+        object.__setattr__(
+            self, "profile_coeffs", _normalize_case_value("profile_coeffs", self.profile_coeffs)
+        )
         object.__setattr__(self, "boundary", _normalize_case_value("boundary", self.boundary))
-        for name in _ORDERED_OPTIONAL_FLOAT_FIELD_NAMES:
-            object.__setattr__(self, name, _normalize_case_value(name, getattr(self, name)))
-        for name in _ORDERED_ARRAY_FIELD_NAMES:
-            object.__setattr__(self, name, _normalize_case_value(name, getattr(self, name)))
+        object.__setattr__(self, "Ip", _normalize_case_value("Ip", self.Ip))
+        object.__setattr__(self, "beta", _normalize_case_value("beta", self.beta))
+        object.__setattr__(self, "heat_input", _normalize_case_value("heat_input", self.heat_input))
+        object.__setattr__(
+            self, "current_input", _normalize_case_value("current_input", self.current_input)
+        )
         if self.heat_input.shape != self.current_input.shape:
             raise ValueError(
                 f"heat_input and current_input must share the same shape, "
@@ -57,11 +66,21 @@ class OperatorCase:
         _autoscale_legacy_mu0_inputs(self)
 
     def __setattr__(self, name: str, value) -> None:
-        if name in _CASE_FIELD_NAMES:
+        if name in (
+            "profile_coeffs",
+            "route",
+            "boundary",
+            "coordinate",
+            "nodes",
+            "Ip",
+            "beta",
+            "heat_input",
+            "current_input",
+        ):
             value = _normalize_case_value(name, value)
         object.__setattr__(self, name, value)
 
-    def __rich__(self):
+    def __rich__(self) -> Tree:
         tree = Tree("[bold blue]OperatorCase[/]")
         tree.add(f"route: {self.route}")
         tree.add(f"coordinate: {self.coordinate}")
@@ -72,7 +91,8 @@ class OperatorCase:
         )
         tree.add(
             f"current_input: shape={self.current_input.shape}, "
-            f"min={float(np.min(self.current_input)):.3f}, max={float(np.max(self.current_input)):.3f}"
+            f"min={float(np.min(self.current_input)):.3f}, "
+            f"max={float(np.max(self.current_input)):.3f}"
         )
         if np.isfinite(self.Ip):
             tree.add(f"Ip(mu0-scaled): {self.Ip:.3e}")
@@ -82,7 +102,9 @@ class OperatorCase:
         return tree
 
     def __str__(self) -> str:
-        console = Console(color_system=None, force_terminal=False, width=120, record=True, soft_wrap=False)
+        console = Console(
+            color_system=None, force_terminal=False, width=120, record=True, soft_wrap=False
+        )
         with console.capture() as capture:
             console.print(self.__rich__())
         return capture.get().rstrip()
@@ -90,8 +112,8 @@ class OperatorCase:
     def __repr__(self) -> str:
         return str(self)
 
-    def copy(self) -> OperatorCase:
-        """创建一个与当前 case 独立的副本."""
+    def copy(self) -> Self:
+        """Create a copy independent from the current case."""
         return OperatorCase(
             route=self.route,
             profile_coeffs=_copy_coeffs(self.profile_coeffs),
@@ -142,26 +164,28 @@ class OperatorCase:
 
 
 def _normalize_coeffs(
-    profile_coeffs: dict[str, list[float] | None],
-) -> dict[str, list[float] | None]:
-    coeffs: dict[str, list[float] | None] = {}
-    for name, coeff in profile_coeffs.items():
-        if name in coeffs:
-            raise ValueError(f"Duplicate profile coeff entry for {name!r}")
-        if coeff is None:
-            coeffs[name] = None
-            continue
-        if not isinstance(coeff, list):
-            raise TypeError(f"{name} coeff must be list[float] or None, got {type(coeff).__name__}")
-        coeffs[name] = _as_1d_coeff_list(coeff, name=f"{name} coeff")
-    return coeffs
+    profile_coeffs: dict[str, ProfileCoeffInput],
+) -> dict[str, ProfileCoeff]:
+    return {name: _normalize_profile_coeff(name, coeff) for name, coeff in profile_coeffs.items()}
 
 
-def _copy_coeffs(profile_coeffs: dict[str, list[float] | None]) -> dict[str, list[float] | None]:
-    copied: dict[str, list[float] | None] = {}
-    for name, coeff in profile_coeffs.items():
-        copied[name] = None if coeff is None else list(coeff)
-    return copied
+def _normalize_profile_coeff(name: str, coeff: ProfileCoeffInput) -> ProfileCoeff:
+    if coeff is None:
+        return None
+    if isinstance(coeff, bool):
+        raise TypeError(f"{name} coeff length indicator must be an integer, got bool")
+    if isinstance(coeff, Integral):
+        length = int(coeff)
+        if length <= 0:
+            raise ValueError(f"{name} coeff length indicator must be positive, got {coeff}")
+        return np.zeros(length, dtype=np.float64)
+    if isinstance(coeff, (list, np.ndarray)):
+        return _as_1d_array(coeff, name=f"{name} coeff").astype(np.float64, copy=True)
+    raise TypeError(f"Invalid {name} coeff type {type(coeff).__name__}")
+
+
+def _copy_coeffs(profile_coeffs: dict[str, ProfileCoeffInput]) -> dict[str, ProfileCoeff]:
+    return {name: _normalize_profile_coeff(name, coeff) for name, coeff in profile_coeffs.items()}
 
 
 def _as_1d_array(value: np.ndarray | list[float], *, name: str) -> np.ndarray:
@@ -169,11 +193,6 @@ def _as_1d_array(value: np.ndarray | list[float], *, name: str) -> np.ndarray:
     if arr.ndim != 1:
         raise ValueError(f"{name} must be 1D, got {arr.shape}")
     return arr
-
-
-def _as_1d_coeff_list(value: list[float], *, name: str) -> list[float]:
-    arr = _as_1d_array(value, name=name)
-    return arr.astype(float, copy=False).tolist()
 
 
 def _normalize_case_value(name: str, value):
@@ -189,64 +208,47 @@ def _normalize_case_value(name: str, value):
         raise TypeError(f"boundary must be Boundary or dict, got {type(value).__name__}")
     if name == "coordinate":
         coord = str(value).lower()
-        if coord not in _COORDINATE_FIELD_VALUES:
-            raise ValueError(f"coordinate must be one of {_COORDINATE_FIELD_VALUES}, got {value!r}")
+        if coord not in ("rho", "psin"):
+            raise ValueError(f"coordinate must be one of ('rho', 'psin'), got {value!r}")
         return coord
     if name == "nodes":
         nodes = str(value).lower()
-        if nodes not in _NODE_FIELD_VALUES:
-            raise ValueError(f"nodes must be one of {_NODE_FIELD_VALUES}, got {value!r}")
+        if nodes not in ("uniform", "grid"):
+            raise ValueError(f"nodes must be one of ('uniform', 'grid'), got {value!r}")
         return nodes
-    if name in _OPTIONAL_FLOAT_FIELD_NAMES:
+    if name in ("Ip", "beta"):
         return np.nan if value is None else float(value)
-    if name in _ARRAY_FIELD_NAMES:
+    if name in ("heat_input", "current_input"):
         return _as_1d_array(value, name=name).copy()
     return value
 
 
 def _autoscale_legacy_mu0_inputs(case: OperatorCase) -> None:
     warnings_needed: list[str] = []
+    legacy_unscaled_abs_limit = 1.0e4
+    mu0 = 4.0e-7 * np.pi
 
     max_abs = float(np.max(np.abs(case.heat_input))) if case.heat_input.size else 0.0
-    if max_abs > _LEGACY_UNSCALED_ABS_LIMIT:
-        case.heat_input *= _MU0
+    if max_abs > legacy_unscaled_abs_limit:
+        case.heat_input *= mu0
         warnings_needed.append("heat_input")
 
     if case.route in {"PI", "PJ1", "PJ2"}:
         max_abs = float(np.max(np.abs(case.current_input))) if case.current_input.size else 0.0
-        if max_abs > _LEGACY_UNSCALED_ABS_LIMIT:
-            case.current_input *= _MU0
+        if max_abs > legacy_unscaled_abs_limit:
+            case.current_input *= mu0
             warnings_needed.append("current_input")
 
     if np.isfinite(case.Ip):
         ip_value = float(case.Ip)
-        if abs(ip_value) > _LEGACY_UNSCALED_ABS_LIMIT:
-            object.__setattr__(case, "Ip", ip_value * _MU0)
+        if abs(ip_value) > legacy_unscaled_abs_limit:
+            object.__setattr__(case, "Ip", ip_value * mu0)
             warnings_needed.append("Ip")
 
     if warnings_needed:
         fields = ", ".join(warnings_needed)
         warnings.warn(
-            f"Auto-scaled legacy inputs for {fields}; canonical OperatorCase inputs are mu0-scaled.",
+            f"Auto-scaled legacy {fields}; use mu0-scaled inputs.",
             RuntimeWarning,
             stacklevel=3,
         )
-
-
-_OPTIONAL_FLOAT_FIELD_NAMES = {"Ip", "beta"}
-_ARRAY_FIELD_NAMES = {"heat_input", "current_input"}
-_MU0 = 4.0e-7 * np.pi
-_LEGACY_UNSCALED_ABS_LIMIT = 1.0e4
-_COORDINATE_FIELD_VALUES = ("rho", "psin")
-_NODE_FIELD_VALUES = ("uniform", "grid")
-_ORDERED_OPTIONAL_FLOAT_FIELD_NAMES = ("Ip", "beta")
-_ORDERED_ARRAY_FIELD_NAMES = ("heat_input", "current_input")
-_CASE_FIELD_NAMES = {
-    "profile_coeffs",
-    "route",
-    "boundary",
-    "coordinate",
-    "nodes",
-    *_OPTIONAL_FLOAT_FIELD_NAMES,
-    *_ARRAY_FIELD_NAMES,
-}

@@ -79,25 +79,23 @@ j_{\rm tor} \equiv \langle j_{\phi} \rangle_S=  \frac{1}{S_\rho} \frac{\mathrm{d
 \end{aligned}
 $$
 
-当前代码中的 `Equilibrium` 已经从固定低阶 shape profile 快照扩展成动态 Fourier family 快照:
+当前代码中的 `Equilibrium` 从 shape profile 快照惰性 materialize 几何场:
 
-- snapshot 保存:
-  - `shape_profiles`
-- `c{k}` / `s{k}` 可以直接进入:
-  - `build_equilibrium()`
-  - `Equilibrium.resample(...)`
-  - JSON roundtrip
+- snapshot 保存 `shape_profiles` 和源/root profiles；
+- JSON roundtrip 保存并恢复 `shape_profiles`，不保存 materialized geometry；
+- `Equilibrium.surface_fields`、`Equilibrium.radial_fields`、`Equilibrium.Z`
+  是直接挂在 `Equilibrium` 上的 reactive cached 几何场；它们不是 root state，
+  也不是构造参数。
 
-当前快照的权威 shape-profile 集合是:
+当前快照的权威几何状态是:
 
-- `shape_profiles: dict[str, Profile]`
+- `surface_fields: np.ndarray`
+  - engine 约定布局 `(sin_tb, R, R_t, Z_t, J, JdivR, grtdivJR_t, gttdivJR, gttdivJR_r)`
+- `radial_fields: np.ndarray`
+  - engine 约定布局 `(S_r, V_r, Kn, Kn_r, Ln_r)`
+- `Z: np.ndarray`
+  - 完整二维 `Z(ρ, θ)` 场
 
-其中:
-
-- `h_profile`
-- `v_profile`
-- `k_profile`
-
-仍然保留为方便读取的核心形状属性.  
-高阶 `c{k}` / `s{k}` 不再有单独的 legacy 构造接口.
-默认零形状项不会被持久化；重建时按 profile 名字自动补回默认 `Profile`.
+`R/J/gttdivJR` 等公开 property 直接索引 `surface_fields`；`S_r/V_r/Kn/Kn_r/Ln_r`
+直接索引 `radial_fields`。operator snapshot 路径不再 materialize 中间 geometry 对象，
+只保存 passive `shape_profiles`。

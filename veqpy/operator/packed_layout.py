@@ -2,12 +2,13 @@
 Module: operator.packed_layout
 
 Role:
-- 负责构造 packed layout 与 profile 元数据.
-- 负责在 operator 边界编码和解码 packed 状态向量.
-- 负责提供 packed state 形状校验工具.
+- Build packed layout and profile metadata.
+- Encode and decode packed state vectors at the operator boundary.
+- Provide packed-state shape validation helpers.
 
 Public API:
 - PACKED_PROFILE_FAMILY_ORDER
+- PACKED_LAYOUT_PROFILE_FIRST
 - INTERLEAVE_SHAPE_COEFFS_BY_ORDER
 - get_prefix_profile_names
 - build_fourier_profile_names
@@ -23,43 +24,182 @@ Public API:
 - coeff_array_from_list
 
 Notes:
-- Profile family ordering is declared in ``veqpy.orchestration``; this module keeps
-  compatibility aliases and packed-index construction.
-- 这里定义的是 packed layout 规则.
-- 这里也处理同一 packed layout 下的 state codec.
-- 不负责数值核计算, residual 组装, 或 solver 迭代控制.
+- Profile family ordering and residual block metadata are declared here.
+- This module defines packed layout rules.
+- It also handles state codecs for the same packed layout.
+- Does not own numerical kernels, residual assembly, or solver iteration control.
 """
+
+from __future__ import annotations
+
+from numbers import Integral
 
 import numpy as np
 
-from veqpy import orchestration
+ProfileCoeffValue = list[float] | np.ndarray | int
 
-PACKED_PROFILE_FAMILY_ORDER = orchestration.PACKED_PROFILE_FAMILY_ORDER
-INTERLEAVE_SHAPE_COEFFS_BY_ORDER = True
+RESIDUAL_BLOCK_CODE_BY_NAME = {
+    "h": 0,
+    "v": 1,
+    "k": 2,
+    "c0": 3,
+    "c_family": 4,
+    "s_family": 5,
+    "psin": 6,
+    "F": 7,
+}
+
+PACKED_PROFILE_FAMILY_ORDER = ("h", "v", "k", "c0", "c", "s", "psin", "F")
+PREFIX_PROFILE_FAMILIES = ("psin", "F")
+SHAPE_PROFILE_FAMILIES = ("h", "v", "k", "c0", "c", "s")
+ALL_PROFILE_FAMILIES = SHAPE_PROFILE_FAMILIES + PREFIX_PROFILE_FAMILIES
+
+PROFILE_STATIC_KWARGS: dict[str, dict[str, int]] = {
+    "psin": {"power": 2},
+    "F": {"envelope_power": 2},
+}
+PROFILE_OFFSET_SPECS: dict[str, float | str] = {
+    "h": 0.0,
+    "v": 0.0,
+    "k": "ka",
+    "psin": 1.0,
+    "F": 1.0,
+}
+
+
+def validate_profile_family_order(
+    family_order: tuple[str, ...] = PACKED_PROFILE_FAMILY_ORDER,
+) -> tuple[str, ...]:
+    family_order = tuple(family_order)
+    if len(family_order) != len(ALL_PROFILE_FAMILIES) or set(family_order) != set(
+        ALL_PROFILE_FAMILIES
+    ):
+        raise ValueError(f"Invalid PACKED_PROFILE_FAMILY_ORDER {family_order!r}")
+    return family_order
+
+
+def get_prefix_profile_names(
+    family_order: tuple[str, ...] = PACKED_PROFILE_FAMILY_ORDER,
+) -> tuple[str, ...]:
+    return tuple(
+        family
+        for family in validate_profile_family_order(family_order)
+        if family in PREFIX_PROFILE_FAMILIES
+    )
+
+
+def expand_profile_family(family: str, M_max: int) -> tuple[str, ...]:
+    if family == "psin":
+        return ("psin",)
+    if family == "F":
+        return ("F",)
+    if family == "h":
+        return ("h",)
+    if family == "v":
+        return ("v",)
+    if family == "k":
+        return ("k",)
+    if family == "c0":
+        return ("c0",)
+    if family == "c":
+        return tuple(f"c{k}" for k in range(1, M_max + 1))
+    if family == "s":
+        return tuple(f"s{k}" for k in range(1, M_max + 1))
+    raise KeyError(f"Unknown profile family {family!r}")
+
+
+def build_fourier_profile_names(
+    M_max: int,
+    family_order: tuple[str, ...] = PACKED_PROFILE_FAMILY_ORDER,
+) -> tuple[str, ...]:
+    M_max = int(M_max)
+    if M_max < 0:
+        raise ValueError(f"M_max must be non-negative, got {M_max}")
+
+    fourier_names: list[str] = []
+    for family in validate_profile_family_order(family_order):
+        if family not in ("c0", "c", "s"):
+            continue
+        fourier_names.extend(expand_profile_family(family, M_max))
+    return tuple(fourier_names)
+
+
+def build_shape_profile_names(
+    M_max: int,
+    family_order: tuple[str, ...] = PACKED_PROFILE_FAMILY_ORDER,
+) -> tuple[str, ...]:
+    shape_profile_names: list[str] = []
+    for family in validate_profile_family_order(family_order):
+        if family in PREFIX_PROFILE_FAMILIES:
+            continue
+        shape_profile_names.extend(expand_profile_family(family, int(M_max)))
+    return tuple(shape_profile_names)
+
+
+def build_profile_names(
+    M_max: int,
+    family_order: tuple[str, ...] = PACKED_PROFILE_FAMILY_ORDER,
+) -> tuple[str, ...]:
+    M_max = int(M_max)
+    profile_names: list[str] = []
+    for family in validate_profile_family_order(family_order):
+        profile_names.extend(expand_profile_family(family, M_max))
+    return tuple(profile_names)
+
+
+def _decode_residual_block_code(name: str) -> tuple[int, int]:
+    if name.startswith("c") and name[1:].isdigit():
+        order = int(name[1:])
+        if order == 0:
+            return (RESIDUAL_BLOCK_CODE_BY_NAME["c0"], 0)
+        return (RESIDUAL_BLOCK_CODE_BY_NAME["c_family"], order)
+    if name.startswith("s") and name[1:].isdigit():
+        order = int(name[1:])
+        if order == 0:
+            raise KeyError("s0 is not a valid residual block")
+        return (RESIDUAL_BLOCK_CODE_BY_NAME["s_family"], order)
+    try:
+        return (RESIDUAL_BLOCK_CODE_BY_NAME[name], 0)
+    except KeyError as exc:
+        supported = ", ".join(RESIDUAL_BLOCK_CODE_BY_NAME)
+        raise KeyError(f"Unknown residual block {name!r}. Supported blocks: {supported}") from exc
+
+
+def build_residual_block_metadata(profile_names: tuple[str, ...]) -> tuple[np.ndarray, np.ndarray]:
+    block_codes = np.empty(len(profile_names), dtype=np.int64)
+    block_orders = np.zeros(len(profile_names), dtype=np.int64)
+    for i, name in enumerate(profile_names):
+        block_codes[i], block_orders[i] = _decode_residual_block_code(name)
+    return block_codes, block_orders
+
+
+def build_residual_block_radial_powers(
+    profile_names: tuple[str, ...],
+    *,
+    K_values: np.ndarray,
+) -> np.ndarray:
+    radial_powers = np.zeros(len(profile_names), dtype=np.int64)
+    for i, name in enumerate(profile_names):
+        if name.startswith(("c", "s")) and name[1:].isdigit():
+            order = int(name[1:])
+            if order < K_values.size:
+                radial_powers[i] = int(K_values[order])
+    return radial_powers
+
+
+# Global packed-vector ordering switch.
+# True  -> profile/name-first: h[0:L], v[0:L], ..., psin[0:L], F[0:L].
+# False -> degree-first: all active profile 0th coefficients, then 1st coefficients, ... .
+# Default remains degree-first because Zhang2026 script 06 was faster for all three
+# high-order reconstruction cases in the local A/B benchmark.
+PACKED_LAYOUT_PROFILE_FIRST = False
+
+# Backwards-readable alias for the previous degree-first switch name.
+INTERLEAVE_SHAPE_COEFFS_BY_ORDER = not PACKED_LAYOUT_PROFILE_FIRST
 
 
 def _validated_profile_family_order() -> tuple[str, ...]:
-    return orchestration.validate_profile_family_order(PACKED_PROFILE_FAMILY_ORDER)
-
-
-def get_prefix_profile_names() -> tuple[str, ...]:
-    return orchestration.get_prefix_profile_names(PACKED_PROFILE_FAMILY_ORDER)
-
-
-def _expand_profile_family(family: str, M_max: int) -> tuple[str, ...]:
-    return orchestration.expand_profile_family(family, M_max)
-
-
-def build_fourier_profile_names(M_max: int) -> tuple[str, ...]:
-    return orchestration.build_fourier_profile_names(M_max, PACKED_PROFILE_FAMILY_ORDER)
-
-
-def build_shape_profile_names(M_max: int) -> tuple[str, ...]:
-    return orchestration.build_shape_profile_names(M_max, PACKED_PROFILE_FAMILY_ORDER)
-
-
-def build_profile_names(M_max: int) -> tuple[str, ...]:
-    return orchestration.build_profile_names(M_max, PACKED_PROFILE_FAMILY_ORDER)
+    return validate_profile_family_order(PACKED_PROFILE_FAMILY_ORDER)
 
 
 def build_profile_index(profile_names: tuple[str, ...]) -> dict[str, int]:
@@ -67,12 +207,12 @@ def build_profile_index(profile_names: tuple[str, ...]) -> dict[str, int]:
 
 
 def build_profile_layout(
-    profile_coeffs: dict[str, list[float] | None],
+    profile_coeffs: dict[str, ProfileCoeffValue | None],
     *,
     profile_names: tuple[str, ...],
     prefix_profile_names: tuple[str, ...] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """根据 profile 系数字典构造 packed 状态布局."""
+    """Build the packed state layout from a profile-coefficient dictionary."""
     profile_names = tuple(profile_names)
     if prefix_profile_names is None:
         prefix_profile_names = get_prefix_profile_names()
@@ -88,8 +228,7 @@ def build_profile_layout(
     for name, coeff in profile_coeffs.items():
         if coeff is None:
             continue
-        coeff_arr = coeff_array_from_list(name, coeff)
-        profile_L[profile_index[name]] = coeff_arr.size - 1
+        profile_L[profile_index[name]] = coeff_array_from_list(name, coeff).size - 1
 
     max_L = int(np.max(profile_L))
     if max_L < 0:
@@ -99,7 +238,7 @@ def build_profile_layout(
     order_offsets = np.full(max_L + 2, -1, dtype=np.int64)
 
     x_pos = 0
-    if INTERLEAVE_SHAPE_COEFFS_BY_ORDER:
+    if not PACKED_LAYOUT_PROFILE_FIRST:
         for k in range(max_L + 1):
             order_offsets[k] = x_pos
             for name in profile_names:
@@ -131,11 +270,13 @@ def build_active_profile_metadata(
     *,
     profile_names: tuple[str, ...],
 ) -> tuple[np.ndarray, np.ndarray]:
-    """从 profile 阶数向量提取 active profile 元数据."""
+    """Extract active profile metadata from the profile-degree vector."""
     profile_L = np.asarray(profile_L, dtype=np.int64)
     expected_size = len(tuple(profile_names))
     if profile_L.ndim != 1 or profile_L.shape[0] != expected_size:
-        raise ValueError(f"Expected profile_L to have shape ({expected_size},), got {profile_L.shape}")
+        raise ValueError(
+            f"Expected profile_L to have shape ({expected_size},), got {profile_L.shape}"
+        )
 
     active_profile_mask = profile_L >= 0
     active_profile_ids = np.flatnonzero(active_profile_mask).astype(np.int64, copy=False)
@@ -143,14 +284,14 @@ def build_active_profile_metadata(
 
 
 def packed_size(coeff_index: np.ndarray) -> int:
-    """统计 packed 向量的有效长度."""
+    """Return the effective packed-vector length."""
     if coeff_index.size == 0:
         return 0
     return int(np.count_nonzero(coeff_index >= 0))
 
 
 def validate_packed_state(x: np.ndarray, coeff_index: np.ndarray) -> np.ndarray:
-    """校验 packed 状态向量形状并返回 float64 视图."""
+    """Validate packed state vector shape and return a float64 view."""
     x = np.asarray(x, dtype=np.float64)
     if x.ndim != 1:
         raise ValueError(f"Expected x to be 1D, got {x.shape}")
@@ -162,13 +303,13 @@ def validate_packed_state(x: np.ndarray, coeff_index: np.ndarray) -> np.ndarray:
 
 
 def encode_packed_state(
-    profile_coeffs: dict[str, list[float] | None],
+    profile_coeffs: dict[str, ProfileCoeffValue | None],
     profile_L: np.ndarray,
     coeff_index: np.ndarray,
     *,
     profile_names: tuple[str, ...],
 ) -> np.ndarray:
-    """按 layout 把 profile 系数字典编码成 packed 状态向量."""
+    """Encode a profile-coefficient dictionary into a packed state vector."""
     x = np.empty(packed_size(coeff_index), dtype=np.float64)
 
     for p, name in enumerate(profile_names):
@@ -182,7 +323,9 @@ def encode_packed_state(
 
         coeff_arr = coeff_array_from_list(name, coeff)
         if coeff_arr.size != L + 1:
-            raise ValueError(f"{name} coeff shape mismatch: expected {(L + 1,)}, got {coeff_arr.shape}")
+            raise ValueError(
+                f"{name} coeff shape mismatch: expected {(L + 1,)}, got {coeff_arr.shape}"
+            )
 
         for k in range(L + 1):
             x[coeff_index[p, k]] = coeff_arr[k]
@@ -197,7 +340,7 @@ def decode_packed_blocks(
     *,
     profile_names: tuple[str, ...],
 ) -> tuple[np.ndarray | None, ...]:
-    """把 packed 状态向量解码成按 profile 分块的系数副本."""
+    """Decode a packed state vector into per-profile coefficient copies."""
     x = validate_packed_state(x, coeff_index)
 
     blocks: list[np.ndarray | None] = []
@@ -213,10 +356,17 @@ def decode_packed_blocks(
     return tuple(blocks)
 
 
-def coeff_array_from_list(name: str, coeff: list[float]) -> np.ndarray:
-    """把 profile 系数列表转成受约束的一维数组."""
-    if not isinstance(coeff, list):
-        raise TypeError(f"{name} coeff must be list[float] or None, got {type(coeff).__name__}")
+def coeff_array_from_list(name: str, coeff: ProfileCoeffValue) -> np.ndarray:
+    """Convert profile coefficient input into a constrained one-dimensional array."""
+    if isinstance(coeff, bool):
+        raise TypeError(f"{name} coeff length indicator must be an integer, got bool")
+    if isinstance(coeff, Integral):
+        length = int(coeff)
+        if length <= 0:
+            raise ValueError(f"{name} coeff length indicator must be positive, got {coeff}")
+        return np.zeros(length, dtype=np.float64)
+    if not isinstance(coeff, (list, np.ndarray)):
+        raise TypeError(f"Invalid {name} coeff type {type(coeff).__name__}")
     coeff_arr = np.asarray(coeff, dtype=np.float64)
     if coeff_arr.ndim != 1:
         raise ValueError(f"{name} coeff must be 1D, got {coeff_arr.shape}")

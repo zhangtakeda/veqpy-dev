@@ -1,31 +1,46 @@
+# -----------------------------------------------------------------------------
+# Generated artifacts
+# -----------------------------------------------------------------------------
+
 *.json
 *.pkl
 *.png
 *.svg
-*.egg-info 
- 
-data
-dist
-docs
-paper
-scripts
-figures
-tests/demo
-tests/benchmark
-tests/_tmp_plot_regression
-__pycache__
- 
-.backup
-.claude
-.codex
-.omx
-.ruff_cache
-.venv
-.vscode
+*.egg-info
+__pycache__/
 
-.uv-cache
-uv.lock
-AGENTS.md
-TODO.md
-PAPER.md
-/test.py
+# -----------------------------------------------------------------------------
+# Project-generated directories
+# -----------------------------------------------------------------------------
+ 
+dist/
+docs/
+paper/
+figures/
+
+# Keep tests reviewable: only Python tests and GEQDSK fixtures may be added.
+tests/**
+!tests/*.py
+!tests/*.geqdsk
+
+# -----------------------------------------------------------------------------
+# Local tooling and agent state
+# -----------------------------------------------------------------------------
+
+.backup/
+.claude/
+.codex/
+.omx/
+.ruff_cache/
+.venv/
+.vscode/
+
+# -----------------------------------------------------------------------------
+# Local-only files
+# -----------------------------------------------------------------------------
+
+/**.md
+/**.py
+/**.patch
+!AGENTS.md
+!README.md

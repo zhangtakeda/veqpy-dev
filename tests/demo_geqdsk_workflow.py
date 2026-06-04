@@ -1,9 +1,9 @@
-"""No-argument GEQDSK -> veqpy workflow demo.
+"""No-argument GEQDSK -> VEQPy workflow demo.
 
 This script shows the intended user flow:
 1. read an EFIT GEQDSK,
-2. fit a veqpy boundary from it,
-3. solve a veqpy equilibrium,
+2. fit a VEQPy boundary from it,
+3. solve a VEQPy equilibrium,
 4. compare magnetic surfaces in one simple figure.
 
 Note: The first run may be slower due to JIT compilation.
@@ -65,13 +65,12 @@ def build_surface_from_psin(equilibrium, level: float) -> np.ndarray:
     order = np.argsort(psin)
     psin_unique, unique_idx = np.unique(psin[order], return_index=True)
     rho_level = float(np.interp(float(level), psin_unique, rho[order][unique_idx]))
-    geometry = equilibrium.geometry
     R = np.array(
-        [np.interp(rho_level, rho, geometry.R[:, idx]) for idx in range(equilibrium.grid.Nt)],
+        [np.interp(rho_level, rho, equilibrium.R[:, idx]) for idx in range(equilibrium.grid.Nt)],
         dtype=np.float64,
     )
     Z = np.array(
-        [np.interp(rho_level, rho, geometry.Z[:, idx]) for idx in range(equilibrium.grid.Nt)],
+        [np.interp(rho_level, rho, equilibrium.Z[:, idx]) for idx in range(equilibrium.grid.Nt)],
         dtype=np.float64,
     )
     return np.column_stack((R, Z))
@@ -93,7 +92,9 @@ def build_geqdsk_surfaces(geqdsk: Geqdsk, *, levels: tuple[float, ...]) -> dict[
         plt.close(fig)
         for idx, level in enumerate(contour_levels):
             candidates = [
-                np.asarray(segment, dtype=np.float64) for segment in contour.allsegs[idx] if len(segment) >= 8
+                np.asarray(segment, dtype=np.float64)
+                for segment in contour.allsegs[idx]
+                if len(segment) >= 8
             ]
             if candidates:
                 surfaces[level] = max(candidates, key=len)
@@ -102,21 +103,23 @@ def build_geqdsk_surfaces(geqdsk: Geqdsk, *, levels: tuple[float, ...]) -> dict[
     return surfaces
 
 
-def build_profile_coeffs() -> dict[str, list[float]]:
-    coeffs: dict[str, list[float]] = {
-        "psin": [0.0] * 10,
-        "h": [0.0] * 10,
-        "k": [0.0] * 10,
-        "v": [0.0] * 10,
+def build_profile_coeffs() -> dict[str, int]:
+    coeffs: dict[str, int] = {
+        "psin": 10,
+        "h": 10,
+        "k": 10,
+        "v": 10,
     }
     for order in range(8):
-        coeffs[f"c{order}"] = [0.0] * 5
+        coeffs[f"c{order}"] = 5
     for order in range(1, 9):
-        coeffs[f"s{order}"] = [0.0] * 5
+        coeffs[f"s{order}"] = 5
     return coeffs
 
 
-def style_surface_axis(ax: plt.Axes, *, title: str, rz_limits: tuple[tuple[float, float], tuple[float, float]]) -> None:
+def style_surface_axis(
+    ax: plt.Axes, *, title: str, rz_limits: tuple[tuple[float, float], tuple[float, float]]
+) -> None:
     ax.set_title(title)
     ax.set_xlabel("R [m]")
     ax.set_ylabel("Z [m]")
@@ -152,8 +155,10 @@ def main() -> None:
         current_input=np.asarray(geqdsk.FF_psi, dtype=np.float64),
         Ip=MU0 * float(geqdsk.Ip),
     )
-    solve_grid = Grid(Nr=32, Nt=32, scheme="legendre")
-    plot_grid = Grid(Nr=128, Nt=256, scheme="uniform", L_max=solve_grid.L_max, M_max=solve_grid.M_max)
+    solve_grid = Grid(Nr=32, Nt=32, quadrature_scheme="legendre")
+    plot_grid = Grid(
+        Nr=128, Nt=256, quadrature_scheme="uniform", L_max=solve_grid.L_max, M_max=solve_grid.M_max
+    )
     solver = Solver(
         operator=Operator(grid=solve_grid, case=case),
         config=SolverConfig(
@@ -170,14 +175,19 @@ def main() -> None:
         solver.solve()
         solver.reset()
 
-    solver.solve(enable_verbose=False, enable_history=False, enable_warmstart=False, enable_fallback=False)
+    solver.solve(
+        enable_verbose=False, enable_history=False, enable_warmstart=False, enable_fallback=False
+    )
     print(solver.result)
     equilibrium = solver.build_equilibrium()
     plot_equilibrium = equilibrium.resample(grid=plot_grid)
 
     geqdsk_surfaces = build_geqdsk_surfaces(geqdsk, levels=DEFAULT_LEVELS)
     shared_levels = [level for level in DEFAULT_LEVELS if level in geqdsk_surfaces]
-    veqpy_surfaces = {float(level): build_surface_from_psin(plot_equilibrium, float(level)) for level in shared_levels}
+    veqpy_surfaces = {
+        float(level): build_surface_from_psin(plot_equilibrium, float(level))
+        for level in shared_levels
+    }
     rz_limits = compute_rz_limits(list(geqdsk_surfaces.values()) + list(veqpy_surfaces.values()))
 
     fig, ax = plt.subplots(figsize=(7.6, 6.8), constrained_layout=True)
@@ -197,7 +207,7 @@ def main() -> None:
             linestyle="-",
             color="#d62728",
             linewidth=linewidth,
-            label="veqpy" if index == 0 else None,
+            label="VEQPy" if index == 0 else None,
         )
     ax.scatter(
         [boundary.R0],
@@ -208,7 +218,7 @@ def main() -> None:
         linewidths=1.4,
         label="Boundary (R0, Z0)",
     )
-    style_surface_axis(ax, title="EFIT vs veqpy Flux Surfaces", rz_limits=rz_limits)
+    style_surface_axis(ax, title="EFIT vs VEQPy Flux Surfaces", rz_limits=rz_limits)
     ax.legend(loc="upper right")
     fig.savefig(figure_path, dpi=220)
     plt.close(fig)

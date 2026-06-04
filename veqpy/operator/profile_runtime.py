@@ -2,27 +2,31 @@
 Module: operator.profile_runtime
 
 Role:
-- 收敛 profile/case setup 与 profile-stage 装配的共享 Python 规则.
-- 避免 operator.py 混入过多 profile 参数解析, stage A 绑定与 Fourier family 细节.
+- Consolidate shared Python rules for profile/case setup and ProfileWorkspace refresh.
+- Keep profile parameter parsing, Stage-A binding, and Fourier-family details out of operator.py.
 """
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from veqpy.engine.numba_source import validate_route
-from veqpy.model.grid import Grid
 from veqpy.model.profile import Profile
 from veqpy.operator.operator_case import OperatorCase
-from veqpy.operator.packed_layout import build_profile_layout
-from veqpy.orchestration import resolve_fourier_power
+from veqpy.operator.packed_layout import build_profile_layout, coeff_array_from_list
+from veqpy.workspace import GridWorkspace
+
+if TYPE_CHECKING:
+    from veqpy.workspace.profile_workspace import ProfileWorkspace
 
 
 def make_profile(
     *,
     case: OperatorCase,
+    operator_grid: GridWorkspace | None = None,
     name: str,
     profile_L: np.ndarray,
     profile_names: tuple[str, ...],
@@ -34,7 +38,7 @@ def make_profile(
     static_kwargs = profile_static_kwargs_by_name.get(name)
     if static_kwargs is None and name.startswith(("c", "s")) and name[1:].isdigit():
         order = int(name[1:])
-        static_kwargs = {} if order == 0 else {"power": resolve_fourier_power(order)}
+        static_kwargs = {} if order == 0 else {"power": int(operator_grid.K_values[order])}
     if static_kwargs is not None:
         kwargs.update(static_kwargs)
 
@@ -49,58 +53,81 @@ def make_profile(
             offset_spec = profile_offset_specs[name]
         except KeyError as exc:
             raise KeyError(f"Unknown profile name {name!r}") from exc
-        kwargs["offset"] = float(getattr(case, offset_spec)) if isinstance(offset_spec, str) else float(offset_spec)
+        kwargs["offset"] = (
+            float(getattr(case, offset_spec))
+            if isinstance(offset_spec, str)
+            else float(offset_spec)
+        )
 
     kwargs["scale"] = _profile_scale(case, name)
 
     p = profile_index[name]
     L = int(profile_L[p])
     coeff = case.profile_coeffs.get(name)
-    kwargs["coeff"] = None if L < 0 or coeff is None else np.asarray(coeff, dtype=np.float64)[: L + 1].copy()
+    kwargs["coeff"] = (
+        None if L < 0 or coeff is None else coeff_array_from_list(name, coeff)[: L + 1].copy()
+    )
     return Profile(**kwargs)
 
 
 def refresh_profile_runtime(
     *,
     case: OperatorCase,
-    grid: Grid,
+    operator_grid: GridWorkspace,
     profile_names: tuple[str, ...],
     profile_index: dict[str, int],
     profile_L: np.ndarray,
     profiles_by_name: dict[str, Profile],
+    profile_workspace: ProfileWorkspace,
     profile_static_kwargs_by_name: dict[str, dict[str, int]],
     profile_offset_specs: dict[str, float | str],
-    refresh_fourier_family_base_fields: Callable[[], None],
 ) -> None:
     for name in profile_names:
         profile = profiles_by_name[name]
         static_kwargs = profile_static_kwargs_by_name.get(name)
         if static_kwargs is None and name.startswith(("c", "s")) and name[1:].isdigit():
             order = int(name[1:])
-            static_kwargs = {} if order == 0 else {"power": resolve_fourier_power(order)}
+            static_kwargs = {} if order == 0 else {"power": int(operator_grid.K_values[order])}
         elif static_kwargs is None:
             static_kwargs = {}
         profile.power = int(static_kwargs.get("power", 0))
         profile.envelope_power = int(static_kwargs.get("envelope_power", 1))
         if name.startswith("c") and name[1:].isdigit():
             order = int(name[1:])
-            profile.offset = 0.0 if order >= case.c_offsets.shape[0] else float(case.c_offsets[order])
+            profile.offset = (
+                0.0 if order >= case.c_offsets.shape[0] else float(case.c_offsets[order])
+            )
         elif name.startswith("s") and name[1:].isdigit():
             order = int(name[1:])
-            profile.offset = 0.0 if order >= case.s_offsets.shape[0] else float(case.s_offsets[order])
+            profile.offset = (
+                0.0 if order >= case.s_offsets.shape[0] else float(case.s_offsets[order])
+            )
         else:
             offset_spec = profile_offset_specs[name]
             profile.offset = (
-                float(getattr(case, offset_spec)) if isinstance(offset_spec, str) else float(offset_spec)
+                float(getattr(case, offset_spec))
+                if isinstance(offset_spec, str)
+                else float(offset_spec)
             )
         profile.scale = _profile_scale(case, name)
         p = profile_index[name]
         L = int(profile_L[p])
         coeff = case.profile_coeffs.get(name)
-        profile.coeff = None if L < 0 or coeff is None else np.asarray(coeff, dtype=np.float64)[: L + 1].copy()
-        profile._prepare_runtime_cache(grid)
-        profile.update()
-    refresh_fourier_family_base_fields()
+        profile.coeff = (
+            None if L < 0 or coeff is None else coeff_array_from_list(name, coeff)[: L + 1].copy()
+        )
+        profile_workspace.refresh_profile_slot(
+            profile_id=p,
+            profile=profile,
+            grid_workspace=operator_grid,
+        )
+    refresh_fourier_family_base_fields(
+        M_max=operator_grid.M_max,
+        profile_index=profile_index,
+        profile_workspace=profile_workspace,
+        c_family_base_fields=profile_workspace.c_family_base_fields,
+        s_family_base_fields=profile_workspace.s_family_base_fields,
+    )
 
 
 def _profile_scale(case: OperatorCase, name: str) -> float:
@@ -116,9 +143,6 @@ def refresh_stage_a_runtime(
     profiles_by_name: dict[str, Profile],
     profile_L: np.ndarray,
     coeff_index: np.ndarray,
-    active_u_fields: np.ndarray,
-    active_rp_fields: np.ndarray,
-    active_env_fields: np.ndarray,
     active_offsets: np.ndarray,
     active_scales: np.ndarray,
     active_lengths: np.ndarray,
@@ -134,9 +158,6 @@ def refresh_stage_a_runtime(
         L = int(profile_L[p_int])
         coeff_indices = coeff_index[p_int, : L + 1]
 
-        profile.u_fields = active_u_fields[slot]
-        active_rp_fields[slot] = profile.rp_fields
-        active_env_fields[slot] = profile.env_fields
         active_offsets[slot] = profile.offset
         active_scales[slot] = profile.scale
         active_lengths[slot] = coeff_indices.size
@@ -145,39 +166,11 @@ def refresh_stage_a_runtime(
             active_coeff_index_rows[slot, : coeff_indices.size] = coeff_indices
 
 
-def build_profile_stage_runner(
-    *,
-    active_profile_ids: np.ndarray,
-    active_profile_slab: np.ndarray,
-    T_fields: np.ndarray,
-    active_offsets: np.ndarray,
-    active_scales: np.ndarray,
-    active_coeff_index_rows: np.ndarray,
-    active_lengths: np.ndarray,
-    update_profiles_packed_bulk: Callable,
-) -> Callable[[np.ndarray], None]:
-    if active_profile_ids.size == 0:
-        return lambda x: None
-
-    def runner(x: np.ndarray) -> None:
-        update_profiles_packed_bulk(
-            active_profile_slab,
-            T_fields,
-            active_offsets,
-            active_scales,
-            x,
-            active_coeff_index_rows,
-            active_lengths,
-        )
-
-    return runner
-
-
 def refresh_fourier_family_base_fields(
     *,
     M_max: int,
     profile_index: dict[str, int],
-    profiles_by_name: dict[str, Profile],
+    profile_workspace: ProfileWorkspace,
     c_family_base_fields: np.ndarray,
     s_family_base_fields: np.ndarray,
 ) -> None:
@@ -186,19 +179,19 @@ def refresh_fourier_family_base_fields(
     for order in range(int(M_max) + 1):
         c_name = f"c{order}"
         if c_name in profile_index:
-            np.copyto(c_family_base_fields[order], profiles_by_name[c_name].u_fields)
+            np.copyto(c_family_base_fields[order], profile_workspace.fields_for(c_name))
         if order == 0:
             continue
         s_name = f"s{order}"
         if s_name in profile_index:
-            np.copyto(s_family_base_fields[order], profiles_by_name[s_name].u_fields)
+            np.copyto(s_family_base_fields[order], profile_workspace.fields_for(s_name))
 
 
 def refresh_fourier_family_metadata(
     *,
     c_profile_names: tuple[str, ...],
     s_profile_names: tuple[str, ...],
-    profile_coeffs: dict[str, list[float] | None],
+    profile_coeffs: dict[str, list[float] | np.ndarray | int | None],
     c_offsets: np.ndarray | None,
     s_offsets: np.ndarray | None,
     c_family_fields: np.ndarray,
@@ -210,7 +203,11 @@ def refresh_fourier_family_metadata(
         if profile_coeffs.get(name) is not None:
             c_effective_order = max(c_effective_order, order)
             continue
-        if c_offsets is not None and order < c_offsets.shape[0] and abs(float(c_offsets[order])) > 1e-14:
+        if (
+            c_offsets is not None
+            and order < c_offsets.shape[0]
+            and abs(float(c_offsets[order])) > 1e-14
+        ):
             c_effective_order = max(c_effective_order, order)
 
     s_effective_order = 0
@@ -219,7 +216,11 @@ def refresh_fourier_family_metadata(
         if profile_coeffs.get(name) is not None:
             s_effective_order = max(s_effective_order, order)
             continue
-        if s_offsets is not None and order < s_offsets.shape[0] and abs(float(s_offsets[order])) > 1e-14:
+        if (
+            s_offsets is not None
+            and order < s_offsets.shape[0]
+            and abs(float(s_offsets[order])) > 1e-14
+        ):
             s_effective_order = max(s_effective_order, order)
 
     if c_effective_order + 1 < c_family_fields.shape[0]:

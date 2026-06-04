@@ -1,10 +1,19 @@
-# veqpy
+# VEQPy
 
-`veqpy` is a Python package for VEQ (Veloce/Variational Equilibrium),
+> [!WARNING]
+> This repository is deprecated and is no longer the official maintenance repository.
+>
+> The official repository has moved to:
+>
+> **https://github.com/zhangtakeda/veqpy**
+>
+> Please use the new repository for source code, releases, documentation, issues, and pull requests.
+
+VEQPy is a Python package for VEQ (Veloce/Variational Equilibrium),
 a high-performance Python wrapper for plasma equilibrium simulations in magnetic confinement fusion (MCF) devices.
 
 - Author: `rhzhang`
-- Updated: `2026-04-15`
+- Updated: `2026-05-08`
 - Version: `0.3.1`
 
 ## Code Structure
@@ -15,7 +24,7 @@ a high-performance Python wrapper for plasma equilibrium simulations in magnetic
 - `veqpy/orchestration.py`
   - Python-level route, source, residual metadata, and stage-runner orchestration.
 - `veqpy/model/`
-  - Passive or snapshot-oriented objects: `Grid`, `Profile`, `Geometry`, `Equilibrium`.
+  - Passive or snapshot-oriented objects: `Grid`, `Profile`, `Equilibrium`.
 - `veqpy/operator/`
   - Packed layout and the main `x -> residual` runtime path.
   - Owns `OperatorCase`, packed `layout/codec`, and `Operator`.
@@ -26,58 +35,73 @@ a high-performance Python wrapper for plasma equilibrium simulations in magnetic
 
 ## Environment
 
-All scripts, benchmarks, compile checks, and `pytest` runs should be executed inside the project `uv`-managed virtual environment.
+All scripts, benchmarks, compile checks, and `pytest` runs should use the project `.venv` rather than system Python.
 
-Recommended workflow on Windows PowerShell:
+Install or refresh development dependencies from the repository root:
 
-```powershell
-uv sync --group dev
+```bash
+.venv/bin/python -m pip install -e ".[dev]"
 ```
 
-Recommended command style:
+Recommended command style on Linux/macOS:
 
-- `python -m pytest ...`
-- `python tests/demo.py`
-- `python tests/demo_geqdsk_workflow.py`
-- `python tests/benchmark.py`
-- `python -m compileall veqpy tests`
+- `.venv/bin/python -m pytest ...`
+- `.venv/bin/python tests/demo.py`
+- `.venv/bin/python tests/demo_geqdsk_workflow.py`
+- `.venv/bin/python tests/benchmark.py`
+- `.venv/bin/python -m compileall veqpy tests`
+- `.venv/bin/ruff check veqpy tests`
 
-Prefer running them through `uv`:
-
-- `uv run python -m pytest ...`
-- `uv run python tests/demo.py`
-- `uv run python tests/demo_geqdsk_workflow.py`
-- `uv run python tests/benchmark.py`
-- `uv run python -m compileall veqpy tests`
-
-If you prefer an activated shell, use:
+On Windows PowerShell, activate the project environment first:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
 ```
 
-Then run the same `python ...` commands inside that environment.  
-Avoid running repository commands from system Python or a non-project interpreter.  
-If you do not activate the environment, use `uv run ...` or `.\.venv\Scripts\python.exe ...` explicitly.
+Then run the corresponding `python ...` and `ruff ...` commands inside that environment.
+Avoid running repository commands from system Python or a non-project interpreter.
 
 ## Regression Suites
 
 Core regressions are now organized by submodule instead of by temporary refactor phase:
 
-- [tests/test_model_core_regression.py](tests/test_model_core_regression.py)
-  - `Grid`, `Boundary.from_geqdsk`, `Equilibrium` snapshot/serialization/comparison semantics
-- [tests/test_solver_core_regression.py](tests/test_solver_core_regression.py)
-  - solve facade, fallback/reset behavior, and solver/operator state lifecycle semantics
-
 The main runtime path is:
 
 1. `Solver.solve(...)`
 2. SciPy root or least-squares entry
-3. `Operator.__call__(x)`
+3. `Operator.__call__(x)` / `Operator.residual_var(x)`
 4. Stage-A `profile`
 5. Stage-B `geometry`
 6. Stage-C `source`
 7. Stage-D `residual`
+
+The default solve uses the packed projected variational residual, mapping packed
+coefficients `N -> N`. Set `SolverConfig(enable_collocation=True)` (or pass
+`enable_collocation=True` to `solve`) to run a two-stage workflow:
+
+1. solve the normal variational problem;
+2. warm-start a collocation polish using `Operator.residual_collocation(x)`.
+
+The collocation polish residual is controlled by `collocation_weight`. The
+default `collocation_weight=1` keeps the pure quadrature-scaled pointwise
+objective containing `R/J * G`, mapping packed coefficients `N -> Nr*Nt`.
+Intermediate weights use a variational-state-anchored least-squares objective
+that keeps the solution local to the variational warm-start while reducing the
+collocation residual; `collocation_weight=0` skips the polish and is exactly the
+normal variational result. Because nonzero collocation polish is generally
+rectangular, the polish method must be a least-squares method:
+
+```python
+solver = Solver(
+    operator=operator,
+    config=SolverConfig(enable_collocation=True, collocation_weight=0.25),
+)
+```
+
+The variational default remains `method="hybr"`; the collocation polish default
+is `collocation_method="trf"`. A collocation-enabled `SolverResult` stores one
+record, reports the post-polish coefficients, and includes both stages in
+elapsed time and evaluation counts.
 
 ## Performance Snapshot
 
@@ -85,7 +109,7 @@ Current Fourier-family runtime is driven by `Grid.M_max`, but hot-path kernels o
 
 - Low-order case with the same active profiles:
   - `M_max=4` vs `M_max=2` currently gives about `1.05x` full residual time in the `numba` microbenchmark.
-  - Geometry alone is about `1.03x`.
+  - Geometry-stage computation alone is about `1.03x`.
 - When higher-order terms are actually active:
   - `M_max=4` high-order case is about `1.23x` full residual time relative to the low-order `M_max=2` baseline.
 
