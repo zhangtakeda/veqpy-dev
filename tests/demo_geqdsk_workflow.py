@@ -1,9 +1,9 @@
-"""No-argument GEQDSK -> veqpy workflow demo.
+"""No-argument GEQDSK -> VEQPy workflow demo.
 
 This script shows the intended user flow:
 1. read an EFIT GEQDSK,
-2. fit a veqpy boundary from it,
-3. solve a veqpy equilibrium,
+2. fit a VEQPy boundary from it,
+3. solve a VEQPy equilibrium,
 4. compare magnetic surfaces in one simple figure.
 
 Note: The first run may be slower due to JIT compilation.
@@ -207,7 +207,7 @@ def main() -> None:
             linestyle="-",
             color="#d62728",
             linewidth=linewidth,
-            label="veqpy" if index == 0 else None,
+            label="VEQPy" if index == 0 else None,
         )
     ax.scatter(
         [boundary.R0],
@@ -218,7 +218,7 @@ def main() -> None:
         linewidths=1.4,
         label="Boundary (R0, Z0)",
     )
-    style_surface_axis(ax, title="EFIT vs veqpy Flux Surfaces", rz_limits=rz_limits)
+    style_surface_axis(ax, title="EFIT vs VEQPy Flux Surfaces", rz_limits=rz_limits)
     ax.legend(loc="upper right")
     fig.savefig(figure_path, dpi=220)
     plt.close(fig)

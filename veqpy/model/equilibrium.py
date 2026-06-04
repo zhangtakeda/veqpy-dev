@@ -69,7 +69,7 @@ SHAPE_PROFILE_PLOT_META = {
     "k": {"color": "#2ca02c", "label": r"$\kappa$", "linestyle": "-", "marker": None},
 }
 SHAPE_PROFILE_NAMES = tuple(SHAPE_PROFILE_PLOT_META)
-_EXTRA_SHAPE_PROFILE_COLORS = (
+EXTRA_SHAPE_PROFILE_COLORS = (
     "#d62728",
     "#9467bd",
     "#8c564b",
@@ -672,8 +672,8 @@ def _shape_profile_plot_meta(name: str) -> dict[str, str | None]:
     else:
         label = name
         style = {"linestyle": "-", "marker": None}
-    color = _EXTRA_SHAPE_PROFILE_COLORS[
-        sum(ord(ch) for ch in name) % len(_EXTRA_SHAPE_PROFILE_COLORS)
+    color = EXTRA_SHAPE_PROFILE_COLORS[
+        sum(ord(ch) for ch in name) % len(EXTRA_SHAPE_PROFILE_COLORS)
     ]
     return {"color": color, "label": label, **style}
 

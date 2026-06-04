@@ -1,6 +1,15 @@
-# veqpy
+# VEQPy
 
-`veqpy` is a Python package for VEQ (Veloce/Variational Equilibrium),
+> [!WARNING]
+> This repository is deprecated and is no longer the official maintenance repository.
+>
+> The official repository has moved to:
+>
+> **https://github.com/zhangtakeda/veqpy**
+>
+> Please use the new repository for source code, releases, documentation, issues, and pull requests.
+
+VEQPy is a Python package for VEQ (Veloce/Variational Equilibrium),
 a high-performance Python wrapper for plasma equilibrium simulations in magnetic confinement fusion (MCF) devices.
 
 - Author: `rhzhang`

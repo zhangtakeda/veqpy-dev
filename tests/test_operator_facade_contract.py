@@ -135,6 +135,29 @@ def test_profile_workspace_owns_profile_fields() -> None:
     assert not profile_workspace.profile_env_fields.flags.writeable
 
 
+def test_lobatto_endpoint_grid_uses_axis_regularization() -> None:
+    psin = np.linspace(0.0, 1.0, 8, dtype=np.float64)
+    case = OperatorCase(
+        route="PF",
+        coordinate="psin",
+        profile_coeffs={"psin": 3, "h": 2, "k": 2, "s1": 2},
+        boundary=Boundary(a=1.0, R0=3.0, Z0=0.0, B0=2.0, ka=1.2),
+        heat_input=1.0 - psin,
+        current_input=psin,
+        Ip=1.0,
+    )
+    operator = Operator(
+        grid=Grid(Nr=6, Nt=8, L_max=4, M_max=2, quadrature_scheme="lobatto"),
+        case=case,
+    )
+    x = operator.encode_initial_state()
+
+    assert operator.plan.grid_workspace.rho[0] == 0.0
+    assert int(np.searchsorted(operator.plan.grid_workspace.rho, operator.fix_rho)) > 0
+    assert np.all(np.isfinite(operator.residual_var(x)))
+    assert np.all(np.isfinite(operator.residual_collocation(x)))
+
+
 def test_equilibrium_resample_uses_shape_profile_snapshot_not_field_interpolation() -> None:
     psin = np.linspace(0.0, 1.0, 9, dtype=np.float64)
     case = OperatorCase(

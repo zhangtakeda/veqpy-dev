@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "veqpy"
 dynamic = ["version"]
-description = "veqpy — Veloce/Variational EQuilbrium code"
+description = "VEQPy — Veloce EQuilbrium code"
 readme = "README.md"
 license = "BSD-3-Clause"
 authors = [

@@ -311,7 +311,7 @@ def _safe_float_conversion(value: str) -> float:
 
 
 def _header_line(header: str, nr: int, nz: int) -> str:
-    title = (header or "veqpy GEQDSK").strip()
+    title = (header or "VEQPy GEQDSK").strip()
     return f"{title} {int(nr)} {int(nz)}\n"
 
 

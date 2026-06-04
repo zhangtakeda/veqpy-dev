@@ -172,9 +172,6 @@ def _pack_radial_fields(
     T_rr: np.ndarray,
 ) -> np.ndarray:
     """Pack radial fields into a read-only (R, Nr) 2D array according to the layout contract."""
-    if abs(rho[0]) < 1e-10:
-        raise ValueError("rho[0] is too close to zero")
-
     Nr = rho.shape[0]
     K_max = rho_powers.shape[0] - 2
     L_max = T.shape[0] - 1

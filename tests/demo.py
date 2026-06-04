@@ -1,4 +1,4 @@
-"""Minimal no-argument veqpy demo script.
+"""Minimal no-argument VEQPy demo script.
 
 Run it directly to get one solved equilibrium plus a simple flux-surface plot.
 This is meant to be the smallest user-facing workflow example in the repo.
@@ -100,7 +100,7 @@ def compute_rz_limits(
 def plot_equilibrium_surfaces(
     ax: plt.Axes, equilibrium, *, levels: tuple[float, ...] = DEFAULT_LEVELS
 ) -> None:
-    first_label = "veqpy surfaces"
+    first_label = "VEQPy surfaces"
     for index, level in enumerate(levels):
         surface = build_surface_from_psin(equilibrium, float(level))
         color = DEFAULT_SURFACE_COLORS[min(index, len(DEFAULT_SURFACE_COLORS) - 1)]
@@ -190,7 +190,7 @@ def main() -> None:
         linewidths=1.4,
         label="Boundary (R0, Z0)",
     )
-    style_surface_axis(ax, title="veqpy Demo Flux Surfaces", rz_limits=rz_limits)
+    style_surface_axis(ax, title="VEQPy Demo Flux Surfaces", rz_limits=rz_limits)
     ax.legend(loc="upper right")
     fig.savefig(figure_path, dpi=220)
     plt.close(fig)

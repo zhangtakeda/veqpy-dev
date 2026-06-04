@@ -97,33 +97,11 @@ def compact_cfd55_calculus(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 def _cfd33_matrices(nodes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Build non-uniform CFD33 matrices ``A`` and ``B`` for ``A @ u_r == B @ u``."""
 
-    n = nodes.shape[0]
-    a_matrix = np.zeros((n, n), dtype=np.float64)
-    b_matrix = np.zeros((n, n), dtype=np.float64)
-
-    a_matrix[0, 0] = 1.0
-    b_matrix[0, :4] = _finite_difference_weights(nodes[:4], nodes[0], derivative_order=1)
-
-    for i in range(1, n - 1):
-        h_left = nodes[i] - nodes[i - 1]
-        h_right = nodes[i + 1] - nodes[i]
-        h_sum = h_left + h_right
-
-        a_matrix[i, i - 1] = (h_right / h_sum) ** 2
-        a_matrix[i, i] = 1.0
-        a_matrix[i, i + 1] = (h_left / h_sum) ** 2
-
-        b_matrix[i, i - 1] = -(2.0 * h_right * h_right * (2.0 * h_left + h_right)) / (
-            h_left * h_sum**3
-        )
-        b_matrix[i, i] = 2.0 * (h_right - h_left) / (h_right * h_left)
-        b_matrix[i, i + 1] = (2.0 * h_left * h_left * (h_left + 2.0 * h_right)) / (
-            h_right * h_sum**3
-        )
-
-    a_matrix[-1, -1] = 1.0
-    b_matrix[-1, -4:] = _finite_difference_weights(nodes[-4:], nodes[-1], derivative_order=1)
-    return a_matrix, b_matrix
+    return _compact_matrices(
+        nodes,
+        implicit_width=3,
+        explicit_width=3,
+    )
 
 
 def _compact_calculus(
